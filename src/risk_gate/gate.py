@@ -187,12 +187,15 @@ class RiskGate:
         today = now.date()
         state = self._state
 
-        if state.kill_switch_tripped:
+        # A halt stops exposure growing; it does not trap the account in its
+        # positions. Closes still run the full close-validation path below, so a
+        # halted account can reduce risk but can never oversell into a short.
+        if state.kill_switch_tripped and order.is_opening:
             return Rejection(
                 code=RejectionCode.KILL_SWITCH_ACTIVE,
                 message=(
-                    "kill switch is tripped; all new orders are halted until a human "
-                    "resets it"
+                    "kill switch is tripped; opening orders are halted until a human "
+                    "resets it (risk-reducing closes are still accepted)"
                 ),
                 limit=self._limits.kill_switch.drawdown_from_high_water_mark,
                 observed=state.drawdown(),
@@ -306,11 +309,7 @@ class RiskGate:
         single_cap_fraction = (
             limits.equity_sleeve.max_single_position
             if sleeve is Sleeve.EQUITY
-            # Prediction-sleeve arbitrage carries a tighter 0.5% cap, but telling an
-            # arb order from a directional one needs a strategy tag the order schema
-            # does not carry. The directional cap is applied to every event position
-            # until that field exists.
-            else limits.prediction_sleeve.directional.max_position
+            else self._prediction_cap_fraction(order)
         )
         single_cap = sleeve_nav * single_cap_fraction
         if resulting > single_cap:
@@ -391,6 +390,18 @@ class RiskGate:
         if sleeve is Sleeve.EQUITY:
             state.deployed_today += cost
         return self._approve(order, cost, now)
+
+    def _prediction_cap_fraction(self, order: Order) -> Decimal:
+        """Per-position cap for the prediction sleeve, by strategy.
+
+        Arbitrage is micro-unit and high-turnover (0.5%); directional divergence
+        positions are larger (2%). The order carries its own strategy tag, so an arb
+        order can never be sized like a directional one.
+        """
+        prediction = self._limits.prediction_sleeve
+        if getattr(order, "strategy", None) == "arb":
+            return prediction.arbitrage.max_position
+        return prediction.directional.max_position
 
     def _approve(self, order: Order, reserved: Decimal, now: datetime) -> ApprovedOrder:
         self._sequence += 1

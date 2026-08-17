@@ -82,6 +82,7 @@ def event_buys(draw):
         market_ticker="PRES-2028-D",
         outcome=draw(st.sampled_from(["yes", "no"])),
         contracts=draw(quantities),
+        strategy=draw(st.sampled_from(["arb", "directional"])),
         execution=draw(limit_or_market(price=event_price)),
     )
 
@@ -205,6 +206,7 @@ def test_closing_orders_risk_no_new_cash():
             market_ticker="PRES-2028-D",
             outcome="yes",
             contracts=50,
+            strategy="arb",
             execution=LimitExecution(limit_price=Decimal("0.42")),
         ),
     ]
@@ -247,7 +249,31 @@ def test_event_contract_price_must_be_below_one(price):
             market_ticker="PRES-2028-D",
             outcome="yes",
             contracts=10,
+            strategy="directional",
             execution=LimitExecution(limit_price=price),
+        )
+
+
+@pytest.mark.parametrize("strategy", ["copy_trade", "hedge", "", None])
+def test_event_contract_strategy_must_be_arb_or_directional(strategy):
+    """No default: the two strategies carry different caps, so it must be stated."""
+    with pytest.raises(ValidationError):
+        EventContractBuyOrder(
+            market_ticker="PRES-2028-D",
+            outcome="yes",
+            contracts=10,
+            strategy=strategy,
+            execution=LimitExecution(limit_price=Decimal("0.50")),
+        )
+
+
+def test_event_contract_strategy_is_required():
+    with pytest.raises(ValidationError):
+        EventContractBuyOrder(
+            market_ticker="PRES-2028-D",
+            outcome="yes",
+            contracts=10,
+            execution=LimitExecution(limit_price=Decimal("0.50")),
         )
 
 

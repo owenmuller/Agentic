@@ -231,6 +231,10 @@ class _EventContract(_OrderBase):
     market_ticker: Ticker
     outcome: Literal["yes", "no"]
     contracts: Quantity
+    #: Which permitted prediction-market strategy this order belongs to. Required, with
+    #: no default: the two carry very different position caps (0.5% vs 2% of the
+    #: prediction sleeve), and defaulting either way would silently mis-cap an order.
+    strategy: Literal["arb", "directional"]
 
     @model_validator(mode="after")
     def _price_within_unit_interval(self) -> "_EventContract":

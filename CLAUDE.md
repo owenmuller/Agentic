@@ -23,7 +23,7 @@ Claude Code reads this file every session. These rules govern all code written i
   - Max single position: 5% of sleeve NAV
   - Max daily capital deployment: 15% of sleeve NAV
   - Max aggregate long-options premium at risk: 20% of equity sleeve
-- **Kill switch:** 12% drawdown from high-water mark halts ALL new orders. Resume requires manual human reset.
+- **Kill switch:** 12% drawdown from high-water mark halts all **opening** orders — no new or increased exposure of any kind. **Risk-reducing sell-to-close orders remain permitted** while halted, validated normally: never beyond held quantity, so a halt can never be used to open a short. Resume of opening orders requires manual human reset.
 - **PDT awareness:** if account equity < $25K in a margin-type account, day-trade counting is enforced in the risk gate. (Preferred: cash account, which also structurally prevents negative balances.)
 
 ## Signal Sources & Latency Classes

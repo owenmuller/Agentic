@@ -112,11 +112,17 @@ def option_sell(contracts: int = 1, price: str = "1.00", symbol: str = "AAPL2601
     )
 
 
-def event_buy(contracts: int = 1, price: str = "0.50", outcome: str = "yes"):
+def event_buy(
+    contracts: int = 1,
+    price: str = "0.50",
+    outcome: str = "yes",
+    strategy: str = "directional",
+):
     return EventContractBuyOrder(
         market_ticker="PRES-2028-D",
         outcome=outcome,
         contracts=contracts,
+        strategy=strategy,
         execution=LimitExecution(limit_price=Decimal(price)),
     )
 
@@ -322,16 +328,44 @@ def test_aggregate_option_premium_cap(limits):
     assert gate.state.options_premium_at_risk <= premium_cap
 
 
-def test_prediction_sleeve_has_its_own_smaller_cap(limits):
+def test_directional_event_position_capped_at_two_percent(limits):
     gate = make_gate(limits)
     prediction_cap = (
         gate.sleeve_nav(Sleeve.PREDICTION)
         * limits.prediction_sleeve.directional.max_position
     )
     contracts = int(prediction_cap / Decimal("0.50")) + 10
-    rejection = reject(gate, event_buy(contracts=contracts))
+    rejection = reject(gate, event_buy(contracts=contracts, strategy="directional"))
     assert rejection.code is RejectionCode.MAX_SINGLE_POSITION_EXCEEDED
     assert rejection.limit == prediction_cap
+
+
+def test_arb_event_position_capped_at_the_tighter_half_percent(limits):
+    gate = make_gate(limits)
+    arb_cap = (
+        gate.sleeve_nav(Sleeve.PREDICTION)
+        * limits.prediction_sleeve.arbitrage.max_position
+    )
+    contracts = int(arb_cap / Decimal("0.50")) + 10
+    rejection = reject(gate, event_buy(contracts=contracts, strategy="arb"))
+    assert rejection.code is RejectionCode.MAX_SINGLE_POSITION_EXCEEDED
+    assert rejection.limit == arb_cap
+
+
+def test_the_same_size_passes_as_directional_and_fails_as_arb(limits):
+    """The strategy tag is what distinguishes them — nothing else about the order."""
+    gate = make_gate(limits)
+    arb_cap = (
+        gate.sleeve_nav(Sleeve.PREDICTION)
+        * limits.prediction_sleeve.arbitrage.max_position
+    )
+    contracts = int(arb_cap / Decimal("0.50")) + 10
+    approve(gate, event_buy(contracts=contracts, strategy="directional"))
+
+    fresh = make_gate(limits)
+    assert reject(fresh, event_buy(contracts=contracts, strategy="arb")).code is (
+        RejectionCode.MAX_SINGLE_POSITION_EXCEEDED
+    )
 
 
 def test_sleeve_allocation_ceiling_is_target_plus_drift(limits):
@@ -467,20 +501,41 @@ def test_a_single_capped_position_cannot_trip_the_kill_switch(limits):
     assert gate.kill_switch_tripped is False
 
 
-def test_tripped_kill_switch_rejects_every_order_type(limits):
+def test_tripped_kill_switch_rejects_every_opening_order(limits):
     gate = make_gate(limits)
     keys = deploy_for_crash(gate)
     crash(gate, keys)
     assert gate.kill_switch_tripped is True
 
-    for order in (
-        equity_buy(),
-        equity_sell(symbol="AAA", qty=1),
-        option_buy(),
-        event_buy(),
-    ):
+    for order in (equity_buy(), option_buy(), event_buy()):
         rejection = reject(gate, order)
         assert rejection.code is RejectionCode.KILL_SWITCH_ACTIVE
+
+
+def test_tripped_kill_switch_still_allows_risk_reducing_closes(limits):
+    gate = make_gate(limits)
+    keys = deploy_for_crash(gate)
+    crash(gate, keys)
+    assert gate.kill_switch_tripped is True
+
+    held = gate.state.position(keys[0]).quantity
+    approved = approve(gate, equity_sell(symbol="AAA", qty=held))
+    assert approved.max_loss == 0
+
+
+def test_a_halt_cannot_be_used_to_open_a_short(limits):
+    """Closes stay fully validated while halted — the exemption is not a bypass."""
+    gate = make_gate(limits)
+    keys = deploy_for_crash(gate)
+    crash(gate, keys)
+
+    held = gate.state.position(keys[0]).quantity
+    rejection = reject(gate, equity_sell(symbol="AAA", qty=held + 1))
+    assert rejection.code is RejectionCode.CLOSE_EXCEEDS_HELD_QUANTITY
+
+    approve(gate, equity_sell(symbol="AAA", qty=held))
+    second = reject(gate, equity_sell(symbol="AAA", qty=1))
+    assert second.code is RejectionCode.CLOSE_EXCEEDS_HELD_QUANTITY
 
 
 def test_kill_switch_does_not_untrip_when_the_market_recovers(limits):
@@ -625,9 +680,14 @@ class GateStateMachine(RuleBasedStateMachine):
         contracts=st.integers(min_value=1, max_value=50),
         price=st.sampled_from(["0.10", "0.50", "0.90"]),
         outcome=st.sampled_from(["yes", "no"]),
+        strategy=st.sampled_from(["arb", "directional"]),
     )
-    def buy_event(self, contracts, price, outcome):
-        self._submit(event_buy(contracts=contracts, price=price, outcome=outcome))
+    def buy_event(self, contracts, price, outcome, strategy):
+        self._submit(
+            event_buy(
+                contracts=contracts, price=price, outcome=outcome, strategy=strategy
+            )
+        )
 
     @rule(symbol=st.sampled_from(SYMBOLS), qty=st.integers(min_value=1, max_value=300))
     def sell_equity(self, symbol, qty):
@@ -724,13 +784,25 @@ class GateStateMachine(RuleBasedStateMachine):
                 assert gate.state.sleeve_exposure(sleeve) / nav <= ceiling
 
     @invariant()
-    def a_tripped_kill_switch_rejects_everything(self):
+    def a_tripped_kill_switch_blocks_opens_but_not_closes(self):
+        """Every probe here must be one that cannot mutate state.
+
+        Opening orders are rejected outright while halted. The close probe is
+        deliberately oversized so it always rejects too — an approved close would
+        reserve units and corrupt the sequence being tested.
+        """
         if not self.gate.kill_switch_tripped:
             return
-        for order in (equity_buy(), equity_sell(qty=1), option_buy(), event_buy()):
+        for order in (equity_buy(), option_buy(), event_buy()):
             decision = self.gate.submit(order)
             assert not decision.is_approved
             assert decision.code is RejectionCode.KILL_SWITCH_ACTIVE
+
+        oversized_close = self.gate.submit(equity_sell(symbol="AAA", qty=10**6))
+        assert not oversized_close.is_approved
+        assert oversized_close.code is not RejectionCode.KILL_SWITCH_ACTIVE, (
+            "a halt must not be the reason a close is refused"
+        )
 
 
 TestGateSequences = GateStateMachine.TestCase
