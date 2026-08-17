@@ -1,0 +1,69 @@
+# Risk limits — mirrors the caps in CLAUDE.md.
+#
+# Changing ANY value in this file requires explicit human approval
+# (CLAUDE.md § Requires Explicit Human Approval). The risk gate loads this file and
+# treats it as binding; it is not a set of defaults to tune.
+
+version: 1
+
+account:
+  cash_secured_only: true
+  margin_enabled: false
+  short_selling: forbidden
+  option_writing: forbidden # also structurally unrepresentable in the order schema
+
+portfolio:
+  sleeves:
+    equity: 0.90 # equities & long options
+    prediction: 0.10 # event contracts
+  drift_tolerance: 0.03 # +/-3% from target triggers rebalance
+  rebalance: weekly_at_next_session_open
+
+equity_sleeve:
+  max_single_position: 0.05 # of sleeve NAV
+  max_daily_deployment: 0.15 # of sleeve NAV, per trading day
+  max_options_premium_at_risk: 0.20 # aggregate open premium, of equity sleeve
+
+kill_switch:
+  drawdown_from_high_water_mark: 0.12
+  halts: all_new_orders
+  reset: manual_human_only
+
+pdt:
+  equity_threshold_usd: 25000
+  enforce_day_trade_count_in_margin_account: true
+  preferred_account_type: cash # also structurally prevents a negative balance
+
+sizing:
+  # Research confidence (0-100) -> position size as a fraction of sleeve NAV.
+  # Bands are lower-inclusive, upper-exclusive; the top band includes 100.
+  #
+  # BOUNDARY NOTE: CLAUDE.md lists the bands as "55-70 / 70-85 / 85+", which overlaps
+  # at 70 and at 85. Resolved here with the standard [lower, upper) convention, which
+  # matches "85+" exactly (85 -> 5%) and assigns exactly 70 -> 2.5%. That last call is
+  # a judgment call, not something the spec states. Confirm before relying on it;
+  # changing it is a cap change and needs human approval.
+  no_trade_below: 55
+  bounds: lower_inclusive_upper_exclusive
+  bands:
+    - { min: 55, max: 70, size: 0.010 }
+    - { min: 70, max: 85, size: 0.025 }
+    - { min: 85, max: 100, size: 0.050, upper_inclusive: true }
+  hard_cap: 0.05 # confidence 100 is still 5% max
+  options:
+    basis: premium_at_risk
+    multiplier: 0.5 # table size halved: options already carry embedded leverage
+
+prediction_sleeve:
+  arbitrage:
+    max_position: 0.005 # of prediction sleeve, per arb position
+    fee_clearance_multiplier: 1.5 # edge > (round_trip_fees + slippage) * 1.5
+    fees_source: live_fee_schedule # never assumed, computed per contract on both legs
+    high_turnover_expected: true
+  directional:
+    min_divergence_points: 10 # research probability vs market-implied odds
+    max_position: 0.02 # of prediction sleeve, per position
+
+execution:
+  default_order_type: limit
+  market_orders_require_justification: true
