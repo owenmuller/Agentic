@@ -1,0 +1,7 @@
+# Normalise line endings in the repository to LF, and check out LF on every platform.
+#
+# Without this, git's autocrlf rewrites files on checkout, so a file restored from a
+# commit is byte-different from the same file before it was committed. That made a
+# raw hash comparison during mutation testing report a mismatch on identical content.
+# Hash checks should be unambiguous.
+* text=auto eol=lf
