@@ -1,12 +1,26 @@
-node_modules/
-dist/
-build/
-*.log
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets & credentials — never commit
 .env
 .env.*
 !.env.example
+*.key
+config/secrets*
+
+# Runtime data — audit records, order logs, fills
+data/
+*.log
+
+# OS / editor
 .DS_Store
 Thumbs.db
-*.tsbuildinfo
-.cache/
-coverage/
