@@ -36,19 +36,22 @@ pdt:
 
 sizing:
   # Research confidence (0-100) -> position size as a fraction of sleeve NAV.
-  # Bands are lower-inclusive, upper-exclusive; the top band includes 100.
   #
-  # BOUNDARY NOTE: CLAUDE.md lists the bands as "55-70 / 70-85 / 85+", which overlaps
-  # at 70 and at 85. Resolved here with the standard [lower, upper) convention, which
-  # matches "85+" exactly (85 -> 5%) and assigns exactly 70 -> 2.5%. That last call is
-  # a judgment call, not something the spec states. Confirm before relying on it;
-  # changing it is a cap change and needs human approval.
+  # BOUNDARY RULE: CLAUDE.md lists the bands as "55-70 / 70-85 / 85+", which overlaps
+  # at 70 and at 85. Resolved per Inviolable Constraint #6 (ambiguity resolves toward
+  # less risk): bands are (lower, upper], so a confidence landing exactly on a boundary
+  # takes the SMALLER size. Exactly 70 -> 1.0%, exactly 85 -> 2.5%.
+  #
+  # The one exception is the floor: "< 55 | No trade" is explicit, not ambiguous, so
+  # 55 itself trades at 1.0% and the first band alone is lower-inclusive. Constraint #6
+  # resolves genuine overlaps; it does not override a rule that already says what it
+  # means.
   no_trade_below: 55
-  bounds: lower_inclusive_upper_exclusive
+  bounds: lower_exclusive_upper_inclusive
   bands:
-    - { min: 55, max: 70, size: 0.010 }
+    - { min: 55, max: 70, size: 0.010, lower_inclusive: true }
     - { min: 70, max: 85, size: 0.025 }
-    - { min: 85, max: 100, size: 0.050, upper_inclusive: true }
+    - { min: 85, max: 100, size: 0.050 }
   hard_cap: 0.05 # confidence 100 is still 5% max
   options:
     basis: premium_at_risk

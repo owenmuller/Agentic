@@ -4,10 +4,28 @@ CONSTRAINT #3 (CLAUDE.md): this package is deterministic Python. No LLM calls ma
 made from anywhere inside it. Every order — equity, option, or event contract —
 passes through the gate before touching a broker, and no bypass path may exist.
 
-Currently implemented: the order schema. The enforcing gate (caps, kill switch, PDT
-counting, position-aware validation of close-only orders) is the next build step.
+Nothing reaches a broker without an ``ApprovedOrder``, and only ``RiskGate`` can
+construct one.
 """
 
+from risk_gate.gate import (
+    ApprovedOrder,
+    BuyingPowerBreached,
+    GateDecision,
+    RiskGate,
+)
+from risk_gate.limits import RiskLimits, default_limits_path
+from risk_gate.rejections import Rejection, RejectionCode
+from risk_gate.state import (
+    AccountState,
+    AccountType,
+    Position,
+    PositionKey,
+    Sleeve,
+    position_key,
+    sleeve_of,
+    units_of,
+)
 from risk_gate.schema import (
     OPTION_CONTRACT_MULTIPLIER,
     ORDER_ADAPTER,
@@ -31,6 +49,22 @@ __all__ = [
     "ORDER_ADAPTER",
     "ORDER_KINDS",
     "UNREPRESENTABLE_ACTIONS",
+    "AccountState",
+    "AccountType",
+    "ApprovedOrder",
+    "BuyingPowerBreached",
+    "GateDecision",
+    "Position",
+    "PositionKey",
+    "Rejection",
+    "RejectionCode",
+    "RiskGate",
+    "RiskLimits",
+    "Sleeve",
+    "default_limits_path",
+    "position_key",
+    "sleeve_of",
+    "units_of",
     "EquityBuyOrder",
     "EquitySellToCloseOrder",
     "EventContractBuyOrder",
