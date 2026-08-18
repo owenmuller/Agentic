@@ -377,3 +377,16 @@ def test_a_persistent_outage_still_fails_the_poll(source):
     fetcher, _ = fetcher_with({"efts.sec.gov": httpx.Response(503, text="down")})
     with pytest.raises(EdgarError, match="503"):
         fetcher(source)
+
+
+def test_edgar_dedup_survives_a_restart_via_the_audit_log(source):
+    """Same seeding as Quiver: a restarted process is told what was already
+    researched and does not re-download or re-emit it. Before this, every daily
+    restart re-bought research on the same filings."""
+    first, _ = fetcher_with()
+    accession = first(source)[0].external_id
+
+    restarted, recorder = fetcher_with(seen=[accession])
+    assert restarted(source) == []
+    # Only the FTS query ran; the filing's archives were never fetched.
+    assert all("efts.sec.gov" in str(r.url) for r in recorder.requests)

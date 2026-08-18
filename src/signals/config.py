@@ -8,6 +8,7 @@ that is not in the file is a source that does not get scanned.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 from typing import Optional
 
@@ -51,6 +52,10 @@ class SourceConfig(_Strict):
     watchlist: tuple[dict[str, str], ...] = ()
     #: Contact header for sources that require one (SEC EDGAR). Must name an email.
     user_agent: Optional[str] = None
+    #: What this feed costs per month, in dollars. Attribution prorates it against the
+    #: class's P&L: a signal class must out-earn its own feed, and the weekly report
+    #: is where that verdict lives. Zero for free feeds and for sources not yet built.
+    monthly_cost: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
 
     @property
     def classifies_posts(self) -> bool:
@@ -83,6 +88,13 @@ class SignalsConfig(_Strict):
                 f"{key} is not configured in signals.yaml; adding a signal class or "
                 f"source requires human approval"
             ) from exc
+
+    def monthly_feed_costs(self) -> dict[str, Decimal]:
+        """Total feed cost per class key ("class_1"...), from the sources' own fields."""
+        return {
+            key: sum((source.monthly_cost for source in klass.sources), Decimal("0"))
+            for key, klass in self.classes.items()
+        }
 
     def source(self, class_key: str, source_id: str) -> SourceConfig:
         for source in self.klass(class_key).sources:

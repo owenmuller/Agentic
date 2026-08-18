@@ -632,3 +632,131 @@ def test_a_later_record_against_an_earlier_decision_is_not_a_second_pass(
 
     assert log.research_passes_on(NOW.date()) == 1
     assert log.research_passes_on((NOW + timedelta(days=1)).date()) == 0
+
+
+# ================================================================================
+# Feed costs — a signal class must out-earn its own feed
+# ================================================================================
+
+
+def test_feed_costs_are_prorated_into_the_window(tmp_path, limits):
+    clock = FakeClock()
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+    seed_history(log, limits, clock)
+
+    report = build_attribution(
+        log.trails(),
+        generated_at=clock.now,
+        window_days=90,
+        feed_costs={SignalClass.CLASS_2_MOMENTUM: Decimal("30")},
+    )
+    class_2 = report.by_class[SignalClass.CLASS_2_MOMENTUM]
+
+    assert class_2.feed_cost == Decimal("90.00")  # 30/mo x 90d / 30
+    assert class_2.net_pnl == class_2.realised_pnl - Decimal("90.00")
+    # Free classes are untouched: gross == net.
+    class_1 = report.by_class[SignalClass.CLASS_1_REALTIME]
+    assert class_1.feed_cost == Decimal("0")
+    assert class_1.net_pnl == class_1.realised_pnl
+
+
+def test_gross_positive_but_net_negative_fires_the_flag(tmp_path, limits):
+    """The verdict the field exists for: the class made money, the feed ate it."""
+    clock = FakeClock()
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+    gate = gate_for(limits)
+
+    for n, pnl in enumerate(["50", "20"], start=1):
+        clock.advance(days=1)
+        signal = make_signal(
+            signal_id=f"sig-{n}", signal_class=SignalClass.CLASS_2_MOMENTUM
+        )
+        record, _ = full_decision(log, limits, gate=gate, signal=signal)
+        log.record_fill(record.decision_id, f"brk-{n}", Decimal("10"), Decimal("140"))
+        log.record_outcome(record.decision_id, Decimal(pnl))
+
+    report = build_attribution(
+        log.trails(),
+        generated_at=clock.now,
+        window_days=90,
+        feed_costs={SignalClass.CLASS_2_MOMENTUM: Decimal("30")},
+    )
+    class_2 = report.by_class[SignalClass.CLASS_2_MOMENTUM]
+
+    assert class_2.realised_pnl == Decimal("70")  # gross-positive
+    assert class_2.feed_cost == Decimal("90.00")
+    assert class_2.net_pnl == Decimal("-20.00")  # net-negative
+    assert class_2.is_negative
+    assert report.flagged_classes == (SignalClass.CLASS_2_MOMENTUM,)
+
+    rendered = report.render()
+    assert "FLAGGED FOR HUMAN REVIEW (net-negative over the window)" in rendered
+    assert "+70.00 gross" in rendered
+    assert "-20.00 net" in rendered
+
+
+def test_a_class_that_out_earns_its_feed_is_not_flagged(tmp_path, limits):
+    clock = FakeClock()
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+    record, _ = full_decision(log, limits, signal=make_signal(
+        signal_class=SignalClass.CLASS_2_MOMENTUM
+    ))
+    log.record_fill(record.decision_id, "brk-1", Decimal("10"), Decimal("140"))
+    log.record_outcome(record.decision_id, Decimal("500"))
+
+    report = build_attribution(
+        log.trails(),
+        generated_at=clock.now,
+        window_days=90,
+        feed_costs={SignalClass.CLASS_2_MOMENTUM: Decimal("30")},
+    )
+    class_2 = report.by_class[SignalClass.CLASS_2_MOMENTUM]
+    assert class_2.net_pnl == Decimal("410.00")
+    assert not class_2.is_negative
+    assert report.flagged_classes == ()
+
+
+def test_a_paid_but_silent_class_still_shows_its_bleed(tmp_path, limits):
+    """No decisions in the window, but the bill ran anyway: the class appears in the
+    report with its cost visible — and is not FLAGGED, because nothing has resolved
+    to judge it by. Visible bleed, withheld verdict."""
+    report = build_attribution(
+        [],
+        generated_at=NOW,
+        window_days=60,
+        feed_costs={SignalClass.CLASS_2_MOMENTUM: Decimal("30")},
+    )
+    class_2 = report.by_class[SignalClass.CLASS_2_MOMENTUM]
+
+    assert class_2.decisions == 0
+    assert class_2.feed_cost == Decimal("60.00")  # 30/mo x 60d / 30
+    assert class_2.net_pnl == Decimal("-60.00")
+    assert not class_2.is_negative  # resolved-gated, unchanged
+    assert report.flagged_classes == ()
+    assert report.total_feed_cost == Decimal("60.00")
+    assert "60.00 feed cost" in report.render()
+
+
+def test_without_feed_costs_the_report_is_unchanged(tmp_path, limits):
+    """Backwards compatibility: no costs given means zero costs, net == gross."""
+    clock = FakeClock()
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+    seed_history(log, limits, clock)
+
+    report = build_attribution(log.trails(), generated_at=clock.now)
+    for attribution in report.by_class.values():
+        assert attribution.feed_cost == Decimal("0")
+        assert attribution.net_pnl == attribution.realised_pnl
+    assert report.total_net_pnl == report.total_pnl
+
+
+def test_the_config_supplies_the_costs_the_report_consumes():
+    """The wiring: signals.yaml owns the numbers, keyed by class."""
+    from signals import SignalsConfig
+
+    costs = SignalsConfig.load().monthly_feed_costs()
+    assert costs["class_2"] == Decimal("30")
+    assert costs["class_1"] == Decimal("0")
+    assert costs["class_3"] == Decimal("0")
+    # Class keys are SignalClass values, so the mapping into the report is direct.
+    assert {SignalClass(key) for key in costs} == set(SignalClass)

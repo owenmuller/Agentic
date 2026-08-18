@@ -23,7 +23,7 @@ moves to the next signal — there is no path here that reconsiders a rejection.
 from orchestrator.bootstrap import Preflight, Startup, preflight, start
 from orchestrator.budget import ResearchBudget
 from orchestrator.exits import ExitEngine, TrackedPosition, unmanaged_exposure
-from orchestrator.ops import RunLog, health_report, is_trading_weekday, session_bounds
+from orchestrator.ops import InstanceLock, RunLog, health_report, is_trading_weekday, session_bounds
 from orchestrator.config import OrchestratorConfig, default_orchestrator_path
 from orchestrator.loop import TickReport, TradingLoop
 from orchestrator.pipeline import (
@@ -41,6 +41,7 @@ from orchestrator.state import (
 
 __all__ = [
     "ExitEngine",
+    "InstanceLock",
     "OrchestratorConfig",
     "PipelineResult",
     "Preflight",

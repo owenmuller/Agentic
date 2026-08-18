@@ -1,7 +1,14 @@
 """Operational layer: the run log, session bounds, and the health report.
 
-Three small things unattended operation needs that the trading code deliberately does
+Four small things unattended operation needs that the trading code deliberately does
 not provide:
+
+  - ``InstanceLock``: one running ``orchestrator run`` per data directory. Two
+    processes against one audit file and one broker account would interleave the
+    log, double-spend a budget each had replayed as unspent, and trade twice. The
+    lock is held by the OS for the life of the process, so a crash releases it
+    automatically — staleness is solved by the kernel, not by a heuristic a wedged
+    PID file could defeat.
 
   - ``RunLog``: a terse append-only line log (STARTED / STOPPED / ERROR / POLL) in
     ``data/run.log``, separate from the audit trail. The audit trail answers "what did
@@ -18,9 +25,16 @@ not provide:
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Optional
+
+try:  # Windows
+    import msvcrt
+except ImportError:  # POSIX
+    msvcrt = None
+    import fcntl
 
 from audit.log import AuditLog
 from signals.scanners import MARKET_CLOSE, MARKET_OPEN, MARKET_TIMEZONE
@@ -29,6 +43,95 @@ from orchestrator.bootstrap import Preflight
 from orchestrator.exits import TrackedPosition, unmanaged_exposure
 
 logger = logging.getLogger("orchestrator.ops")
+
+
+# ================================================================================
+# Single-instance protection
+# ================================================================================
+
+#: The locked byte sits far past anything written to the file, so the pid/started
+#: info at offset 0 stays readable by the refused process even under Windows'
+#: mandatory byte-range locking.
+_LOCK_BYTE_OFFSET = 1_000_000
+
+
+class InstanceLock:
+    """An exclusive, OS-held lock on the data directory.
+
+    The guarantee comes from the operating system, not from the file's contents: the
+    byte-range lock (Windows) or flock (POSIX) is released automatically when the
+    holding process exits, **however** it exits. A lock file left behind by a crash
+    is therefore just a note about a dead process — the next ``acquire`` succeeds
+    without any staleness guesswork, and a PID-recycling race cannot brick a run.
+
+    The file's text (pid, started-at) exists only for the human and the refused
+    process's log line; nothing decides anything by reading it.
+    """
+
+    def __init__(self, path: Path, clock: Optional[Callable[[], datetime]] = None) -> None:
+        self._path = path
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._handle = None
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    def acquire(self) -> bool:
+        """Take the lock. False means another live process holds it."""
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(self._path, "a+", encoding="utf-8")
+        try:
+            if msvcrt is not None:
+                handle.seek(_LOCK_BYTE_OFFSET)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:  # pragma: no cover - POSIX path, exercised on non-Windows machines
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            handle.close()
+            return False
+
+        # Held. Record who, for the human and for the refused process's log line.
+        handle.seek(0)
+        handle.truncate()
+        started = self._clock().isoformat(timespec="seconds")
+        handle.write(
+            f"pid={os.getpid()} started={started}\n"
+            "held by a live orchestrator run; released automatically when it exits\n"
+        )
+        handle.flush()
+        self._handle = handle
+        return True
+
+    def holder(self) -> str:
+        """Whatever the lock file says about its holder. Informational only."""
+        try:
+            text = self._path.read_text(encoding="utf-8").splitlines()
+            return text[0] if text else "unknown"
+        except OSError:
+            return "unknown"
+
+    def release(self) -> None:
+        if self._handle is None:
+            return
+        try:
+            if msvcrt is not None:
+                self._handle.seek(_LOCK_BYTE_OFFSET)
+                msvcrt.locking(self._handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:  # pragma: no cover - POSIX path
+                fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+        except OSError:  # pragma: no cover - the OS will release at exit anyway
+            pass
+        self._handle.close()
+        self._handle = None
+
+    def __enter__(self) -> "InstanceLock":
+        if not self.acquire():
+            raise RuntimeError(f"another instance holds {self._path} ({self.holder()})")
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.release()
 
 
 # ================================================================================

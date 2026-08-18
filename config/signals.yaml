@@ -21,6 +21,7 @@ classes:
     sources:
       - id: trump_posts
         platforms: [truth_social, x]
+        monthly_cost: 0 # no feed procured yet; set when the X/Truth Social source is real
         extraction:
           tickers: true
           sectors: true
@@ -28,6 +29,7 @@ classes:
 
       - id: nolimitgains
         platforms: [x]
+        monthly_cost: 0 # no feed procured yet
         handle: "@nolimitgains"
         treatment: thesis_input_only
         copy_trade: false
@@ -76,6 +78,10 @@ classes:
     sources:
       - id: congressional_disclosures
         providers: [quiver_quant, unusual_whales, capitol_trades]
+        provider: quiver_quant # the one actually wired: api.quiverquant.com, Hobbyist tier
+        # Feed cost, prorated against this class's P&L in the weekly attribution
+        # report. Class 2 must out-earn its own subscription.
+        monthly_cost: 30
         watchlist:
           - { name: Nancy Pelosi, chamber: house }
         # High-signal members; configurable, human approval required per addition.
@@ -93,6 +99,7 @@ classes:
     sources:
       - id: form_13f
         provider: sec_edgar_full_text_search
+        monthly_cost: 0 # EDGAR is free
         # SEC-required contact header. EDGAR asks every automated client to identify
         # a way to reach its operator; anonymous scrapers get IP-blocked.
         user_agent: "Agentic trading research omuller@brasacap.com"

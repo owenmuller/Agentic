@@ -16,7 +16,7 @@ The two claims that matter most for unattended operation:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -34,7 +34,6 @@ from orchestrator import (
 from orchestrator.bootstrap import preflight
 from test_exits import MutablePrices, RoutingLLM, enter_position
 from test_orchestrator import (
-    NOW,
     QUOTE,
     FakeBroker,
     FakeClock,
@@ -356,3 +355,67 @@ def test_unmanaged_exposure_math(tmp_path, limits, signals_config, research_conf
     engine = inert_engine(checks)
 
     assert unmanaged_exposure(checks.gate, engine.tracked) == {"NUE": 4, "AAPL": 100}
+
+
+# ================================================================================
+# Single-instance protection
+# ================================================================================
+
+
+def test_a_second_instance_is_refused_while_the_first_holds_the_lock(tmp_path):
+    from orchestrator import InstanceLock
+
+    first = InstanceLock(tmp_path / "orchestrator.lock")
+    second = InstanceLock(tmp_path / "orchestrator.lock")
+    assert first.acquire() is True
+
+    assert second.acquire() is False
+    # The refused instance can still say who holds it, for the log line.
+    assert "pid=" in second.holder()
+
+    first.release()
+
+
+def test_a_stale_lock_from_a_crashed_process_does_not_brick_the_next_run(tmp_path):
+    """The file survives a crash; the OS lock does not. A leftover file with a dead
+    pid in it must be exactly as acquirable as no file at all."""
+    from orchestrator import InstanceLock
+
+    path = tmp_path / "orchestrator.lock"
+    path.write_text(
+        "pid=99999999 started=2026-08-17T09:30:00+00:00\n"
+        "held by a live orchestrator run; released automatically when it exits\n",
+        encoding="utf-8",
+    )
+
+    lock = InstanceLock(path)
+    assert lock.acquire() is True, "a crashed process's lock file bricked the run"
+    assert "pid=99999999" not in lock.holder()  # rewritten with the live holder
+    lock.release()
+
+
+def test_release_makes_the_lock_acquirable_again(tmp_path):
+    from orchestrator import InstanceLock
+
+    path = tmp_path / "orchestrator.lock"
+    first = InstanceLock(path)
+    second = InstanceLock(path)
+
+    assert first.acquire()
+    assert not second.acquire()
+    first.release()
+    assert second.acquire()
+    second.release()
+
+
+def test_the_lock_is_a_context_manager_that_raises_when_held(tmp_path):
+    from orchestrator import InstanceLock
+
+    path = tmp_path / "orchestrator.lock"
+    with InstanceLock(path):
+        with pytest.raises(RuntimeError, match="another instance"):
+            with InstanceLock(path):
+                pass  # pragma: no cover
+    # Released on exit:
+    with InstanceLock(path):
+        pass

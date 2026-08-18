@@ -1,6 +1,6 @@
 """``python -m orchestrator`` — the operational entry points.
 
-Three subcommands, in ascending order of consequence:
+Four subcommands, in ascending order of consequence:
 
   check    (default) The startup checks: mode, configs, broker connectivity, replay.
            Prints what was reconstructed and exits. Places nothing.
@@ -14,9 +14,18 @@ Three subcommands, in ascending order of consequence:
            cleanly. This is the command the Windows scheduled task runs — and the
            only one of the three that trades.
 
-``run`` wires the production seams that exist today: the EDGAR Class 3 fetcher and
-the Alpaca IEX price source. Class 1 and Class 2 sources poll nothing until their
-credentials are procured — their branch below returns an empty feed, explicitly.
+  attribution
+           The weekly report: P&L per signal class, gross and NET of each class's
+           prorated feed cost — a signal class must out-earn its own feed, and this
+           is where that verdict lives. Read-only.
+
+``run`` wires the production fetchers through ``SourceRouter``: EDGAR for Class 3,
+Quiver for Class 2 congressional disclosures, and the Class 1 accounts declared
+unbuilt until their credentials are procured. It also holds the ``InstanceLock`` for
+the data directory: a second concurrent run would interleave one audit file, double-
+spend a budget both replayed as unspent, and trade one account twice — it refuses to
+start instead. Fetcher dedup sets are seeded from the audit log at startup, so a
+restart never re-buys research the log already answers.
 
 Trading mode is decided by Constraint #4 inside ``preflight()``, first, always:
 PAPER_MODE=true is the default and live requires the two human-set variables. This
@@ -31,13 +40,19 @@ import sys
 import time
 from datetime import datetime, timezone
 
+from audit.attribution import build_attribution
 from audit.log import default_data_dir
 from execution import AlpacaPriceSource
-from signals import Form13FFetcher
+from signals import Form13FFetcher, QuiverCongressFetcher, SignalClass, SourceRouter
 
 from orchestrator.bootstrap import preflight, start
-from orchestrator.exits import unmanaged_exposure
-from orchestrator.ops import RunLog, health_report, is_trading_weekday, session_bounds
+from orchestrator.ops import (
+    InstanceLock,
+    RunLog,
+    health_report,
+    is_trading_weekday,
+    session_bounds,
+)
 
 logger = logging.getLogger("orchestrator.run")
 
@@ -54,7 +69,8 @@ def check() -> int:
     print(
         "Checks passed. Nothing was started or traded — use "
         "'python -m orchestrator run' for a trading session, "
-        "'python -m orchestrator health' for the daily status."
+        "'python -m orchestrator health' for the daily status, "
+        "'python -m orchestrator attribution' for the weekly report."
     )
     return 0
 
@@ -95,6 +111,28 @@ def health() -> int:
     return 0
 
 
+def attribution() -> int:
+    """The weekly attribution report, gross and net of feed costs. Read-only."""
+    logging.basicConfig(level=logging.WARNING)
+    try:
+        checks = preflight()
+    except Exception as error:  # noqa: BLE001
+        print(f"ATTRIBUTION FAILED: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
+
+    costs = {
+        SignalClass(key): monthly
+        for key, monthly in checks.signals_config.monthly_feed_costs().items()
+    }
+    report = build_attribution(
+        checks.audit.trails(),
+        generated_at=checks.clock(),
+        feed_costs=costs,
+    )
+    print(report.render())
+    return 0
+
+
 def run() -> int:
     """One supervised-by-schedule trading session: open to close, then shut down."""
     data_dir = default_data_dir()
@@ -108,33 +146,63 @@ def run() -> int:
         ],
     )
     run_log = RunLog(data_dir / "run.log")
+
+    # One instance per data directory: two runs would interleave one audit file,
+    # double-spend a budget each replayed as unspent, and trade one account twice.
+    # The OS holds the lock, so a crashed run releases it automatically — a stale
+    # lock file cannot brick the next scheduled session.
+    lock = InstanceLock(data_dir / "orchestrator.lock")
+    if not lock.acquire():
+        message = f"another orchestrator run holds the lock: {lock.holder()}"
+        run_log.note("REFUSED", message)
+        logger.error("%s; refusing to start", message)
+        return 1
+
     run_log.note("STARTED", f"pid={os.getpid()}")
-
     now = datetime.now(timezone.utc)
-    if not is_trading_weekday(now):
-        run_log.note("STOPPED", "not a trading weekday; nothing to do")
-        return 0
-    open_utc, close_utc = session_bounds(now)
-    if now >= close_utc:
-        run_log.note("STOPPED", "started after the close; nothing to do")
-        return 0
-
     loop = None
     edgar = None
+    quiver = None
     prices = None
     try:
+        if not is_trading_weekday(now):
+            run_log.note("STOPPED", "not a trading weekday; nothing to do")
+            return 0
+        open_utc, close_utc = session_bounds(now)
+        if now >= close_utc:
+            run_log.note("STOPPED", "started after the close; nothing to do")
+            return 0
+
         # Checks first — a misconfigured run should fail before it waits for a bell.
         checks = preflight()
         logger.info("startup state:\n%s", checks.describe())
 
-        edgar = Form13FFetcher()
+        # Dedup seeded from the log: research already paid for is never re-bought.
+        researched = checks.audit.researched_external_ids()
 
-        def fetcher(source):
-            if source.id == "form_13f":
-                items = edgar(source)
-                run_log.note("POLL", f"form_13f ok items={len(items)}")
+        def seen_for(source_id):
+            return {eid for (sid, eid) in researched if sid == source_id}
+
+        edgar = Form13FFetcher(seen=seen_for("form_13f"))
+        quiver = QuiverCongressFetcher(seen=seen_for("congressional_disclosures"))
+
+        def logged(source_id, inner):
+            def fetch(source):
+                items = inner(source)
+                run_log.note("POLL", f"{source_id} ok items={len(items)}")
                 return items
-            return []  # Class 1/2 feeds await credentials
+
+            return fetch
+
+        fetcher = SourceRouter(
+            routes={
+                "form_13f": logged("form_13f", edgar),
+                "congressional_disclosures": logged(
+                    "congressional_disclosures", quiver
+                ),
+            },
+            unbuilt={"trump_posts", "nolimitgains"},  # Class 1: credentials pending
+        )
 
         prices = AlpacaPriceSource(
             feed=checks.orchestrator_config.market_data.feed,
@@ -187,6 +255,9 @@ def run() -> int:
             prices.close()
         if edgar is not None:
             edgar.close()
+        if quiver is not None:
+            quiver.close()
+        lock.release()
 
 
 def main() -> int:
@@ -197,8 +268,11 @@ def main() -> int:
         return health()
     if command == "run":
         return run()
+    if command == "attribution":
+        return attribution()
     print(
-        f"unknown command {command!r}: expected 'check', 'health', or 'run'",
+        f"unknown command {command!r}: expected 'check', 'health', 'run', or "
+        f"'attribution'",
         file=sys.stderr,
     )
     return 2

@@ -4,20 +4,53 @@ Rolling handover between sessions. Written at the end of a session, read at the 
 of the next one. `CLAUDE.md` is the constitution and does not change here; this file is
 only ever a record of where the work got to and what comes next.
 
-**Last updated:** 2026-08-18 · PAPER PERIOD STARTED — Class 3 only; ops layer built
+**Last updated:** 2026-08-18 · paper period running — Class 2 LIVE as of today (Quiver); Class 1 pending credentials
 
 ---
 
 ## PAPER PERIOD: started 2026-08-18
 
-CLAUDE.md build order step 7 is running: **Class 3 only** (EDGAR 13F), Classes 1/2
-pending credentials. Alpaca paper keys landed 2026-08-18; all 6 keyed integration
+CLAUDE.md build order step 7 is running: **Class 3 (EDGAR 13F) + Class 2 (Quiver
+congressional disclosures, live as of 2026-08-18 — its attribution clock starts
+now)**. Class 1 pending credentials. Alpaca paper keys landed 2026-08-18; all 6 keyed integration
 tests pass. First supervised end-to-end cycle ran the same day: 3 real filings polled,
 3 real research passes, all three returned `no_position` at high confidence (82/83/80)
 — no order placed, complete audit trail in `data/audit.jsonl`. The step-7 clock
 (2–4 weeks minimum before any live-mode discussion) starts from the scheduled runs,
 and what it can prove with Class 3 alone is limited: 13Fs anchor conviction, they
 rarely trade. The period gets meaningful when Class 1/2 credentials land.
+
+### Class 2: live 2026-08-18 (attribution clock starts now)
+
+`signals/quiver.py` — QuiverCongressFetcher against api.quiverquant.com (Hobbyist,
+$30/mo, Bearer auth from `QUIVER_API_KEY` in `.env`). One request per hourly poll
+regardless of watchlist size; same citizenship as EDGAR (0.5s min interval, one
+logged retry on 429/5xx). Every signal's content carries BOTH dates labelled —
+transaction date and report date — plus the computed lag in days, so the staleness
+the priced-in analysis must reason about is inside the fenced data block, not
+inferred. Live smoke (`QUIVER_LIVE_TESTS=1`) passed same day: 2 real Pelosi
+disclosures parsed from the live feed.
+
+Dedup across restarts is now systemic, not per-fetcher: disclosures get a
+deterministic identity hash, filings their accession, and both fetchers seed their
+seen-sets at startup from `AuditLog.researched_external_ids()` — research already
+paid for is never re-bought, while a signal that was queued but never researched
+left no record and correctly re-emits. (This also fixed a real Class 3 defect: every
+daily restart had been re-researching the same filings.)
+
+**Feed costs are in the attribution report.** `monthly_cost` per source in
+signals.yaml (Quiver 30, everything else 0), prorated at window_days/30; the report
+states gross AND net per class and the human-review flag now fires on NET — a class
+must out-earn its own feed. A paid class with no decisions still shows its bleed.
+Run it: `python -m orchestrator attribution`.
+
+**Single-instance protection** (predates none of this — added first): `orchestrator
+run` holds an OS-level lock on `data/orchestrator.lock`. A second concurrent run
+refuses with a REFUSED run-log line naming the holder; a crashed process's lock is
+released by the kernel, so a stale lock file cannot brick the next scheduled run.
+Both tested. `SourceRouter` wires class→fetcher in one place: EDGAR + Quiver routed,
+the two Class 1 accounts declared unbuilt (poll nothing, warn once), anything
+undeclared raises before it can fail silently at 9:30.
 
 Operating it:
 
@@ -166,17 +199,18 @@ Topology note: `signals` now has network permission in the map — ingestion is 
 job — while its first-party isolation (no risk_gate, no execution, no sizing) is
 unchanged and still tested.
 
-### Class 1 and Class 2 fetchers — UNBUILT, awaiting credentials
+### Class 2 `Fetcher` — BUILT 2026-08-18: `signals.quiver.QuiverCongressFetcher`
 
-Truth Social / X (Class 1) and Quiver Quant / Unusual Whales / Capitol Trades
-(Class 2) all need credentials not yet procured. Same `Fetcher` protocol; the EDGAR
-implementation is the template. A failing fetcher is already handled: the loop logs
-it, skips that cycle, and carries on without hot-retrying a feed that is down.
+See the paper-period section above. The router it forced into existence is
+`signals.routing.SourceRouter` — the one place to wire a future fetcher.
 
-Wiring note: `build_scanners` takes ONE fetcher for all three classes. Production
-wiring with only EDGAR built needs a small router (dispatch on `source.id`,
-unconfigured sources raising) — deliberately not built until a second real fetcher
-exists to shape it.
+### Class 1 fetchers — UNBUILT, awaiting credentials
+
+Truth Social / X for trump_posts and nolimitgains. Same `Fetcher` protocol; Quiver
+and EDGAR are the templates. Declared `unbuilt` in the production router — wiring a
+new one is one line in `routes` and one id out of `unbuilt` in
+`orchestrator/__main__.py`. A failing fetcher is already handled: the loop logs it,
+skips that cycle, and carries on.
 
 ---
 

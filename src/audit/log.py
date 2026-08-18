@@ -314,6 +314,23 @@ class AuditLog:
         """
         return [r for r in self.stage_rejections() if r.decision_id == decision_id]
 
+    def researched_external_ids(self) -> set[tuple[str, str]]:
+        """(source_id, external_id) for every signal that entered the pipeline.
+
+        Every path through the pipeline writes a record carrying the signal snapshot
+        — a decision, or a stage rejection — so this is the set of signals research
+        was already spent on. Fetchers seed their dedup sets from it at startup, so a
+        restart does not re-emit (and re-pay for) what the log already answers. A
+        signal that was queued but never researched left no record, which is the
+        right edge: it re-emits and finally gets its pass.
+        """
+        seen: set[tuple[str, str]] = set()
+        for record in self.records():
+            signal = getattr(record, "signal", None)
+            if signal is not None and signal.external_id:
+                seen.add((signal.source_id, signal.external_id))
+        return seen
+
     def first_seen(self) -> dict[str, datetime]:
         """Earliest record time per decision id, in write order."""
         seen: dict[str, datetime] = {}

@@ -90,6 +90,7 @@ class Form13FFetcher:
         clock: Optional[Callable[[], datetime]] = None,
         sleeper: Optional[Callable[[float], None]] = None,
         monotonic: Optional[Callable[[], float]] = None,
+        seen: Optional[Sequence[str]] = None,
     ) -> None:
         self._client = client or httpx.Client(timeout=timeout, follow_redirects=True)
         self._user_agent = user_agent
@@ -100,8 +101,11 @@ class Form13FFetcher:
         self._sleep = sleeper or time.sleep
         self._monotonic = monotonic or time.monotonic
         self._last_request: Optional[float] = None
-        #: Accessions already emitted this process. The queue dedups across restarts.
-        self._seen: set[str] = set()
+        #: Accessions already emitted. Seed from the audit log
+        #: (``AuditLog.researched_external_ids``) so a restart does not re-research
+        #: filings it already paid for; unseeded, the in-process set still dedups
+        #: within a run.
+        self._seen: set[str] = set(seen or ())
 
     # -- the Fetcher protocol ------------------------------------------------------
 
