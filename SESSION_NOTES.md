@@ -4,14 +4,52 @@ Rolling handover between sessions. Written at the end of a session, read at the 
 of the next one. `CLAUDE.md` is the constitution and does not change here; this file is
 only ever a record of where the work got to and what comes next.
 
-**Last updated:** 2026-08-18 · exits built; EDGAR fetcher and Alpaca price source built; Alpaca keys still not on this machine
+**Last updated:** 2026-08-18 · PAPER PERIOD STARTED — Class 3 only; ops layer built
+
+---
+
+## PAPER PERIOD: started 2026-08-18
+
+CLAUDE.md build order step 7 is running: **Class 3 only** (EDGAR 13F), Classes 1/2
+pending credentials. Alpaca paper keys landed 2026-08-18; all 6 keyed integration
+tests pass. First supervised end-to-end cycle ran the same day: 3 real filings polled,
+3 real research passes, all three returned `no_position` at high confidence (82/83/80)
+— no order placed, complete audit trail in `data/audit.jsonl`. The step-7 clock
+(2–4 weeks minimum before any live-mode discussion) starts from the scheduled runs,
+and what it can prove with Class 3 alone is limited: 13Fs anchor conviction, they
+rarely trade. The period gets meaningful when Class 1/2 credentials land.
+
+Operating it:
+
+- `python -m orchestrator run` — one trading session: waits for the 9:30 ET open
+  (bounds computed in America/New_York at runtime), ticks until 16:00 ET, shuts down
+  cleanly. This is what the scheduled task runs.
+- `python -m orchestrator health` — the daily ten-second check: positions with armed
+  stops, cash/NAV/drawdown, kill switch, budget, last EDGAR poll, last run events,
+  last audit record. Strictly read-only (tested byte-for-byte).
+- `python -m orchestrator` — the startup checks alone, unchanged.
+- `ops/register_paper_task.ps1` — registers the weekday scheduled task (venv python,
+  repo working directory, 9:15 ET-equivalent local trigger; the run gates itself so
+  the trigger only has to be early). Deliberately not run by the agent — the human
+  registers it.
+- `data/run.log` — terse STARTED/STOPPED/ERROR/POLL lines, separate from the audit
+  trail: "did the scheduled run actually fire" at a glance. `data/orchestrator.log`
+  has the full logging.
+
+Crash safety for unattended runs: everything replays (kill switch, budget, daily
+deployment, open positions with stops — all tested), plus two additions for the
+mid-tick death specifically: startup **orphan-sweeps** any order left working at the
+broker by a dead process (its reservation died with the process, unforgeably — tested
+in `test_ops.py::test_a_crash_between_submit_and_reconcile_is_swept_at_the_next_startup`),
+and startup + health flag **UNMANAGED** positions — held at the broker with no audit
+trail, hence no stops — loudly for a human.
 
 ---
 
 ## Build state
 
-All seven packages in `CLAUDE.md`'s build order exist and are tested. **478 passing, 7
-skipped** (the skips are `tests/test_execution_integration.py`, which auto-skips
+All seven packages in `CLAUDE.md`'s build order exist and are tested. **498 passing, 1
+skipped** (the opt-in EDGAR live smoke; run it with `EDGAR_LIVE_TESTS=1`) (the skips are `tests/test_execution_integration.py`, which auto-skips
 without Alpaca paper credentials in `.env` — see the queue below).
 
 | Package | What it does |
@@ -170,14 +208,12 @@ inverted relative to `@nolimitgains`. Design questions to settle before writing 
 - Do **not** let "fade" become a second code path through sizing or the gate. If the
   research layer cannot express it, that is a research-layer problem to solve.
 
-### (b) Alpaca paper keys → un-skip the integration tests — **STILL PENDING 2026-08-18**
+### (b) ~~Alpaca paper keys~~ — **DONE 2026-08-18**
 
-Attempted this session: the keys were reported as added, but `.env` on this machine
-holds only `PAPER_MODE` and `ANTHROPIC_API_KEY`, and nothing is set in the shell or
-Windows user environment. The 4 broker integration tests still skip, and 2 new
-`AlpacaPriceSource` integration tests skip on the same condition — all six light up
-in a normal `pytest` run the moment the two lines land in `.env`. The agent never
-writes `.env` (Constraint #4 adjacent); a human puts them there.
+Keys landed in `.env`; all 6 keyed integration tests pass. The first live re-run also
+surfaced and fixed a real bug: client_order_id must be unique per account across
+time, and the gate sequence restarts every process — ids now carry a per-adapter
+launch token (`agentic-{token}-{seq}`).
 
 Original queue entry:
 

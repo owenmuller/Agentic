@@ -126,6 +126,16 @@ class BrokerAdapter(ABC):
         """Spendable cash. Cash-secured accounts only — never margin buying power."""
 
     @abstractmethod
+    def open_orders(self) -> list[str]:
+        """Broker order ids for every order still working at the broker.
+
+        Exists for crash recovery: an order left resting by a dead process is
+        exposure no restarted gate can account for — its reservation lived in an
+        ``ApprovedOrder`` that died with the process — so startup sweeps these and
+        cancels them (see ``orchestrator.bootstrap``).
+        """
+
+    @abstractmethod
     def get_order(self, broker_order_id: str) -> OrderStatus:
         """Current state of one submitted order.
 

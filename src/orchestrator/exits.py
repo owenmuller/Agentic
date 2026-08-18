@@ -661,6 +661,31 @@ class ExitEngine:
             return None
 
 
+def unmanaged_exposure(
+    gate: RiskGate, tracked: "Iterable[TrackedPosition]"
+) -> dict[str, int]:
+    """Equity units the gate holds that no tracked position accounts for.
+
+    Nonzero means something is held with NO STOPS ARMED — typically a fill from a
+    crashed process that never reached the audit log, or a manual trade in the same
+    account. The exit engine will not invent a thesis for it, so it is surfaced for a
+    human instead: close it manually, or accept that it is unprotected.
+    """
+    covered: dict[str, int] = {}
+    for position in tracked:
+        covered[position.symbol] = covered.get(position.symbol, 0) + position.quantity
+
+    unmanaged: dict[str, int] = {}
+    for key, held in gate.state.positions.items():
+        if key[0] != "equity" or held.quantity <= 0:
+            continue
+        symbol = key[1]
+        excess = held.quantity - covered.get(symbol, 0)
+        if excess > 0:
+            unmanaged[symbol] = excess
+    return unmanaged
+
+
 def _phantom_rejection(position: TrackedPosition) -> Rejection:
     """A rejection-shaped value for the record when there is nothing to submit."""
     return Rejection(

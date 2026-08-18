@@ -169,6 +169,13 @@ class FakeBroker(BrokerAdapter):
     def get_buying_power(self) -> Decimal:
         return self.cash
 
+    def open_orders(self) -> list[str]:
+        return [
+            order_id
+            for order_id, status in self._statuses.items()
+            if not status.is_terminal
+        ]
+
     def get_order(self, broker_order_id: str) -> OrderStatus:
         return self._statuses[broker_order_id]
 

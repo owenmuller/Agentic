@@ -152,6 +152,10 @@ class AlpacaAdapter(BrokerAdapter):
         data = self._request("GET", "/v2/account")
         return Decimal(str(data["cash"]))
 
+    def open_orders(self) -> list[str]:
+        data = self._request("GET", "/v2/orders", params={"status": "open"})
+        return [str(row["id"]) for row in data or []]
+
     def get_order(self, broker_order_id: str) -> OrderStatus:
         data = self._request("GET", f"/v2/orders/{broker_order_id}")
         raw_price = data.get("filled_avg_price")
@@ -214,9 +218,10 @@ class AlpacaAdapter(BrokerAdapter):
         path: str,
         *,
         json: Optional[dict[str, Any]] = None,
+        params: Optional[dict[str, Any]] = None,
         expect_body: bool = True,
     ) -> Any:
-        response = self._client.request(method, path, json=json)
+        response = self._client.request(method, path, json=json, params=params)
         if response.status_code >= 400:
             raise BrokerRejected(
                 f"Alpaca {method} {path} failed with {response.status_code}",

@@ -31,7 +31,7 @@ from typing import Callable, Optional
 
 from audit.log import AuditLog, default_data_dir
 from execution.alpaca import AlpacaAdapter
-from execution.base import BrokerAdapter
+from execution.base import BrokerAdapter, BrokerError
 from execution.environment import load_environment, require_paper_or_confirmed_live
 from research.client import AnthropicResearchClient, LLMClient
 from research.config import ResearchConfig
@@ -47,7 +47,7 @@ from sizing.engine import SizingEngine
 
 from orchestrator.budget import ResearchBudget
 from orchestrator.config import OrchestratorConfig
-from orchestrator.exits import ExitEngine
+from orchestrator.exits import ExitEngine, unmanaged_exposure
 from orchestrator.loop import TradingLoop
 from orchestrator.pipeline import PriceSource, SignalPipeline
 from orchestrator.state import SessionState, replay_deployed_today, seed_account_state
@@ -237,6 +237,23 @@ def start(
     """
     checks = checks or preflight(id_factory=id_factory, **preflight_kwargs)  # type: ignore[arg-type]
 
+    # Orphan sweep. An order left working at the broker by a dead process is exposure
+    # no gate in THIS process can account for: its reservation lived in an
+    # ApprovedOrder that died with the process, unforgeably. Cancel them all before
+    # trading starts — anything that already filled is in the positions the gate was
+    # just seeded from, and anything still resting must not be allowed to fill
+    # unreserved. A clean start sweeps nothing.
+    for orphan_id in checks.adapter.open_orders():
+        logger.warning(
+            "cancelling orphaned order %s left working at the broker by an earlier "
+            "process; no live reservation covers it",
+            orphan_id,
+        )
+        try:
+            checks.adapter.cancel_order(orphan_id)
+        except BrokerError as error:
+            logger.error("could not cancel orphaned order %s: %s", orphan_id, error)
+
     queue = SignalQueue()
     credibility_log = CredibilityLog()
     scanners = build_scanners(
@@ -259,6 +276,15 @@ def start(
     # Positions opened by earlier runs, rebuilt from the log with stops re-armed. Part
     # of the replay step in spirit, but it needs the wired engine, so it runs here.
     exits.replay(checks.audit.trails())
+    for symbol, quantity in sorted(unmanaged_exposure(checks.gate, exits.tracked).items()):
+        logger.warning(
+            "UNMANAGED POSITION: %d units of %s are held at the broker with no audit "
+            "trail behind them — no stops are armed. A crashed process may have "
+            "filled without recording, or the account was traded manually. Needs a "
+            "human: close it, or accept that it is unprotected.",
+            quantity,
+            symbol,
+        )
     pipeline = SignalPipeline(
         research=research,
         sizing=SizingEngine(checks.limits),
