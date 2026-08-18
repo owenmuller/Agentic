@@ -36,8 +36,10 @@ class CredibilitySummary:
     reports_scored: int = 0
     #: Reports whose manipulation_assessment found something.
     manipulation_flags: int = 0
-    #: The most recent findings verbatim, newest last. Bounded so the prompt cannot
-    #: grow without limit as a source accumulates history.
+    #: The most recent findings, newest last, each truncated to
+    #: ``CredibilityTracker.NOTE_CHARS``. Bounded in both directions — how many notes,
+    #: and how long each may be — so the prompt cannot grow without limit as a source
+    #: accumulates history. The untruncated text lives in the audit record.
     recent_manipulation_notes: tuple[str, ...] = ()
 
     @property
@@ -117,6 +119,17 @@ class CredibilityTracker:
     #: How many past manipulation findings to replay into a prompt.
     NOTE_HISTORY = 3
 
+    #: How much of each finding to keep for replay. A manipulation note is a pointer —
+    #: "this account posts entry prices it has already exited" — and the first
+    #: sentences carry that; what follows is elaboration the model does not need in
+    #: order to weigh the source. Capping it keeps a verbose model, or a source with a
+    #: long history, from crowding the signal under analysis out of its own prompt.
+    #:
+    #: This truncation is for prompt replay ONLY. The full assessment is written
+    #: verbatim to the audit record (``audit.records.ResearchSnapshot``), which is where
+    #: an incident review reads it. Nothing here is the system of record.
+    NOTE_CHARS = 300
+
     def __init__(self, credibility_log: Optional[CredibilityLog] = None) -> None:
         self._log = credibility_log
         self._forward_calls: dict[str, int] = {}
@@ -144,7 +157,7 @@ class CredibilityTracker:
             return
         self._flags[source_id] = self._flags.get(source_id, 0) + 1
         notes = self._notes.setdefault(source_id, [])
-        notes.append(str(report.manipulation_assessment))
+        notes.append(_truncate(str(report.manipulation_assessment), self.NOTE_CHARS))
         del notes[: -self.NOTE_HISTORY]
 
     def record_outcome(self, source_id: str, *, won: bool) -> None:
@@ -173,3 +186,16 @@ class CredibilityTracker:
             manipulation_flags=self._flags.get(source_id, 0),
             recent_manipulation_notes=tuple(self._notes.get(source_id, ())),
         )
+
+
+def _truncate(note: str, limit: int) -> str:
+    """Cap a note at ``limit`` characters, marking it when anything was dropped.
+
+    The ellipsis is inside the budget rather than appended to it, so the result is
+    never longer than ``limit``. Marking matters: an unmarked truncation reads as a
+    complete finding that happens to end mid-sentence, and a model shown one may treat
+    the missing half as absent rather than elided.
+    """
+    if len(note) <= limit:
+        return note
+    return note[: limit - 1].rstrip() + "…"

@@ -18,6 +18,7 @@ from execution.base import (
     BrokerPosition,
     BrokerRejected,
     OrderReceipt,
+    OrderStatus,
     UnsupportedInstrument,
 )
 from execution.environment import (
@@ -45,6 +46,7 @@ __all__ = [
     "BrokerPosition",
     "BrokerRejected",
     "OrderReceipt",
+    "OrderStatus",
     "UnsupportedInstrument",
     "load_environment",
     "paper_mode",

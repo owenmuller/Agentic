@@ -34,6 +34,7 @@ from execution.base import (
     BrokerPosition,
     BrokerRejected,
     OrderReceipt,
+    OrderStatus,
     UnsupportedInstrument,
 )
 from execution.environment import (
@@ -129,6 +130,7 @@ class AlpacaAdapter(BrokerAdapter):
                 quantity=Decimal(str(row["qty"])),
                 market_value=Decimal(str(row["market_value"])),
                 cost_basis=Decimal(str(row["cost_basis"])),
+                asset_class=str(row.get("asset_class", "us_equity")),
             )
             for row in data
         ]
@@ -142,6 +144,18 @@ class AlpacaAdapter(BrokerAdapter):
         """
         data = self._request("GET", "/v2/account")
         return Decimal(str(data["cash"]))
+
+    def get_order(self, broker_order_id: str) -> OrderStatus:
+        data = self._request("GET", f"/v2/orders/{broker_order_id}")
+        raw_price = data.get("filled_avg_price")
+        return OrderStatus(
+            broker_order_id=str(data.get("id", broker_order_id)),
+            status=str(data.get("status", "unknown")),
+            filled_quantity=Decimal(str(data.get("filled_qty", "0"))),
+            filled_avg_price=(
+                Decimal(str(raw_price)) if raw_price not in (None, "") else None
+            ),
+        )
 
     def cancel_order(self, broker_order_id: str) -> None:
         self._request("DELETE", f"/v2/orders/{broker_order_id}", expect_body=False)

@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Callable, Iterator, Optional
@@ -31,9 +31,11 @@ from audit.records import (
     FillRecord,
     GateSnapshot,
     OutcomeRecord,
+    RejectedStage,
     ResearchSnapshot,
     SignalSnapshot,
     SizingSnapshot,
+    StageRejectionRecord,
 )
 from research.reports import ResearchReport
 from signals import Signal
@@ -89,6 +91,35 @@ class AuditLog:
             research=ResearchSnapshot.of(report),
             sizing=SizingSnapshot.of(proposal),
             gate=GateSnapshot.of(gate_decision),  # type: ignore[arg-type]
+        )
+        self._append(record)
+        return record
+
+    def record_stage_rejection(
+        self,
+        decision_id: str,
+        stage: RejectedStage,
+        code: str,
+        message: str,
+        signal: Signal,
+        report: Optional[ResearchReport] = None,
+        proposal: Optional[SizedProposal] = None,
+    ) -> StageRejectionRecord:
+        """Record a signal that stopped before the gate, or an order the broker refused.
+
+        Takes whichever stages completed. A research-stage rejection has neither report
+        nor proposal; a sizing-stage one has a report; an execution-stage one has both
+        and shares its ``decision_id`` with the ``DecisionRecord`` already written.
+        """
+        record = StageRejectionRecord(
+            decision_id=decision_id,
+            recorded_at=self._clock(),
+            stage=stage,
+            code=code,
+            message=message,
+            signal=SignalSnapshot.of(signal),
+            research=ResearchSnapshot.of(report) if report is not None else None,
+            sizing=SizingSnapshot.of(proposal) if proposal is not None else None,
         )
         self._append(record)
         return record
@@ -201,6 +232,40 @@ class AuditLog:
     def decisions(self) -> list[DecisionRecord]:
         return [r for r in self.records() if isinstance(r, DecisionRecord)]
 
+    def stage_rejections(self) -> list[StageRejectionRecord]:
+        return [r for r in self.records() if isinstance(r, StageRejectionRecord)]
+
+    def rejections_for(self, decision_id: str) -> list[StageRejectionRecord]:
+        """Every stage rejection recorded against one decision id.
+
+        For a signal that never reached the gate this *is* the whole trail — there is
+        no ``AuditTrail`` to assemble, because nothing was decided.
+        """
+        return [r for r in self.stage_rejections() if r.decision_id == decision_id]
+
+    def first_seen(self) -> dict[str, datetime]:
+        """Earliest record time per decision id, in write order."""
+        seen: dict[str, datetime] = {}
+        for record in self.records():
+            recorded_at = record.recorded_at
+            existing = seen.get(record.decision_id)
+            if existing is None or recorded_at < existing:
+                seen[record.decision_id] = recorded_at
+        return seen
+
+    def research_passes_on(self, day: date) -> int:
+        """How many signals were researched on ``day`` (UTC).
+
+        The research budget has to survive a restart, or a crash loop would spend it
+        without limit. Rather than keep a counter somewhere that can drift from
+        reality, this derives the figure from the log: the pipeline allocates one
+        ``decision_id`` per signal it researches and every path from there writes at
+        least one record, so distinct ids first recorded on a day *is* the number of
+        passes bought that day. A later record against an earlier decision — a fill, an
+        outcome — does not count again, because the id is not new.
+        """
+        return sum(1 for at in self.first_seen().values() if at.date() == day)
+
     def _decision(self, decision_id: str) -> DecisionRecord:
         for record in self.records():
             if isinstance(record, DecisionRecord) and record.decision_id == decision_id:
@@ -219,6 +284,7 @@ class AuditLog:
         fills: list[FillRecord] = []
         outcome: Optional[OutcomeRecord] = None
         corrections: list[CorrectionRecord] = []
+        rejections: list[StageRejectionRecord] = []
 
         for record in self.records():
             if getattr(record, "decision_id", None) != decision_id:
@@ -231,6 +297,8 @@ class AuditLog:
                 outcome = record
             elif isinstance(record, CorrectionRecord):
                 corrections.append(record)
+            elif isinstance(record, StageRejectionRecord):
+                rejections.append(record)
 
         if decision is None:
             raise AuditLogError(f"no decision recorded for {decision_id}")
@@ -239,6 +307,7 @@ class AuditLog:
             fills=tuple(fills),
             outcome=outcome,
             corrections=tuple(corrections),
+            stage_rejections=tuple(rejections),
         )
 
     def trails(self) -> list[AuditTrail]:

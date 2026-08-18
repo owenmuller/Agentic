@@ -16,6 +16,10 @@ Instead the trail is a sequence of immutable records keyed by ``decision_id``:
   ``OutcomeRecord``    what it was worth when the position closed.
   ``CorrectionRecord`` how a mistake is fixed. Nothing is edited or deleted; a
                        correction is a new record naming the one it supersedes.
+  ``StageRejectionRecord``
+                       a signal that stopped before the gate ever saw it, or an
+                       approved order the broker refused. Carries whichever stages did
+                       complete and nothing for the ones that did not.
 
 ``AuditTrail`` assembles those back into the single view CLAUDE.md describes.
 
@@ -23,6 +27,15 @@ Rejections are records, not omissions. A rejected order writes a full
 ``DecisionRecord`` carrying the typed rejection — "risk-gate rejections are signal,
 not noise", and a log that only contains the trades you took cannot tell you what
 your rules cost you.
+
+The same reasoning runs one step further back. A signal the research layer could not
+score, or one sized to nothing, never reaches the gate and so can never produce a
+``DecisionRecord`` — every stage of which is mandatory, deliberately. Without a record
+of its own it would leave no trace at all, and "the model failed to parse thirty
+signals from this source last week" is exactly the kind of thing the log exists to be
+able to answer. ``StageRejectionRecord`` is that trace: same append-only file, same
+``decision_id`` key, allocated when the signal is dequeued rather than when the gate
+answers, so a signal that dies at stage one is still followable end to end.
 """
 
 from __future__ import annotations
@@ -183,6 +196,7 @@ class RecordKind(StrEnum):
     FILL = "fill"
     OUTCOME = "outcome"
     CORRECTION = "correction"
+    STAGE_REJECTION = "stage_rejection"
 
 
 class DecisionRecord(_Record):
@@ -246,8 +260,62 @@ class CorrectionRecord(_Record):
     corrected_fields: dict[str, Any] = Field(default_factory=dict)
 
 
+class RejectedStage(StrEnum):
+    """Where a signal stopped.
+
+    Named here rather than in the orchestrator because the log has to be readable
+    without the code that wrote it: a record whose stage is an integer, or a string
+    whose meanings live in another package, is a record that needs an archaeologist.
+    The gate is absent from this enum on purpose — a gate rejection is a complete
+    decision and writes a ``DecisionRecord``.
+    """
+
+    #: The research pass returned a typed rejection instead of a report.
+    RESEARCH = "research"
+    #: A report was produced, and sizing resolved it to nothing: confidence below the
+    #: floor, or a ``no_position`` verdict.
+    SIZING = "sizing"
+    #: A size was proposed but no order could be built from it — no price available,
+    #: an instrument this system does not execute, or a report naming several tickers
+    #: with no basis to choose between them (Constraint #6: surface, do not guess).
+    ORDER_CONSTRUCTION = "order_construction"
+    #: The gate approved and the broker refused, or the order terminated unfilled.
+    #: Shares the ``decision_id`` of the ``DecisionRecord`` that preceded it.
+    EXECUTION = "execution"
+    #: The pipeline itself raised. A bug is not a verdict about the signal, and
+    #: recording it as one would corrupt the source's track record.
+    INTERNAL_ERROR = "internal_error"
+
+
+class StageRejectionRecord(_Record):
+    """A signal that stopped short of a completed decision.
+
+    ``research`` and ``sizing`` are populated when those stages ran and absent when
+    they did not — the record carries the path the signal actually took rather than a
+    fixed set of slots with nulls in them.
+    """
+
+    kind: Literal[RecordKind.STAGE_REJECTION] = RecordKind.STAGE_REJECTION
+    decision_id: str
+    recorded_at: datetime
+    stage: RejectedStage
+    #: A stable machine-readable reason. Reuses the upstream code where one exists —
+    #: ``ResearchRejectionCode`` at the research stage, the broker status at execution.
+    code: str
+    message: str
+    signal: SignalSnapshot
+    research: Optional[ResearchSnapshot] = None
+    sizing: Optional[SizingSnapshot] = None
+
+
 AuditRecord = Annotated[
-    Union[DecisionRecord, FillRecord, OutcomeRecord, CorrectionRecord],
+    Union[
+        DecisionRecord,
+        FillRecord,
+        OutcomeRecord,
+        CorrectionRecord,
+        StageRejectionRecord,
+    ],
     Field(discriminator="kind"),
 ]
 
@@ -259,6 +327,9 @@ class AuditTrail(_Record):
     fills: tuple[FillRecord, ...] = ()
     outcome: Optional[OutcomeRecord] = None
     corrections: tuple[CorrectionRecord, ...] = ()
+    #: Rejections recorded against this decision after the gate answered — a broker
+    #: refusal, or an order that terminated unfilled.
+    stage_rejections: tuple[StageRejectionRecord, ...] = ()
 
     @property
     def decision_id(self) -> str:
@@ -269,13 +340,25 @@ class AuditTrail(_Record):
         return self.decision.signal.signal_class
 
     @property
+    def never_executed(self) -> bool:
+        """Approved, then stopped at the broker: refused, cancelled, or expired unfilled."""
+        return any(
+            rejection.stage is RejectedStage.EXECUTION for rejection in self.stage_rejections
+        ) and not self.fills
+
+    @property
     def is_complete(self) -> bool:
         """Has this order run its full course?
 
-        A rejected order is complete the moment it is rejected — there is nothing
-        further to happen to it. An approved one needs a fill and a resolved outcome.
+        Completeness is path-dependent, because "finished" means different things on
+        different paths. A rejected order is complete the moment it is rejected — there
+        is nothing further to happen to it. An approved order the broker never executed
+        is complete too: the reservation was released and no position exists to resolve.
+        Only an order that actually filled needs an outcome before it is done.
         """
         if not self.decision.was_approved:
+            return True
+        if self.never_executed:
             return True
         return bool(self.fills) and self.outcome is not None
 

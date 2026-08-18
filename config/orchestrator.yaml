@@ -1,0 +1,28 @@
+# Orchestrator loop configuration.
+#
+# Nothing in this file can widen a risk limit. The caps live in risk_limits.yaml and
+# are enforced downstream of everything the loop does; these values control how often
+# the loop wakes up and how much research it is willing to buy in a day.
+
+version: 1
+
+# COST CEILING. The research layer is the only part of this system that spends money
+# per signal, and a noisy day on a Class 1 feed can produce a great many signals. When
+# this many passes have been bought in a day, further signals queue unresearched until
+# the next day rather than being dropped — they are still there tomorrow, they are just
+# not worth an unbounded spend today.
+#
+# Derived from the log rather than from a counter, so a restart cannot buy the budget a
+# second time. See audit.log.AuditLog.research_passes_on.
+max_research_passes_per_day: 40
+
+# How often the loop wakes. Each scanner still polls on its own cadence from
+# signals.yaml — this only has to be fast enough not to be the binding constraint on
+# the fastest of them (Class 1, 60s).
+tick_interval_seconds: 30
+
+# cash | margin. risk_limits.yaml states `pdt.preferred_account_type: cash`, and a cash
+# account cannot be a pattern day trader — it is also what structurally prevents a
+# negative balance (Constraint #1). Set to `margin` only if the broker account really is
+# one, which turns on day-trade counting in the risk gate below $25K equity.
+account_type: cash

@@ -53,6 +53,48 @@ class BrokerPosition:
     quantity: Decimal
     market_value: Decimal
     cost_basis: Decimal
+    #: The broker's own instrument classification. Carried rather than inferred from
+    #: the symbol: an OCC option symbol is distinguishable from a ticker by shape, but
+    #: only by a heuristic, and a heuristic that mis-files an option as equity would
+    #: seed it into the wrong sleeve with the wrong contract multiplier. Defaults to
+    #: equity so a backend that does not report one still parses.
+    asset_class: str = "us_equity"
+
+    @property
+    def is_option(self) -> bool:
+        return "option" in self.asset_class
+
+
+@dataclass(frozen=True, slots=True)
+class OrderStatus:
+    """A working order as the broker currently sees it.
+
+    Settlement is driven off ``is_terminal`` rather than off ``is_filled``, because the
+    two questions differ on the case that matters: an order that was cancelled or
+    expired after filling part of its quantity is finished, and the position it left
+    behind is real. Treating only ``filled`` as final would leave that position
+    unrecorded and the cash reservation held forever.
+    """
+
+    broker_order_id: str
+    #: The broker's own status string, recorded verbatim.
+    status: str
+    filled_quantity: Decimal
+    #: Average fill price. None while nothing has filled.
+    filled_avg_price: Optional[Decimal] = None
+
+    #: States after which nothing further will happen to the order.
+    TERMINAL = frozenset(
+        {"filled", "canceled", "cancelled", "expired", "rejected", "done_for_day", "stopped"}
+    )
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status.lower() in self.TERMINAL
+
+    @property
+    def is_filled(self) -> bool:
+        return self.filled_quantity > 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +124,15 @@ class BrokerAdapter(ABC):
     @abstractmethod
     def get_buying_power(self) -> Decimal:
         """Spendable cash. Cash-secured accounts only — never margin buying power."""
+
+    @abstractmethod
+    def get_order(self, broker_order_id: str) -> OrderStatus:
+        """Current state of one submitted order.
+
+        The settlement path depends on this: the risk gate reserves cash at approval
+        and only releases it when told what actually happened, so an order nobody polls
+        is a reservation that never comes back.
+        """
 
     @abstractmethod
     def cancel_order(self, broker_order_id: str) -> None:

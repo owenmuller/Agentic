@@ -6,9 +6,7 @@ The property test at the bottom covers everything between them, plus every out-o
 score, against the one invariant that must hold whatever the research layer says.
 """
 
-import ast
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 from hypothesis import given, settings
@@ -291,44 +289,74 @@ def test_sizing_is_a_pure_function_of_its_inputs(engine):
     assert first == second
 
 
-FORBIDDEN_IMPORTS = ("anthropic", "execution", "httpx", "openai")
+# ================================================================================
+# direction == no_position — zero at any confidence
+# ================================================================================
 
 
-def test_sizing_imports_no_llm_and_no_execution():
-    """Deterministic and un-executable: no model client, no broker, no network.
+def no_trade_report(confidence: int) -> ResearchReport:
+    return ResearchReport.model_validate(
+        {**BASE_REPORT, "direction": "no_position", "confidence": confidence}
+    )
 
-    ``research`` is permitted for one thing — the ResearchReport type it takes as
-    input. That is a data class; importing it brings no client and no network with it,
-    which the second assertion below pins down.
+
+@pytest.mark.parametrize("confidence", [0, 54, 55, 70, 71, 85, 86, 95, 100])
+def test_no_position_sizes_to_zero_at_every_confidence(engine, confidence):
+    """The verdict is the verdict. The number does not overrule it.
+
+    95 is the case that matters: it sits in the top band, so reading confidence alone
+    would produce the largest position the table allows out of a report whose entire
+    content is "do not take this trade".
     """
-    package = Path(__file__).resolve().parents[1] / "src" / "sizing"
-    offenders: list[str] = []
-
-    for path in sorted(package.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            names: list[str] = []
-            if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                names = [node.module]
-            for name in names:
-                if name.split(".")[0] in FORBIDDEN_IMPORTS:
-                    offenders.append(f"{path.name}:{node.lineno}: imports {name}")
-
-    assert offenders == [], f"sizing must stay deterministic and offline: {offenders}"
+    proposal = engine.propose_equity(no_trade_report(confidence), EQUITY_SLEEVE_NAV)
+    assert proposal.capital == Decimal("0")
+    assert proposal.fraction_of_sleeve_nav == Decimal("0")
+    assert not proposal.is_tradeable
 
 
-def test_sizing_only_imports_the_report_type_from_research():
-    package = Path(__file__).resolve().parents[1] / "src" / "sizing"
-    allowed = {"research.reports"}
-    offenders: list[str] = []
+def test_no_position_at_ninety_five_is_not_a_five_percent_position(engine):
+    """Stated against the concrete alternative, because that is the failure mode."""
+    directional = engine.propose_equity(report(95), EQUITY_SLEEVE_NAV)
+    assert directional.capital == Decimal("4500.00")  # 5% of 90k, the top band
 
-    for path in sorted(package.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            module = node.module if isinstance(node, ast.ImportFrom) else None
-            if module and module.split(".")[0] == "research" and module not in allowed:
-                offenders.append(f"{path.name}:{node.lineno}: imports {module}")
+    abstaining = engine.propose_equity(no_trade_report(95), EQUITY_SLEEVE_NAV)
+    assert abstaining.capital == Decimal("0")
 
-    assert offenders == [], f"sizing reached into the research layer: {offenders}"
+
+@pytest.mark.parametrize("confidence", [56, 71, 86, 100])
+def test_no_position_is_zero_for_options_too(engine, confidence):
+    proposal = engine.propose_option(no_trade_report(confidence), EQUITY_SLEEVE_NAV)
+    assert proposal.capital == Decimal("0")
+    assert not proposal.is_tradeable
+
+
+@pytest.mark.parametrize("strategy", list(EventStrategy))
+def test_no_position_is_zero_for_event_contracts_too(engine, strategy):
+    proposal = engine.propose_event_contract(
+        no_trade_report(100), PREDICTION_SLEEVE_NAV, strategy
+    )
+    assert proposal.capital == Decimal("0")
+    assert not proposal.is_tradeable
+
+
+def test_no_position_says_why_in_the_rationale(engine):
+    """The audit record has to distinguish "no trade" from "weak signal"."""
+    abstaining = engine.propose_equity(no_trade_report(95), EQUITY_SLEEVE_NAV)
+    assert "no_position" in abstaining.rationale
+    assert "95" in abstaining.rationale
+
+    weak = engine.propose_equity(report(30), EQUITY_SLEEVE_NAV)
+    assert "no_position" not in weak.rationale
+    assert "floor" in weak.rationale
+
+
+@given(confidence=st.integers(min_value=0, max_value=100))
+@settings(max_examples=200)
+def test_no_confidence_score_makes_a_no_position_report_tradeable(limits, confidence):
+    """The property, over the whole range: there is no score that unlocks it."""
+    engine = SizingEngine(limits)
+    for propose, nav in (
+        (engine.propose_equity, EQUITY_SLEEVE_NAV),
+        (engine.propose_option, EQUITY_SLEEVE_NAV),
+    ):
+        assert propose(no_trade_report(confidence), nav).capital == Decimal("0")

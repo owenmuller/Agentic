@@ -32,9 +32,11 @@ from audit.records import (
     GateSnapshot,
     OutcomeRecord,
     RecordKind,
+    RejectedStage,
     ResearchSnapshot,
     SignalSnapshot,
     SizingSnapshot,
+    StageRejectionRecord,
 )
 
 __all__ = [
@@ -51,9 +53,11 @@ __all__ = [
     "GateSnapshot",
     "OutcomeRecord",
     "RecordKind",
+    "RejectedStage",
     "ResearchSnapshot",
     "SignalSnapshot",
     "SizingSnapshot",
+    "StageRejectionRecord",
     "build_attribution",
     "default_data_dir",
 ]

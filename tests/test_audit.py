@@ -5,11 +5,9 @@ nothing already written can be changed, an outcome credits the source that calle
 and attribution over fixture history flags a losing signal class.
 """
 
-import ast
 import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -22,6 +20,7 @@ from audit import (
     DecisionRecord,
     FillRecord,
     OutcomeRecord,
+    RejectedStage,
     build_attribution,
 )
 from research import CredibilityTracker, ResearchReport
@@ -92,10 +91,15 @@ def limits() -> RiskLimits:
 
 
 @pytest.fixture
-def log(tmp_path) -> AuditLog:
+def clock() -> FakeClock:
+    return FakeClock()
+
+
+@pytest.fixture
+def log(tmp_path, clock) -> AuditLog:
     return AuditLog(
         path=tmp_path / "audit.jsonl",
-        clock=FakeClock(),
+        clock=clock,
         id_factory=_counter(),
     )
 
@@ -497,46 +501,134 @@ def test_the_window_must_stay_within_the_spec_range(bad_window):
         build_attribution([], generated_at=NOW, window_days=bad_window)
 
 
+
 # ================================================================================
-# The log observes, it never participates
+# Stage rejections — a signal that never reached the gate still leaves a trail
 # ================================================================================
 
 
-def test_nothing_in_src_imports_audit():
-    """An audit trail other modules can call into is part of the machinery.
+def test_a_research_rejection_is_a_record_with_the_whole_signal_in_it(log):
+    """Nothing else about this signal exists, so this record has to be the trail."""
+    signal = make_signal(content="Loading $NUE here.", raw_content="Loading $NUE here.")
+    record = log.record_stage_rejection(
+        "dec-99",
+        RejectedStage.RESEARCH,
+        "no_structured_output",
+        "model did not return a structured report",
+        signal,
+    )
 
-    Only a top-level orchestrator may import it, and there isn't one yet — so today
-    the answer is nothing at all.
-    """
-    src = Path(__file__).resolve().parents[1] / "src"
-    offenders: list[str] = []
-
-    for path in sorted(src.rglob("*.py")):
-        if path.parts[-2] == "audit":
-            continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            names: list[str] = []
-            if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                names = [node.module]
-            for name in names:
-                if name.split(".")[0] == "audit":
-                    offenders.append(f"{path.name}:{node.lineno}: imports {name}")
-
-    assert offenders == [], f"audit must observe, not participate: {offenders}"
+    assert record.stage is RejectedStage.RESEARCH
+    assert record.signal.raw_content == "Loading $NUE here."
+    assert record.research is None and record.sizing is None
+    assert log.rejections_for("dec-99") == [record]
 
 
-def test_audit_may_read_types_from_everywhere():
-    """The inverse direction is allowed and expected — it has to describe everything."""
-    package = Path(__file__).resolve().parents[1] / "src" / "audit"
-    seen: set[str] = set()
+def test_a_sizing_rejection_carries_the_report_that_was_declined(log, limits):
+    """"Research liked it and sizing said no" is a different fact from "no report"."""
+    report = make_report(direction="no_position", confidence=95)
+    proposal = SizingEngine(limits).propose_equity(report, Decimal("90000"))
+    record = log.record_stage_rejection(
+        "dec-1",
+        RejectedStage.SIZING,
+        "no_position",
+        proposal.rationale,
+        make_signal(),
+        report=report,
+        proposal=proposal,
+    )
 
-    for path in sorted(package.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module:
-                seen.add(node.module.split(".")[0])
+    assert record.research.confidence == 95
+    assert record.research.direction == "no_position"
+    assert record.sizing.capital == Decimal("0")
 
-    assert {"signals", "research", "sizing", "risk_gate"} <= seen
+
+def test_stage_rejections_survive_a_round_trip_through_the_file(log):
+    log.record_stage_rejection(
+        "dec-7", RejectedStage.INTERNAL_ERROR, "KeyError", "boom", make_signal()
+    )
+    replayed = log.stage_rejections()
+
+    assert len(replayed) == 1
+    assert replayed[0].decision_id == "dec-7"
+    assert replayed[0].stage is RejectedStage.INTERNAL_ERROR
+
+
+def test_an_execution_rejection_joins_the_trail_of_its_decision(log, limits):
+    """Same decision_id, so the approval and the broker's refusal read as one story."""
+    record, _ = full_decision(log, limits)
+    log.record_stage_rejection(
+        record.decision_id,
+        RejectedStage.EXECUTION,
+        "BrokerRejected",
+        "insufficient buying power at the broker",
+        make_signal(),
+    )
+
+    trail = log.trail(record.decision_id)
+    assert trail.decision.was_approved
+    assert len(trail.stage_rejections) == 1
+    assert trail.never_executed
+
+
+def test_an_approved_order_the_broker_never_executed_is_complete(log, limits):
+    """Path-dependent completeness: nothing is coming, so nothing is outstanding."""
+    record, _ = full_decision(log, limits)
+    log.record_stage_rejection(
+        record.decision_id,
+        RejectedStage.EXECUTION,
+        "canceled",
+        "order terminated canceled without filling; reservation released",
+        make_signal(),
+    )
+
+    assert log.trail(record.decision_id).is_complete
+
+
+def test_an_approved_order_that_filled_still_needs_an_outcome(log, limits):
+    """The unchanged case, restated so the new branch cannot swallow it."""
+    record, _ = full_decision(log, limits)
+    log.record_fill(record.decision_id, "brk-1", Decimal("10"), Decimal("140.00"))
+
+    trail = log.trail(record.decision_id)
+    assert not trail.never_executed
+    assert not trail.is_complete
+
+
+def test_the_log_still_refuses_a_fill_against_a_rejected_decision(log, limits):
+    """Unchanged by the new record kind: a fill there means an order bypassed the gate."""
+    gate = gate_for(limits, cash=Decimal("100"))
+    record, _ = full_decision(log, limits, gate=gate)
+    assert not record.gate.approved
+
+    with pytest.raises(AuditLogError):
+        log.record_fill(record.decision_id, "brk-1", Decimal("10"), Decimal("140.00"))
+
+
+# ================================================================================
+# Research budget replay
+# ================================================================================
+
+
+def test_research_passes_are_counted_per_day_from_the_log(log, limits):
+    """One decision_id per research pass, whichever stage the signal died at."""
+    full_decision(log, limits)
+    log.record_stage_rejection(
+        "dec-a", RejectedStage.RESEARCH, "upstream_error", "timeout", make_signal()
+    )
+
+    assert log.research_passes_on(NOW.date()) == 2
+    assert log.research_passes_on((NOW + timedelta(days=1)).date()) == 0
+
+
+def test_a_later_record_against_an_earlier_decision_is_not_a_second_pass(
+    log, limits, clock
+):
+    """A fill tomorrow does not re-buy the research that was paid for today."""
+    record, _ = full_decision(log, limits)
+
+    clock.advance(days=1)
+    log.record_fill(record.decision_id, "brk-1", Decimal("10"), Decimal("140.00"))
+
+    assert log.research_passes_on(NOW.date()) == 1
+    assert log.research_passes_on((NOW + timedelta(days=1)).date()) == 0

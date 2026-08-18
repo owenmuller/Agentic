@@ -13,11 +13,18 @@ That duplication is deliberate. Sizing works from a NAV figure it was handed; th
 works from the account. When they disagree, the gate wins, because the gate is the one
 holding the money.
 
+Two ways to get nothing
+-----------------------
+A confidence below the floor produces no trade. So does ``direction == no_position``,
+at every confidence score including 100 — a model saying "there is no trade here" is
+stating a verdict, not hedging one, and reading it through the confidence table alone
+would invert it into the largest position the table allows.
+
 Determinism
 -----------
-No LLM, no network, no clock. The only input from the research layer is an integer
-confidence score — the prose in a report cannot reach this module, because nothing
-here reads it.
+No LLM, no network, no clock. The only inputs from the research layer are an integer
+confidence score and a direction drawn from a closed enum — the prose in a report
+cannot reach this module, because nothing here reads it.
 """
 
 from __future__ import annotations
@@ -27,7 +34,7 @@ from decimal import ROUND_DOWN, Decimal
 from enum import StrEnum
 from typing import Optional
 
-from research.reports import ResearchReport
+from research.reports import Direction, ResearchReport
 from risk_gate.limits import RiskLimits
 from risk_gate.state import Sleeve
 
@@ -88,7 +95,7 @@ class SizingEngine:
         self, report: ResearchReport, equity_sleeve_nav: Decimal
     ) -> SizedProposal:
         """Straight table lookup against the equity sleeve."""
-        fraction, rationale = self._table_fraction(report.confidence)
+        fraction, rationale = self._report_fraction(report)
         return self._build(
             InstrumentKind.EQUITY,
             Sleeve.EQUITY,
@@ -107,7 +114,7 @@ class SizingEngine:
         double it." A bought option's premium buys far more exposure than the same
         dollars of stock, so the same confidence buys half the dollars.
         """
-        fraction, rationale = self._table_fraction(report.confidence)
+        fraction, rationale = self._report_fraction(report)
         if fraction > ZERO:
             fraction = fraction * self._limits.sizing.options.multiplier
             rationale = f"{rationale}, halved for embedded option leverage"
@@ -133,7 +140,7 @@ class SizingEngine:
         is no trade regardless of strategy — but the strategy cap is what binds above
         it, since both caps sit well under every band in the table.
         """
-        fraction, rationale = self._table_fraction(report.confidence)
+        fraction, rationale = self._report_fraction(report)
         if fraction > ZERO:
             cap = self._strategy_cap(strategy)
             if cap < fraction:
@@ -150,6 +157,28 @@ class SizingEngine:
         )
 
     # -- internals ------------------------------------------------------------------
+
+    def _report_fraction(self, report: ResearchReport) -> tuple[Decimal, str]:
+        """Resolve a report to a fraction of sleeve NAV.
+
+        ``direction == no_position`` short-circuits to zero before the confidence table
+        is consulted at all, at every score including 100. The two fields answer
+        different questions — direction is *whether, and which way*; confidence is *how
+        sure* — so a report that is certain nothing should be traded must not be read as
+        a certain position. Sizing that consulted only the number would turn the most
+        emphatic "there is no trade here" the model can express into the largest
+        position the table allows.
+
+        Structurally the outcome is the same as a sub-floor confidence: no trade, with
+        a rationale saying why. Every entry point reaches the table through here, so
+        there is no path on which the verdict is skipped.
+        """
+        if report.recommends_no_position:
+            return ZERO, (
+                f"research returned direction {Direction.NO_POSITION}: no position at "
+                f"any confidence, and this report scored {report.confidence}"
+            )
+        return self._table_fraction(report.confidence)
 
     def _table_fraction(self, confidence: int) -> tuple[Decimal, str]:
         """Look up the band. Rejects an out-of-range score rather than clamping.

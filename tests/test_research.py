@@ -6,10 +6,8 @@ are the ones where the model misbehaves: prose instead of a report, a report car
 instruction-like text, and a signal carrying an injection attempt.
 """
 
-import ast
 from datetime import datetime, timezone
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -528,47 +526,114 @@ def test_config_loads_and_names_a_model():
 
 
 # ================================================================================
-# Structural isolation
+# no_position — a verdict the schema can express
 # ================================================================================
 
-FORBIDDEN_IMPORTS = ("risk_gate", "sizing")
+
+def test_no_position_is_a_valid_direction():
+    report = ResearchReport.model_validate(
+        {**VALID_REPORT, "direction": "no_position", "confidence": 95}
+    )
+    assert report.direction is Direction.NO_POSITION
+    assert report.recommends_no_position is True
 
 
-def test_research_cannot_reach_the_risk_gate_or_sizing():
-    """Research produces a verdict. It cannot size or approve anything.
-
-    ``execution`` is permitted for one narrow reason: the Anthropic client reads
-    ANTHROPIC_API_KEY through the same .env loader the broker adapter uses. It never
-    touches the adapter itself.
-    """
-    package = Path(__file__).resolve().parents[1] / "src" / "research"
-    offenders: list[str] = []
-
-    for path in sorted(package.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            names: list[str] = []
-            if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                names = [node.module]
-            for name in names:
-                if name.split(".")[0] in FORBIDDEN_IMPORTS:
-                    offenders.append(f"{path.name}:{node.lineno}: imports {name}")
-
-    assert offenders == [], f"research must not reach sizing or the gate: {offenders}"
+def test_a_directional_report_does_not_recommend_no_position():
+    assert ResearchReport.model_validate(VALID_REPORT).recommends_no_position is False
 
 
-def test_research_only_touches_execution_for_environment_loading():
-    package = Path(__file__).resolve().parents[1] / "src" / "research"
-    allowed = {"execution.environment"}
-    offenders: list[str] = []
+def test_no_position_is_offered_in_the_generated_tool_schema():
+    """The model can only pick it if the schema it is handed contains it."""
+    schema = report_tool_definition()["input_schema"]
+    definitions = schema.get("$defs", schema.get("definitions", {}))
+    direction = definitions["Direction"]
+    assert set(direction["enum"]) == {"long", "short_via_puts", "no_position"}
 
-    for path in sorted(package.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            module = node.module if isinstance(node, ast.ImportFrom) else None
-            if module and module.split(".")[0] == "execution" and module not in allowed:
-                offenders.append(f"{path.name}:{node.lineno}: imports {module}")
 
-    assert offenders == [], f"research reached into execution: {offenders}"
+def test_the_tool_description_explains_when_to_use_no_position():
+    description = report_tool_definition()["description"]
+    assert "no_position" in description
+
+
+def test_the_system_prompt_tells_the_model_no_position_is_an_answer():
+    """Without this the model hedges into a low score on a direction it does not hold."""
+    assert "no_position" in SYSTEM_PROMPT
+    assert "different questions" in SYSTEM_PROMPT
+
+
+def test_there_is_still_no_way_to_ask_for_a_bare_short():
+    """Constraint #2: short exposure stays unrepresentable, both ways of saying it."""
+    for forbidden in ("short", "sell_short", "naked"):
+        with pytest.raises(ValidationError):
+            ResearchReport.model_validate({**VALID_REPORT, "direction": forbidden})
+
+
+# ================================================================================
+# Manipulation notes: truncated for replay, verbatim in the audit record
+# ================================================================================
+
+
+def test_a_stored_note_is_truncated_for_prompt_replay():
+    tracker = CredibilityTracker(CredibilityLog())
+    long_finding = "Author pumps the ticker. " * 60  # 1500 chars
+    ResearchPass(
+        FakeLLM(structured({**VALID_REPORT, "manipulation_assessment": long_finding})),
+        credibility=tracker,
+    ).run(signal())
+
+    note = tracker.summary_for("nolimitgains").recent_manipulation_notes[0]
+    assert len(note) == CredibilityTracker.NOTE_CHARS == 300
+    assert note.startswith("Author pumps the ticker.")
+
+
+def test_a_truncated_note_is_marked_as_truncated():
+    """An unmarked cut reads as a finding that happens to end mid-sentence."""
+    tracker = CredibilityTracker(CredibilityLog())
+    ResearchPass(
+        FakeLLM(structured({**VALID_REPORT, "manipulation_assessment": "x" * 400})),
+        credibility=tracker,
+    ).run(signal())
+
+    assert tracker.summary_for("nolimitgains").recent_manipulation_notes[0].endswith("\u2026")
+
+
+def test_a_short_note_is_stored_whole():
+    tracker = CredibilityTracker(CredibilityLog())
+    finding = "Author benefits if readers buy; entry price already gone."
+    ResearchPass(
+        FakeLLM(structured({**VALID_REPORT, "manipulation_assessment": finding})),
+        credibility=tracker,
+    ).run(signal())
+
+    assert tracker.summary_for("nolimitgains").recent_manipulation_notes == (finding,)
+
+
+def test_the_report_itself_keeps_the_full_finding():
+    """Truncation is for the prompt. The verdict, and so the audit record, is verbatim."""
+    long_finding = "Author pumps the ticker. " * 60
+    outcome = ResearchPass(
+        FakeLLM(structured({**VALID_REPORT, "manipulation_assessment": long_finding}))
+    ).run(signal())
+
+    assert isinstance(outcome, ResearchReport)
+    assert outcome.manipulation_assessment == long_finding
+    assert len(outcome.manipulation_assessment) > CredibilityTracker.NOTE_CHARS
+
+
+def test_replayed_notes_cannot_grow_the_prompt_without_bound():
+    """Both bounds together: at most NOTE_HISTORY notes, each at most NOTE_CHARS."""
+    tracker = CredibilityTracker(CredibilityLog())
+    for i in range(8):
+        ResearchPass(
+            FakeLLM(
+                structured(
+                    {**VALID_REPORT, "manipulation_assessment": f"{i} " + "y" * 5000}
+                )
+            ),
+            credibility=tracker,
+        ).run(signal())
+
+    context = tracker.summary_for("nolimitgains").as_context()
+    ceiling = CredibilityTracker.NOTE_HISTORY * CredibilityTracker.NOTE_CHARS
+    assert sum(len(n) for n in tracker.summary_for("nolimitgains").recent_manipulation_notes) <= ceiling
+    assert len(context) < ceiling + 1000

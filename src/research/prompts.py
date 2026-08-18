@@ -72,6 +72,15 @@ Be calibrated rather than agreeable. Most signals do not justify a trade, and a 
 confidence score is a useful, correct answer. Confidence below 55 results in no \
 position at all, which is the right outcome for the majority of what you will read.
 
+When your conclusion is that nothing should be traded on a signal, say so \
+directly: set direction to "no_position". That is not a failure to reach a \
+verdict, it is a verdict, and it produces no position at any confidence score. Do \
+not name a direction you do not hold and then bury the doubt in a low number — the \
+direction and the confidence answer different questions, and a system reading \
+"long, 40" cannot tell whether you leaned long weakly or thought there was no \
+trade at all. If you are confident there is nothing here, "no_position" with a \
+high confidence score is the accurate report.
+
 Call the submit_research tool exactly once when you are ready to report.\
 """
 

@@ -409,12 +409,33 @@ class RiskGate:
 
     # -- settlement --------------------------------------------------------------
 
-    def record_fill(self, approved: ApprovedOrder, fill_price: Decimal) -> None:
+    def record_fill(
+        self,
+        approved: ApprovedOrder,
+        fill_price: Decimal,
+        filled_units: Optional[int] = None,
+    ) -> None:
         """Settle an approved order at its actual fill price.
 
         Buys release the reservation and take the real cash; sells release the held
         units and credit proceeds. Approving reserved the worst case, so a fill at a
         better price returns the difference to buying power.
+
+        ``filled_units`` handles the partial fill: an order that filled 30 of 100 shares
+        and was then cancelled or expired. Settlement is written for a *terminal* order,
+        so the whole reservation is released either way — nothing more is going to
+        happen to the remaining 70 — while only the units that actually filled become a
+        position. Because the released cash is the full worst case and the cash taken is
+        the filled portion, a partial fill can only move buying power in the safe
+        direction.
+
+        Omitting it settles the full quantity, which is the ordinary case and the
+        previous behaviour.
+
+        The day's deployment budget is deliberately *not* credited back for the unfilled
+        remainder. It was charged the worst case at approval; leaving it charged means
+        the daily cap counts capital the account committed rather than capital that
+        happened to print, which is the tighter reading (Constraint #6).
         """
         order = approved.order
         key = position_key(order)
@@ -422,31 +443,37 @@ class RiskGate:
         if position is None:
             raise KeyError(f"no position to settle for {key}")
 
-        units = units_of(order)
+        ordered = units_of(order)
+        filled = ordered if filled_units is None else filled_units
+        if not 0 <= filled <= ordered:
+            raise ValueError(
+                f"filled_units must be between 0 and the {ordered} units ordered, "
+                f"got {filled}"
+            )
         multiplier = unit_multiplier(order)
-        value = fill_price * units * multiplier
+        value = fill_price * filled * multiplier
 
         if order.is_opening:
             self._state.reserved_cash -= approved.max_loss
             self._state.cash -= value
-            position.pending_open_units -= units
+            position.pending_open_units -= ordered
             position.pending_open_cost -= approved.max_loss
-            position.quantity += units
+            position.quantity += filled
             position.cost_basis += value
             position.market_value += value
         else:
             share = (
-                position.cost_basis * Decimal(units) / Decimal(position.quantity)
+                position.cost_basis * Decimal(filled) / Decimal(position.quantity)
                 if position.quantity
                 else ZERO
             )
             mark_share = (
-                position.market_value * Decimal(units) / Decimal(position.quantity)
+                position.market_value * Decimal(filled) / Decimal(position.quantity)
                 if position.quantity
                 else ZERO
             )
-            position.reserved_close -= units
-            position.quantity -= units
+            position.reserved_close -= ordered
+            position.quantity -= filled
             position.cost_basis -= share
             position.market_value -= mark_share
             self._state.cash += value

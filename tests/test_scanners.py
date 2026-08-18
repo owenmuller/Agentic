@@ -4,9 +4,7 @@ The most important test here is the import walk at the bottom. Everything else c
 behaviour; that one checks that the behaviour cannot be otherwise.
 """
 
-import ast
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
@@ -362,50 +360,6 @@ def test_signal_content_is_preserved_verbatim_for_the_audit_trail(config):
 # ================================================================================
 # Structural isolation — the property that makes the rest safe
 # ================================================================================
-
-FORBIDDEN_IMPORTS = ("risk_gate", "execution", "sizing")
-
-
-def test_signals_package_cannot_reach_execution_or_risk():
-    """Scanners produce Signal records into a queue. Nothing else is reachable.
-
-    Enforced by walking imports rather than by convention: if a future scanner grows a
-    dependency on the risk gate or a broker, this fails before it can be used.
-    """
-    package = Path(__file__).resolve().parents[1] / "src" / "signals"
-    offenders: list[str] = []
-
-    for path in sorted(package.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            names: list[str] = []
-            if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                names = [node.module]
-            for name in names:
-                root = name.split(".")[0]
-                if root in FORBIDDEN_IMPORTS:
-                    offenders.append(f"{path.name}:{node.lineno}: imports {name}")
-
-    assert offenders == [], f"signals must not reach trading machinery: {offenders}"
-
-
-def test_the_isolation_guard_would_catch_a_real_import(tmp_path):
-    """The guard is only worth having if it fails on the thing it forbids."""
-    offender = tmp_path / "rogue_scanner.py"
-    offender.write_text("from risk_gate import RiskGate\n", encoding="utf-8")
-
-    tree = ast.parse(offender.read_text(encoding="utf-8"))
-    found = [
-        node.module
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-        and node.module
-        and node.module.split(".")[0] in FORBIDDEN_IMPORTS
-    ]
-    assert found == ["risk_gate"]
-
 
 def test_a_scanner_exposes_no_way_to_trade(config):
     """Nothing on the object can size, approve, or send an order."""

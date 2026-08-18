@@ -38,6 +38,7 @@ from risk_gate import (
 )
 from risk_gate.state import business_days_before
 
+ZERO = Decimal("0")
 START_CASH = Decimal("100000")
 START = datetime(2026, 8, 17, 14, 30, tzinfo=timezone.utc)
 
@@ -803,6 +804,109 @@ class GateStateMachine(RuleBasedStateMachine):
         assert oversized_close.code is not RejectionCode.KILL_SWITCH_ACTIVE, (
             "a halt must not be the reason a close is refused"
         )
+
+
+# ================================================================================
+# Partial fills — a terminal order that filled some of its quantity
+# ================================================================================
+
+
+def test_a_partial_fill_books_only_the_units_that_filled(limits):
+    gate = make_gate(limits)
+    approved = approve(gate, equity_buy(qty=80, price="50.00"))
+
+    gate.record_fill(approved, Decimal("50.00"), filled_units=30)
+
+    position = gate.state.position(("equity", "AAPL"))
+    assert position.quantity == 30
+    assert position.cost_basis == Decimal("1500.00")
+
+
+def test_a_partial_fill_releases_the_whole_reservation(limits):
+    """The order is terminal. Nothing else is coming, so nothing else needs securing."""
+    gate = make_gate(limits)
+    approved = approve(gate, equity_buy(qty=80, price="50.00"))
+    assert gate.state.reserved_cash == Decimal("4000.00")
+
+    gate.record_fill(approved, Decimal("50.00"), filled_units=30)
+
+    assert gate.state.reserved_cash == ZERO
+    assert gate.state.position(("equity", "AAPL")).pending_open_units == 0
+    # Only the filled portion left the account.
+    assert gate.state.cash == START_CASH - Decimal("1500.00")
+    assert gate.buying_power == START_CASH - Decimal("1500.00")
+
+
+def test_a_partial_fill_can_only_move_buying_power_the_safe_way(limits):
+    """Released reservation is the worst case; cash taken is the part that printed."""
+    gate = make_gate(limits)
+    approved = approve(gate, equity_buy(qty=80, price="50.00"))
+    before = gate.buying_power
+
+    gate.record_fill(approved, Decimal("50.00"), filled_units=30)
+
+    assert gate.buying_power >= before
+    assert gate.buying_power >= ZERO
+
+
+def test_a_zero_fill_leaves_no_position_and_no_reservation(limits):
+    gate = make_gate(limits)
+    approved = approve(gate, equity_buy(qty=10, price="50.00"))
+
+    gate.record_fill(approved, Decimal("50.00"), filled_units=0)
+
+    assert gate.state.reserved_cash == ZERO
+    assert gate.state.position(("equity", "AAPL")) is None
+    assert gate.state.cash == START_CASH
+
+
+def test_a_partial_close_releases_the_units_it_did_not_sell(limits):
+    """The unsold shares stay held and stay closeable — not stranded under a reservation."""
+    gate = make_gate(limits)
+    gate.record_fill(approve(gate, equity_buy(qty=80, price="50.00")), Decimal("50.00"))
+    approved = approve(gate, equity_sell(qty=80, price="60.00"))
+
+    gate.record_fill(approved, Decimal("60.00"), filled_units=40)
+
+    position = gate.state.position(("equity", "AAPL"))
+    assert position.quantity == 40
+    assert position.reserved_close == 0
+    assert position.available_to_close == 40
+
+
+def test_a_partial_fill_does_not_refund_the_daily_deployment_budget(limits):
+    """Deliberate: the cap counts capital committed, not capital that happened to print."""
+    gate = make_gate(limits)
+    approved = approve(gate, equity_buy(qty=80, price="50.00"))
+    assert gate.state.deployed_today == Decimal("4000.00")
+
+    gate.record_fill(approved, Decimal("50.00"), filled_units=1)
+
+    assert gate.state.deployed_today == Decimal("4000.00")
+
+
+@pytest.mark.parametrize("filled", [-1, 11])
+def test_a_fill_outside_the_ordered_quantity_is_refused(limits, filled):
+    """Over-filling is not something to absorb quietly: it means a broker or a bug lied."""
+    gate = make_gate(limits)
+    approved = approve(gate, equity_buy(qty=10, price="50.00"))
+
+    with pytest.raises(ValueError, match="between 0 and the 10 units"):
+        gate.record_fill(approved, Decimal("50.00"), filled_units=filled)
+
+
+def test_omitting_filled_units_still_settles_the_whole_order(limits):
+    """The ordinary case is unchanged."""
+    gate = make_gate(limits)
+    approved = approve(gate, equity_buy(qty=10, price="50.00"))
+
+    gate.record_fill(approved, Decimal("49.00"))
+
+    position = gate.state.position(("equity", "AAPL"))
+    assert position.quantity == 10
+    assert gate.state.reserved_cash == ZERO
+    # Filled better than the bound, so the difference came back.
+    assert gate.buying_power == START_CASH - Decimal("490.00")
 
 
 TestGateSequences = GateStateMachine.TestCase

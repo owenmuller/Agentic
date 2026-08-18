@@ -53,14 +53,26 @@ _UNSUPPORTED_SCHEMA_KEYS = frozenset(
 
 
 class Direction(StrEnum):
-    """CLAUDE.md § Research: long, or short expressed via bought puts.
+    """CLAUDE.md § Research: long, short expressed via bought puts, or nothing at all.
 
     There is no bare "short" — Constraint #2 makes short exposure unrepresentable
     downstream, so it is not offered as something research can recommend either.
+
+    ``NO_POSITION`` exists because "which way would you lean" and "is this worth
+    trading" are different questions, and collapsing them corrupts the confidence
+    score. Without it, a model that has read a signal carefully and concluded there is
+    no trade here has only one way to say so: pick a direction it does not believe in
+    and score it low. That produces a confident-sounding verdict about a direction
+    nobody holds, and it makes the confidence number carry two meanings at once —
+    "how sure am I of the direction" and "how sure am I that anything should happen".
+
+    Sizing treats it exactly like a sub-floor confidence: zero, at any score. See
+    ``sizing.engine.SizingEngine``.
     """
 
     LONG = "long"
     SHORT_VIA_PUTS = "short_via_puts"
+    NO_POSITION = "no_position"
 
 
 class TimeHorizon(StrEnum):
@@ -125,6 +137,16 @@ class ResearchReport(BaseModel):
     def flags_manipulation(self) -> bool:
         """True when the assessment reports something rather than clearing the signal."""
         return is_manipulation_flagged(self.manipulation_assessment)
+
+    @property
+    def recommends_no_position(self) -> bool:
+        """The model's own verdict that nothing should be traded on this signal.
+
+        Independent of ``confidence``: a report may be highly confident that the right
+        answer is to do nothing, and sizing must read that as zero rather than as a
+        high-conviction position in some direction.
+        """
+        return self.direction is Direction.NO_POSITION
 
 
 #: Phrasings that mean "I looked and found nothing". Matching these keeps a clean
@@ -237,7 +259,10 @@ def report_tool_definition() -> dict[str, Any]:
             "priced_in_analysis to null only when the signal carries no disclosure "
             "lag to reason about, and state manipulation_assessment explicitly — "
             "write \"none detected\" rather than leaving it null when you looked and "
-            "found nothing."
+            "found nothing. Use direction \"no_position\" when your conclusion is "
+            "that nothing should be traded on this signal; it produces no position at "
+            "any confidence, and it is a more honest answer than naming a direction "
+            "you do not hold."
         ),
         "strict": True,
         "input_schema": schema,
