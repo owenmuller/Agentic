@@ -101,7 +101,12 @@ class Signal:
     source_id: str
     signal_class: SignalClass
     observed_at: datetime
+    #: The text this signal is *about*. For a mixed post this is the forward-looking
+    #: component only — the historical half is stripped and logged separately.
     content: str
+    #: The verbatim original, always. ``content`` may be a subset of it, so audit never
+    #: has to join two records to answer "what did the source actually say".
+    raw_content: str
     priority: Priority
     #: Stable id at the source (post id, filing accession number), for deduplication.
     external_id: Optional[str] = None

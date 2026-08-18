@@ -137,6 +137,31 @@ def test_mixed_post_emits_only_the_forward_half_and_logs_the_brag(config):
     assert "AMD" in log.records[0].content
 
 
+def test_a_mixed_post_still_carries_the_verbatim_original(config):
+    """The audit trail must never need a join to see what the source actually said."""
+    scanner = class1(config, {"nolimitgains": [post(MIXED_POST)]})
+    emitted = scanner.poll()[0]
+
+    # content is the forward half only...
+    assert "SOFI" in emitted.content
+    assert "240%" not in emitted.content
+    # ...while raw_content is the whole post, brag included.
+    assert emitted.raw_content == MIXED_POST
+    assert "240%" in emitted.raw_content
+    assert "AMD" in emitted.raw_content
+
+
+@pytest.mark.parametrize(
+    "content", [PURE_FORWARD_CALL, EMBEDDED_INSTRUCTIONS, "Tariffs on steel Monday."]
+)
+def test_every_signal_carries_its_verbatim_original(config, content):
+    source = "nolimitgains" if content is PURE_FORWARD_CALL else "trump_posts"
+    scanner = class1(config, {source: [post(content)]})
+    emitted = scanner.poll()
+    if emitted:
+        assert emitted[0].raw_content == content
+
+
 def test_ambiguous_post_is_discarded(config):
     log = CredibilityLog()
     scanner = class1(config, {"nolimitgains": [post(AMBIGUOUS_PAST_TENSE)]}, log=log)

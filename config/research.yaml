@@ -1,0 +1,25 @@
+# Research layer configuration.
+#
+# The model is configurable here. Nothing in this file can affect position sizing or
+# risk-gate behaviour — those live in risk_limits.yaml and are enforced downstream of
+# anything the research layer produces.
+
+version: 1
+
+# Claude model used for the research pass.
+model: claude-opus-5
+
+# Output ceiling for a single research call.
+max_tokens: 8000
+
+# Thinking depth / token spend: low | medium | high | xhigh | max.
+effort: high
+
+web_search:
+  # CLAUDE.md § Research: "Research may use web search to pressure-test the thesis."
+  enabled: true
+  max_uses: 5
+
+# How many times a search phase may be resumed after the server-side tool loop pauses.
+# Bounds the evidence-gathering phase; the report phase always runs exactly once.
+max_search_continuations: 3

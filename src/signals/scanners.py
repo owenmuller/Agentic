@@ -152,6 +152,8 @@ class Scanner(ABC):
             signal_class=self.signal_class,
             observed_at=observed_at,
             content=content,
+            # Always the untouched original, even when `content` is a stripped subset.
+            raw_content=item.content,
             # Priority comes from the class, never from the content.
             priority=Priority.for_class(self.signal_class),
             external_id=item.external_id,

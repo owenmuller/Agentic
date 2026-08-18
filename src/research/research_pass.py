@@ -1,0 +1,143 @@
+"""The research pass: Signal in, ResearchReport or typed rejection out.
+
+The pass owns three rules that the schema alone cannot express:
+
+  1. Class 2 and Class 3 signals must carry ``priced_in_analysis``. Both classes
+     describe events that happened weeks ago; a verdict that has not reasoned about
+     what moved since is not a verdict about a tradeable opportunity.
+  2. Malformed output is a rejection, logged, once. No retry loop.
+  3. Credibility context is supplied by the system, from the system's own records —
+     never from anything the source said about itself.
+
+The pass produces a report. It does not size, approve, or send anything, and this
+package imports nothing that could.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Callable, Optional, Union
+
+from pydantic import ValidationError
+
+from research.client import LLMClient
+from research.credibility import CredibilityTracker
+from research.prompts import SYSTEM_PROMPT, build_user_prompt
+from research.reports import (
+    ResearchRejection,
+    ResearchRejectionCode,
+    ResearchReport,
+    report_tool_definition,
+)
+from signals import Signal, SignalClass
+
+#: Classes whose signals describe already-executed events, and therefore require an
+#: explicit view on what has been priced in since.
+LAGGED_CLASSES = frozenset({SignalClass.CLASS_2_MOMENTUM, SignalClass.CLASS_3_THESIS})
+
+#: How much of a malformed response to keep for the audit record.
+_EXCERPT_CHARS = 500
+
+ResearchOutcome = Union[ResearchReport, ResearchRejection]
+
+
+class ResearchPass:
+    """Scores one signal at a time."""
+
+    def __init__(
+        self,
+        client: LLMClient,
+        credibility: Optional[CredibilityTracker] = None,
+        clock: Optional[Callable[[], datetime]] = None,
+        rejection_sink: Optional[Callable[[ResearchRejection], None]] = None,
+    ) -> None:
+        self._client = client
+        self._credibility = credibility
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._rejections: list[ResearchRejection] = []
+        self._sink = rejection_sink
+
+    @property
+    def rejections(self) -> tuple[ResearchRejection, ...]:
+        """Every rejection this pass has produced, for the audit trail."""
+        return tuple(self._rejections)
+
+    def run(self, signal: Signal) -> ResearchOutcome:
+        """Score a signal. Returns a validated report or a typed rejection."""
+        credibility_context = self._context_for(signal)
+        user_prompt = build_user_prompt(signal, credibility_context)
+
+        try:
+            result = self._client.research(
+                system=SYSTEM_PROMPT,
+                user=user_prompt,
+                tool=report_tool_definition(),
+            )
+        except Exception as error:  # noqa: BLE001 - upstream failures are data here
+            return self._reject(
+                signal,
+                ResearchRejectionCode.UPSTREAM_ERROR,
+                f"research call failed: {type(error).__name__}: {error}",
+            )
+
+        if not result.structured:
+            # The model answered in prose, or not at all. One attempt, no re-roll.
+            return self._reject(
+                signal,
+                ResearchRejectionCode.NO_STRUCTURED_OUTPUT,
+                "model did not return a structured report",
+                excerpt=result.text,
+            )
+
+        try:
+            report = ResearchReport.model_validate(result.structured)
+        except ValidationError as error:
+            return self._reject(
+                signal,
+                ResearchRejectionCode.SCHEMA_VALIDATION_FAILED,
+                f"report failed schema validation: {error.error_count()} error(s)",
+                excerpt=str(result.structured),
+            )
+
+        if signal.signal_class in LAGGED_CLASSES and not report.has_priced_in_analysis:
+            return self._reject(
+                signal,
+                ResearchRejectionCode.MISSING_PRICED_IN_ANALYSIS,
+                (
+                    f"{signal.signal_class} signals carry disclosure lag; "
+                    f"priced_in_analysis is mandatory and was not provided"
+                ),
+                excerpt=report.thesis,
+            )
+
+        return report
+
+    # -- internals ----------------------------------------------------------------
+
+    def _context_for(self, signal: Signal) -> Optional[str]:
+        """Credibility context, for sources the system actually tracks."""
+        if self._credibility is None:
+            return None
+        summary = self._credibility.summary_for(signal.source_id)
+        if summary.forward_calls_seen == 0 and summary.retrospectives_discarded == 0:
+            return None
+        return summary.as_context()
+
+    def _reject(
+        self,
+        signal: Signal,
+        code: ResearchRejectionCode,
+        message: str,
+        excerpt: str = "",
+    ) -> ResearchRejection:
+        rejection = ResearchRejection(
+            code=code,
+            message=message,
+            signal_id=signal.signal_id,
+            raw_excerpt=excerpt[:_EXCERPT_CHARS],
+            occurred_at=self._clock(),
+        )
+        self._rejections.append(rejection)
+        if self._sink is not None:
+            self._sink(rejection)
+        return rejection
