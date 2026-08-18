@@ -93,6 +93,9 @@ classes:
     sources:
       - id: form_13f
         provider: sec_edgar_full_text_search
+        # SEC-required contact header. EDGAR asks every automated client to identify
+        # a way to reach its operator; anonymous scrapers get IP-blocked.
+        user_agent: "Agentic trading research omuller@brasacap.com"
         watchlist:
           - { fund: Situational Awareness, manager: Leopold Aschenbrenner }
         additional_funds: []

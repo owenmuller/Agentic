@@ -4,13 +4,13 @@ Rolling handover between sessions. Written at the end of a session, read at the 
 of the next one. `CLAUDE.md` is the constitution and does not change here; this file is
 only ever a record of where the work got to and what comes next.
 
-**Last updated:** 2026-08-18 · exits built; see queue
+**Last updated:** 2026-08-18 · exits built; EDGAR fetcher and Alpaca price source built; Alpaca keys still not on this machine
 
 ---
 
 ## Build state
 
-All seven packages in `CLAUDE.md`'s build order exist and are tested. **441 passing, 4
+All seven packages in `CLAUDE.md`'s build order exist and are tested. **478 passing, 7
 skipped** (the skips are `tests/test_execution_integration.py`, which auto-skips
 without Alpaca paper credentials in `.env` — see the queue below).
 
@@ -93,40 +93,52 @@ the state file carries a `_note` field saying so to whoever finds it.
 
 ---
 
-## The two unbuilt seams
+## The seams: two built (2026-08-18), two awaiting credentials
 
-Both are interfaces with no production implementation. They are seams rather than stubs
-on purpose: an untestable HTTP client is worse than an honest gap, and requiring them as
-arguments to `orchestrator.start()` makes the gap visible at the call site rather than
-at 09:30.
+Both interfaces stay explicit arguments to `orchestrator.start()` — the operator wires
+the production implementations at the call site.
 
-### 1. `Fetcher` — `src/signals/scanners.py`
+### `PriceSource` — BUILT: `execution.market_data.AlpacaPriceSource`
 
-```python
-def __call__(self, source: SourceConfig) -> Sequence[RawItem]: ...
-```
+Latest IEX quote via `data.alpaca.markets` (paper keys grant the free feed; same key
+pair as the trading adapter). Settings in `config/orchestrator.yaml` under
+`market_data:`. The safety property, tested from every failure angle: **an outage
+never reads as a price** — HTTP errors, timeouts, malformed bodies, quotes with no
+priced side, and quotes older than `max_quote_age_seconds` (strictly older; absent or
+unparseable timestamps count as stale) all come back as `None`, never `Decimal("0")`,
+because a zero would sit below every max-loss stop in the book. Ask preferred (bounds
+a buy), bid as the one-sided fallback. Its two integration tests auto-skip without
+Alpaca keys, like the broker ones.
 
-Returns raw items for one configured source. Needs real clients for Truth Social and X
-(Class 1), Quiver Quant / Unusual Whales / Capitol Trades (Class 2), and SEC EDGAR
-full-text search (Class 3). All need credentials that are not on this machine. Tests
-drive the whole pipeline through fixture fetchers on this exact interface.
+### Class 3 `Fetcher` — BUILT: `signals.edgar.Form13FFetcher`
 
-A failing fetcher is already handled: the loop logs it, skips that cycle, and carries on
-without hot-retrying a feed that is down.
+EDGAR full-text search → archives index → cover (`periodOfReport`) → information
+table, per watchlist fund, free and keyless. SEC citizenship enforced in code: every
+request carries the contact User-Agent from `config/signals.yaml` (refuses to run
+without an email in it), requests are throttled to one per half-second (a fifth of the
+SEC's 10/s ceiling), and a single 429/5xx gets one logged retry so a transient blip
+does not cost a daily-cadence poll a full day. FTS matches filings that merely
+*mention* a fund, so hits are kept only when the filer's display name contains the
+fund name. Bought puts in a filing are rendered as `(Put)` — a 13F is longs-only in
+the equity sense, not the instrument sense. Live smoke test is opt-in
+(`EDGAR_LIVE_TESTS=1`, no key needed) to keep the default suite hermetic; it passed
+against the real fund on 2026-08-18 (six real filings fetched and parsed).
 
-### 2. `PriceSource` — `src/orchestrator/pipeline.py`
+Topology note: `signals` now has network permission in the map — ingestion is its
+job — while its first-party isolation (no risk_gate, no execution, no sizing) is
+unchanged and still tested.
 
-```python
-def __call__(self, symbol: str) -> Optional[Decimal]: ...
-```
+### Class 1 and Class 2 fetchers — UNBUILT, awaiting credentials
 
-Returns the per-unit price a buy should be *bounded* at — the offer, not the last
-trade, because that is the figure the risk gate cash-secures against. Returning `None`
-is a normal answer meaning "no usable quote", and produces no order rather than an order
-priced on a guess.
+Truth Social / X (Class 1) and Quiver Quant / Unusual Whales / Capitol Trades
+(Class 2) all need credentials not yet procured. Same `Fetcher` protocol; the EDGAR
+implementation is the template. A failing fetcher is already handled: the loop logs
+it, skips that cycle, and carries on without hot-retrying a feed that is down.
 
-Nothing exists behind it. Alpaca's market-data API (`data.alpaca.markets`) is the
-obvious first implementation and shares credentials with the trading adapter.
+Wiring note: `build_scanners` takes ONE fetcher for all three classes. Production
+wiring with only EDGAR built needs a small router (dispatch on `source.id`,
+unconfigured sources raising) — deliberately not built until a second real fetcher
+exists to shape it.
 
 ---
 
@@ -158,7 +170,16 @@ inverted relative to `@nolimitgains`. Design questions to settle before writing 
 - Do **not** let "fade" become a second code path through sizing or the gate. If the
   research layer cannot express it, that is a research-layer problem to solve.
 
-### (b) Alpaca paper keys → un-skip the integration tests
+### (b) Alpaca paper keys → un-skip the integration tests — **STILL PENDING 2026-08-18**
+
+Attempted this session: the keys were reported as added, but `.env` on this machine
+holds only `PAPER_MODE` and `ANTHROPIC_API_KEY`, and nothing is set in the shell or
+Windows user environment. The 4 broker integration tests still skip, and 2 new
+`AlpacaPriceSource` integration tests skip on the same condition — all six light up
+in a normal `pytest` run the moment the two lines land in `.env`. The agent never
+writes `.env` (Constraint #4 adjacent); a human puts them there.
+
+Original queue entry:
 
 `tests/test_execution_integration.py` has four tests that auto-skip when `.env` has no
 `ALPACA_API_KEY` / `ALPACA_API_SECRET`. Filling those in turns them on and makes

@@ -55,3 +55,15 @@ exits:
   # research budget; entries are processed first each tick, so a tight budget starves
   # reviews before it starves entries.
   thesis_review_interval_hours: 24
+
+# MARKET DATA. Settings for the production PriceSource (execution.market_data.
+# AlpacaPriceSource) — the operator passes these when wiring orchestrator.start().
+market_data:
+  # iex is the free feed that paper API keys grant. sip requires a paid subscription.
+  feed: iex
+  # A quote older than this is treated as MISSING, not used: pricing an order on a
+  # stale quote is pricing it on a guess, and a missing price already has safe
+  # handling everywhere (no order; skip the stop check for that symbol this tick).
+  # An outage must surface as absence — never as a price of zero, which would fire
+  # every max-loss stop in the book.
+  max_quote_age_seconds: 300

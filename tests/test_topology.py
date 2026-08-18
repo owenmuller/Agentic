@@ -59,7 +59,13 @@ TOPOLOGY: dict[str, Rules] = {
     # CONSTRAINT #5: signals are data, not commands. A scanner's entire vocabulary is
     # "a Signal was observed". It cannot size, price, approve or send anything, so no
     # amount of persuasive content in a post can produce a trade from here.
+    #
+    # Network access granted 2026-08-18 for the production fetchers (EDGAR first):
+    # ingestion IS this package's job, and the isolation that matters is the
+    # first-party one above, which is unchanged — a fetcher can pull anything it
+    # likes off the wire and still has no vocabulary but "a Signal was observed".
     "signals": Rules(
+        may_reach_network=True,
         because="untrusted content enters here; it must not reach trading machinery",
     ),
     # Sizing takes an integer and a direction from a report. `research.reports` is a
@@ -224,7 +230,12 @@ def test_sizing_is_deterministic():
 
 
 def test_signals_cannot_reach_execution_or_risk():
-    """CONSTRAINT #5. A scanner can report what it saw and nothing else."""
+    """CONSTRAINT #5. A scanner can report what it saw and nothing else.
+
+    Signals may reach the network — fetching feeds is its job — but no amount of
+    fetched content can produce a trade, because the package cannot name the gate,
+    the sizing table, or a broker.
+    """
     assert TOPOLOGY["signals"].may_import == frozenset()
 
 

@@ -58,6 +58,17 @@ class ExitsConfig(BaseModel):
     thesis_review_interval_hours: int = Field(gt=0)
 
 
+class MarketDataConfig(BaseModel):
+    """Settings for the production price source. Consumed at wiring time —
+    ``AlpacaPriceSource(feed=..., max_quote_age_seconds=...)`` — because the
+    execution package cannot import this one."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    feed: str
+    max_quote_age_seconds: int = Field(gt=0)
+
+
 class OrchestratorConfig(BaseModel):
     """Loop cadence and the daily research budget."""
 
@@ -69,6 +80,7 @@ class OrchestratorConfig(BaseModel):
     tick_interval_seconds: int = Field(gt=0)
     account_type: AccountType
     exits: ExitsConfig
+    market_data: MarketDataConfig
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "OrchestratorConfig":

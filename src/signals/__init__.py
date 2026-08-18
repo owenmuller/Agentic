@@ -17,6 +17,7 @@ from signals.classification import (
     extract_tickers,
 )
 from signals.config import ClassConfig, SignalsConfig, SourceConfig, default_signals_path
+from signals.edgar import ARCHIVES_URL, FTS_URL, EdgarError, Form13FFetcher
 from signals.records import (
     UNTRUSTED_CONTENT_PREAMBLE,
     Classification,
@@ -41,6 +42,10 @@ from signals.scanners import (
 )
 
 __all__ = [
+    "ARCHIVES_URL",
+    "FTS_URL",
+    "EdgarError",
+    "Form13FFetcher",
     "UNTRUSTED_CONTENT_PREAMBLE",
     "ClassConfig",
     "Class1RealtimeScanner",

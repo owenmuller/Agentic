@@ -261,6 +261,7 @@ def orchestrator_config(**overrides) -> OrchestratorConfig:
             "time_stop_days": {"days": 7, "weeks": 45, "months": 120},
             "thesis_review_interval_hours": 24,
         },
+        "market_data": {"feed": "iex", "max_quote_age_seconds": 300},
     }
     return OrchestratorConfig.model_validate({**base, **overrides})
 

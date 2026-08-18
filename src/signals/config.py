@@ -46,6 +46,11 @@ class SourceConfig(_Strict):
     classification: Optional[ClassificationRules] = None
     providers: tuple[str, ...] = ()
     provider: Optional[str] = None
+    #: Named accounts/funds this source watches. Adding an entry requires human
+    #: approval (CLAUDE.md); the fetchers read the list, they never extend it.
+    watchlist: tuple[dict[str, str], ...] = ()
+    #: Contact header for sources that require one (SEC EDGAR). Must name an email.
+    user_agent: Optional[str] = None
 
     @property
     def classifies_posts(self) -> bool:
