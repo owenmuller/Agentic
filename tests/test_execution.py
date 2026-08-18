@@ -15,10 +15,15 @@ import httpx
 import pytest
 
 from execution import (
+    LIVE_BASE_URL,
+    LIVE_CONFIRMATION_PHRASE,
+    LIVE_CONFIRMATION_VARIABLE,
     PAPER_BASE_URL,
     AlpacaAdapter,
     BrokerRejected,
+    LiveModeMisconfigured,
     UnsupportedInstrument,
+    live_trading_confirmed,
     paper_mode,
 )
 from risk_gate import (
@@ -28,7 +33,8 @@ from risk_gate import (
     EquitySellToCloseOrder,
     EventContractBuyOrder,
     LimitExecution,
-    MarketExecution,
+    MarketBuyExecution,
+    MarketSellExecution,
     OptionBuyToOpenOrder,
     RiskGate,
     RiskLimits,
@@ -148,13 +154,13 @@ def test_limit_order_is_sent_at_its_limit_price(gate):
     assert payload["symbol"] == "AAPL"
 
 
-def test_market_execution_is_sent_as_a_limit_at_max_price(gate):
+def test_market_buy_is_sent_as_a_limit_at_max_price(gate):
     """A fill above the reserved bound becomes impossible at the venue."""
     adapter, recorder = adapter_with(ORDER_ACCEPTED)
     order = EquityBuyOrder(
         symbol="AAPL",
         quantity=10,
-        execution=MarketExecution(
+        execution=MarketBuyExecution(
             justification=JUSTIFICATION, max_price=Decimal("105.00")
         ),
     )
@@ -166,6 +172,35 @@ def test_market_execution_is_sent_as_a_limit_at_max_price(gate):
     assert Decimal(payload["limit_price"]) == order.execution.price_bound
     # The limit is exactly what the gate cash-secured against.
     assert Decimal(payload["limit_price"]) * 10 == approved.max_loss
+
+
+def test_market_sell_is_sent_as_a_limit_at_min_price(gate):
+    """The sell mirror: a marketable floor, so proceeds cannot fall below the bound."""
+    adapter, recorder = adapter_with(ORDER_ACCEPTED)
+    opened = gate.submit(
+        EquityBuyOrder(
+            symbol="AAPL",
+            quantity=10,
+            execution=LimitExecution(limit_price=Decimal("100.00")),
+        )
+    )
+    gate.record_fill(opened, Decimal("100.00"))
+
+    closed = gate.submit(
+        EquitySellToCloseOrder(
+            symbol="AAPL",
+            quantity=10,
+            execution=MarketSellExecution(
+                justification=JUSTIFICATION, min_price=Decimal("95.00")
+            ),
+        )
+    )
+    adapter.submit_order(closed)
+
+    payload = recorder.last_payload
+    assert payload["type"] == "limit"
+    assert payload["side"] == "sell"
+    assert Decimal(payload["limit_price"]) == Decimal("95.00")
 
 
 def test_sell_to_close_maps_to_a_sell(gate):
@@ -344,12 +379,71 @@ def test_adapter_points_at_the_paper_endpoint_by_default(monkeypatch):
     adapter.close()
 
 
-def test_live_mode_warns_loudly(monkeypatch):
+# -- the second key ------------------------------------------------------------
+
+
+@pytest.fixture
+def live_env(monkeypatch):
     monkeypatch.setenv("PAPER_MODE", "false")
     monkeypatch.setenv("ALPACA_API_KEY", "test-key")
     monkeypatch.setenv("ALPACA_API_SECRET", "test-secret")
+    monkeypatch.delenv(LIVE_CONFIRMATION_VARIABLE, raising=False)
+    return monkeypatch
+
+
+def test_live_mode_without_the_confirmation_hard_fails(live_env):
+    with pytest.raises(LiveModeMisconfigured, match="does not hold the required"):
+        AlpacaAdapter()
+
+
+@pytest.mark.parametrize(
+    "wrong",
+    [
+        "",
+        "yes",
+        "i confirm live trading with real money",  # case matters
+        "I CONFIRM LIVE TRADING",  # truncated
+        "I CONFIRM LIVE TRADING WITH REAL MONEY!",  # extra punctuation
+        "true",
+    ],
+)
+def test_a_confirmation_that_is_not_the_exact_phrase_hard_fails(live_env, wrong):
+    live_env.setenv(LIVE_CONFIRMATION_VARIABLE, wrong)
+    with pytest.raises(LiveModeMisconfigured):
+        AlpacaAdapter()
+
+
+def test_misconfigured_live_mode_never_falls_back_to_paper(live_env):
+    """The dangerous failure is starting anyway, quietly, on the paper endpoint."""
+    live_env.setenv(LIVE_CONFIRMATION_VARIABLE, "sure")
+    with pytest.raises(LiveModeMisconfigured):
+        AlpacaAdapter()
+    assert paper_mode() is False, "PAPER_MODE itself must not be rewritten"
+
+
+def test_both_keys_turned_reaches_live_and_warns(live_env):
+    live_env.setenv(LIVE_CONFIRMATION_VARIABLE, LIVE_CONFIRMATION_PHRASE)
     with pytest.warns(UserWarning, match="LIVE"):
         adapter = AlpacaAdapter()
+    assert adapter.paper is False
+    assert adapter.base_url == LIVE_BASE_URL
+    adapter.close()
+
+
+def test_surrounding_whitespace_in_the_confirmation_is_tolerated(live_env):
+    """A copy-paste artefact, not a different intent."""
+    live_env.setenv(LIVE_CONFIRMATION_VARIABLE, f"  {LIVE_CONFIRMATION_PHRASE}\n")
+    assert live_trading_confirmed() is True
+
+
+def test_the_confirmation_alone_does_nothing_while_paper_mode_is_on(monkeypatch):
+    monkeypatch.setenv("PAPER_MODE", "true")
+    monkeypatch.setenv(LIVE_CONFIRMATION_VARIABLE, LIVE_CONFIRMATION_PHRASE)
+    monkeypatch.setenv("ALPACA_API_KEY", "test-key")
+    monkeypatch.setenv("ALPACA_API_SECRET", "test-secret")
+    adapter = AlpacaAdapter()
+    assert adapter.paper is True
+    assert adapter.base_url == PAPER_BASE_URL
     adapter.close()
 
 

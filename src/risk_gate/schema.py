@@ -92,15 +92,16 @@ class LimitExecution(_Frozen):
         return self.limit_price
 
 
-class MarketExecution(_Frozen):
-    """A market order, which CLAUDE.md permits only with explicit justification.
+class MarketBuyExecution(_Frozen):
+    """A market buy, which CLAUDE.md permits only with explicit justification.
 
-    ``max_price`` is required and has no counterpart in a broker API — it is a local
-    worst-case bound so ``max_loss()`` stays finite for an order with no limit price.
-    The gate cash-secures against it; the broker never sees it.
+    ``max_price`` is a ceiling with no counterpart in a broker API — a local worst case
+    so ``max_loss()`` stays finite for an order carrying no limit price. The gate
+    cash-secures against it, and the execution layer sends it as the limit price, which
+    is what makes a fill above the reserved bound impossible at the venue.
     """
 
-    style: Literal["market"] = "market"
+    style: Literal["market_buy"] = "market_buy"
     justification: Annotated[str, Field(min_length=20)]
     max_price: Money
 
@@ -109,8 +110,43 @@ class MarketExecution(_Frozen):
         return self.max_price
 
 
+class MarketSellExecution(_Frozen):
+    """A market sell, with a price floor rather than a ceiling.
+
+    Mirrors ``MarketBuyExecution``, inverted: the risk on a sell is not overpaying but
+    dumping into a hole, so the bound is ``min_price`` — the worst proceeds per unit
+    the order may accept. The execution layer sends it as a marketable limit floor.
+
+    The two are separate types, not one type with two optional fields, because a
+    ceiling and a floor are not interchangeable: a buy carrying a floor would let cost
+    run unbounded, and a sell carrying a ceiling would rest unfilled at exactly the
+    moment you need out. Pairing them wrongly is unrepresentable — see
+    ``BuyExecution`` / ``SellExecution``.
+    """
+
+    style: Literal["market_sell"] = "market_sell"
+    justification: Annotated[str, Field(min_length=20)]
+    min_price: Money
+
+    @property
+    def price_bound(self) -> Decimal:
+        return self.min_price
+
+
+#: What an opening order may carry: a limit, or a market buy with a ceiling.
+BuyExecution = Annotated[
+    Union[LimitExecution, MarketBuyExecution], Field(discriminator="style")
+]
+
+#: What a closing order may carry: a limit, or a market sell with a floor.
+SellExecution = Annotated[
+    Union[LimitExecution, MarketSellExecution], Field(discriminator="style")
+]
+
+#: Any execution style, for code that handles orders generically.
 Execution = Annotated[
-    Union[LimitExecution, MarketExecution], Field(discriminator="style")
+    Union[LimitExecution, MarketBuyExecution, MarketSellExecution],
+    Field(discriminator="style"),
 ]
 
 
@@ -120,6 +156,9 @@ Execution = Annotated[
 
 
 class _OrderBase(_Frozen):
+    #: Declared on each concrete order rather than here: opening orders take a
+    #: ``BuyExecution`` and closing orders a ``SellExecution``, so a ceiling can never
+    #: be attached to a sell or a floor to a buy.
     execution: Execution
     #: Links the order back to the signal that produced it, for the audit record
     #: (CLAUDE.md § Audit & Attribution: signal -> thesis -> confidence -> size -> ...).
@@ -150,6 +189,7 @@ class EquityBuyOrder(_OrderBase):
     kind: Literal["equity_buy"] = "equity_buy"
     symbol: Ticker
     quantity: Quantity
+    execution: BuyExecution
 
     def max_loss(self) -> Decimal:
         return self.execution.price_bound * self.quantity
@@ -170,6 +210,7 @@ class EquitySellToCloseOrder(_OrderBase):
     kind: Literal["equity_sell_to_close"] = "equity_sell_to_close"
     symbol: Ticker
     quantity: Quantity
+    execution: SellExecution
 
     def max_loss(self) -> Decimal:
         return ZERO
@@ -199,6 +240,7 @@ class OptionBuyToOpenOrder(_OptionLeg):
     """
 
     kind: Literal["option_buy_to_open"] = "option_buy_to_open"
+    execution: BuyExecution
 
     def max_loss(self) -> Decimal:
         return self.execution.price_bound * self.contracts * self.multiplier
@@ -218,6 +260,7 @@ class OptionSellToCloseOrder(_OptionLeg):
     """
 
     kind: Literal["option_sell_to_close"] = "option_sell_to_close"
+    execution: SellExecution
 
     def max_loss(self) -> Decimal:
         return ZERO
@@ -260,6 +303,7 @@ class EventContractBuyOrder(_EventContract):
     """
 
     kind: Literal["event_contract_buy"] = "event_contract_buy"
+    execution: BuyExecution
 
     def max_loss(self) -> Decimal:
         return self.execution.price_bound * self.contracts
@@ -277,6 +321,7 @@ class EventContractSellToCloseOrder(_EventContract):
     """
 
     kind: Literal["event_contract_sell_to_close"] = "event_contract_sell_to_close"
+    execution: SellExecution
 
     def max_loss(self) -> Decimal:
         return ZERO

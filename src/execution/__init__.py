@@ -20,12 +20,26 @@ from execution.base import (
     OrderReceipt,
     UnsupportedInstrument,
 )
-from execution.environment import load_environment, paper_mode, require_env
+from execution.environment import (
+    LIVE_CONFIRMATION_PHRASE,
+    LIVE_CONFIRMATION_VARIABLE,
+    LiveModeMisconfigured,
+    live_trading_confirmed,
+    load_environment,
+    paper_mode,
+    require_env,
+    require_paper_or_confirmed_live,
+)
 
 __all__ = [
     "LIVE_BASE_URL",
+    "LIVE_CONFIRMATION_PHRASE",
+    "LIVE_CONFIRMATION_VARIABLE",
+    "LiveModeMisconfigured",
     "PAPER_BASE_URL",
     "AlpacaAdapter",
+    "live_trading_confirmed",
+    "require_paper_or_confirmed_live",
     "BrokerAdapter",
     "BrokerError",
     "BrokerPosition",

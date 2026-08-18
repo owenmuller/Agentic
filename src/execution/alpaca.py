@@ -1,13 +1,19 @@
 """Alpaca adapter — equities and long options, paper first.
 
 Every order goes out as a LIMIT order, including those the schema marked as market
-executions. A ``MarketExecution`` carries ``max_price``, the worst case the risk gate
-cash-secured against, and that value becomes the limit price: for a buy this is a
-marketable limit that fills immediately at or better, and a fill above the reserved
-bound stops being something the broker can do to us. The gate's trip-and-raise on a
-bad fill remains as defence in depth for edge cases (partial fills at a venue that
-ignores the limit, corporate actions, adapter bugs) but should now be unreachable in
-normal operation.
+executions. The limit is the execution's ``price_bound``:
+
+  - ``MarketBuyExecution`` bounds with ``max_price``, a ceiling. Sent as the limit, it
+    is marketable — fills immediately at or better — and a fill above the price the
+    risk gate cash-secured against stops being something the broker can do to us.
+  - ``MarketSellExecution`` bounds with ``min_price``, a floor. Sent as the limit, it
+    caps how far proceeds can slip, at the cost of resting unfilled if the market is
+    already below the floor. That trade-off is the point: a sell that will not print
+    below your floor is what a floor means.
+
+The gate's trip-and-raise on a bad fill remains as defence in depth for edge cases
+(a venue ignoring the limit, corporate actions, adapter bugs) but should now be
+unreachable in normal operation.
 
 Talking to the REST API directly rather than through ``alpaca-py`` keeps the wire
 format visible in this file: the exact payload sent to a broker is the thing you most
@@ -30,7 +36,11 @@ from execution.base import (
     OrderReceipt,
     UnsupportedInstrument,
 )
-from execution.environment import load_environment, paper_mode, require_env
+from execution.environment import (
+    load_environment,
+    require_env,
+    require_paper_or_confirmed_live,
+)
 from risk_gate import ApprovedOrder
 from risk_gate.schema import (
     EquityBuyOrder,
@@ -66,15 +76,16 @@ class AlpacaAdapter(BrokerAdapter):
         timeout: float = 15.0,
     ) -> None:
         load_environment()
-        self.paper = paper_mode()
+        # Raises LiveModeMisconfigured if PAPER_MODE is off without the exact
+        # confirmation phrase. It never falls back to paper — see Constraint #4.
+        self.paper = require_paper_or_confirmed_live()
         if not self.paper:
-            # The human flipped PAPER_MODE, which is their call to make and the only
-            # way live mode can be reached. Say so loudly rather than quietly routing
-            # real money. Note CLAUDE.md build order step 7: the full pipeline should
-            # paper trade for 2-4 weeks before live is even discussed.
+            # Both keys were turned by a human, which is the only way to get here.
+            # Say so loudly anyway. Note CLAUDE.md build order step 7: the full
+            # pipeline should paper trade 2-4 weeks before live is even discussed.
             warnings.warn(
-                "PAPER_MODE is disabled — this adapter is pointed at LIVE Alpaca and "
-                "will trade real money.",
+                "PAPER_MODE is disabled and live trading is confirmed — this adapter "
+                "is pointed at LIVE Alpaca and will trade real money.",
                 stacklevel=2,
             )
         self.base_url = base_url or (PAPER_BASE_URL if self.paper else LIVE_BASE_URL)

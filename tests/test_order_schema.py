@@ -22,7 +22,8 @@ from risk_gate.schema import (
     EventContractBuyOrder,
     EventContractSellToCloseOrder,
     LimitExecution,
-    MarketExecution,
+    MarketBuyExecution,
+    MarketSellExecution,
     OptionBuyToOpenOrder,
     OptionSellToCloseOrder,
     parse_order,
@@ -50,10 +51,20 @@ expiries = st.dates(min_value=date(2026, 1, 1), max_value=date(2030, 1, 1))
 
 @st.composite
 def limit_or_market(draw, price=money):
+    """A buy-shaped execution: a limit, or a market buy with a price ceiling."""
     p = draw(price)
     if draw(st.booleans()):
         return LimitExecution(limit_price=p)
-    return MarketExecution(justification=JUSTIFICATION, max_price=p)
+    return MarketBuyExecution(justification=JUSTIFICATION, max_price=p)
+
+
+@st.composite
+def limit_or_market_sell(draw, price=money):
+    """A sell-shaped execution: a limit, or a market sell with a price floor."""
+    p = draw(price)
+    if draw(st.booleans()):
+        return LimitExecution(limit_price=p)
+    return MarketSellExecution(justification=JUSTIFICATION, min_price=p)
 
 
 @st.composite
@@ -233,13 +244,64 @@ def test_every_order_kind_is_covered_by_these_tests():
 # --------------------------------------------------------------------------------
 
 
-def test_market_order_requires_justification_and_price_bound():
+def test_market_buy_requires_justification_and_a_ceiling():
     with pytest.raises(ValidationError):
-        MarketExecution(max_price=Decimal("10.00"))
+        MarketBuyExecution(max_price=Decimal("10.00"))
     with pytest.raises(ValidationError):
-        MarketExecution(justification="fast", max_price=Decimal("10.00"))
+        MarketBuyExecution(justification="fast", max_price=Decimal("10.00"))
     with pytest.raises(ValidationError):
-        MarketExecution(justification=JUSTIFICATION)
+        MarketBuyExecution(justification=JUSTIFICATION)
+
+
+def test_market_sell_requires_justification_and_a_floor():
+    with pytest.raises(ValidationError):
+        MarketSellExecution(min_price=Decimal("10.00"))
+    with pytest.raises(ValidationError):
+        MarketSellExecution(justification="fast", min_price=Decimal("10.00"))
+    with pytest.raises(ValidationError):
+        MarketSellExecution(justification=JUSTIFICATION)
+
+
+def test_a_buy_cannot_carry_a_sell_shaped_execution():
+    """A ceiling and a floor are not interchangeable — pairing them wrongly must fail."""
+    with pytest.raises(ValidationError):
+        EquityBuyOrder(
+            symbol="AAPL",
+            quantity=1,
+            execution=MarketSellExecution(
+                justification=JUSTIFICATION, min_price=Decimal("10.00")
+            ),
+        )
+
+
+def test_a_sell_cannot_carry_a_buy_shaped_execution():
+    with pytest.raises(ValidationError):
+        EquitySellToCloseOrder(
+            symbol="AAPL",
+            quantity=1,
+            execution=MarketBuyExecution(
+                justification=JUSTIFICATION, max_price=Decimal("10.00")
+            ),
+        )
+
+
+@given(execution=limit_or_market_sell())
+def test_sell_shaped_executions_bound_on_their_floor(execution):
+    if isinstance(execution, MarketSellExecution):
+        assert execution.price_bound == execution.min_price
+    else:
+        assert execution.price_bound == execution.limit_price
+
+
+def test_market_sell_orders_still_risk_no_new_cash():
+    order = EquitySellToCloseOrder(
+        symbol="AAPL",
+        quantity=10,
+        execution=MarketSellExecution(
+            justification=JUSTIFICATION, min_price=Decimal("240.00")
+        ),
+    )
+    assert order.max_loss() == 0
 
 
 @given(price=st.decimals(min_value=Decimal("1.00"), max_value=Decimal("5.00"), places=2))
