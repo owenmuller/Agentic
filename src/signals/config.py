@@ -52,6 +52,10 @@ class SourceConfig(_Strict):
     watchlist: tuple[dict[str, str], ...] = ()
     #: Contact header for sources that require one (SEC EDGAR). Must name an email.
     user_agent: Optional[str] = None
+    #: For pay-per-use feeds (X): warn once the day's posts read passes this. A
+    #: since_id regression re-reads the same posts every poll, and the bug should
+    #: show in run.log before it shows on the bill.
+    daily_read_warning: Optional[int] = None
     #: What this feed costs per month, in dollars. Attribution prorates it against the
     #: class's P&L: a signal class must out-earn its own feed, and the weekly report
     #: is where that verdict lives. Zero for free feeds and for sources not yet built.

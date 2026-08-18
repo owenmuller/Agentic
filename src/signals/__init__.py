@@ -20,6 +20,7 @@ from signals.config import ClassConfig, SignalsConfig, SourceConfig, default_sig
 from signals.edgar import ARCHIVES_URL, FTS_URL, EdgarError, Form13FFetcher
 from signals.quiver import QUIVER_CONGRESS_URL, QuiverCongressFetcher, QuiverError
 from signals.routing import FeedNotConfigured, SourceRouter
+from signals.x import TWEET_FIELDS, X_SEARCH_URL, XError, XRecentSearchFetcher
 from signals.records import (
     UNTRUSTED_CONTENT_PREAMBLE,
     Classification,
@@ -53,6 +54,10 @@ __all__ = [
     "QuiverCongressFetcher",
     "QuiverError",
     "SourceRouter",
+    "TWEET_FIELDS",
+    "X_SEARCH_URL",
+    "XError",
+    "XRecentSearchFetcher",
     "UNTRUSTED_CONTENT_PREAMBLE",
     "ClassConfig",
     "Class1RealtimeScanner",

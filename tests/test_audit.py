@@ -756,7 +756,7 @@ def test_the_config_supplies_the_costs_the_report_consumes():
 
     costs = SignalsConfig.load().monthly_feed_costs()
     assert costs["class_2"] == Decimal("30")
-    assert costs["class_1"] == Decimal("0")
+    assert costs["class_1"] == Decimal("10")  # X pay-per-use budget figure
     assert costs["class_3"] == Decimal("0")
     # Class keys are SignalClass values, so the mapping into the report is direct.
     assert {SignalClass(key) for key in costs} == set(SignalClass)

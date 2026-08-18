@@ -21,7 +21,12 @@ classes:
     sources:
       - id: trump_posts
         platforms: [truth_social, x]
-        monthly_cost: 0 # no feed procured yet; set when the X/Truth Social source is real
+        # Pending the Truth API decision: X is only a partial, sometimes-late mirror
+        # of Truth Social for this account. The handle is here so that joining the X
+        # feed is one route line in orchestrator/__main__.py; the primary-venue
+        # question (Truth API vs X) is decided by a human first.
+        handle: "@realDonaldTrump"
+        monthly_cost: 0 # no feed active for this source yet
         extraction:
           tickers: true
           sectors: true
@@ -29,7 +34,14 @@ classes:
 
       - id: nolimitgains
         platforms: [x]
-        monthly_cost: 0 # no feed procured yet
+        # X API pay-per-use: ~$0.005 per post read, requests free, since_id keeps a
+        # quiet minute at zero. $10/month is the conservative budget figure the
+        # attribution report charges this class.
+        monthly_cost: 10
+        # Warn in run.log once this many posts have been read in a UTC day — organic
+        # volume is a fraction of this, so crossing it means a since_id bug, and the
+        # bug should surface in the logs before it surfaces on the bill.
+        daily_read_warning: 200
         handle: "@nolimitgains"
         treatment: thesis_input_only
         copy_trade: false

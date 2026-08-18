@@ -4,15 +4,27 @@ Rolling handover between sessions. Written at the end of a session, read at the 
 of the next one. `CLAUDE.md` is the constitution and does not change here; this file is
 only ever a record of where the work got to and what comes next.
 
-**Last updated:** 2026-08-18 · paper period running — Class 2 LIVE as of today (Quiver); Class 1 pending credentials
+**Last updated:** 2026-08-18 · paper period running — Class 2 live; Class 1 partially live (@nolimitgains wired, X token needs Project enrollment); Trump leg pending Truth API decision
 
 ---
 
 ## PAPER PERIOD: started 2026-08-18
 
 CLAUDE.md build order step 7 is running: **Class 3 (EDGAR 13F) + Class 2 (Quiver
-congressional disclosures, live as of 2026-08-18 — its attribution clock starts
-now)**. Class 1 pending credentials. Alpaca paper keys landed 2026-08-18; all 6 keyed integration
+congressional disclosures) + Class 1 partially (@nolimitgains via X recent search,
+wired 2026-08-18)**. The Trump leg is pending the Truth API decision — X is a
+partial, sometimes-late mirror for that account, and mirror latency spends the edge
+that makes Class 1 worth polling at 60s. Joining it later is one route line in
+`orchestrator/__main__.py` (the handle already sits in signals.yaml).
+
+**Class 1 blocker (2026-08-18):** the X bearer token in `.env` is valid but returns
+`403 client-not-enrolled` — its developer App is not attached to a Project, and v2
+access (pay-per-use included) enrolls at the Project level. Two-minute fix in the X
+developer portal: attach the App to a Project, or regenerate the token from an app
+inside one, then update `X_BEARER_TOKEN` in `.env`. Zero code changes needed after
+that; until then each Class 1 poll logs a scanner failure and is skipped (the
+fetcher's 403 message states the exact fix). The X live smoke (`X_LIVE_TESTS=1`)
+should be re-run once enrolled. Alpaca paper keys landed 2026-08-18; all 6 keyed integration
 tests pass. First supervised end-to-end cycle ran the same day: 3 real filings polled,
 3 real research passes, all three returned `no_position` at high confidence (82/83/80)
 — no order placed, complete audit trail in `data/audit.jsonl`. The step-7 clock
@@ -204,13 +216,26 @@ unchanged and still tested.
 See the paper-period section above. The router it forced into existence is
 `signals.routing.SourceRouter` — the one place to wire a future fetcher.
 
-### Class 1 fetchers — UNBUILT, awaiting credentials
+### Class 1 X fetcher — BUILT 2026-08-18: `signals.x.XRecentSearchFetcher`
 
-Truth Social / X for trump_posts and nolimitgains. Same `Fetcher` protocol; Quiver
-and EDGAR are the templates. Declared `unbuilt` in the production router — wiring a
-new one is one line in `routes` and one id out of `unbuilt` in
-`orchestrator/__main__.py`. A failing fetcher is already handled: the loop logs it,
-skips that cycle, and carries on.
+One recent-search query per source (`from:<handle> -is:retweet`), since_id-disciplined
+because pay-per-use bills per POST RETURNED, not per request: a quiet minute costs
+zero, and the first poll of a session uses a 15-minute lookback instead of seven days
+of history. `note_tweet` requested explicitly — plain `text` truncates past 280 chars
+and a clipped trade call is a corrupted signal; the full-pipeline test walks a
+300+-char post through classification, research (full text inside the fence), the
+gate, and the audit record. Classification rules apply unchanged (forward_call /
+retrospective / other). The billing tripwire: a daily read counter logs cumulative
+posts read per UTC day and warns once past `daily_read_warning` (200, in
+signals.yaml) into run.log via the warn_sink — a since_id regression must show in the
+logs before it shows on the bill. `monthly_cost: 10` charged to Class 1 in
+attribution.
+
+### Old Class 1 note, superseded
+
+Only trump_posts remains unbuilt, by decision rather than by gap — see the Class 1
+blocker note above and the Truth API question. A failing fetcher is already handled:
+the loop logs it, skips that cycle, and carries on.
 
 ---
 

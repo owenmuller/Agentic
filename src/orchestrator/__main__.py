@@ -20,8 +20,9 @@ Four subcommands, in ascending order of consequence:
            is where that verdict lives. Read-only.
 
 ``run`` wires the production fetchers through ``SourceRouter``: EDGAR for Class 3,
-Quiver for Class 2 congressional disclosures, and the Class 1 accounts declared
-unbuilt until their credentials are procured. It also holds the ``InstanceLock`` for
+Quiver for Class 2 congressional disclosures, X recent search for the Class 1
+@nolimitgains account, and the Trump leg declared unbuilt pending the Truth API
+decision. It also holds the ``InstanceLock`` for
 the data directory: a second concurrent run would interleave one audit file, double-
 spend a budget both replayed as unspent, and trade one account twice — it refuses to
 start instead. Fetcher dedup sets are seeded from the audit log at startup, so a
@@ -43,7 +44,13 @@ from datetime import datetime, timezone
 from audit.attribution import build_attribution
 from audit.log import default_data_dir
 from execution import AlpacaPriceSource
-from signals import Form13FFetcher, QuiverCongressFetcher, SignalClass, SourceRouter
+from signals import (
+    Form13FFetcher,
+    QuiverCongressFetcher,
+    SignalClass,
+    SourceRouter,
+    XRecentSearchFetcher,
+)
 
 from orchestrator.bootstrap import preflight, start
 from orchestrator.ops import (
@@ -163,6 +170,7 @@ def run() -> int:
     loop = None
     edgar = None
     quiver = None
+    x_search = None
     prices = None
     try:
         if not is_trading_weekday(now):
@@ -185,11 +193,21 @@ def run() -> int:
 
         edgar = Form13FFetcher(seen=seen_for("form_13f"))
         quiver = QuiverCongressFetcher(seen=seen_for("congressional_disclosures"))
+        x_search = XRecentSearchFetcher(
+            seen=seen_for("nolimitgains"),
+            # The billing tripwire writes straight into run.log: a since_id bug
+            # must show up there before it shows up on the bill.
+            warn_sink=lambda message: run_log.note("READS", message),
+        )
 
         def logged(source_id, inner):
             def fetch(source):
                 items = inner(source)
-                run_log.note("POLL", f"{source_id} ok items={len(items)}")
+                detail = f"{source_id} ok items={len(items)}"
+                reads = getattr(inner, "posts_read_today", None)
+                if reads is not None:
+                    detail += f" reads_today={reads}"
+                run_log.note("POLL", detail)
                 return items
 
             return fetch
@@ -200,8 +218,13 @@ def run() -> int:
                 "congressional_disclosures": logged(
                     "congressional_disclosures", quiver
                 ),
+                "nolimitgains": logged("nolimitgains", x_search),
             },
-            unbuilt={"trump_posts", "nolimitgains"},  # Class 1: credentials pending
+            # The Trump leg waits on the Truth API decision: X is a partial,
+            # sometimes-late mirror for that account, and mirror latency spends the
+            # edge that makes Class 1 worth polling at 60s. Joining is one line:
+            # move the id into routes above, against x_search.
+            unbuilt={"trump_posts"},
         )
 
         prices = AlpacaPriceSource(
@@ -257,6 +280,8 @@ def run() -> int:
             edgar.close()
         if quiver is not None:
             quiver.close()
+        if x_search is not None:
+            x_search.close()
         lock.release()
 
 
