@@ -522,3 +522,73 @@ def test_the_environment_guard_would_catch_a_real_write(tmp_path):
     finder.visit(ast.parse(offender.read_text(encoding="utf-8")))
     assert len(finder.offenders) == 1
     assert "os.environ[...]" in finder.offenders[0]
+
+
+# ================================================================================
+# Account permissions vs what the code can express
+# ================================================================================
+
+
+def test_a_matched_account_reports_no_excess():
+    from execution import BrokerPermissions
+
+    clean = BrokerPermissions(
+        options_level=2, shorting_enabled=False, margin_multiplier=Decimal("1")
+    )
+    assert clean.excess_permissions() == []
+    assert clean.can_trade_options
+    assert "matched" not in clean.describe()  # describe states facts, not verdicts
+
+
+def test_an_overpermissive_account_reports_every_excess():
+    from execution import BrokerPermissions
+
+    loose = BrokerPermissions(
+        options_level=3, shorting_enabled=True, margin_multiplier=Decimal("4")
+    )
+    findings = loose.excess_permissions()
+    assert len(findings) == 3
+    assert any("spreads" in finding for finding in findings)
+    assert any("shorting" in finding for finding in findings)
+    assert any("margin" in finding.lower() for finding in findings)
+
+
+def test_an_options_disabled_account_is_a_capability_gap_not_an_excess():
+    from execution import BrokerPermissions
+
+    no_options = BrokerPermissions(
+        options_level=0, shorting_enabled=False, margin_multiplier=Decimal("1")
+    )
+    assert no_options.excess_permissions() == []
+    assert not no_options.can_trade_options
+
+
+def test_the_adapter_parses_account_permissions():
+    adapter, _ = adapter_with(
+        httpx.Response(
+            200,
+            json={
+                "options_approved_level": 3,
+                "options_trading_level": 3,
+                "shorting_enabled": False,
+                "multiplier": "1",
+                "cash": "100000",
+            },
+        )
+    )
+    permissions = adapter.permissions()
+    assert permissions.options_level == 3
+    assert permissions.shorting_enabled is False
+    assert permissions.margin_multiplier == Decimal("1")
+    assert permissions.excess_permissions() != []  # level 3 > the level-2 need
+
+
+def test_the_effective_trading_level_wins_over_the_approved_level():
+    """options_trading_level is what orders are judged by; approval is potential."""
+    adapter, _ = adapter_with(
+        httpx.Response(
+            200,
+            json={"options_approved_level": 3, "options_trading_level": 2, "multiplier": "1"},
+        )
+    )
+    assert adapter.permissions().options_level == 2

@@ -46,6 +46,68 @@ class BrokerRejected(BrokerError):
 
 
 @dataclass(frozen=True, slots=True)
+class BrokerPermissions:
+    """What the broker account is CONFIGURED to allow — as distinct from what this
+    system's code can express.
+
+    The system's enforcement is structural (the order schema cannot represent a
+    write, a short, or a margin buy; the gate cash-secures everything), so an account
+    that permits more than the code allows is not unsafe — but it is worth one loud
+    line at every startup, because on a LIVE account the broker-side configuration is
+    a defence-in-depth layer this report says is missing. A misconfigured live
+    account should be flagged on day one, not discovered in an incident.
+    """
+
+    #: The broker's options approval level. This system needs exactly the level that
+    #: permits BUYING calls and puts (level 2 at Alpaca); level 3 adds spreads.
+    options_level: int
+    shorting_enabled: bool
+    #: Buying-power multiplier. 1 = cash-like; 2/4 = margin.
+    margin_multiplier: Decimal
+
+    #: The most a broker can be asked to permit while still matching this system:
+    #: long options yes, spreads no, shorting no, margin no.
+    SYSTEM_NEEDS_OPTIONS_LEVEL = 2
+
+    def excess_permissions(self) -> list[str]:
+        """Everything the account permits that the code forbids. Empty = matched."""
+        findings: list[str] = []
+        if self.options_level > self.SYSTEM_NEEDS_OPTIONS_LEVEL:
+            findings.append(
+                f"options level {self.options_level} permits spreads and other "
+                f"multi-leg strategies; the system only ever buys calls and puts "
+                f"(level {self.SYSTEM_NEEDS_OPTIONS_LEVEL} suffices) and its order "
+                f"schema cannot represent anything else"
+            )
+        if self.shorting_enabled:
+            findings.append(
+                "shorting is enabled at the broker; short exposure is "
+                "unrepresentable in the order schema (Constraint #2)"
+            )
+        if self.margin_multiplier > 1:
+            findings.append(
+                f"margin multiplier is {self.margin_multiplier}x; Constraint #1 "
+                f"forbids borrowed buying power — the adapter reports cash only and "
+                f"the gate cash-secures every order, but a live account should be a "
+                f"cash account"
+            )
+        return findings
+
+    @property
+    def can_trade_options(self) -> bool:
+        """Level 2+ is what long calls/puts need. Below it, option orders will be
+        refused by the broker, not by this system."""
+        return self.options_level >= self.SYSTEM_NEEDS_OPTIONS_LEVEL
+
+    def describe(self) -> str:
+        return (
+            f"options level {self.options_level}, "
+            f"shorting {'ENABLED' if self.shorting_enabled else 'disabled'}, "
+            f"margin {self.margin_multiplier}x"
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class BrokerPosition:
     """A holding as the broker reports it — the reconciliation source of truth."""
 
@@ -124,6 +186,11 @@ class BrokerAdapter(ABC):
     @abstractmethod
     def get_buying_power(self) -> Decimal:
         """Spendable cash. Cash-secured accounts only — never margin buying power."""
+
+    @abstractmethod
+    def permissions(self) -> BrokerPermissions:
+        """What the account is configured to allow. Logged and compared against what
+        the code can express at every startup — see ``BrokerPermissions``."""
 
     @abstractmethod
     def open_orders(self) -> list[str]:

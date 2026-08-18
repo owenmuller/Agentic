@@ -31,7 +31,7 @@ from typing import Callable, Optional
 
 from audit.log import AuditLog, default_data_dir
 from execution.alpaca import AlpacaAdapter
-from execution.base import BrokerAdapter, BrokerError
+from execution.base import BrokerAdapter, BrokerError, BrokerPermissions
 from execution.environment import load_environment, require_paper_or_confirmed_live
 from research.client import AnthropicResearchClient, LLMClient
 from research.config import ResearchConfig
@@ -70,6 +70,8 @@ class Preflight:
     session: SessionState
     budget: ResearchBudget
     adapter: BrokerAdapter
+    #: What the broker account is configured to allow, checked every startup.
+    permissions: BrokerPermissions
     limits: RiskLimits
     signals_config: SignalsConfig
     research_config: ResearchConfig
@@ -96,6 +98,12 @@ class Preflight:
                 f"deployed today:    {state.deployed_today}",
                 f"research budget:   {self.budget.spent} of "
                 f"{self.budget.max_per_day} spent for {self.budget.day}",
+                f"broker permits:    {self.permissions.describe()}"
+                + (
+                    "  [EXCEEDS what the code allows - see startup warnings]"
+                    if self.permissions.excess_permissions()
+                    else "  [matched to the system]"
+                ),
             ]
         )
 
@@ -170,6 +178,28 @@ def preflight(
     positions = adapter.get_positions()
     logger.info("broker reachable: %s cash across %d positions", cash, len(positions))
 
+    # What the ACCOUNT permits, vs what the code can express. The system's real
+    # enforcement is structural — the order schema cannot represent a write, a
+    # short, or a margin buy — so an over-permissive account is not unsafe, but on a
+    # live account the broker-side configuration is a defence-in-depth layer, and a
+    # missing layer gets said out loud on day one, not found in an incident.
+    permissions = adapter.permissions()
+    logger.info("broker account permits: %s", permissions.describe())
+    for finding in permissions.excess_permissions():
+        logger.warning(
+            "ACCOUNT PERMITS MORE THAN THE CODE ALLOWS: %s. The schema's "
+            "unrepresentability is the enforcement; on a live account, tighten the "
+            "broker-side setting too.",
+            finding,
+        )
+    if not permissions.can_trade_options:
+        logger.warning(
+            "account options level %d cannot BUY calls or puts; option proposals "
+            "will be refused by the broker (the system needs level %d)",
+            permissions.options_level,
+            BrokerPermissions.SYSTEM_NEEDS_OPTIONS_LEVEL,
+        )
+
     # 4. Replay.
     now_fn = clock or (lambda: datetime.now(timezone.utc))
     today = now_fn().date()
@@ -209,6 +239,7 @@ def preflight(
         session=session,
         budget=budget,
         adapter=adapter,
+        permissions=permissions,
         limits=limits,
         signals_config=signals_config,
         research_config=research_config,

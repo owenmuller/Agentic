@@ -16,6 +16,7 @@ from execution.market_data import DATA_BASE_URL, AlpacaPriceSource
 from execution.base import (
     BrokerAdapter,
     BrokerError,
+    BrokerPermissions,
     BrokerPosition,
     BrokerRejected,
     OrderReceipt,
@@ -46,6 +47,7 @@ __all__ = [
     "require_paper_or_confirmed_live",
     "BrokerAdapter",
     "BrokerError",
+    "BrokerPermissions",
     "BrokerPosition",
     "BrokerRejected",
     "OrderReceipt",

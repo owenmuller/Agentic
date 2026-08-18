@@ -32,6 +32,7 @@ import httpx
 
 from execution.base import (
     BrokerAdapter,
+    BrokerPermissions,
     BrokerPosition,
     BrokerRejected,
     OrderReceipt,
@@ -151,6 +152,36 @@ class AlpacaAdapter(BrokerAdapter):
         """
         data = self._request("GET", "/v2/account")
         return Decimal(str(data["cash"]))
+
+    def permissions(self) -> BrokerPermissions:
+        """The account's configured permissions, from ``GET /v2/account``.
+
+        ``options_trading_level`` is the effective level (approved level capped by
+        any account setting); it is the one that decides what an order can do.
+        """
+        data = self._request("GET", "/v2/account")
+        level = data.get("options_trading_level", data.get("options_approved_level", 0))
+        return BrokerPermissions(
+            options_level=int(level or 0),
+            shorting_enabled=bool(data.get("shorting_enabled", False)),
+            margin_multiplier=Decimal(str(data.get("multiplier", "1"))),
+        )
+
+    def option_contracts(self, underlying: str, limit: int = 5) -> list[str]:
+        """A few live option contract symbols for ``underlying``.
+
+        Exists to answer "can this account actually see the options market" as a
+        fact rather than an inference from the approval level — and it is the first
+        sliver of the options-chain seam that short_via_puts will eventually need.
+        Read-only; no order is involved.
+        """
+        data = self._request(
+            "GET",
+            "/v2/options/contracts",
+            params={"underlying_symbols": underlying, "limit": limit},
+        )
+        contracts = (data or {}).get("option_contracts", []) or []
+        return [str(row["symbol"]) for row in contracts]
 
     def open_orders(self) -> list[str]:
         data = self._request("GET", "/v2/orders", params={"status": "open"})

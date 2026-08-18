@@ -113,3 +113,31 @@ def test_resting_order_round_trip(adapter):
         assert receipt.limit_price == Decimal("1.00")
     finally:
         adapter.cancel_order(receipt.broker_order_id)
+
+
+@needs_keys
+def test_account_permissions_are_visible_and_match_the_known_paper_config(adapter):
+    """The real paper account, as verified 2026-08-18: options fixed at level 3 by
+    Alpaca, shorting disabled, margin 1x. Level 3 exceeds the system's level-2 need,
+    which is exactly what the preflight warning exists to say out loud."""
+    permissions = adapter.permissions()
+
+    assert permissions.options_level >= 2, "account cannot buy calls/puts"
+    assert permissions.shorting_enabled is False
+    assert permissions.margin_multiplier == Decimal("1")
+    # The one expected excess on this account: level 3 permits spreads.
+    findings = permissions.excess_permissions()
+    assert all("shorting" not in finding for finding in findings)
+    assert all("margin" not in finding.lower() for finding in findings)
+
+
+@needs_keys
+def test_the_account_can_actually_see_the_options_market(adapter):
+    """Visibility as a fact, not an inference from the approval level: the contracts
+    endpoint returns real OCC symbols for a liquid underlying."""
+    contracts = adapter.option_contracts("AAPL", limit=5)
+
+    assert contracts, "no option contracts visible for AAPL"
+    for symbol in contracts:
+        assert symbol.startswith("AAPL")
+        assert len(symbol) >= 16  # OCC symbology: root + yymmdd + C/P + strike

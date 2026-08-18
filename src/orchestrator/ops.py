@@ -267,6 +267,12 @@ def health_report(
         f"deployed today: {state.deployed_today}  |  research budget: "
         f"{checks.budget.spent} of {checks.budget.max_per_day} spent for "
         f"{checks.budget.day}",
+        f"broker permits: {checks.permissions.describe()}"
+        + (
+            "  [EXCEEDS the code - schema is the enforcement]"
+            if checks.permissions.excess_permissions()
+            else "  [matched]"
+        ),
         "",
         f"open positions: {len(tracked)}",
     ]

@@ -23,6 +23,7 @@ import pytest
 from audit import AuditLog, RejectedStage
 from execution.base import (
     BrokerAdapter,
+    BrokerPermissions,
     BrokerPosition,
     BrokerRejected,
     OrderReceipt,
@@ -135,6 +136,12 @@ class FakeBroker(BrokerAdapter):
         self.payloads: list[dict] = []
         self.cancelled: list[str] = []
         self._statuses: dict[str, OrderStatus] = {}
+        #: Clean by default: exactly what the system needs, nothing beyond it.
+        self.granted = BrokerPermissions(
+            options_level=2,
+            shorting_enabled=False,
+            margin_multiplier=Decimal("1"),
+        )
 
     def submit_order(self, approved) -> OrderReceipt:
         approved = self._require_approved(approved)
@@ -168,6 +175,9 @@ class FakeBroker(BrokerAdapter):
 
     def get_buying_power(self) -> Decimal:
         return self.cash
+
+    def permissions(self) -> BrokerPermissions:
+        return self.granted
 
     def open_orders(self) -> list[str]:
         return [

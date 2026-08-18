@@ -419,3 +419,77 @@ def test_the_lock_is_a_context_manager_that_raises_when_held(tmp_path):
     # Released on exit:
     with InstanceLock(path):
         pass
+
+
+# ================================================================================
+# Permission preflight — the day-one misconfiguration flag
+# ================================================================================
+
+
+def test_preflight_warns_when_the_account_permits_more_than_the_code(
+    tmp_path, limits, signals_config, research_config, caplog
+):
+    import logging
+
+    from execution.base import BrokerPermissions
+
+    broker = FakeBroker()
+    broker.granted = BrokerPermissions(
+        options_level=3, shorting_enabled=True, margin_multiplier=Decimal("2")
+    )
+    with caplog.at_level(logging.WARNING, logger="orchestrator.bootstrap"):
+        checks = preflight(
+            adapter=broker,
+            **preflight_kwargs(tmp_path, limits, signals_config, research_config),
+        )
+
+    warnings = [r.message for r in caplog.records if "PERMITS MORE" in r.message]
+    assert len(warnings) == 3
+    assert "EXCEEDS" in checks.describe()
+
+
+def test_preflight_is_quiet_for_a_matched_account(
+    tmp_path, limits, signals_config, research_config, caplog
+):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="orchestrator.bootstrap"):
+        checks = preflight(
+            adapter=FakeBroker(),  # clean by default: level 2, no shorting, 1x
+            **preflight_kwargs(tmp_path, limits, signals_config, research_config),
+        )
+
+    assert [r for r in caplog.records if "PERMITS MORE" in r.message] == []
+    assert "matched to the system" in checks.describe()
+    assert "options level 2" in checks.describe()
+
+
+def test_preflight_flags_an_account_that_cannot_buy_options(
+    tmp_path, limits, signals_config, research_config, caplog
+):
+    import logging
+
+    from execution.base import BrokerPermissions
+
+    broker = FakeBroker()
+    broker.granted = BrokerPermissions(
+        options_level=0, shorting_enabled=False, margin_multiplier=Decimal("1")
+    )
+    with caplog.at_level(logging.WARNING, logger="orchestrator.bootstrap"):
+        preflight(
+            adapter=broker,
+            **preflight_kwargs(tmp_path, limits, signals_config, research_config),
+        )
+
+    assert any("cannot BUY calls or puts" in r.message for r in caplog.records)
+
+
+def test_health_shows_the_permission_line(
+    tmp_path, limits, signals_config, research_config
+):
+    checks = preflight(
+        adapter=FakeBroker(),
+        **preflight_kwargs(tmp_path, limits, signals_config, research_config),
+    )
+    report = health_report(checks, inert_engine(checks).tracked, RunLog(tmp_path / "run.log"))
+    assert "broker permits: options level 2, shorting disabled, margin 1x" in report
