@@ -84,6 +84,11 @@ class ResearchReport(BaseModel):
     priced_in_analysis: Optional[str]
     confidence: int
     invalidation_condition: str
+    #: Whether the signal looks engineered to induce a trade, and why. Nullable so the
+    #: model can say the assessment does not apply, but the prompt asks for an explicit
+    #: "none detected" instead — an absent assessment and a clean one are different
+    #: findings, and only one of them is evidence about the source.
+    manipulation_assessment: Optional[str]
 
     @field_validator("confidence")
     @classmethod
@@ -99,7 +104,7 @@ class ResearchReport(BaseModel):
             raise ValueError("must not be blank")
         return value
 
-    @field_validator("priced_in_analysis")
+    @field_validator("priced_in_analysis", "manipulation_assessment")
     @classmethod
     def _blank_is_absent(cls, value: Optional[str]) -> Optional[str]:
         """A whitespace-only analysis is an absent one, not a present one."""
@@ -115,6 +120,50 @@ class ResearchReport(BaseModel):
     @property
     def has_priced_in_analysis(self) -> bool:
         return bool(self.priced_in_analysis)
+
+    @property
+    def flags_manipulation(self) -> bool:
+        """True when the assessment reports something rather than clearing the signal."""
+        return is_manipulation_flagged(self.manipulation_assessment)
+
+
+#: Phrasings that mean "I looked and found nothing". Matching these keeps a clean
+#: assessment from being counted as a finding.
+_NONE_DETECTED_MARKERS = frozenset(
+    {
+        "none",
+        "none detected",
+        "none found",
+        "none apparent",
+        "no manipulation detected",
+        "no manipulation",
+        "no manipulation found",
+        "no manipulation apparent",
+        "not applicable",
+        "n/a",
+        "nothing detected",
+    }
+)
+
+
+def is_manipulation_flagged(assessment: Optional[str]) -> bool:
+    """Does this assessment report a finding?
+
+    Absent, blank, or an explicit all-clear means no. Anything else counts.
+
+    This is string matching on model output, which is normally a smell. It is
+    acceptable here for one reason: the only thing downstream of this boolean is a
+    per-source counter in the credibility log. It cannot move a position, a cap, or a
+    confidence score, so a misclassification costs an inaccurate statistic and nothing
+    else. Erring toward counting an ambiguous assessment as a flag is the conservative
+    direction (Constraint #6).
+    """
+    if assessment is None:
+        return False
+    normalised = assessment.strip().lower().rstrip(".!").strip()
+    if not normalised:
+        return False
+    return normalised not in _NONE_DETECTED_MARKERS
 
 
 class ResearchRejectionCode(StrEnum):
@@ -186,7 +235,9 @@ def report_tool_definition() -> dict[str, Any]:
             "Submit your research verdict on the signal. Call this exactly once, "
             "after any searching you need. Every field is required; set "
             "priced_in_analysis to null only when the signal carries no disclosure "
-            "lag to reason about."
+            "lag to reason about, and state manipulation_assessment explicitly — "
+            "write \"none detected\" rather than leaving it null when you looked and "
+            "found nothing."
         ),
         "strict": True,
         "input_schema": schema,

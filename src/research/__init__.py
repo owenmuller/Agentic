@@ -34,6 +34,7 @@ from research.reports import (
     ResearchRejectionCode,
     ResearchReport,
     TimeHorizon,
+    is_manipulation_flagged,
     report_tool_definition,
     strip_unsupported_schema_keywords,
 )
@@ -60,6 +61,7 @@ __all__ = [
     "WebSearchConfig",
     "build_user_prompt",
     "default_research_path",
+    "is_manipulation_flagged",
     "report_tool_definition",
     "strip_unsupported_schema_keywords",
 ]

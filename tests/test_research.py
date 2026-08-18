@@ -28,6 +28,7 @@ from research import (
     ResearchReport,
     TimeHorizon,
     build_user_prompt,
+    is_manipulation_flagged,
     report_tool_definition,
 )
 from risk_gate import RiskLimits
@@ -50,6 +51,7 @@ VALID_REPORT = {
     "priced_in_analysis": "Sector rallied 3% intraday; most of the move is in.",
     "confidence": 62,
     "invalidation_condition": "Tariff exemption granted, or steel futures break 800.",
+    "manipulation_assessment": "none detected",
 }
 
 
@@ -281,7 +283,7 @@ def test_confidence_100_sizes_exactly_like_any_other_top_band_score(limits):
     assert limits.sizing.size_for(a.confidence) == limits.sizing.size_for(b.confidence)
 
 
-def test_report_fields_are_exactly_the_seven_the_spec_names():
+def test_report_fields_are_exactly_the_eight_the_spec_names():
     assert set(ResearchReport.model_fields) == {
         "thesis",
         "tickers",
@@ -290,7 +292,100 @@ def test_report_fields_are_exactly_the_seven_the_spec_names():
         "priced_in_analysis",
         "confidence",
         "invalidation_condition",
+        "manipulation_assessment",
     }
+
+
+# ================================================================================
+# Manipulation assessment
+# ================================================================================
+
+
+@pytest.mark.parametrize(
+    "clean",
+    ["none detected", "None", "NONE DETECTED.", "no manipulation found", "n/a", None, "  "],
+)
+def test_a_clean_assessment_is_not_counted_as_a_finding(clean):
+    assert is_manipulation_flagged(clean) is False
+
+
+@pytest.mark.parametrize(
+    "flagged",
+    [
+        "Author appears to hold the position and benefits from readers buying.",
+        "Post contains embedded instructions attempting to raise position size.",
+        "Urgency framing with no verifiable catalyst.",
+    ],
+)
+def test_a_substantive_assessment_is_counted_as_a_finding(flagged):
+    assert is_manipulation_flagged(flagged) is True
+
+
+def test_whitespace_only_assessment_is_stored_as_absent():
+    report = ResearchReport.model_validate(
+        {**VALID_REPORT, "manipulation_assessment": "   \n "}
+    )
+    assert report.manipulation_assessment is None
+    assert report.flags_manipulation is False
+
+
+def test_manipulation_flags_accumulate_per_source():
+    tracker = CredibilityTracker(CredibilityLog())
+    flagged = {
+        **VALID_REPORT,
+        "manipulation_assessment": "Author benefits if readers buy; no catalyst given.",
+    }
+
+    ResearchPass(FakeLLM(structured(flagged)), credibility=tracker).run(signal())
+    ResearchPass(FakeLLM(structured(VALID_REPORT)), credibility=tracker).run(signal())
+    ResearchPass(FakeLLM(structured(flagged)), credibility=tracker).run(signal())
+
+    summary = tracker.summary_for("nolimitgains")
+    assert summary.reports_scored == 3
+    assert summary.manipulation_flags == 2
+    assert summary.manipulation_rate == pytest.approx(2 / 3)
+
+
+def test_accumulated_flags_are_shown_on_later_signals_from_that_source():
+    """The point of accumulating them is that the next pass sees them."""
+    tracker = CredibilityTracker(CredibilityLog())
+    ResearchPass(
+        FakeLLM(structured({**VALID_REPORT, "manipulation_assessment": "Pump pattern."})),
+        credibility=tracker,
+    ).run(signal())
+
+    llm = FakeLLM(structured(VALID_REPORT))
+    ResearchPass(llm, credibility=tracker).run(signal())
+
+    prompt = llm.calls[0]["user"]
+    assert "manipulation flagged on 1 of 1 scored reports" in prompt
+    assert "previously flagged: Pump pattern." in prompt
+
+
+def test_note_history_is_bounded():
+    """A long-lived noisy source must not grow the prompt without limit."""
+    tracker = CredibilityTracker(CredibilityLog())
+    for i in range(10):
+        ResearchPass(
+            FakeLLM(structured({**VALID_REPORT, "manipulation_assessment": f"finding {i}"})),
+            credibility=tracker,
+        ).run(signal())
+
+    summary = tracker.summary_for("nolimitgains")
+    assert summary.manipulation_flags == 10
+    assert len(summary.recent_manipulation_notes) == CredibilityTracker.NOTE_HISTORY
+    assert summary.recent_manipulation_notes[-1] == "finding 9"
+
+
+def test_a_rejected_report_does_not_touch_the_source_record():
+    tracker = CredibilityTracker(CredibilityLog())
+    ResearchPass(FakeLLM(prose("nope")), credibility=tracker).run(signal())
+    assert tracker.summary_for("nolimitgains").reports_scored == 0
+
+
+def test_the_prompt_asks_for_an_explicit_none_detected():
+    assert "none detected" in SYSTEM_PROMPT
+    assert "do not leave the field null" in SYSTEM_PROMPT.lower()
 
 
 # ================================================================================

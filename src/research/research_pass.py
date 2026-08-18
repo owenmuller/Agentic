@@ -110,6 +110,10 @@ class ResearchPass:
                 excerpt=report.thesis,
             )
 
+        if self._credibility is not None:
+            # Every accepted report updates the source's record, flagged or not.
+            self._credibility.record_report(signal.source_id, report)
+
         return report
 
     # -- internals ----------------------------------------------------------------
@@ -119,9 +123,7 @@ class ResearchPass:
         if self._credibility is None:
             return None
         summary = self._credibility.summary_for(signal.source_id)
-        if summary.forward_calls_seen == 0 and summary.retrospectives_discarded == 0:
-            return None
-        return summary.as_context()
+        return summary.as_context() if summary.has_record else None
 
     def _reject(
         self,

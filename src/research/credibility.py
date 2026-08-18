@@ -15,9 +15,12 @@ describing its own selection bias.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from signals import CredibilityLog, Signal
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle guard
+    from research.reports import ResearchReport
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +32,13 @@ class CredibilitySummary:
     retrospectives_discarded: int
     resolved_calls: int
     winning_calls: int
+    #: Reports produced for this source, whether or not they flagged anything.
+    reports_scored: int = 0
+    #: Reports whose manipulation_assessment found something.
+    manipulation_flags: int = 0
+    #: The most recent findings verbatim, newest last. Bounded so the prompt cannot
+    #: grow without limit as a source accumulates history.
+    recent_manipulation_notes: tuple[str, ...] = ()
 
     @property
     def hit_rate(self) -> Optional[float]:
@@ -43,6 +53,30 @@ class CredibilitySummary:
         if self.forward_calls_seen <= 0:
             return None
         return self.retrospectives_discarded / self.forward_calls_seen
+
+    @property
+    def has_record(self) -> bool:
+        """Is there anything here worth showing the model?
+
+        Deliberately covers every counter, not just signal volume: a source whose only
+        history is a manipulation finding has the most relevant record of all.
+        """
+        return any(
+            (
+                self.forward_calls_seen,
+                self.retrospectives_discarded,
+                self.resolved_calls,
+                self.reports_scored,
+                self.manipulation_flags,
+            )
+        )
+
+    @property
+    def manipulation_rate(self) -> Optional[float]:
+        """Fraction of scored reports that flagged manipulation."""
+        if self.reports_scored <= 0:
+            return None
+        return self.manipulation_flags / self.reports_scored
 
     def as_context(self) -> str:
         """A plain-text summary for the prompt. States absence rather than implying it."""
@@ -66,23 +100,52 @@ class CredibilitySummary:
                 f"- realised hit rate: {self.hit_rate:.0%} "
                 f"({self.winning_calls} of {self.resolved_calls} resolved calls)"
             )
+
+        if self.reports_scored:
+            lines.append(
+                f"- manipulation flagged on {self.manipulation_flags} of "
+                f"{self.reports_scored} scored reports"
+            )
+            for note in self.recent_manipulation_notes:
+                lines.append(f"  - previously flagged: {note}")
         return "\n".join(lines)
 
 
 class CredibilityTracker:
     """Accumulates per-source counts from signals, the credibility log, and outcomes."""
 
+    #: How many past manipulation findings to replay into a prompt.
+    NOTE_HISTORY = 3
+
     def __init__(self, credibility_log: Optional[CredibilityLog] = None) -> None:
         self._log = credibility_log
         self._forward_calls: dict[str, int] = {}
         self._resolved: dict[str, int] = {}
         self._wins: dict[str, int] = {}
+        self._reports: dict[str, int] = {}
+        self._flags: dict[str, int] = {}
+        self._notes: dict[str, list[str]] = {}
 
     def observe(self, signal: Signal) -> None:
         """Count an emitted signal. Only forward calls reach the queue at all."""
         self._forward_calls[signal.source_id] = (
             self._forward_calls.get(signal.source_id, 0) + 1
         )
+
+    def record_report(self, source_id: str, report: "ResearchReport") -> None:
+        """Fold a finished report's manipulation assessment into the source's record.
+
+        Called by the research pass on every report it produces, flagged or not — the
+        denominator matters as much as the numerator. A source flagged once in fifty
+        reports is a different source from one flagged once in two.
+        """
+        self._reports[source_id] = self._reports.get(source_id, 0) + 1
+        if not report.flags_manipulation:
+            return
+        self._flags[source_id] = self._flags.get(source_id, 0) + 1
+        notes = self._notes.setdefault(source_id, [])
+        notes.append(str(report.manipulation_assessment))
+        del notes[: -self.NOTE_HISTORY]
 
     def record_outcome(self, source_id: str, *, won: bool) -> None:
         """Resolve one call to a win or a loss.
@@ -106,4 +169,7 @@ class CredibilityTracker:
             retrospectives_discarded=self._retrospectives_for(source_id),
             resolved_calls=self._resolved.get(source_id, 0),
             winning_calls=self._wins.get(source_id, 0),
+            reports_scored=self._reports.get(source_id, 0),
+            manipulation_flags=self._flags.get(source_id, 0),
+            recent_manipulation_notes=tuple(self._notes.get(source_id, ())),
         )
