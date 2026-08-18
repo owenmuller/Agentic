@@ -45,6 +45,7 @@ from signals import Signal, SignalQueue
 from signals.scanners import Scanner
 
 from orchestrator.budget import ResearchBudget
+from orchestrator.exits import ExitEngine
 from orchestrator.pipeline import PipelineResult, SignalPipeline
 from orchestrator.state import SessionState
 
@@ -60,6 +61,12 @@ class TickReport:
     processed: list[PipelineResult] = field(default_factory=list)
     deferred: int = 0
     settled: int = 0
+    #: Thesis reviews run this tick (each spent one research pass).
+    reviews_run: int = 0
+    #: Exit orders that went out this tick, both guardrail and review-driven.
+    exits_started: int = 0
+    #: Positions fully closed this tick — each wrote an OutcomeRecord.
+    positions_closed: int = 0
     halted: bool = False
 
     @property
@@ -76,6 +83,7 @@ class TradingLoop:
         scanners: Sequence[Scanner],
         queue: SignalQueue,
         pipeline: SignalPipeline,
+        exits: ExitEngine,
         budget: ResearchBudget,
         session: SessionState,
         gate: RiskGate,
@@ -88,6 +96,7 @@ class TradingLoop:
         self._scanners = tuple(scanners)
         self._queue = queue
         self._pipeline = pipeline
+        self._exits = exits
         self._budget = budget
         self._session = session
         self._gate = gate
@@ -102,6 +111,10 @@ class TradingLoop:
     @property
     def pipeline(self) -> SignalPipeline:
         return self._pipeline
+
+    @property
+    def exits(self) -> ExitEngine:
+        return self._exits
 
     @property
     def deferred(self) -> tuple[Signal, ...]:
@@ -145,8 +158,21 @@ class TradingLoop:
             report.processed.append(self._pipeline.process(signal))
 
         report.settled = len(self._pipeline.reconcile())
+
+        # Exits, after entries have settled so a position opened this tick is already
+        # tracked. Reconcile first (yesterday's exit orders), then the deterministic
+        # guardrails — which also mark to market and can trip the kill switch — then
+        # the budgeted thesis reviews. Guardrails before reviews on purpose: the layer
+        # that always works goes first.
+        now = self._clock()
+        report.positions_closed = len(self._exits.reconcile())
+        guardrail_exits = self._exits.check_guardrails(now)
+        reviews_run, review_exits = self._exits.review_theses(now)
+        report.reviews_run = reviews_run
+        report.exits_started = len(guardrail_exits) + review_exits
+
         report.halted = self._gate.kill_switch_tripped
-        self._session.persist(self._gate, self._clock())
+        self._session.persist(self._gate, now)
 
         if report.halted:
             logger.warning(
@@ -192,12 +218,16 @@ class TradingLoop:
         report = TickReport()
         report.settled = len(self._pipeline.reconcile())
         report.settled += len(self._pipeline.cancel_working())
+        report.positions_closed = len(self._exits.reconcile())
+        report.settled += len(self._exits.cancel_working())
         report.halted = self._gate.kill_switch_tripped
         self._session.persist(self._gate, self._clock())
         logger.info(
-            "shutdown complete: %d orders settled or released, %d signals still "
-            "queued for tomorrow, kill switch %s",
+            "shutdown complete: %d orders settled or released, %d positions still "
+            "open (replayed from the log at next startup), %d signals still queued "
+            "for tomorrow, kill switch %s",
             report.settled,
+            len(self._exits.tracked),
             len(self._deferred),
             "TRIPPED" if report.halted else "clear",
         )

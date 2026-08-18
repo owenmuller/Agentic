@@ -20,6 +20,13 @@ Instead the trail is a sequence of immutable records keyed by ``decision_id``:
                        a signal that stopped before the gate ever saw it, or an
                        approved order the broker refused. Carries whichever stages did
                        complete and nothing for the ones that did not.
+  ``ThesisReviewRecord``
+                       one periodic re-research of an open position: hold, close, or
+                       the review failed. Keyed by the entry's decision_id, so the
+                       whole life of a position reads as one thread.
+  ``ExitRecord``       one attempt to close a position — the typed reason, the gate's
+                       answer to the sell-to-close order, and what the broker did with
+                       it. Exits are decisions too.
 
 ``AuditTrail`` assembles those back into the single view CLAUDE.md describes.
 
@@ -197,6 +204,8 @@ class RecordKind(StrEnum):
     OUTCOME = "outcome"
     CORRECTION = "correction"
     STAGE_REJECTION = "stage_rejection"
+    THESIS_REVIEW = "thesis_review"
+    EXIT = "exit"
 
 
 class DecisionRecord(_Record):
@@ -221,6 +230,10 @@ class FillRecord(_Record):
     kind: Literal[RecordKind.FILL] = RecordKind.FILL
     decision_id: str
     recorded_at: datetime
+    #: Which way the fill went. An entry is a buy; an exit's fill is a sell. Defaults
+    #: to buy so records written before exits existed parse unchanged — every fill in
+    #: the log before this field was added was one.
+    side: Literal["buy", "sell"] = "buy"
     broker_order_id: str
     filled_quantity: Decimal
     fill_price: Decimal
@@ -308,6 +321,72 @@ class StageRejectionRecord(_Record):
     sizing: Optional[SizingSnapshot] = None
 
 
+class ExitReason(StrEnum):
+    """Why a position was closed. Defined here, like ``RejectedStage``, because the
+    log has to be readable without the code that wrote it."""
+
+    #: Deterministic guardrail: price at or below the stop set at entry.
+    MAX_LOSS_STOP = "max_loss_stop"
+    #: Deterministic guardrail: held longer than the leash for its time horizon.
+    TIME_STOP = "time_stop"
+    #: The thesis review concluded the position should close — an explicit close
+    #: verdict, or a triggered invalidation condition (which closes whatever the
+    #: action field said; the contradiction resolves toward the exit).
+    THESIS_INVALIDATED = "thesis_invalidated"
+
+
+class ReviewOutcome(StrEnum):
+    HOLD = "hold"
+    CLOSE = "close"
+    #: The review call failed or returned something malformed. Treated as HOLD by the
+    #: caller — a close on bad data is a trade on bad data — but recorded as its own
+    #: outcome, because "the model held" and "the model could not answer" are
+    #: different facts about the review layer.
+    REVIEW_FAILED = "review_failed"
+
+
+class ThesisReviewRecord(_Record):
+    """One periodic re-research of an open position.
+
+    Every review that consumed a research pass writes one, hold or not — the reviews
+    that found nothing are the denominator, and the daily research budget is replayed
+    from these records after a restart (see ``AuditLog.research_passes_on``).
+    """
+
+    kind: Literal[RecordKind.THESIS_REVIEW] = RecordKind.THESIS_REVIEW
+    decision_id: str
+    recorded_at: datetime
+    outcome: ReviewOutcome
+    #: The model's prose, verbatim. Absent when the review failed.
+    assessment: Optional[str] = None
+    invalidation_triggered: Optional[bool] = None
+    #: Failure code when the outcome is REVIEW_FAILED.
+    code: Optional[str] = None
+    message: str = ""
+
+
+class ExitRecord(_Record):
+    """One attempt to close a position, keyed by the entry's decision_id.
+
+    Carries the whole attempt in one record: the typed reason, the gate's answer to
+    the sell-to-close order, and — when the gate approved — whether the broker took
+    it. A gate rejection or a broker refusal is still a complete record; the attempt
+    happened, and retries write their own.
+    """
+
+    kind: Literal[RecordKind.EXIT] = RecordKind.EXIT
+    decision_id: str
+    recorded_at: datetime
+    reason: ExitReason
+    detail: str
+    gate: GateSnapshot
+    #: True/False once a broker submission was attempted; None when the gate rejected
+    #: and there was nothing to submit.
+    submitted: Optional[bool] = None
+    broker_order_id: Optional[str] = None
+    broker_error: Optional[str] = None
+
+
 AuditRecord = Annotated[
     Union[
         DecisionRecord,
@@ -315,6 +394,8 @@ AuditRecord = Annotated[
         OutcomeRecord,
         CorrectionRecord,
         StageRejectionRecord,
+        ThesisReviewRecord,
+        ExitRecord,
     ],
     Field(discriminator="kind"),
 ]
@@ -330,6 +411,10 @@ class AuditTrail(_Record):
     #: Rejections recorded against this decision after the gate answered — a broker
     #: refusal, or an order that terminated unfilled.
     stage_rejections: tuple[StageRejectionRecord, ...] = ()
+    #: Every thesis review this position received, in order.
+    reviews: tuple[ThesisReviewRecord, ...] = ()
+    #: Every attempt to close it, in order. Usually zero or one; retries accumulate.
+    exits: tuple[ExitRecord, ...] = ()
 
     @property
     def decision_id(self) -> str:

@@ -28,14 +28,18 @@ from audit.records import (
     AuditTrail,
     CorrectionRecord,
     DecisionRecord,
+    ExitReason,
+    ExitRecord,
     FillRecord,
     GateSnapshot,
     OutcomeRecord,
     RejectedStage,
     ResearchSnapshot,
+    ReviewOutcome,
     SignalSnapshot,
     SizingSnapshot,
     StageRejectionRecord,
+    ThesisReviewRecord,
 )
 from research.reports import ResearchReport
 from signals import Signal
@@ -124,6 +128,71 @@ class AuditLog:
         self._append(record)
         return record
 
+    def record_thesis_review(
+        self,
+        decision_id: str,
+        outcome: ReviewOutcome,
+        assessment: Optional[str] = None,
+        invalidation_triggered: Optional[bool] = None,
+        code: Optional[str] = None,
+        message: str = "",
+    ) -> ThesisReviewRecord:
+        """Record one thesis review of an open position.
+
+        Validated against the entry decision like a fill is: a review of a position
+        that was never approved means the review layer is looking at a phantom.
+        """
+        decision = self._decision(decision_id)
+        if not decision.was_approved:
+            raise AuditLogError(
+                f"{decision_id} was rejected and never held a position to review"
+            )
+        record = ThesisReviewRecord(
+            decision_id=decision_id,
+            recorded_at=self._clock(),
+            outcome=outcome,
+            assessment=assessment,
+            invalidation_triggered=invalidation_triggered,
+            code=code,
+            message=message,
+        )
+        self._append(record)
+        return record
+
+    def record_exit(
+        self,
+        decision_id: str,
+        reason: ExitReason,
+        detail: str,
+        gate_decision: object,
+        submitted: Optional[bool] = None,
+        broker_order_id: Optional[str] = None,
+        broker_error: Optional[str] = None,
+    ) -> ExitRecord:
+        """Record one attempt to close a position - exits are decisions too.
+
+        Written whether the gate approved the sell-to-close or rejected it, and
+        whether the broker took it or refused: every attempt is a fact about the
+        position, and a retry writes its own record rather than editing this one.
+        """
+        decision = self._decision(decision_id)
+        if not decision.was_approved:
+            raise AuditLogError(
+                f"{decision_id} was rejected and never held a position to exit"
+            )
+        record = ExitRecord(
+            decision_id=decision_id,
+            recorded_at=self._clock(),
+            reason=reason,
+            detail=detail,
+            gate=GateSnapshot.of(gate_decision),  # type: ignore[arg-type]
+            submitted=submitted,
+            broker_order_id=broker_order_id,
+            broker_error=broker_error,
+        )
+        self._append(record)
+        return record
+
     def record_fill(
         self,
         decision_id: str,
@@ -131,6 +200,7 @@ class AuditLog:
         filled_quantity: Decimal,
         fill_price: Decimal,
         filled_value: Optional[Decimal] = None,
+        side: str = "buy",
     ) -> FillRecord:
         """Record a fill. Refused for a decision that was never approved."""
         decision = self._decision(decision_id)
@@ -142,6 +212,7 @@ class AuditLog:
         record = FillRecord(
             decision_id=decision_id,
             recorded_at=self._clock(),
+            side=side,
             broker_order_id=broker_order_id,
             filled_quantity=filled_quantity,
             fill_price=fill_price,
@@ -263,8 +334,20 @@ class AuditLog:
         least one record, so distinct ids first recorded on a day *is* the number of
         passes bought that day. A later record against an earlier decision — a fill, an
         outcome — does not count again, because the id is not new.
+
+        Thesis reviews of open positions spend the budget too, and they run under the
+        *entry's* decision_id — an id that is not new — so they are counted by record
+        rather than by id: every ``ThesisReviewRecord`` stamped on the day is one pass,
+        failed reviews included, because the call was still made.
         """
-        return sum(1 for at in self.first_seen().values() if at.date() == day)
+        new_ids = sum(1 for at in self.first_seen().values() if at.date() == day)
+        reviews = sum(
+            1
+            for record in self.records()
+            if isinstance(record, ThesisReviewRecord)
+            and record.recorded_at.date() == day
+        )
+        return new_ids + reviews
 
     def _decision(self, decision_id: str) -> DecisionRecord:
         for record in self.records():
@@ -285,6 +368,8 @@ class AuditLog:
         outcome: Optional[OutcomeRecord] = None
         corrections: list[CorrectionRecord] = []
         rejections: list[StageRejectionRecord] = []
+        reviews: list[ThesisReviewRecord] = []
+        exits: list[ExitRecord] = []
 
         for record in self.records():
             if getattr(record, "decision_id", None) != decision_id:
@@ -299,6 +384,10 @@ class AuditLog:
                 corrections.append(record)
             elif isinstance(record, StageRejectionRecord):
                 rejections.append(record)
+            elif isinstance(record, ThesisReviewRecord):
+                reviews.append(record)
+            elif isinstance(record, ExitRecord):
+                exits.append(record)
 
         if decision is None:
             raise AuditLogError(f"no decision recorded for {decision_id}")
@@ -308,6 +397,8 @@ class AuditLog:
             outcome=outcome,
             corrections=tuple(corrections),
             stage_rejections=tuple(rejections),
+            reviews=tuple(reviews),
+            exits=tuple(exits),
         )
 
     def trails(self) -> list[AuditTrail]:

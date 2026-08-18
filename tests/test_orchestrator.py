@@ -256,6 +256,11 @@ def orchestrator_config(**overrides) -> OrchestratorConfig:
         "max_research_passes_per_day": 40,
         "tick_interval_seconds": 30,
         "account_type": "cash",
+        "exits": {
+            "max_loss_fraction": "0.15",
+            "time_stop_days": {"days": 7, "weeks": 45, "months": 120},
+            "thesis_review_interval_hours": 24,
+        },
     }
     return OrchestratorConfig.model_validate({**base, **overrides})
 

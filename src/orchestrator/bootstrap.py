@@ -36,6 +36,7 @@ from execution.environment import load_environment, require_paper_or_confirmed_l
 from research.client import AnthropicResearchClient, LLMClient
 from research.config import ResearchConfig
 from research.credibility import CredibilityTracker
+from research.exit_review import ExitReviewPass
 from research.research_pass import ResearchPass
 from risk_gate.gate import RiskGate
 from risk_gate.limits import RiskLimits
@@ -46,6 +47,7 @@ from sizing.engine import SizingEngine
 
 from orchestrator.budget import ResearchBudget
 from orchestrator.config import OrchestratorConfig
+from orchestrator.exits import ExitEngine
 from orchestrator.loop import TradingLoop
 from orchestrator.pipeline import PriceSource, SignalPipeline
 from orchestrator.state import SessionState, replay_deployed_today, seed_account_state
@@ -104,6 +106,11 @@ class Startup:
 
     loop: TradingLoop
     queue: SignalQueue
+    #: Open-position tracking and both exit layers. Shared with the loop.
+    exits: ExitEngine
+    #: The one credibility tracker, shared by the entry pass (context), the review
+    #: layer's outcomes, and the audit log (hit-rate resolution).
+    credibility: CredibilityTracker
     preflight: Preflight
 
     @property
@@ -235,11 +242,23 @@ def start(
     scanners = build_scanners(
         checks.signals_config, fetcher, queue, checks.clock, credibility_log
     )
-    research = ResearchPass(
-        llm_client or AnthropicResearchClient(checks.research_config),
-        CredibilityTracker(credibility_log),
-        checks.clock,
+    client = llm_client or AnthropicResearchClient(checks.research_config)
+    credibility = CredibilityTracker(credibility_log)
+    research = ResearchPass(client, credibility, checks.clock)
+    exits = ExitEngine(
+        gate=checks.gate,
+        adapter=checks.adapter,
+        audit=checks.audit,
+        prices=prices,
+        review_pass=ExitReviewPass(client, checks.clock),
+        budget=checks.budget,
+        config=checks.orchestrator_config.exits,
+        clock=checks.clock,
+        credibility=credibility,
     )
+    # Positions opened by earlier runs, rebuilt from the log with stops re-armed. Part
+    # of the replay step in spirit, but it needs the wired engine, so it runs here.
+    exits.replay(checks.audit.trails())
     pipeline = SignalPipeline(
         research=research,
         sizing=SizingEngine(checks.limits),
@@ -248,11 +267,13 @@ def start(
         audit=checks.audit,
         prices=prices,
         id_factory=id_factory,
+        fill_sink=exits.track_fill,
     )
     loop = TradingLoop(
         scanners=scanners,
         queue=queue,
         pipeline=pipeline,
+        exits=exits,
         budget=checks.budget,
         session=checks.session,
         gate=checks.gate,
@@ -262,4 +283,6 @@ def start(
         clock=checks.clock,
         sleeper=sleeper,
     )
-    return Startup(loop=loop, queue=queue, preflight=checks)
+    return Startup(
+        loop=loop, queue=queue, exits=exits, credibility=credibility, preflight=checks
+    )

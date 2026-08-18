@@ -22,6 +22,7 @@ moves to the next signal — there is no path here that reconsiders a rejection.
 
 from orchestrator.bootstrap import Preflight, Startup, preflight, start
 from orchestrator.budget import ResearchBudget
+from orchestrator.exits import ExitEngine, TrackedPosition
 from orchestrator.config import OrchestratorConfig, default_orchestrator_path
 from orchestrator.loop import TickReport, TradingLoop
 from orchestrator.pipeline import (
@@ -38,6 +39,7 @@ from orchestrator.state import (
 )
 
 __all__ = [
+    "ExitEngine",
     "OrchestratorConfig",
     "PipelineResult",
     "Preflight",
@@ -47,6 +49,7 @@ __all__ = [
     "SignalPipeline",
     "Startup",
     "TickReport",
+    "TrackedPosition",
     "TradingLoop",
     "WorkingOrder",
     "default_orchestrator_path",

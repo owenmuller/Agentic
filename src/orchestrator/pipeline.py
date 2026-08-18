@@ -111,6 +111,7 @@ class SignalPipeline:
         audit: AuditLog,
         prices: PriceSource,
         id_factory: Optional[Callable[[], str]] = None,
+        fill_sink: Optional[Callable[["WorkingOrder", int, Decimal], None]] = None,
     ) -> None:
         self._research = research
         self._sizing = sizing
@@ -119,6 +120,9 @@ class SignalPipeline:
         self._audit = audit
         self._prices = prices
         self._id_factory = id_factory or (lambda: uuid.uuid4().hex[:16])
+        #: Told about every settled opening fill — this is how the exit engine learns
+        #: a position exists without the pipeline knowing what an exit engine is.
+        self._fill_sink = fill_sink
         self._working: dict[str, WorkingOrder] = {}
 
     @property
@@ -369,6 +373,8 @@ class SignalPipeline:
             Decimal(filled),
             filled_avg_price,
         )
+        if self._fill_sink is not None:
+            self._fill_sink(working, filled, filled_avg_price)
         ordered = units_of(working.approved.order)
         if filled < ordered:
             # A partial fill is a fact about the order, and the decision record says a

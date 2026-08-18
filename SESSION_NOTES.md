@@ -4,13 +4,13 @@ Rolling handover between sessions. Written at the end of a session, read at the 
 of the next one. `CLAUDE.md` is the constitution and does not change here; this file is
 only ever a record of where the work got to and what comes next.
 
-**Last updated:** 2026-08-17 · at commit `80a33ef`
+**Last updated:** 2026-08-18 · exits built; see queue
 
 ---
 
 ## Build state
 
-All seven packages in `CLAUDE.md`'s build order exist and are tested. **406 passing, 4
+All seven packages in `CLAUDE.md`'s build order exist and are tested. **441 passing, 4
 skipped** (the skips are `tests/test_execution_integration.py`, which auto-skips
 without Alpaca paper credentials in `.env` — see the queue below).
 
@@ -22,7 +22,7 @@ without Alpaca paper credentials in `.env` — see the queue below).
 | `src/research/` | LLM scoring layer, structured output through a forced tool call. |
 | `src/sizing/` | Confidence table → `SizedProposal`. |
 | `src/audit/` | Append-only JSONL trail + weekly attribution. |
-| `src/orchestrator/` | The loop that wires the six together. **New this session.** |
+| `src/orchestrator/` | The loop that wires the six together, plus the exit engine. |
 
 ### The orchestrator is done
 
@@ -46,8 +46,16 @@ and nothing else:
   exists, and picking a contract is a sizing-relevant decision, not a detail.
 - Event contracts need Kalshi, which the build order puts *after* the equity leg has
   proved itself in paper.
-- **Exits are not built.** The loop opens positions and reconciles fills. It does not
-  close anything. See the queue — this is the item that gates the paper run.
+- **Exits are built** (2026-08-18): two layers in `src/orchestrator/exits.py` +
+  `src/research/exit_review.py`. Deterministic guardrails (max-loss stop, time stop,
+  frozen per position at entry from `config/orchestrator.yaml`) checked every cycle;
+  a budgeted LLM thesis review (hold/close via a closed schema) on a configured
+  cadence. A failed review is a hold, never a close; the guardrails run regardless,
+  so a position cannot become unexitable because the LLM layer is down. Every close
+  routes through gate sell-to-close validation, works during a kill-switch halt, and
+  finishes the trail: ExitRecord → sell-side FillRecord → OutcomeRecord →
+  CredibilityTracker — hit rates are real now. Open positions and pending close
+  verdicts replay from the audit log at startup. The paper run is unblocked.
 
 Each unsupported path writes a named `order_construction` rejection rather than being
 silently skipped, so the log can say how often it happened.
@@ -161,7 +169,15 @@ correct behaviour and also as far as it can go.
 `PAPER_MODE=true` stays as it is. `.env` is gitignored; the keys go there and nowhere
 else.
 
-### (c) Exit logic via `invalidation_condition` — **blocks the paper run**
+### (c) ~~Exit logic via `invalidation_condition`~~ — **DONE 2026-08-18**
+
+Built as specified below, plus deterministic guardrails the spec discussion settled
+on. `AuditLog.record_outcome` is now called by the exit engine on every full close.
+CLAUDE.md build order step 7 — the 2–4 week paper run — now measures something real.
+Remaining detail from the notes below that is still true: the loop cannot yet
+express a puts-based exit hedge, only sell-to-close of long equity.
+
+Original queue entry, kept for the reasoning:
 
 The highest-value item, and the reason to be careful about reading anything into a paper
 run started before it exists. **The loop opens positions and never closes them.** A P&L

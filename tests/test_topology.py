@@ -78,10 +78,14 @@ TOPOLOGY: dict[str, Rules] = {
     # Research reads signals and calls a model. `execution.environment` is permitted for
     # one narrow reason: the Anthropic client reads ANTHROPIC_API_KEY through the same
     # .env loader the broker adapter uses. It never touches the adapter itself.
+    # Covers both passes — entry scoring and the exit thesis review. The review's
+    # verdict is a two-member enum (hold/close); neither pass can size, approve, or
+    # send anything, and the exit orders a close verdict leads to are built and
+    # gated in the orchestrator, not here.
     "research": Rules(
         may_import=frozenset({"signals", "execution.environment"}),
         may_reach_network=True,
-        because="scores signals; cannot size or approve anything",
+        because="scores signals and reviews open positions; cannot size or approve anything",
     ),
     # Audit has to describe everything, so it reads types from everywhere. It is read
     # *by* nothing except the orchestrator — see test_only_the_orchestrator_imports_audit.

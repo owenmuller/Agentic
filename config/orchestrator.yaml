@@ -26,3 +26,32 @@ tick_interval_seconds: 30
 # negative balance (Constraint #1). Set to `margin` only if the broker account really is
 # one, which turns on day-trade counting in the risk gate below $25K equity.
 account_type: cash
+
+# EXIT LOGIC. Two layers (see src/orchestrator/exits.py):
+#
+#   1. Deterministic guardrails, no LLM, checked every loop cycle: a max-loss stop and
+#      a time stop, both fixed per-position at entry from the defaults below. These are
+#      the guarantee — they run whether or not the review layer works.
+#   2. Thesis review: a periodic LLM re-research of each open position (hold/close via
+#      a closed schema). Counts against max_research_passes_per_day above. A failed
+#      review is a hold, never a close — the guardrails still apply regardless.
+#
+# Both stops resolve boundaries toward the exit (Constraint #6): a price exactly at
+# the stop closes, a holding period exactly at the leash closes.
+exits:
+  # Close when price falls to or below entry_price x (1 - this). Per position, frozen
+  # at entry. 0.15 on a 5%-of-sleeve position bounds the loss at 0.75% of the sleeve.
+  max_loss_fraction: 0.15
+
+  # Maximum holding period, chosen by the research report's time_horizon at entry.
+  # A thesis that has not worked within its own stated horizon is a thesis that was
+  # wrong about something, whichever direction price went.
+  time_stop_days:
+    days: 7
+    weeks: 45
+    months: 120
+
+  # How often each open position gets a thesis review. Reviews spend the daily
+  # research budget; entries are processed first each tick, so a tight budget starves
+  # reviews before it starves entries.
+  thesis_review_interval_hours: 24

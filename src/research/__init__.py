@@ -26,6 +26,18 @@ from research.client import (
 )
 from research.config import ResearchConfig, WebSearchConfig, default_research_path
 from research.credibility import CredibilitySummary, CredibilityTracker
+from research.exit_review import (
+    EXIT_REVIEW_TOOL_NAME,
+    EXIT_SYSTEM_PROMPT,
+    ExitAction,
+    ExitReview,
+    ExitReviewOutcome,
+    ExitReviewPass,
+    ExitReviewRejection,
+    PositionUnderReview,
+    build_review_prompt,
+    exit_review_tool_definition,
+)
 from research.prompts import SYSTEM_PROMPT, build_user_prompt
 from research.reports import (
     REPORT_TOOL_NAME,
@@ -41,6 +53,13 @@ from research.reports import (
 from research.research_pass import LAGGED_CLASSES, ResearchOutcome, ResearchPass
 
 __all__ = [
+    "EXIT_REVIEW_TOOL_NAME",
+    "EXIT_SYSTEM_PROMPT",
+    "ExitAction",
+    "ExitReview",
+    "ExitReviewOutcome",
+    "ExitReviewPass",
+    "ExitReviewRejection",
     "LAGGED_CLASSES",
     "REPORT_TOOL_NAME",
     "SYSTEM_PROMPT",
@@ -51,6 +70,7 @@ __all__ = [
     "Direction",
     "LLMClient",
     "LLMResult",
+    "PositionUnderReview",
     "ResearchConfig",
     "ResearchOutcome",
     "ResearchPass",
@@ -59,8 +79,10 @@ __all__ = [
     "ResearchReport",
     "TimeHorizon",
     "WebSearchConfig",
+    "build_review_prompt",
     "build_user_prompt",
     "default_research_path",
+    "exit_review_tool_definition",
     "is_manipulation_flagged",
     "report_tool_definition",
     "strip_unsupported_schema_keywords",
