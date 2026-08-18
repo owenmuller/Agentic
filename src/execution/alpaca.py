@@ -22,6 +22,7 @@ want to be able to read during an incident.
 
 from __future__ import annotations
 
+import uuid
 import warnings
 from datetime import datetime
 from decimal import Decimal
@@ -91,6 +92,12 @@ class AlpacaAdapter(BrokerAdapter):
             )
         self.base_url = base_url or (PAPER_BASE_URL if self.paper else LIVE_BASE_URL)
         self.time_in_force = time_in_force
+        # Alpaca requires client_order_id to be unique per account ACROSS TIME, and
+        # the gate's approval sequence restarts at 1 in every new process — so a bare
+        # sequence collides with the previous run's orders and draws a 422. A launch
+        # token makes ids unique across restarts while the sequence still links the
+        # order to its approval in the audit trail.
+        self._launch_token = uuid.uuid4().hex[:8]
 
         if client is not None:
             self._client = client
@@ -196,7 +203,7 @@ class AlpacaAdapter(BrokerAdapter):
             "type": "limit",
             "time_in_force": self.time_in_force,
             "limit_price": str(limit_price),
-            "client_order_id": f"agentic-{approved.sequence}",
+            "client_order_id": f"agentic-{self._launch_token}-{approved.sequence}",
         }
 
     # -- plumbing ------------------------------------------------------------------

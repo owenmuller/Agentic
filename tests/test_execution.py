@@ -259,7 +259,12 @@ def test_event_contracts_are_not_routed_to_alpaca(gate):
         adapter.submit_order(approved)
 
 
-def test_client_order_id_carries_the_gate_sequence(gate):
+def test_client_order_id_carries_the_gate_sequence_and_survives_restarts(gate):
+    """Alpaca requires client_order_id to be unique per account across time, and the
+    gate sequence restarts at 1 in every process — so the id carries a per-adapter
+    launch token alongside the sequence. Two adapters (two "restarts") sending the
+    same sequence must produce different ids, or the second run's first order 422s.
+    """
     adapter, recorder = adapter_with(ORDER_ACCEPTED)
     approved = gate.submit(
         EquityBuyOrder(
@@ -269,7 +274,16 @@ def test_client_order_id_carries_the_gate_sequence(gate):
         )
     )
     adapter.submit_order(approved)
-    assert recorder.last_payload["client_order_id"] == f"agentic-{approved.sequence}"
+    sent = recorder.last_payload["client_order_id"]
+    assert sent.startswith("agentic-")
+    assert sent.endswith(f"-{approved.sequence}")
+
+    second_adapter, second_recorder = adapter_with(ORDER_ACCEPTED)
+    second_adapter.submit_order(approved)
+    assert second_recorder.last_payload["client_order_id"] != sent
+    assert second_recorder.last_payload["client_order_id"].endswith(
+        f"-{approved.sequence}"
+    )
 
 
 # ================================================================================
