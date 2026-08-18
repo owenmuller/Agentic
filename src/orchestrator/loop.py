@@ -47,6 +47,7 @@ from signals.scanners import Scanner
 from orchestrator.budget import ResearchBudget
 from orchestrator.exits import ExitEngine
 from orchestrator.pipeline import PipelineResult, SignalPipeline
+from orchestrator.prefilter import ResearchPreFilter
 from orchestrator.state import SessionState
 
 logger = logging.getLogger("orchestrator.loop")
@@ -60,6 +61,9 @@ class TickReport:
     scanner_failures: int = 0
     processed: list[PipelineResult] = field(default_factory=list)
     deferred: int = 0
+    #: Signals recorded as pre_filter rejections this tick — arrived, written down,
+    #: not worth a research pass.
+    prefiltered: int = 0
     settled: int = 0
     #: Thesis reviews run this tick (each spent one research pass).
     reviews_run: int = 0
@@ -84,6 +88,7 @@ class TradingLoop:
         queue: SignalQueue,
         pipeline: SignalPipeline,
         exits: ExitEngine,
+        prefilter: Optional[ResearchPreFilter],
         budget: ResearchBudget,
         session: SessionState,
         gate: RiskGate,
@@ -97,6 +102,7 @@ class TradingLoop:
         self._queue = queue
         self._pipeline = pipeline
         self._exits = exits
+        self._prefilter = prefilter
         self._budget = budget
         self._session = session
         self._gate = gate
@@ -150,6 +156,14 @@ class TradingLoop:
         pending.sort(key=lambda signal: (-int(signal.priority), signal.observed_at))
 
         for index, signal in enumerate(pending):
+            # The pre-filter runs BEFORE the budget: a post that names no instrument
+            # and touches no configured theme is written down, not paid for.
+            if self._prefilter is not None:
+                reason = self._prefilter.skip_reason(signal)
+                if reason is not None:
+                    self._pipeline.record_prefiltered(signal, reason)
+                    report.prefiltered += 1
+                    continue
             if not self._budget.try_spend():
                 # Deferred, not dropped: these are the first thing researched tomorrow.
                 self._deferred = pending[index:]

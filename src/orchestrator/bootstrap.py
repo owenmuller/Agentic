@@ -50,6 +50,7 @@ from orchestrator.config import OrchestratorConfig
 from orchestrator.exits import ExitEngine, unmanaged_exposure
 from orchestrator.loop import TradingLoop
 from orchestrator.pipeline import PriceSource, SignalPipeline
+from orchestrator.prefilter import ResearchPreFilter
 from orchestrator.state import SessionState, replay_deployed_today, seed_account_state
 
 logger = logging.getLogger("orchestrator.bootstrap")
@@ -335,6 +336,7 @@ def start(
         queue=queue,
         pipeline=pipeline,
         exits=exits,
+        prefilter=ResearchPreFilter.from_config(checks.signals_config),
         budget=checks.budget,
         session=checks.session,
         gate=checks.gate,

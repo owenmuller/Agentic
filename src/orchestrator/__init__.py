@@ -33,6 +33,7 @@ from orchestrator.ops import (
 )
 from orchestrator.config import OrchestratorConfig, default_orchestrator_path
 from orchestrator.loop import TickReport, TradingLoop
+from orchestrator.prefilter import ResearchPreFilter
 from orchestrator.pipeline import (
     PipelineResult,
     PriceSource,
@@ -54,6 +55,7 @@ __all__ = [
     "Preflight",
     "PriceSource",
     "ResearchBudget",
+    "ResearchPreFilter",
     "RunLog",
     "SessionState",
     "SignalPipeline",

@@ -4,7 +4,7 @@ Rolling handover between sessions. Written at the end of a session, read at the 
 of the next one. `CLAUDE.md` is the constitution and does not change here; this file is
 only ever a record of where the work got to and what comes next.
 
-**Last updated:** 2026-08-18 · paper period running — all three classes wired: Class 1 = @nolimitgains + Trump via X mirrors (Truth API consciously deferred); X token still needs Project enrollment
+**Last updated:** 2026-08-18 · all three classes LIVE (X enrollment fixed, smoke green); trump_posts research pre-filter built; Robinhood Agentic Trading assessed as live-phase broker candidate
 
 ---
 
@@ -43,22 +43,24 @@ news coverage is part of the pass, and an unverifiable post MUST come back
 source) gets a MIRROR line in run.log at session start — quiet principal or dead
 bot, a human checks which.
 
-**Open concern — research budget vs Trump volume:** Trump has posted 40+ times in a
-single day; the daily research budget is 40 passes total across all classes. A heavy
-Trump day will exhaust the budget and defer everything else (Class 1 is processed
-first by priority). Options when it bites: raise `max_research_passes_per_day`, or a
-human-approved deterministic pre-filter on trump_posts signals (only research posts
-with tickers/policy themes — CLAUDE.md already frames this source as "NLP extraction
-of tickers, sectors, policy themes"). Decision deferred to the human.
+**Budget collision — RESOLVED 2026-08-18 (human ruling): the pre-filter, not a
+bigger budget.** `orchestrator/prefilter.py`: a trump_posts signal (mirror-delivered
+included — the filter keys on the attributed source) is researched only if it names
+an instrument (the scanner's own deterministic ticker extraction) or matches a theme
+stem from `research_prefilter_themes` in signals.yaml (tariff, energy, defense,
+crypto, rate, fed, chip, china, ~30 stems; word-prefix, case-blind). Placement per
+the ruling: at research dispatch in the loop, BEFORE the budget — scanners stay dumb
+emitters. Every filtered post writes a `stage_rejection` with stage/code
+`pre_filter`, so the trail shows every Truth that arrived and why it was skipped; if
+attribution ever suggests the filter eats alpha, read what it skipped. Budget replay
+excludes pre-filtered ids (they spent nothing), and the seeded queue stops re-
+filtering the same Truth daily. `max_research_passes_per_day` stays 40.
 
-**Class 1 blocker (2026-08-18), still open:** the X bearer token in `.env` is valid but returns
-`403 client-not-enrolled` — its developer App is not attached to a Project, and v2
-access (pay-per-use included) enrolls at the Project level. Two-minute fix in the X
-developer portal: attach the App to a Project, or regenerate the token from an app
-inside one, then update `X_BEARER_TOKEN` in `.env`. Zero code changes needed after
-that; until then each Class 1 poll logs a scanner failure and is skipped (the
-fetcher's 403 message states the exact fix). The X live smoke (`X_LIVE_TESTS=1`)
-should be re-run once enrolled. Alpaca paper keys landed 2026-08-18; all 6 keyed integration
+**Class 1 blocker — CLEARED 2026-08-18:** the App was attached to the pay-per-use
+Project (Production) and `X_BEARER_TOKEN` regenerated. Live smoke green same day:
+25 real posts from @nolimitgains over 6 days, 25 posts billed (~$0.13). All three
+Class 1 sources (@nolimitgains + both Trump mirrors) poll live from the next
+scheduled session. Alpaca paper keys landed 2026-08-18; all 6 keyed integration
 tests pass. First supervised end-to-end cycle ran the same day: 3 real filings polled,
 3 real research passes, all three returned `no_position` at high confidence (82/83/80)
 — no order placed, complete audit trail in `data/audit.jsonl`. The step-7 clock
@@ -355,6 +357,40 @@ Notes for whoever builds it:
   pipeline 2-4 weeks minimum" — measure anything real.
 
 ---
+
+## Live-phase broker: Robinhood Agentic Trading (assessed 2026-08-18)
+
+Robinhood launched official **Agentic Trading** (2026-05-27, beta): a first-party
+MCP server (`https://agent.robinhood.com/mcp/trading`) trading a dedicated,
+separately funded **Agentic Account**. This retires the ToS objection that routed
+execution to Alpaca — the CLAUDE.md Robinhood note is now outdated on that point.
+Findings (full report in the 2026-08-18 session):
+
+- **Tools:** comprehensive — portfolio/balances, positions, order status, and
+  review→place→cancel order flows for **equities, options, and crypto**, plus
+  quotes, historicals, and **option chains** (`get_option_chains` /
+  `get_option_instruments` — would fill our missing options-chain seam). Order-type
+  specifics (TIF, limit semantics) and client-order-id idempotency are not publicly
+  documented; need empirical confirmation.
+- **Auth:** OAuth with interactive desktop consent at setup; autonomous operation is
+  explicitly permitted after that. Token lifetime/refresh for a headless scheduled
+  process is undocumented — the single biggest open question; needs a spike.
+- **No sandbox/paper mode.** Mitigation: minimal funding — the dedicated-account
+  model is itself a structural blast-radius cap that fits Constraint #1 (margin is
+  not enabled on Agentic accounts).
+- **Rate limits:** undocumented.
+- **Event contracts:** on the roadmap ("event contracts, futures, and more"), not
+  reachable today — the prediction sleeve stays Kalshi-bound regardless.
+- **Adapter cost:** a `RobinhoodAgenticAdapter` implementing `BrokerAdapter` plus a
+  minimal MCP-over-HTTP (JSON-RPC) client in `execution/` (topology already permits
+  network there); reads must be scoped to the Agentic account (the MCP can read ALL
+  the user's accounts); `permissions()` synthesized from account metadata.
+
+**Verdict: viable live-phase candidate; decision stays open until the paper period
+ends.** Paper stays on Alpaca (Robinhood has no paper mode to run it on). Before any
+live commitment: a small spike — open an Agentic account, minimal funding, prove
+headless token refresh across a full scheduled session, confirm limit-order TIF and
+idempotency semantics.
 
 ## Standing reminders
 

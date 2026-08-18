@@ -62,6 +62,11 @@ class SourceConfig(_Strict):
     #: delivery — silence might mean the principal is quiet, or the bot died, and a
     #: human should check which.
     silence_warning_trading_days: Optional[int] = None
+    #: When set, this source's signals are researched ONLY if they name an
+    #: instrument (per the scanner's ticker extraction) or match one of these theme
+    #: stems. Everything else is recorded as a pre_filter stage rejection instead of
+    #: spending a research pass. Human-approved 2026-08-18 for trump_posts.
+    research_prefilter_themes: tuple[str, ...] = ()
     #: For pay-per-use feeds (X): warn once the day's posts read passes this. A
     #: since_id regression re-reads the same posts every poll, and the bug should
     #: show in run.log before it shows on the bill.

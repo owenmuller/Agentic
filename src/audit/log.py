@@ -357,12 +357,26 @@ class AuditLog:
         rather than by id: every ``ThesisReviewRecord`` stamped on the day is one pass,
         failed reviews included, because the call was still made.
         """
-        new_ids = sum(1 for at in self.first_seen().values() if at.date() == day)
-        reviews = sum(
+        first_by_id: dict[str, AuditRecord] = {}
+        reviews = 0
+        for record in self.records():
+            if record.decision_id not in first_by_id:
+                first_by_id[record.decision_id] = record
+            if (
+                isinstance(record, ThesisReviewRecord)
+                and record.recorded_at.date() == day
+            ):
+                reviews += 1
+        new_ids = sum(
             1
-            for record in self.records()
-            if isinstance(record, ThesisReviewRecord)
-            and record.recorded_at.date() == day
+            for record in first_by_id.values()
+            if record.recorded_at.date() == day
+            # A pre-filtered signal got a decision_id and a record but no research
+            # call — it spent nothing, so it must not be replayed as spent.
+            and not (
+                isinstance(record, StageRejectionRecord)
+                and record.stage is RejectedStage.PRE_FILTER
+            )
         )
         return new_ids + reviews
 

@@ -288,6 +288,11 @@ class RejectedStage(StrEnum):
     decision and writes a ``DecisionRecord``.
     """
 
+    #: Filtered at research dispatch, before a budget pass was spent: the post
+    #: named no instrument and touched no configured policy theme. The record is the
+    #: point — every filtered post stays readable, so a filter that eats alpha can
+    #: be caught by reading what it skipped.
+    PRE_FILTER = "pre_filter"
     #: The research pass returned a typed rejection instead of a report.
     RESEARCH = "research"
     #: A report was produced, and sizing resolved it to nothing: confidence below the

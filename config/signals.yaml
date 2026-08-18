@@ -27,6 +27,45 @@ classes:
         # question (Truth API vs X) is decided by a human first.
         handle: "@realDonaldTrump"
         monthly_cost: 0 # delivery rides the mirror sources below on the same X meter
+        # RESEARCH PRE-FILTER (human-approved 2026-08-18). Trump can out-post the
+        # 40/day research budget by himself, and most Truths are not about markets:
+        # a post is researched only if it names an instrument (cashtag / extracted
+        # ticker) or matches one of these theme stems (word-prefix, case-insensitive:
+        # "tariff" covers tariffs/tariffed). Everything else is still fetched,
+        # deduplicated, and written to the audit trail as a pre_filter stage
+        # rejection — visible, revisitable, never silently dropped. Applies equally
+        # to mirror-delivered content (it attributes to this source).
+        research_prefilter_themes:
+          - tariff
+          - trade
+          - sanction
+          - tax
+          - energy
+          - oil
+          - gas
+          - drill
+          - defense
+          - defence
+          - military
+          - crypto
+          - bitcoin
+          - stablecoin
+          - rate
+          - fed
+          - inflation
+          - dollar
+          - currency
+          - chip
+          - semiconductor
+          - steel
+          - auto
+          - pharma
+          - drug
+          - china
+          - opec
+          - stock
+          - market
+          - economy
 
       # --- Mirrors of trump_posts (human-approved 2026-08-18) -------------------
       # Decision: ride X mirror accounts, not the Truth API; the upgrade decision
