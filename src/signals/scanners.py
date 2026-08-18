@@ -34,6 +34,7 @@ from signals.classification import ClassificationResult, classify_post, extract_
 from signals.config import ClassConfig, SignalsConfig, SourceConfig
 from signals.records import (
     Classification,
+    mirror_content_key,
     CredibilityLog,
     CredibilityRecord,
     Priority,
@@ -146,9 +147,30 @@ class Scanner(ABC):
         classification: Optional[Classification] = None,
         metadata: Optional[dict[str, str]] = None,
     ) -> Signal:
+        meta = dict(item.fields) if metadata is None else dict(metadata)
+        attributed = source.id
+        external = item.external_id
+
+        if source.mirror_of:
+            # A mirror source's signals belong to the principal: research context,
+            # credibility, and attribution all key on the source whose words these
+            # are. The audit record still knows who delivered them — and the
+            # external id becomes a normalised content key, so the same original
+            # post arriving through two mirrors dedups to one signal.
+            attributed = source.mirror_of
+            external = mirror_content_key(item.content)
+            meta.update(
+                {
+                    "delivered_by": source.id,
+                    "delivered_handle": source.handle or "",
+                    "delivered_post_id": item.external_id,
+                    "provenance": "unofficial_mirror",
+                }
+            )
+
         return Signal(
-            signal_id=signal_id_for(source.id, item.external_id, content),
-            source_id=source.id,
+            signal_id=signal_id_for(attributed, external, content),
+            source_id=attributed,
             signal_class=self.signal_class,
             observed_at=observed_at,
             content=content,
@@ -156,9 +178,9 @@ class Scanner(ABC):
             raw_content=item.content,
             # Priority comes from the class, never from the content.
             priority=Priority.for_class(self.signal_class),
-            external_id=item.external_id,
+            external_id=external,
             classification=classification,
-            metadata=dict(item.fields) if metadata is None else metadata,
+            metadata=meta,
         )
 
     @abstractmethod

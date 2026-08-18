@@ -285,7 +285,11 @@ def start(
         except BrokerError as error:
             logger.error("could not cancel orphaned order %s: %s", orphan_id, error)
 
-    queue = SignalQueue()
+    # The queue's dedup is seeded with everything the log says was already
+    # researched, so a restart cannot re-buy a pass whichever fetcher re-emits the
+    # signal. This is the layer that covers mirrored content, whose external ids are
+    # normalised content keys rather than any fetcher's native ids.
+    queue = SignalQueue(seen=checks.audit.researched_external_ids())
     credibility_log = CredibilityLog()
     scanners = build_scanners(
         checks.signals_config, fetcher, queue, checks.clock, credibility_log

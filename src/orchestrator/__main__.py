@@ -58,6 +58,7 @@ from orchestrator.ops import (
     RunLog,
     health_report,
     is_trading_weekday,
+    mirror_silence,
     session_bounds,
 )
 
@@ -219,13 +220,25 @@ def run() -> int:
                     "congressional_disclosures", quiver
                 ),
                 "nolimitgains": logged("nolimitgains", x_search),
+                # The Trump leg, decided 2026-08-18: X mirror accounts, not the
+                # Truth API — the upgrade decision belongs to attribution data.
+                # Signals attribute to trump_posts; the audit record keeps the
+                # deliverer.
+                "trump_mirror_ttox": logged("trump_mirror_ttox", x_search),
+                "trump_mirror_tdp": logged("trump_mirror_tdp", x_search),
             },
-            # The Trump leg waits on the Truth API decision: X is a partial,
-            # sometimes-late mirror for that account, and mirror latency spends the
-            # edge that makes Class 1 worth polling at 60s. Joining is one line:
-            # move the id into routes above, against x_search.
+            # The original account is not polled directly; its content arrives via
+            # the mirror sources above.
             unbuilt={"trump_posts"},
         )
+
+        # Mirror health: silence is ambiguous (quiet principal, or dead bot), so it
+        # goes to a human via run.log rather than to any automatic action.
+        for message in mirror_silence(
+            checks.audit, checks.signals_config, datetime.now(timezone.utc)
+        ):
+            logger.warning("%s", message)
+            run_log.note("MIRROR", message)
 
         prices = AlpacaPriceSource(
             feed=checks.orchestrator_config.market_data.feed,

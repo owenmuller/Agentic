@@ -312,14 +312,23 @@ def test_the_router_dispatches_each_class_to_its_fetcher(signals_config):
         routes={
             "form_13f": fake("edgar"),
             "congressional_disclosures": fake("quiver"),
+            "nolimitgains": fake("x"),
+            "trump_mirror_ttox": fake("x"),
+            "trump_mirror_tdp": fake("x"),
         },
-        unbuilt={"trump_posts", "nolimitgains"},
+        unbuilt={"trump_posts"},
     )
     for sources in router_sources(signals_config).values():
         for source in sources:
             router(source)
 
-    assert calls == ["quiver:congressional_disclosures", "edgar:form_13f"]
+    assert calls == [
+        "x:trump_mirror_ttox",
+        "x:trump_mirror_tdp",
+        "x:nolimitgains",
+        "quiver:congressional_disclosures",
+        "edgar:form_13f",
+    ]
 
 
 def test_unbuilt_sources_poll_nothing_and_warn_once(signals_config, caplog):
@@ -350,8 +359,14 @@ def test_every_configured_source_has_a_wiring_decision(signals_config):
     """The production router covers signals.yaml exactly — a source added to the
     config without a routing decision fails here before it fails at 9:30."""
     production = SourceRouter(
-        routes={"form_13f": lambda s: [], "congressional_disclosures": lambda s: []},
-        unbuilt={"trump_posts", "nolimitgains"},
+        routes={
+            "form_13f": lambda s: [],
+            "congressional_disclosures": lambda s: [],
+            "nolimitgains": lambda s: [],
+            "trump_mirror_ttox": lambda s: [],
+            "trump_mirror_tdp": lambda s: [],
+        },
+        unbuilt={"trump_posts"},
     )
     for sources in router_sources(signals_config).values():
         for source in sources:

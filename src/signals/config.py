@@ -52,6 +52,16 @@ class SourceConfig(_Strict):
     watchlist: tuple[dict[str, str], ...] = ()
     #: Contact header for sources that require one (SEC EDGAR). Must name an email.
     user_agent: Optional[str] = None
+    #: Source type. "mirror" marks an unofficial account that republishes another
+    #: source's posts; its signals are attributed to ``mirror_of`` for research and
+    #: attribution, while the audit record preserves which mirror delivered them.
+    type: Optional[str] = None
+    #: For mirror sources: the source id the content actually belongs to.
+    mirror_of: Optional[str] = None
+    #: For mirror sources: warn in run.log after this many trading days without a
+    #: delivery — silence might mean the principal is quiet, or the bot died, and a
+    #: human should check which.
+    silence_warning_trading_days: Optional[int] = None
     #: For pay-per-use feeds (X): warn once the day's posts read passes this. A
     #: since_id regression re-reads the same posts every poll, and the bug should
     #: show in run.log before it shows on the bill.

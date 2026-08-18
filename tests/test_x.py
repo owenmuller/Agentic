@@ -365,8 +365,15 @@ def scanner_for(fetcher, signals_config):
 
 
 def route_to_nolimitgains(fetcher):
-    """The production shape: nolimitgains routed, the Trump leg still unbuilt."""
-    return SourceRouter(routes={"nolimitgains": fetcher}, unbuilt={"trump_posts"})
+    """nolimitgains routed; the Trump principal and its mirrors quiet for these tests."""
+    return SourceRouter(
+        routes={
+            "nolimitgains": fetcher,
+            "trump_mirror_ttox": lambda source: [],
+            "trump_mirror_tdp": lambda source: [],
+        },
+        unbuilt={"trump_posts"},
+    )
 
 
 def test_a_forward_call_reaches_the_queue_classified(signals_config):

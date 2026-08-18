@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
@@ -215,6 +215,82 @@ def is_trading_weekday(now: datetime) -> bool:
     rests orders on a closed book, wasting requests and risking nothing (the same
     posture as ``signals.scanners.is_market_hours``)."""
     return now.astimezone(MARKET_TIMEZONE).weekday() < 5
+
+
+# ================================================================================
+# Mirror health
+# ================================================================================
+
+
+def _trading_days_between(start, end) -> int:
+    """Weekdays strictly after ``start`` up to and including ``end``."""
+    if end <= start:
+        return 0
+    count = 0
+    cursor = start
+    while cursor < end:
+        cursor = cursor + timedelta(days=1)
+        if cursor.weekday() < 5:
+            count += 1
+    return count
+
+
+def mirror_silence(
+    audit: AuditLog,
+    signals_config,
+    now: datetime,
+    default_threshold_trading_days: int = 2,
+) -> list[str]:
+    """Mirror sources that have delivered nothing for too many trading days.
+
+    Silence is ambiguous by nature — the principal may be quiet, or the bot may be
+    dead — so this produces a warning for a human to disambiguate, never an action.
+    The baseline for a mirror that has never delivered is the first record in the
+    log: a fresh system is not "silent", it is new.
+    """
+    last_delivery: dict[str, datetime] = {}
+    first_record: Optional[datetime] = None
+    for record in audit.records():
+        if first_record is None or record.recorded_at < first_record:
+            first_record = record.recorded_at
+        signal = getattr(record, "signal", None)
+        delivered_by = getattr(signal, "delivered_by", None) if signal else None
+        if delivered_by:
+            seen = last_delivery.get(delivered_by)
+            if seen is None or record.recorded_at > seen:
+                last_delivery[delivered_by] = record.recorded_at
+    if first_record is None:
+        return []  # nothing has ever run; there is no silence to measure
+
+    messages: list[str] = []
+    for klass in signals_config.classes.values():
+        for source in klass.sources:
+            if not source.mirror_of:
+                continue
+            threshold = (
+                source.silence_warning_trading_days
+                or default_threshold_trading_days
+            )
+            last = last_delivery.get(source.id)
+            baseline = last or first_record
+            gap = _trading_days_between(baseline.date(), now.date())
+            if gap < threshold:
+                continue
+            if last is None:
+                messages.append(
+                    f"mirror {source.id} ({source.handle}) has NEVER delivered a "
+                    f"post in {gap} trading days of records — the bot may be dead, "
+                    f"misconfigured, or {source.mirror_of} may be quiet; a human "
+                    f"should check which"
+                )
+            else:
+                messages.append(
+                    f"mirror {source.id} ({source.handle}) has been silent for "
+                    f"{gap} trading days (last delivery "
+                    f"{last.date().isoformat()}) — {source.mirror_of} may be "
+                    f"quiet, or the bot may be dead; a human should check which"
+                )
+    return messages
 
 
 # ================================================================================

@@ -4,20 +4,54 @@ Rolling handover between sessions. Written at the end of a session, read at the 
 of the next one. `CLAUDE.md` is the constitution and does not change here; this file is
 only ever a record of where the work got to and what comes next.
 
-**Last updated:** 2026-08-18 · paper period running — Class 2 live; Class 1 partially live (@nolimitgains wired, X token needs Project enrollment); Trump leg pending Truth API decision
+**Last updated:** 2026-08-18 · paper period running — all three classes wired: Class 1 = @nolimitgains + Trump via X mirrors (Truth API consciously deferred); X token still needs Project enrollment
 
 ---
 
 ## PAPER PERIOD: started 2026-08-18
 
-CLAUDE.md build order step 7 is running: **Class 3 (EDGAR 13F) + Class 2 (Quiver
-congressional disclosures) + Class 1 partially (@nolimitgains via X recent search,
-wired 2026-08-18)**. The Trump leg is pending the Truth API decision — X is a
-partial, sometimes-late mirror for that account, and mirror latency spends the edge
-that makes Class 1 worth polling at 60s. Joining it later is one route line in
-`orchestrator/__main__.py` (the handle already sits in signals.yaml).
+CLAUDE.md build order step 7 is running: **all three classes wired.** Class 3 =
+EDGAR 13F; Class 2 = Quiver congressional disclosures; Class 1 = @nolimitgains plus
+the Trump leg via X mirror accounts (decided and human-approved 2026-08-18).
 
-**Class 1 blocker (2026-08-18):** the X bearer token in `.env` is valid but returns
+### The Trump leg: live via mirrors; Truth API consciously deferred
+
+Decision 2026-08-18: ride X mirror accounts on the existing fetcher rather than
+subscribe to TMTG's Truth API. **The upgrade decision belongs to attribution data**
+— if Class 1's Trump-sourced trades earn, mirror latency (~1–3 min measured) is the
+quantifiable cost that a Truth API subscription would buy back, and the attribution
+report prices that trade. Revisit when Class 1 attribution has a track record.
+
+Mirrors picked (verified active 2026-08-18 against the Truth Social archive, both
+text-based, both prompt — relay latency measured via tweet-id snowflake timestamps):
+
+- `trump_mirror_ttox` = **@TrumpTruthOnX** (primary): automated relay, ~1-min claim
+  consistent with observed timestamps, original "(TS: ...)" stamp in the text.
+- `trump_mirror_tdp` = **@TrumpDailyPosts** (secondary): 28K posts, full text with
+  original-timestamp header, ~2.5-min measured relay on a market-moving post.
+
+Mechanics: `type: mirror` + `mirror_of: trump_posts` in signals.yaml. Signals are
+**attributed to trump_posts** (research context, credibility, attribution) while the
+audit record preserves the deliverer (`SignalSnapshot.delivered_by`). Mirror signals'
+external ids are normalised content keys, so the same Truth arriving through both
+mirrors is ONE signal and one research pass — and the queue's dedup is now seeded
+from the audit log at startup, so a restart cannot re-buy a Truth it already scored
+whichever mirror re-delivers it. The research prompt carries a MIRROR PROVENANCE
+block (outside the fence): unofficial mirror, verification against Truth Social /
+news coverage is part of the pass, and an unverifiable post MUST come back
+`no_position`. Mirror health: a mirror silent for 2+ trading days (configurable per
+source) gets a MIRROR line in run.log at session start — quiet principal or dead
+bot, a human checks which.
+
+**Open concern — research budget vs Trump volume:** Trump has posted 40+ times in a
+single day; the daily research budget is 40 passes total across all classes. A heavy
+Trump day will exhaust the budget and defer everything else (Class 1 is processed
+first by priority). Options when it bites: raise `max_research_passes_per_day`, or a
+human-approved deterministic pre-filter on trump_posts signals (only research posts
+with tickers/policy themes — CLAUDE.md already frames this source as "NLP extraction
+of tickers, sectors, policy themes"). Decision deferred to the human.
+
+**Class 1 blocker (2026-08-18), still open:** the X bearer token in `.env` is valid but returns
 `403 client-not-enrolled` — its developer App is not attached to a Project, and v2
 access (pay-per-use included) enrolls at the Project level. Two-minute fix in the X
 developer portal: attach the App to a Project, or regenerate the token from an app

@@ -31,6 +31,7 @@ from signals.records import (
     SignalClass,
     SignalQueue,
     as_data_block,
+    mirror_content_key,
     signal_id_for,
 )
 from signals.scanners import (
@@ -83,5 +84,6 @@ __all__ = [
     "default_signals_path",
     "extract_tickers",
     "is_market_hours",
+    "mirror_content_key",
     "signal_id_for",
 ]

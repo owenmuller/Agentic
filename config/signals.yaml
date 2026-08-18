@@ -26,7 +26,36 @@ classes:
         # feed is one route line in orchestrator/__main__.py; the primary-venue
         # question (Truth API vs X) is decided by a human first.
         handle: "@realDonaldTrump"
-        monthly_cost: 0 # no feed active for this source yet
+        monthly_cost: 0 # delivery rides the mirror sources below on the same X meter
+
+      # --- Mirrors of trump_posts (human-approved 2026-08-18) -------------------
+      # Decision: ride X mirror accounts, not the Truth API; the upgrade decision
+      # belongs to attribution data. Signals from these attribute to trump_posts
+      # (research context, credibility, attribution); the audit record preserves
+      # which mirror delivered each one. Both are unofficial commentary-labelled
+      # bots, which is exactly why the research pass is required to verify a
+      # mirrored post exists before assigning confidence.
+      - id: trump_mirror_ttox
+        platforms: [x]
+        # Primary: automated relay, ~1-minute latency (bio claim, consistent with
+        # observed snowflake timestamps), text with original "(TS: ...)" stamp.
+        handle: "@TrumpTruthOnX"
+        type: mirror
+        mirror_of: trump_posts
+        silence_warning_trading_days: 2
+        daily_read_warning: 200
+        monthly_cost: 0 # rides the Class 1 X pay-per-use budget above
+
+      - id: trump_mirror_tdp
+        platforms: [x]
+        # Secondary: established (28K posts), full text with original-timestamp
+        # header; measured ~2.5-minute relay on a market-moving post (03.18.26).
+        handle: "@TrumpDailyPosts"
+        type: mirror
+        mirror_of: trump_posts
+        silence_warning_trading_days: 2
+        daily_read_warning: 200
+        monthly_cost: 0
         extraction:
           tickers: true
           sectors: true

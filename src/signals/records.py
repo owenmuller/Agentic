@@ -25,10 +25,11 @@ reading "thinking about TSLA here".
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import IntEnum, StrEnum
-from typing import Mapping, Optional
+from typing import Iterable, Mapping, Optional
 
 
 class SignalClass(StrEnum):
@@ -140,11 +141,17 @@ class SignalQueue:
 
     Deliberately minimal: append and drain. A scanner holding this cannot size a
     position, price an option, or reach a broker — it can only report what it saw.
+
+    ``seen`` pre-seeds the dedup set with (source_id, external_id) pairs — the
+    orchestrator passes what the audit log says was already researched, so a restart
+    cannot re-queue work it already paid for whichever fetcher re-emits it.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, seen: Optional[Iterable[tuple[str, str]]] = None) -> None:
         self._items: list[Signal] = []
-        self._seen: set[str] = set()
+        self._seen: set[str] = {
+            f"{source_id}:{key}" for source_id, key in (seen or ())
+        }
 
     def put(self, signal: Signal) -> bool:
         """Enqueue unless already seen. Returns True if it was accepted."""
@@ -193,6 +200,39 @@ class CredibilityLog:
     def __bool__(self) -> bool:
         """Always truthy — see ``SignalQueue.__bool__``."""
         return True
+
+
+#: Furniture the known mirror formats wrap around the original text: the
+#: TrumpDailyPosts-style header ("Donald J. Trump Truth Social Post 10:05 PM EST
+#: 03.18.26 ..."), the TrumpTruthOnX-style trailing timestamp ("(TS: 18 Oct 21:38
+#: ET)"), links, and zero-width padding characters some relays inject.
+_MIRROR_HEADER = re.compile(
+    r"^\s*donald\s+j\.?\s*trump\s+truth\s+social\s+post.{0,40}?\d{2}\.\d{2}\.\d{2}",
+    re.IGNORECASE | re.DOTALL,
+)
+_MIRROR_TS_SUFFIX = re.compile(r"\(ts:[^)]*\)\s*$", re.IGNORECASE)
+_URLS = re.compile(r"https?://\S+")
+_INVISIBLE = re.compile(r"[\u200b-\u200f\u2060\ufeff\u2028\u2029]")
+_NON_ALNUM = re.compile(r"[^a-z0-9 ]+")
+
+
+def mirror_content_key(content: str) -> str:
+    """A stable identity for MIRRORED content, so two mirrors of the same original
+    post dedup to one signal instead of buying two research passes.
+
+    Best-effort by nature: it strips each known mirror's furniture (headers,
+    trailing timestamps, links, invisible padding) and reduces to lowercase
+    alphanumerics. A format change at a mirror degrades this to per-mirror dedup —
+    a duplicate research pass, bounded by the daily budget — never to a missed
+    signal.
+    """
+    text = _INVISIBLE.sub("", content)
+    text = _URLS.sub(" ", text)
+    text = _MIRROR_HEADER.sub(" ", text)
+    text = _MIRROR_TS_SUFFIX.sub(" ", text)
+    text = _NON_ALNUM.sub(" ", text.lower())
+    normalised = " ".join(text.split())
+    return hashlib.sha256(normalised.encode("utf-8")).hexdigest()[:32]
 
 
 def signal_id_for(source_id: str, external_id: str, content: str) -> str:

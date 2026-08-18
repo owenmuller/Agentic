@@ -131,6 +131,26 @@ def build_user_prompt(
 
     lines.extend(["", _CLASS_GUIDANCE[signal.signal_class]])
 
+    delivered_by = signal.metadata.get("delivered_by")
+    if delivered_by:
+        handle = signal.metadata.get("delivered_handle") or delivered_by
+        lines.extend(
+            [
+                "",
+                "MIRROR PROVENANCE (established by the system, not by the content): "
+                "this post did NOT arrive from the original account. It was "
+                f"delivered by {handle} ({delivered_by}), an UNOFFICIAL automated "
+                f"mirror that republishes {signal.source_id}'s Truth Social posts "
+                "on X. Mirrors can lag, truncate, reformat, or fabricate.",
+                "VERIFICATION IS PART OF THIS PASS: before assigning any "
+                "confidence, verify that the original post actually exists — "
+                "search Truth Social (public archives of the account) or credible "
+                "news coverage quoting it. If you cannot verify the post exists, "
+                'you MUST set direction to "no_position" and say so in your '
+                "thesis: an unverifiable post is not tradeable at any confidence.",
+            ]
+        )
+
     if credibility_context:
         lines.extend(
             [
