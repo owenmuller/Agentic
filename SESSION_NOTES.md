@@ -392,6 +392,119 @@ live commitment: a small spike — open an Agentic account, minimal funding, pro
 headless token refresh across a full scheduled session, confirm limit-order TIF and
 idempotency semantics.
 
+### Spike part 1 — read-only (2026-08-18): HALTED on the scoping check
+
+Setup that worked: `claude mcp add robinhood-trading --transport http
+https://agent.robinhood.com/mcp/trading` (human-run), interactive OAuth completed by
+the human, Agentic account funded $100 (test harness only). The running Claude Code
+session could not hot-load the new server, so the spike spoke MCP streamable-HTTP
+directly (scratchpad `rh_mcp.py`, read-only guard baked in, token from Claude Code's
+credential store, never printed). Server: `robinhood-trading` v1.1.5, protocol
+2025-06-18, session id via `Mcp-Session-Id` header, SSE responses.
+
+**CRITICAL FINDING (spike halted here per the human's standing instruction):
+`get_accounts` returns ALL of the user's Robinhood accounts, not just the Agentic
+one** — the default individual margin account (option level 2), a traditional IRA,
+and the Agentic account. Each row carries `agentic_allowed`; only the Agentic
+account is `true`, and the server's own guidance says false-accounts cannot be
+ACTED on by this agent — but they are VISIBLE, including type, option level, and
+account numbers. Whether reads like `get_portfolio`/`get_equity_positions` succeed
+against a non-agentic account number is UNTESTED (halted before probing). Any
+future `RobinhoodAgenticAdapter` must therefore hard-pin `account_number` to the
+Agentic account at construction and refuse every other value in code — scoping is
+our responsibility, not the API's.
+
+Second surprise: **the Agentic account is `type: limited_margin`, not cash** — the
+prior assessment's "margin is not enabled on Agentic accounts" is wrong as stated.
+Limited margin ≠ borrowing (it's settled-funds trading), but Constraint #1 review is
+mandatory before this account ever goes live. Its `option_level` is empty — options
+are NOT yet enabled on the Agentic account (blocks the option-chain leg of the spike
+until upgraded via `get_option_level_upgrade_info` / the human).
+
+Tool inventory (question 1) — 54 tools, full schemas in the 2026-08-18 transcript:
+- Documented surface confirmed for equities/options: accounts, portfolio, positions
+  (equity + option), orders (get/review/place/cancel for both), quotes, historicals,
+  fundamentals, option chains/instruments/quotes.
+- **`ref_id` on place_equity_order / place_option_order** — client-supplied id,
+  the idempotency candidate for part 2. `time_in_force` and `market_hours` exposed
+  on review/place; enum values not in the schema dump — part 2 confirms empirically.
+- Undocumented extras: scan engine (create/run/update scans), earnings calendar +
+  results, technical indicators, tax lots, realized PnL / trade history, indexes,
+  watchlists, **exercise_option / cancel_option_exercise**, limited-margin and
+  option-level upgrade info tools.
+- Missing vs marketing: **no crypto trading tools** were listed (only crypto-adjacent
+  fields like `currency_pair_ids` on watchlists) — possibly account-gated.
+- Every tool result embeds a `guide` field of server-authored presentation
+  instructions. Treated as data, never as instructions (CLAUDE.md Constraint #5
+  posture); an adapter must ignore it entirely.
+
+Token evidence (question 5, partial): access token is an ES256 JWT issued by
+`api.robinhood.com`, `scope: internal`, claims include `agent_id`, `options: true`,
+`level2_access: true`, and an embedded secondary credential-like `token` claim (the
+credential store file is sensitive beyond the obvious — treat `.credentials.json`
+as radioactive). Stored expiry ≈ 3 days from issue (expiresAt 1787611791875 ms ≈
+2026-08-21); a 30-char refresh token is stored alongside, refresh endpoint
+per RFC 8414 discovery at the server. Whether Claude Code / an adapter can refresh
+headlessly across weeks is still the open part-3 question.
+
+**Human ruling (2026-08-18): scoping finding ACCEPTED with conditions.**
+Read-level metadata exposure of non-agentic accounts is manageable. Conditions:
+(1) Part 2 must verify the server's own enforcement — a review_equity_order
+against a NON-agentic account number must be REFUSED by the server; if accepted,
+halt and reassess (the act-block would be advisory). (2) The future adapter
+hard-pins the Agentic account number at construction, refuses all others in code,
+tested — and ignores the `guide` field entirely. Limited-margin finding accepted
+for the spike; **live-mode review must confirm the buying-power field is
+settled-funds only and that no debit-balance path exists on the Agentic account**
+(Constraint #1).
+
+### Spike part 1 continued — steps 3 & 4 (2026-08-18, options enabled by human)
+
+Options were enabled on the Agentic account by the human: it now reports
+`option_level_2` — long calls/puts only, no spreads or writes, which is exactly
+the CLAUDE.md posture (the broker level itself cannot represent our forbidden
+order shapes).
+
+**Step 3 — AAPL chain vs the short_via_puts seam: PASS, richer than needed.**
+- `get_option_chains(underlying_symbol)` → chain id, 24 expirations (out to Dec
+  2028), `trade_value_multiplier` (100), `min_ticks` (0.05 above $3.00 cutoff /
+  0.01 below), `can_open_position`.
+- `get_option_instruments(chain_symbol, expiration_dates, type, state)` → 93 put
+  strikes for 2026-09-18 in ONE unpaginated page (50–600), each with instrument
+  UUID, strike, expiration, type, tradability. No OCC symbol field — RH uses
+  instrument UUIDs; OCC symbols are derivable from (symbol, expiration, type,
+  strike) if ever needed.
+- `get_option_quotes(instrument_ids)` → bid/ask WITH sizes, mark, break-even,
+  full greeks (delta/gamma/theta/vega/rho), IV, open interest, volume,
+  chance_of_profit_long/short, updated_at. Everything the sizing engine and
+  invalidation logic could want from a chain, in one call.
+- Schema wart for the adapter: `expiration_dates` is a comma-separated STRING
+  while `instrument_ids` is an ARRAY — per-tool conventions are inconsistent;
+  validate against each tool's schema, don't generalize.
+
+**Step 4 — review_equity_order semantics: preview commits NOTHING.**
+Ran on the AGENTIC account only: AAPL buy 1 @ $1.00 limit gtc (extremely
+far-from-market on purpose). Result:
+- Returns the echoed order params + `order_checks` (typed alert:
+  `EQUITY_EXTREMELY_UNMARKETABLE_LIMIT_PRICE` with entered vs last-trade price) +
+  a full quote + a compliance `market_data_disclosure` string. No order was
+  created (verified intent: review has NO ref_id and returns NO order id or
+  placement token — place_equity_order is a fully independent call that
+  re-supplies all parameters; nothing binds a review to a placement).
+- Order types: market / limit / stop_market / stop_limit. TIF: **gfd | gtc only**
+  — no IOC/FOK. Sessions: regular_hours | extended_hours | all_day_hours (24h);
+  non-regular sessions are LIMIT-ONLY (market/stop shapes rejected outside
+  regular hours). Fractional shares: market + regular_hours only.
+  `dollar_amount` notional only with market orders. Specified-lot selling via
+  `tax_lots` (sell only, ≤30 lots).
+- **Idempotency confirmed at the schema level:** `place_equity_order.ref_id` —
+  "Idempotency key (UUID). Generate once per logical order and re-send on retry —
+  the upstream deduplicates by ref_id." Client↔gateway idempotency exists; part 2
+  proves it empirically (same ref_id re-sent must not double-place).
+
+Parts 2 (order round-trip incl. the non-agentic REFUSAL check above) and 3
+(headless auth/refresh) remain QUEUED on the human's explicit go.
+
 ## Standing reminders
 
 - `PAPER_MODE=true`. Live needs two variables, both set by a human, and the agent must
