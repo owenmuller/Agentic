@@ -502,8 +502,57 @@ far-from-market on purpose). Result:
   the upstream deduplicates by ref_id." Client↔gateway idempotency exists; part 2
   proves it empirically (same ref_id re-sent must not double-place).
 
-Parts 2 (order round-trip incl. the non-agentic REFUSAL check above) and 3
-(headless auth/refresh) remain QUEUED on the human's explicit go.
+### Spike part 2 — order round-trip (2026-08-18, human GO): findings
+
+**Condition 1 PASSED — the act-block is real server enforcement.**
+`review_equity_order` against the non-agentic default account returned
+`isError: true`, `rh_error_category: unauthorized`, "FORBIDDEN: agent not
+authorized to access this account". Non-agentic accounts are readable in
+`get_accounts` metadata but rejected at the order seam by the server itself.
+The adapter hard-pin remains a required second layer, not the only layer.
+
+**Place semantics:** `place_equity_order` (AAPL buy 1 @ $1.00 limit gtc,
+client UUID ref_id) was ACCEPTED at the gateway (state `unconfirmed`,
+`placed_agent: "agentic"` — RH stamps agent-placed orders, good for audit) and
+then **rejected by the back office ~160ms later** (state `rejected`): the review
+alert `EQUITY_EXTREMELY_UNMARKETABLE_LIMIT_PRICE` is backed by a hard
+post-placement collar for limits far from market. Consequences for the adapter:
+(a) an accepted place response is NOT a resting order — poll
+`get_equity_orders(order_id=...)` until a stable state; (b) the rejected order
+record carries **no rejection-reason field** — the review alert beforehand is
+the only readable why, so an adapter should always review-then-place and store
+the alerts in the audit record.
+
+**Idempotency: at-most-once via hard 409, NOT idempotent-return.** Re-sending
+the byte-identical place with the SAME ref_id returned
+`API error 409: "Reference ID must be unique"` — the server refuses duplicates
+rather than returning the original order (unlike Alpaca's client_order_id
+convention). Adapter retry recipe after ambiguous transport failure: re-send
+same ref_id; on 409, the first attempt registered — reconcile via
+get_equity_orders and DO NOT mint a new ref_id.
+
+**Cancel on a terminal order:** `API error 403: "Order cannot be cancelled at
+this time"` (`rh_error_category: invalid_request`). The resting-order cancel
+leg DID NOT RUN — with a $100 account, no 1-share AAPL limit can both rest
+(collar rejects far-from-market) and be affordable (buying power caps at $100
+vs $310 stock). Re-run needs re-authorized parameters: a low-priced liquid
+symbol with a limit a few % below market (exposure = that price), cancel
+immediately.
+
+**Sweep clean:** 1 order total on the account (the rejected one), 0 open,
+cash $100.0000 intact. Portfolio shape is a gift for Constraint #1 review:
+`buying_power == unleveraged_buying_power == 100.0000` — no leverage on the
+limited-margin Agentic account as configured today; live-mode review still must
+confirm no debit path exists.
+
+**Rate limits (question 6):** across ~15 calls including writes — zero
+rate-limit/retry/throttle headers, no 429s, sub-second responses throughout.
+Limits exist but are not advertised; the adapter should keep our
+one-logged-retry citizenship pattern and treat 429 handling as untestable
+until observed.
+
+Part 3 (headless auth/refresh across sessions) remains QUEUED on the human's
+explicit go, along with the re-authorized resting-cancel leg above.
 
 ## Standing reminders
 
