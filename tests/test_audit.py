@@ -760,3 +760,142 @@ def test_the_config_supplies_the_costs_the_report_consumes():
     assert costs["class_3"] == Decimal("0")
     # Class keys are SignalClass values, so the mapping into the report is direct.
     assert {SignalClass(key) for key in costs} == set(SignalClass)
+
+
+# ================================================================================
+# Research costs — a class must out-earn its model bill too (cost pass, 2026-08-19)
+# ================================================================================
+
+from audit.records import ReviewOutcome  # noqa: E402 - section-local import
+from research.reports import ResearchUsage  # noqa: E402
+
+
+def usage_of(cost: str, tokens_in: int = 10_000, tokens_out: int = 500):
+    return ResearchUsage(
+        input_tokens=tokens_in, output_tokens=tokens_out, cost_usd=Decimal(cost)
+    )
+
+
+def test_research_costs_aggregate_by_class(tmp_path, limits):
+    clock = FakeClock()
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+    gate = gate_for(limits)
+
+    # Class 1 entry pass, accepted.
+    record, _ = full_decision(log, limits, gate=gate)
+    # (full_decision doesn't thread usage; stamp a review under it instead.)
+    log.record_fill(record.decision_id, "brk-1", Decimal("10"), Decimal("140"))
+    log.record_thesis_review(
+        record.decision_id, ReviewOutcome.HOLD, assessment="fine",
+        invalidation_triggered=False, usage=usage_of("0.10"),
+    )
+    # Class 2 research-stage rejection: the pass was billed even though it failed.
+    log.record_stage_rejection(
+        "dec-c2", RejectedStage.RESEARCH, "no_structured_output", "prose",
+        make_signal(signal_id="sig-c2", signal_class=SignalClass.CLASS_2_MOMENTUM),
+        usage=usage_of("0.25"),
+    )
+
+    costs = log.research_costs_by_class(window_start=clock.now - timedelta(days=1))
+    assert costs[SignalClass.CLASS_1_REALTIME] == Decimal("0.10")
+    assert costs[SignalClass.CLASS_2_MOMENTUM] == Decimal("0.25")
+
+
+def test_an_entry_pass_is_billed_once_even_when_two_records_share_its_id(
+    tmp_path, limits
+):
+    """A decision record and a later execution rejection share a decision_id and
+    the same usage estimate — one research call, one bill."""
+    clock = FakeClock()
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+    gate = gate_for(limits)
+    signal = make_signal()
+
+    record, _ = full_decision(log, limits, gate=gate, signal=signal)
+    # Simulate the broker refusing after the decision was recorded. The pipeline
+    # threads the same usage into both records; here we stamp the rejection and
+    # prove the aggregator does not double-bill the shared id.
+    log.record_stage_rejection(
+        record.decision_id, RejectedStage.EXECUTION, "BrokerError", "refused",
+        signal, usage=usage_of("0.50"),
+    )
+
+    costs = log.research_costs_by_class(window_start=clock.now - timedelta(days=1))
+    assert costs[SignalClass.CLASS_1_REALTIME] == Decimal("0.50")
+
+
+def test_costs_outside_the_window_do_not_bill(tmp_path, limits):
+    clock = FakeClock()
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+    log.record_stage_rejection(
+        "dec-old", RejectedStage.RESEARCH, "no_structured_output", "prose",
+        make_signal(signal_id="sig-old"), usage=usage_of("0.75"),
+    )
+    costs = log.research_costs_by_class(window_start=clock.now + timedelta(days=1))
+    assert costs == {}
+
+
+def test_records_without_an_estimate_bill_nothing(tmp_path, limits):
+    clock = FakeClock()
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+    full_decision(log, limits)  # no usage threaded
+    costs = log.research_costs_by_class(window_start=clock.now - timedelta(days=1))
+    assert costs == {}
+
+
+def test_gross_positive_but_net_negative_after_research_costs_fires_the_flag(
+    tmp_path, limits
+):
+    """The verdict this line exists for: the class made money, the FREE feed cost
+    nothing, and the model bill still ate the gains. The flag fires on net of ALL
+    costs."""
+    clock = FakeClock()
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+    gate = gate_for(limits)
+
+    for n, pnl in enumerate(["30", "25"], start=1):
+        clock.advance(days=1)
+        signal = make_signal(
+            signal_id=f"sig-{n}", signal_class=SignalClass.CLASS_3_THESIS
+        )
+        record, _ = full_decision(log, limits, gate=gate, signal=signal)
+        log.record_fill(record.decision_id, f"brk-{n}", Decimal("10"), Decimal("140"))
+        log.record_outcome(record.decision_id, Decimal(pnl))
+
+    report = build_attribution(
+        log.trails(),
+        generated_at=clock.now,
+        window_days=90,
+        research_costs={SignalClass.CLASS_3_THESIS: Decimal("60.00")},
+    )
+    class_3 = report.by_class[SignalClass.CLASS_3_THESIS]
+
+    assert class_3.realised_pnl == Decimal("55")  # gross-positive
+    assert class_3.feed_cost == Decimal("0")  # the feed is free
+    assert class_3.research_cost == Decimal("60.00")
+    assert class_3.net_pnl == Decimal("-5.00")  # net-negative on research alone
+    assert class_3.is_negative
+    assert report.flagged_classes == (SignalClass.CLASS_3_THESIS,)
+
+    rendered = report.render()
+    assert "research cost" in rendered
+    assert "60.00" in rendered
+    assert "FLAGGED FOR HUMAN REVIEW" in rendered
+
+
+def test_a_class_with_only_research_spend_still_appears_in_the_report(
+    tmp_path, limits
+):
+    """Every pass rejected pre-gate leaves no trail, but the bill is real."""
+    report = build_attribution(
+        [],
+        generated_at=NOW,
+        window_days=90,
+        research_costs={SignalClass.CLASS_2_MOMENTUM: Decimal("12.50")},
+    )
+    class_2 = report.by_class[SignalClass.CLASS_2_MOMENTUM]
+    assert class_2.research_cost == Decimal("12.50")
+    assert class_2.decisions == 0
+    # Billed, but not judged: no resolved outcomes means no flag yet.
+    assert not class_2.is_negative
+    assert report.total_research_cost == Decimal("12.50")

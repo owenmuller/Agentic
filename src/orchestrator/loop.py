@@ -155,11 +155,15 @@ class TradingLoop:
         # content of a post.
         pending.sort(key=lambda signal: (-int(signal.priority), signal.observed_at))
 
+        held = self._exits.held_symbols()
+        dispatch_now = self._clock()
         for index, signal in enumerate(pending):
-            # The pre-filter runs BEFORE the budget: a post that names no instrument
-            # and touches no configured theme is written down, not paid for.
+            # The pre-filter runs BEFORE the budget: a signal the deterministic
+            # rules can already dismiss is written down, not paid for.
             if self._prefilter is not None:
-                reason = self._prefilter.skip_reason(signal)
+                reason = self._prefilter.skip_reason(
+                    signal, held=held, now=dispatch_now
+                )
                 if reason is not None:
                     self._pipeline.record_prefiltered(signal, reason)
                     report.prefiltered += 1

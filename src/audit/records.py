@@ -223,6 +223,13 @@ class DecisionRecord(_Record):
     research: ResearchSnapshot
     sizing: SizingSnapshot
     gate: GateSnapshot
+    #: Estimated LLM spend of the research pass that produced this record —
+    #: tokens summed across every API call, dollars from the pricing table in
+    #: research.yaml. Estimates for attribution; the console bill is the truth.
+    #: None when no research ran (or the model is unpriced, for the cost).
+    est_input_tokens: Optional[int] = None
+    est_output_tokens: Optional[int] = None
+    est_cost_usd: Optional[Decimal] = None
 
     @property
     def was_approved(self) -> bool:
@@ -329,6 +336,13 @@ class StageRejectionRecord(_Record):
     signal: SignalSnapshot
     research: Optional[ResearchSnapshot] = None
     sizing: Optional[SizingSnapshot] = None
+    #: Estimated LLM spend of the research pass that produced this record —
+    #: tokens summed across every API call, dollars from the pricing table in
+    #: research.yaml. Estimates for attribution; the console bill is the truth.
+    #: None when no research ran (or the model is unpriced, for the cost).
+    est_input_tokens: Optional[int] = None
+    est_output_tokens: Optional[int] = None
+    est_cost_usd: Optional[Decimal] = None
 
 
 class ExitReason(StrEnum):
@@ -373,6 +387,13 @@ class ThesisReviewRecord(_Record):
     #: Failure code when the outcome is REVIEW_FAILED.
     code: Optional[str] = None
     message: str = ""
+    #: Estimated LLM spend of the research pass that produced this record —
+    #: tokens summed across every API call, dollars from the pricing table in
+    #: research.yaml. Estimates for attribution; the console bill is the truth.
+    #: None when no research ran (or the model is unpriced, for the cost).
+    est_input_tokens: Optional[int] = None
+    est_output_tokens: Optional[int] = None
+    est_cost_usd: Optional[Decimal] = None
 
 
 class ExitRecord(_Record):

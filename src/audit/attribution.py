@@ -58,6 +58,9 @@ class ClassAttribution:
     manipulation_flags: int
     #: This class's data-feed cost, prorated to the window.
     feed_cost: Decimal = ZERO
+    #: Estimated LLM research spend attributed to this class over the window —
+    #: entry passes and thesis reviews, from the audit records' cost estimates.
+    research_cost: Decimal = ZERO
 
     @property
     def hit_rate(self) -> Optional[float]:
@@ -74,8 +77,10 @@ class ClassAttribution:
 
     @property
     def net_pnl(self) -> Decimal:
-        """What the class actually contributed: gross P&L minus its feed bill."""
-        return self.realised_pnl - self.feed_cost
+        """What the class actually contributed: gross P&L minus its feed bill and
+        the research spend it caused. Net of ALL costs — the keep/cut flag fires
+        on this number."""
+        return self.realised_pnl - self.feed_cost - self.research_cost
 
     @property
     def is_negative(self) -> bool:
@@ -89,13 +94,13 @@ class ClassAttribution:
         return self.resolved > 0 and self.net_pnl < ZERO
 
     def summary(self) -> str:
-        if self.feed_cost > ZERO:
+        if self.feed_cost > ZERO or self.research_cost > ZERO:
             pnl = (
                 f"{self.realised_pnl:+.2f} gross, {self.feed_cost:.2f} feed cost, "
-                f"{self.net_pnl:+.2f} net"
+                f"{self.research_cost:.2f} research cost, {self.net_pnl:+.2f} net"
             )
         else:
-            pnl = f"{self.realised_pnl:+.2f} realised (feed is free)"
+            pnl = f"{self.realised_pnl:+.2f} realised (no feed or research costs)"
         if self.resolved == 0:
             verdict = "no resolved outcomes yet"
         else:
@@ -125,6 +130,10 @@ class AttributionReport:
         return sum((c.feed_cost for c in self.by_class.values()), ZERO)
 
     @property
+    def total_research_cost(self) -> Decimal:
+        return sum((c.research_cost for c in self.by_class.values()), ZERO)
+
+    @property
     def total_net_pnl(self) -> Decimal:
         return sum((c.net_pnl for c in self.by_class.values()), ZERO)
 
@@ -142,7 +151,8 @@ class AttributionReport:
             f"Attribution report — {self.window_days}d window "
             f"from {self.window_start.date()} to {self.generated_at.date()}",
             f"Total: {self.total_pnl:+.2f} gross, {self.total_feed_cost:.2f} feed "
-            f"costs, {self.total_net_pnl:+.2f} net",
+            f"costs, {self.total_research_cost:.2f} research costs, "
+            f"{self.total_net_pnl:+.2f} net",
             "",
         ]
         for signal_class in sorted(self.by_class):
@@ -157,7 +167,8 @@ class AttributionReport:
                 lines.append(
                     f"  {signal_class}: {attribution.net_pnl:+.2f} net "
                     f"({attribution.realised_pnl:+.2f} gross less "
-                    f"{attribution.feed_cost:.2f} feed cost) over "
+                    f"{attribution.feed_cost:.2f} feed cost less "
+                    f"{attribution.research_cost:.2f} research cost) over "
                     f"{attribution.resolved} closed positions. CLAUDE.md calls for "
                     f"review and possible removal of this signal class."
                 )
@@ -171,6 +182,7 @@ def build_attribution(
     generated_at: datetime,
     window_days: int = DEFAULT_WINDOW_DAYS,
     feed_costs: Optional[Mapping[SignalClass, Decimal]] = None,
+    research_costs: Optional[Mapping[SignalClass, Decimal]] = None,
 ) -> AttributionReport:
     """Compute attribution from audit trails.
 
@@ -201,6 +213,11 @@ def build_attribution(
     # for the signals, and a silent month of feed cost belongs in the report.
     for signal_class, monthly in (feed_costs or {}).items():
         if monthly > ZERO:
+            buckets.setdefault(signal_class, empty_bucket())
+    # Likewise research spend: a class whose every pass was rejected pre-gate has
+    # no trails, but its LLM bill is real and belongs in its column.
+    for signal_class, spent in (research_costs or {}).items():
+        if spent > ZERO:
             buckets.setdefault(signal_class, empty_bucket())
 
     for trail in trails:
@@ -238,6 +255,7 @@ def build_attribution(
             realised_pnl=values["pnl"],  # type: ignore[arg-type]
             manipulation_flags=int(values["flags"]),  # type: ignore[arg-type]
             feed_cost=prorated_cost(signal_class),
+            research_cost=(research_costs or {}).get(signal_class, ZERO),
         )
         for signal_class, values in buckets.items()
     }

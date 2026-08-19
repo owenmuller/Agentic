@@ -673,6 +673,33 @@ laptop task (`Disable-ScheduledTask "Agentic Paper Trading"`), (3) enable the
 VPS timer. 2026-08-20 is the VPS verification session (STARTED → polls →
 STOPPED); rollback = disable the timer and re-enable the laptop task.
 
+## Cost-efficiency pass (2026-08-19): free filters before paid judgment
+
+The trump_posts principle extended system-wide. All skips write `pre_filter`
+stage rejections — visible, revisitable, never silently dropped; all rules fail
+OPEN (an unreadable field sends the signal to research, bounded by the budget).
+
+- **Class 2 pre-filter** (`signals.yaml` prefilter block on
+  congressional_disclosures): skip when the amount range tops out strictly below
+  $15,000, when observed lag exceeds 75 days, or when it is a sale in a name the
+  system does not hold (held set comes from the exit engine, deterministic).
+- **Class 3 pre-filter** (form_13f): skip filings whose period-of-report is
+  older than 120 days.
+- **Model tiering** (`research.yaml` tiers block): Class 1 stays on the
+  flagship (claude-opus-5, high). Class 2, Class 3, and exit thesis reviews run
+  claude-sonnet-4-6 at medium effort. Same schema, same validation gates —
+  only model/effort differ. Unknown tier names raise, never fall back silently.
+- **Cost instrumentation:** every research pass and exit review stamps estimated
+  input/output tokens and estimated dollars onto its audit record (accepted OR
+  rejected — a malformed pass was still paid for). Estimates come from the
+  pricing table in research.yaml. **BASELINE NUMBERS — replace with real
+  console figures after week one of the paper period.** Entry passes are billed
+  once per decision_id (a decision record and a later execution rejection share
+  one call); each thesis review bills separately.
+- **Attribution now nets ALL costs:** gross − feed − research is what the
+  keep/cut flag fires on. A class whose every pass died pre-gate still shows
+  its research bill in the report.
+
 ## Standing reminders
 
 - `PAPER_MODE=true`. Live needs two variables, both set by a human, and the agent must

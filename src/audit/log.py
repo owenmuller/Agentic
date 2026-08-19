@@ -41,8 +41,8 @@ from audit.records import (
     StageRejectionRecord,
     ThesisReviewRecord,
 )
-from research.reports import ResearchReport
-from signals import Signal
+from research.reports import ResearchReport, ResearchUsage
+from signals import Signal, SignalClass
 from sizing.engine import SizedProposal
 
 _ADAPTER: TypeAdapter = TypeAdapter(AuditRecord)
@@ -86,6 +86,7 @@ class AuditLog:
         proposal: SizedProposal,
         gate_decision: object,
         decision_id: Optional[str] = None,
+        usage: Optional[ResearchUsage] = None,
     ) -> DecisionRecord:
         """Write the complete decision-time record. Approved or rejected, both land."""
         record = DecisionRecord(
@@ -95,6 +96,9 @@ class AuditLog:
             research=ResearchSnapshot.of(report),
             sizing=SizingSnapshot.of(proposal),
             gate=GateSnapshot.of(gate_decision),  # type: ignore[arg-type]
+            est_input_tokens=usage.input_tokens if usage else None,
+            est_output_tokens=usage.output_tokens if usage else None,
+            est_cost_usd=usage.cost_usd if usage else None,
         )
         self._append(record)
         return record
@@ -108,6 +112,7 @@ class AuditLog:
         signal: Signal,
         report: Optional[ResearchReport] = None,
         proposal: Optional[SizedProposal] = None,
+        usage: Optional[ResearchUsage] = None,
     ) -> StageRejectionRecord:
         """Record a signal that stopped before the gate, or an order the broker refused.
 
@@ -124,6 +129,9 @@ class AuditLog:
             signal=SignalSnapshot.of(signal),
             research=ResearchSnapshot.of(report) if report is not None else None,
             sizing=SizingSnapshot.of(proposal) if proposal is not None else None,
+            est_input_tokens=usage.input_tokens if usage else None,
+            est_output_tokens=usage.output_tokens if usage else None,
+            est_cost_usd=usage.cost_usd if usage else None,
         )
         self._append(record)
         return record
@@ -136,6 +144,7 @@ class AuditLog:
         invalidation_triggered: Optional[bool] = None,
         code: Optional[str] = None,
         message: str = "",
+        usage: Optional[ResearchUsage] = None,
     ) -> ThesisReviewRecord:
         """Record one thesis review of an open position.
 
@@ -155,6 +164,9 @@ class AuditLog:
             invalidation_triggered=invalidation_triggered,
             code=code,
             message=message,
+            est_input_tokens=usage.input_tokens if usage else None,
+            est_output_tokens=usage.output_tokens if usage else None,
+            est_cost_usd=usage.cost_usd if usage else None,
         )
         self._append(record)
         return record
@@ -431,6 +443,43 @@ class AuditLog:
             reviews=tuple(reviews),
             exits=tuple(exits),
         )
+
+    def research_costs_by_class(
+        self, window_start: datetime
+    ) -> dict[SignalClass, Decimal]:
+        """Estimated LLM research spend per signal class inside the window.
+
+        The entry pass is counted ONCE per decision_id — a decision record and a
+        later execution-stage rejection share an id and the same usage estimate,
+        and double-billing a class for one call would overstate its costs. Thesis
+        reviews are counted per record: each review is its own pass under the
+        entry's id. Records with no estimate contribute nothing (an absent
+        estimate is absent, never zero-priced-as-free — the weekly console
+        reconciliation is where unpriced spend gets caught).
+        """
+        totals: dict[SignalClass, Decimal] = {}
+        entry_counted: set[str] = set()
+        class_of: dict[str, SignalClass] = {}
+        for record in self.records():
+            if isinstance(record, (DecisionRecord, StageRejectionRecord)):
+                class_of.setdefault(record.decision_id, record.signal.signal_class)
+        for record in self.records():
+            cost = getattr(record, "est_cost_usd", None)
+            if cost is None or record.recorded_at < window_start:
+                continue
+            if isinstance(record, (DecisionRecord, StageRejectionRecord)):
+                if record.decision_id in entry_counted:
+                    continue
+                entry_counted.add(record.decision_id)
+                signal_class = record.signal.signal_class
+            elif isinstance(record, ThesisReviewRecord):
+                signal_class = class_of.get(record.decision_id)
+                if signal_class is None:
+                    continue
+            else:
+                continue
+            totals[signal_class] = totals.get(signal_class, Decimal("0")) + cost
+        return totals
 
     def trails(self) -> list[AuditTrail]:
         return [self.trail(d.decision_id) for d in self.decisions()]

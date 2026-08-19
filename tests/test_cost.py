@@ -1,0 +1,313 @@
+"""Cost instrumentation and model tiering (cost-efficiency pass, 2026-08-19).
+
+The claims: each class resolves to the model tier research.yaml names for it, and
+Class 1 stays on the flagship; the real client sends the tier's model/effort and
+sums token usage across every API call in a pass; the pipeline stamps the usage
+estimate onto the audit record whether the pass was accepted or rejected; and the
+exit-review pass carries its own usage the same way.
+"""
+
+from __future__ import annotations
+
+from decimal import Decimal
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from execution.environment import LIVE_CONFIRMATION_VARIABLE
+from research.client import AnthropicResearchClient, LLMResult
+from research.config import ResearchConfig
+from research.exit_review import ExitReviewPass, PositionUnderReview
+from research.reports import REPORT_TOOL_NAME
+from risk_gate import RiskLimits
+from signals import SignalsConfig
+from test_orchestrator import (
+    REPORT,
+    FakeLLM,
+    build,
+    structured,
+)
+
+
+@pytest.fixture(autouse=True)
+def paper_mode(monkeypatch):
+    monkeypatch.setenv("PAPER_MODE", "true")
+    monkeypatch.delenv(LIVE_CONFIRMATION_VARIABLE, raising=False)
+
+
+@pytest.fixture(scope="session")
+def limits():
+    return RiskLimits.load()
+
+
+@pytest.fixture(scope="session")
+def signals_config():
+    return SignalsConfig.load()
+
+
+@pytest.fixture(scope="session")
+def research_config():
+    return ResearchConfig.load()
+
+
+# ================================================================================
+# Tier resolution — research.yaml is the contract
+# ================================================================================
+
+
+def test_class_1_stays_on_the_flagship(research_config):
+    tier = research_config.tier_for("class_1")
+    assert tier.model == research_config.model == "claude-opus-5"
+    assert tier.effort == research_config.effort == "high"
+
+
+@pytest.mark.parametrize("name", ["class_2", "class_3", "exit_review"])
+def test_lagged_classes_and_reviews_run_on_the_cheaper_tier(research_config, name):
+    tier = research_config.tier_for(name)
+    assert tier.model == "claude-sonnet-4-6"
+    assert tier.effort == "medium"
+
+
+def test_an_unknown_tier_is_a_bug_not_a_fallback(research_config):
+    with pytest.raises(ValueError, match="unknown research tier"):
+        research_config.tier_for("class_4")
+
+
+def test_an_unpriced_model_estimates_nothing(research_config):
+    assert research_config.estimate_cost_usd("never-heard-of-it", 1000, 1000) is None
+
+
+def test_cost_estimate_math(research_config):
+    # sonnet at 3.00/15.00 per mtok: 200k in + 10k out = 0.60 + 0.15
+    cost = research_config.estimate_cost_usd("claude-sonnet-4-6", 200_000, 10_000)
+    assert cost == Decimal("0.750000")
+
+
+# ================================================================================
+# The real client: per-tier model selection and usage accounting
+# ================================================================================
+
+
+def _response(usage_in: int, usage_out: int, stop_reason: str = "tool_use"):
+    return SimpleNamespace(
+        content=[
+            SimpleNamespace(
+                type="tool_use", name=REPORT_TOOL_NAME, input={"ok": True}
+            )
+        ],
+        stop_reason=stop_reason,
+        model="whatever-the-api-echoes",
+        usage=SimpleNamespace(input_tokens=usage_in, output_tokens=usage_out),
+    )
+
+
+class RecordingAPI:
+    """Stands in for the anthropic SDK client."""
+
+    def __init__(self, *responses):
+        self._responses = list(responses)
+        self.create_calls: list[dict[str, Any]] = []
+        self.messages = self
+
+    def create(self, **kwargs):
+        self.create_calls.append(kwargs)
+        return self._responses.pop(0)
+
+
+def _config(web_search: bool) -> ResearchConfig:
+    return ResearchConfig.model_validate(
+        {
+            "version": 1,
+            "model": "claude-opus-5",
+            "max_tokens": 8000,
+            "effort": "high",
+            "web_search": {"enabled": web_search, "max_uses": 2},
+            "max_search_continuations": 1,
+            "tiers": {"class_2": {"model": "claude-sonnet-4-6", "effort": "medium"}},
+            "pricing": {
+                "claude-sonnet-4-6": {
+                    "input_per_mtok": "3.00",
+                    "output_per_mtok": "15.00",
+                }
+            },
+        }
+    )
+
+
+def test_the_client_sends_the_tiers_model_and_effort():
+    api = RecordingAPI(_response(1000, 200))
+    client = AnthropicResearchClient(_config(web_search=False), client=api)
+
+    result = client.research(system="s", user="u", tool={"name": "t"}, tier="class_2")
+
+    call = api.create_calls[0]
+    assert call["model"] == "claude-sonnet-4-6"
+    assert call["output_config"] == {"effort": "medium"}
+    assert result.input_tokens == 1000
+    assert result.output_tokens == 200
+    assert result.est_cost_usd == Decimal("0.006000")
+
+
+def test_the_default_tier_is_class_1_on_the_top_level_model():
+    api = RecordingAPI(_response(10, 10))
+    client = AnthropicResearchClient(_config(web_search=False), client=api)
+
+    result = client.research(system="s", user="u", tool={"name": "t"})
+
+    assert api.create_calls[0]["model"] == "claude-opus-5"
+    assert api.create_calls[0]["output_config"] == {"effort": "high"}
+    # opus is deliberately unpriced in this fixture: tokens recorded, cost absent.
+    assert result.input_tokens == 10
+    assert result.est_cost_usd is None
+
+
+def test_usage_is_summed_across_the_search_phase_and_the_report_phase():
+    api = RecordingAPI(
+        _response(5_000, 700, stop_reason="end_turn"),  # search phase
+        _response(6_000, 300),  # forced report
+    )
+    client = AnthropicResearchClient(_config(web_search=True), client=api)
+
+    result = client.research(system="s", user="u", tool={"name": "t"}, tier="class_2")
+
+    assert len(api.create_calls) == 2
+    assert result.input_tokens == 11_000
+    assert result.output_tokens == 1_000
+    # 11k in * 3.00/M + 1k out * 15.00/M
+    assert result.est_cost_usd == Decimal("0.048000")
+
+
+# ================================================================================
+# Through the pipeline: the estimate lands on the audit record
+# ================================================================================
+
+
+def usage_result(payload: dict) -> LLMResult:
+    return LLMResult(
+        structured=payload,
+        text="",
+        stop_reason="tool_use",
+        input_tokens=42_000,
+        output_tokens=2_000,
+        est_cost_usd=Decimal("0.660000"),
+    )
+
+
+def test_an_accepted_pass_stamps_its_cost_on_the_decision_record(
+    tmp_path, limits, signals_config, research_config
+):
+    started = build(
+        tmp_path,
+        limits,
+        signals_config,
+        research_config,
+        llm=FakeLLM(usage_result(REPORT)),
+    )
+    started.loop.tick()
+
+    decision = started.audit.decisions()[0]
+    assert decision.est_input_tokens == 42_000
+    assert decision.est_output_tokens == 2_000
+    assert decision.est_cost_usd == Decimal("0.660000")
+
+
+def test_a_rejected_pass_still_bills_its_tokens(
+    tmp_path, limits, signals_config, research_config
+):
+    """A pass that came back malformed was still paid for; the rejection record
+    carries the estimate so attribution charges the class either way."""
+    started = build(
+        tmp_path,
+        limits,
+        signals_config,
+        research_config,
+        llm=FakeLLM(usage_result({"not": "a report"})),
+    )
+    started.loop.tick()
+
+    rejections = started.audit.stage_rejections()
+    assert len(rejections) == 1
+    assert rejections[0].est_input_tokens == 42_000
+    assert rejections[0].est_cost_usd == Decimal("0.660000")
+
+
+def test_the_entry_pass_names_the_signals_class_as_its_tier(
+    tmp_path, limits, signals_config, research_config
+):
+    llm = FakeLLM(structured(REPORT))
+    started = build(tmp_path, limits, signals_config, research_config, llm=llm)
+    started.loop.tick()
+
+    assert [call["tier"] for call in llm.calls] == ["class_1"]
+
+
+# ================================================================================
+# Exit reviews: same accounting, their own tier
+# ================================================================================
+
+
+def _position() -> PositionUnderReview:
+    from datetime import datetime, timezone
+
+    return PositionUnderReview(
+        symbol="NUE",
+        entry_price=Decimal("140"),
+        current_price=Decimal("150"),
+        opened_at=datetime(2026, 8, 14, tzinfo=timezone.utc),
+        days_held=3,
+        time_horizon="weeks",
+        confidence_at_entry=80,
+        source_id="nolimitgains",
+        thesis="steel demand",
+        invalidation_condition="closes below 130",
+        original_content="Buying $NUE here.",
+    )
+
+
+class TierRecordingLLM:
+    def __init__(self, result: LLMResult) -> None:
+        self._result = result
+        self.tiers: list[str] = []
+
+    def research(self, *, system, user, tool, tier=""):
+        self.tiers.append(tier)
+        return self._result
+
+    def last_usage(self):  # pragma: no cover - never called; protocol only
+        raise AssertionError
+
+
+def test_the_review_pass_uses_the_exit_review_tier_and_carries_usage():
+    llm = TierRecordingLLM(
+        LLMResult(
+            structured={
+                "action": "hold",
+                "assessment": "thesis intact, price above invalidation",
+                "invalidation_triggered": False,
+            },
+            text="",
+            stop_reason="tool_use",
+            input_tokens=9_000,
+            output_tokens=400,
+            est_cost_usd=Decimal("0.033000"),
+        )
+    )
+    review = ExitReviewPass(llm)
+
+    review.run(_position())
+
+    assert llm.tiers == ["exit_review"]
+    assert review.last_usage is not None
+    assert review.last_usage.input_tokens == 9_000
+    assert review.last_usage.cost_usd == Decimal("0.033000")
+
+
+def test_a_review_that_never_reached_the_model_has_no_usage():
+    class Exploding:
+        def research(self, **kwargs):
+            raise TimeoutError("down")
+
+    review = ExitReviewPass(Exploding())
+    review.run(_position())
+    assert review.last_usage is None

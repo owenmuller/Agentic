@@ -23,3 +23,31 @@ web_search:
 # How many times a search phase may be resumed after the server-side tool loop pauses.
 # Bounds the evidence-gathering phase; the report phase always runs exactly once.
 max_search_continuations: 3
+
+# Per-class model tiers (cost-efficiency pass, 2026-08-19). Class 1 is the only
+# latency class where speed is genuine edge and the only one that inherits the
+# flagship model above (no override = top-level model/effort). Class 2 and 3 carry
+# 45-day disclosure lags and the exit review re-reads an already-formed thesis —
+# none of them needs the flagship. The report schema and every validation gate are
+# identical across tiers; only the model and effort change.
+tiers:
+  class_2:
+    model: claude-sonnet-4-6
+    effort: medium
+  class_3:
+    model: claude-sonnet-4-6
+    effort: medium
+  exit_review:
+    model: claude-sonnet-4-6
+    effort: medium
+
+# Cost estimates, dollars per million tokens. BASELINE NUMBERS — to be replaced
+# with real console figures after week one of the paper period. A model missing
+# from this table records no estimate (None), never a guessed one.
+pricing:
+  claude-opus-5:
+    input_per_mtok: "15.00"
+    output_per_mtok: "75.00"
+  claude-sonnet-4-6:
+    input_per_mtok: "3.00"
+    output_per_mtok: "15.00"

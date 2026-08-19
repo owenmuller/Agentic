@@ -24,19 +24,64 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Optional
+from datetime import date, datetime, timezone
+from typing import Collection, Optional
 
 from signals import Signal
-from signals.config import SignalsConfig
+from signals.config import PrefilterConfig, SignalsConfig
 
 logger = logging.getLogger("orchestrator.prefilter")
 
+_NUMBER = re.compile(r"\d[\d,]*")
+
+
+def _amount_range_max(rendered: str) -> Optional[int]:
+    """The top of a disclosure amount range like ``"$1,001 - $15,000"``.
+
+    Returns None when nothing numeric can be read — the caller fails OPEN
+    (research), because a skipped signal we could not price is a silent drop.
+    """
+    figures = [int(match.replace(",", "")) for match in _NUMBER.findall(rendered)]
+    return max(figures) if figures else None
+
+
+def _parse_int(raw: str) -> Optional[int]:
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_date(raw: str) -> Optional[date]:
+    try:
+        return date.fromisoformat(raw.strip())
+    except (TypeError, ValueError, AttributeError):
+        return None
+
 
 class ResearchPreFilter:
-    """Decides which signals earn a research pass. Built from ``signals.yaml``."""
+    """Decides which signals earn a research pass. Built from ``signals.yaml``.
 
-    def __init__(self, themes_by_source: dict[str, tuple[str, ...]]) -> None:
+    Three rule families, all deterministic, all free:
+
+    - Theme/ticker gating (trump_posts): a post earns the pass by naming an
+      instrument or touching a configured policy theme.
+    - Disclosure rules (class 2): amount too small, lag too long, or a sale in a
+      name the system does not hold.
+    - Staleness (class 3): a 13F whose period-of-report is older than the cutoff.
+
+    Every rule fails OPEN: a field the rule cannot read sends the signal to
+    research (bounded by the budget) rather than silently dropping it. Every skip
+    is written as a ``pre_filter`` stage rejection with a readable reason.
+    """
+
+    def __init__(
+        self,
+        themes_by_source: dict[str, tuple[str, ...]],
+        rules_by_source: Optional[dict[str, PrefilterConfig]] = None,
+    ) -> None:
         self._patterns: dict[str, re.Pattern] = {}
+        self._rules: dict[str, PrefilterConfig] = dict(rules_by_source or {})
         for source_id, themes in themes_by_source.items():
             if not themes:
                 continue
@@ -51,23 +96,45 @@ class ResearchPreFilter:
     @classmethod
     def from_config(cls, config: SignalsConfig) -> "ResearchPreFilter":
         themes: dict[str, tuple[str, ...]] = {}
+        rules: dict[str, PrefilterConfig] = {}
         for klass in config.classes.values():
             for source in klass.sources:
                 if source.research_prefilter_themes:
                     themes[source.id] = source.research_prefilter_themes
-        return cls(themes)
+                if source.prefilter is not None:
+                    rules[source.id] = source.prefilter
+        return cls(themes, rules)
 
     @property
     def filtered_sources(self) -> tuple[str, ...]:
-        return tuple(sorted(self._patterns))
+        return tuple(sorted(set(self._patterns) | set(self._rules)))
 
-    def skip_reason(self, signal: Signal) -> Optional[str]:
+    def skip_reason(
+        self,
+        signal: Signal,
+        *,
+        held: Collection[str] = (),
+        now: Optional[datetime] = None,
+    ) -> Optional[str]:
         """Why this signal should NOT be researched, or None to research it.
 
         Keyed on ``signal.source_id`` — the attributed source — so content delivered
         by a mirror is filtered exactly like content from the principal would be.
-        Sources with no configured themes are never filtered.
+        ``held`` is the set of currently held symbols (for the unheld-sale rule);
+        ``now`` anchors the staleness rule and defaults to the wall clock.
         """
+        theme_reason = self._theme_reason(signal)
+        if theme_reason is not None:
+            return theme_reason
+
+        rules = self._rules.get(signal.source_id)
+        if rules is None:
+            return None
+        return self._rule_reason(signal, rules, held, now)
+
+    # -- rule families -------------------------------------------------------------
+
+    def _theme_reason(self, signal: Signal) -> Optional[str]:
         pattern = self._patterns.get(signal.source_id)
         if pattern is None:
             return None
@@ -86,3 +153,57 @@ class ResearchPreFilter:
             f"instrument or touch a theme from signals.yaml "
             f"(research_prefilter_themes)"
         )
+
+    def _rule_reason(
+        self,
+        signal: Signal,
+        rules: PrefilterConfig,
+        held: Collection[str],
+        now: Optional[datetime],
+    ) -> Optional[str]:
+        meta = signal.metadata
+
+        if rules.min_amount_max is not None:
+            amount_max = _amount_range_max(meta.get("amount_range", ""))
+            if amount_max is not None and amount_max < rules.min_amount_max:
+                return (
+                    f"amount range tops out at ${amount_max:,}, below the "
+                    f"${rules.min_amount_max:,} floor (signals.yaml "
+                    f"prefilter.min_amount_max) — too small to signal conviction"
+                )
+
+        if rules.max_lag_days is not None:
+            lag = _parse_int(meta.get("disclosure_lag_days", ""))
+            if lag is not None and lag > rules.max_lag_days:
+                return (
+                    f"disclosure lag of {lag} days exceeds the "
+                    f"{rules.max_lag_days}-day cutoff (signals.yaml "
+                    f"prefilter.max_lag_days) — the move is long priced in"
+                )
+
+        if rules.skip_unheld_sales:
+            transaction = meta.get("transaction", "").lower()
+            ticker = meta.get("ticker", "").upper().strip()
+            held_upper = {symbol.upper() for symbol in held}
+            if "sale" in transaction and ticker and ticker not in held_upper:
+                return (
+                    f"sale disclosure in {ticker}, which the system does not "
+                    f"hold (signals.yaml prefilter.skip_unheld_sales) — someone "
+                    f"else's exit from a position we never entered is not an "
+                    f"entry thesis"
+                )
+
+        if rules.max_period_age_days is not None:
+            period = _parse_date(meta.get("period_of_report", ""))
+            if period is not None:
+                moment = now or datetime.now(timezone.utc)
+                age_days = (moment.date() - period).days
+                if age_days > rules.max_period_age_days:
+                    return (
+                        f"period of report {period.isoformat()} is {age_days} "
+                        f"days old, beyond the {rules.max_period_age_days}-day "
+                        f"staleness cutoff (signals.yaml "
+                        f"prefilter.max_period_age_days)"
+                    )
+
+        return None

@@ -39,9 +39,9 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
-from audit.attribution import build_attribution
+from audit.attribution import DEFAULT_WINDOW_DAYS, build_attribution
 from audit.log import default_data_dir
 from execution import AlpacaPriceSource
 from signals import (
@@ -132,10 +132,14 @@ def attribution() -> int:
         SignalClass(key): monthly
         for key, monthly in checks.signals_config.monthly_feed_costs().items()
     }
+    generated_at = checks.clock()
     report = build_attribution(
         checks.audit.trails(),
-        generated_at=checks.clock(),
+        generated_at=generated_at,
         feed_costs=costs,
+        research_costs=checks.audit.research_costs_by_class(
+            generated_at - timedelta(days=DEFAULT_WINDOW_DAYS)
+        ),
     )
     print(report.render())
     return 0

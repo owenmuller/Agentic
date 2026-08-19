@@ -82,7 +82,9 @@ class FakeLLM:
         self.result = result
         self.calls: list[dict] = []
 
-    def research(self, *, system: str, user: str, tool: dict) -> LLMResult:
+    def research(
+        self, *, system: str, user: str, tool: dict, tier: str = ""
+    ) -> LLMResult:
         self.calls.append({"system": system, "user": user, "tool": tool})
         if isinstance(self.result, Exception):
             raise self.result

@@ -92,8 +92,10 @@ class FakeLLM:
         self._results = list(results) or [structured(REPORT)]
         self.calls: list[dict] = []
 
-    def research(self, *, system: str, user: str, tool: dict) -> LLMResult:
-        self.calls.append({"system": system, "user": user, "tool": tool})
+    def research(
+        self, *, system: str, user: str, tool: dict, tier: str = ""
+    ) -> LLMResult:
+        self.calls.append({"system": system, "user": user, "tool": tool, "tier": tier})
         if len(self._results) > 1:
             return self._results.pop(0)
         return self._results[0]
@@ -105,7 +107,9 @@ class ExplodingLLM:
     def __init__(self) -> None:
         self.calls = 0
 
-    def research(self, *, system: str, user: str, tool: dict) -> LLMResult:
+    def research(
+        self, *, system: str, user: str, tool: dict, tier: str = ""
+    ) -> LLMResult:
         self.calls += 1
         raise TimeoutError("upstream took too long")
 
@@ -1248,6 +1252,11 @@ def test_no_record_written_by_an_adversarial_run_is_anything_but_a_known_kind(
         "research",
         "sizing",
         "gate",
+        # Cost instrumentation (2026-08-19): estimates, set by the pipeline,
+        # never parsed from content.
+        "est_input_tokens",
+        "est_output_tokens",
+        "est_cost_usd",
     }
 
 

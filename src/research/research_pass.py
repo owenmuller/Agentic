@@ -20,7 +20,7 @@ from typing import Callable, Optional, Union
 
 from pydantic import ValidationError
 
-from research.client import LLMClient
+from research.client import LLMClient, ResearchUsage
 from research.credibility import CredibilityTracker
 from research.prompts import SYSTEM_PROMPT, build_user_prompt
 from research.reports import (
@@ -56,6 +56,17 @@ class ResearchPass:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._rejections: list[ResearchRejection] = []
         self._sink = rejection_sink
+        self._last_usage: Optional["ResearchUsage"] = None
+
+    @property
+    def last_usage(self) -> Optional["ResearchUsage"]:
+        """Token/cost estimate of the most recent LLM call, for the audit record.
+
+        None when the last run never reached the model (upstream exception before
+        a response). Tokens billed by a call that later failed validation are
+        still tokens billed — the estimate survives the rejection.
+        """
+        return self._last_usage
 
     @property
     def rejections(self) -> tuple[ResearchRejection, ...]:
@@ -67,11 +78,13 @@ class ResearchPass:
         credibility_context = self._context_for(signal)
         user_prompt = build_user_prompt(signal, credibility_context)
 
+        self._last_usage = None
         try:
             result = self._client.research(
                 system=SYSTEM_PROMPT,
                 user=user_prompt,
                 tool=report_tool_definition(),
+                tier=str(signal.signal_class),
             )
         except Exception as error:  # noqa: BLE001 - upstream failures are data here
             return self._reject(
@@ -79,6 +92,11 @@ class ResearchPass:
                 ResearchRejectionCode.UPSTREAM_ERROR,
                 f"research call failed: {type(error).__name__}: {error}",
             )
+        self._last_usage = ResearchUsage(
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            cost_usd=result.est_cost_usd,
+        )
 
         if not result.structured:
             # The model answered in prose, or not at all. One attempt, no re-roll.

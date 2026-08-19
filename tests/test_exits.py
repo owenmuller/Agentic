@@ -93,7 +93,9 @@ class RoutingLLM:
         self._by_tool = by_tool
         self.calls: list[dict] = []
 
-    def research(self, *, system: str, user: str, tool: dict) -> LLMResult:
+    def research(
+        self, *, system: str, user: str, tool: dict, tier: str = ""
+    ) -> LLMResult:
         self.calls.append({"system": system, "user": user, "tool": tool["name"]})
         return self._by_tool[tool["name"]]
 
@@ -452,7 +454,7 @@ def test_guardrails_still_fire_while_the_review_layer_is_down(
         def __init__(self, entry):
             self._entry = entry
 
-        def research(self, *, system, user, tool):
+        def research(self, *, system, user, tool, tier=""):
             if tool["name"] == REPORT_TOOL_NAME:
                 return self._entry
             raise TimeoutError("review layer is down")

@@ -22,9 +22,10 @@ no re-roll (see ``reports`` module docstring).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Optional, Protocol
 
-from research.reports import REPORT_TOOL_NAME
+from research.reports import REPORT_TOOL_NAME, ResearchUsage
 
 #: Server-side web search. Runs on Anthropic's infrastructure within the same request.
 WEB_SEARCH_TOOL_TYPE = "web_search_20260209"
@@ -40,12 +41,25 @@ class LLMResult:
     text: str
     stop_reason: Optional[str] = None
     model: str = ""
+    #: Token usage summed over every API call this result took (search phases
+    #: included). Estimates for the audit trail; the console bill is the truth.
+    input_tokens: int = 0
+    output_tokens: int = 0
+    #: Estimated dollars, from the pricing table in research.yaml. None when the
+    #: model is unpriced — an absent estimate, never a guessed one.
+    est_cost_usd: Optional[Decimal] = None
 
 
 class LLMClient(Protocol):
-    """The seam. Implementations do I/O; the research pass does not."""
+    """The seam. Implementations do I/O; the research pass does not.
 
-    def research(self, *, system: str, user: str, tool: dict[str, Any]) -> LLMResult:
+    ``tier`` names which model tier the call runs on (a signal class or
+    ``exit_review``); implementations without tiering may ignore it.
+    """
+
+    def research(
+        self, *, system: str, user: str, tool: dict[str, Any], tier: str = "class_1"
+    ) -> LLMResult:
         ...
 
 
@@ -70,16 +84,30 @@ class AnthropicResearchClient:
 
     # -- the two phases ----------------------------------------------------------
 
-    def research(self, *, system: str, user: str, tool: dict[str, Any]) -> LLMResult:
+    def research(
+        self, *, system: str, user: str, tool: dict[str, Any], tier: str = "class_1"
+    ) -> LLMResult:
+        resolved = self._config.tier_for(tier)
+        usage = {"input": 0, "output": 0}
         messages: list[dict[str, Any]] = [{"role": "user", "content": user}]
 
         if self._config.web_search.enabled:
-            messages = self._gather_evidence(system, messages)
+            messages = self._gather_evidence(system, messages, resolved, usage)
 
-        return self._request_report(system, messages, tool)
+        return self._request_report(system, messages, tool, resolved, usage)
+
+    @staticmethod
+    def _track_usage(response: Any, usage: dict[str, int]) -> None:
+        reported = getattr(response, "usage", None)
+        usage["input"] += int(getattr(reported, "input_tokens", 0) or 0)
+        usage["output"] += int(getattr(reported, "output_tokens", 0) or 0)
 
     def _gather_evidence(
-        self, system: str, messages: list[dict[str, Any]]
+        self,
+        system: str,
+        messages: list[dict[str, Any]],
+        resolved: "ModelTier",  # noqa: F821 - lazy import, see __init__
+        usage: dict[str, int],
     ) -> list[dict[str, Any]]:
         """Phase 1: let the model search. Returns the transcript to replay.
 
@@ -90,11 +118,11 @@ class AnthropicResearchClient:
         transcript = list(messages)
         for _ in range(self._config.max_search_continuations + 1):
             response = self._client.messages.create(
-                model=self._config.model,
+                model=resolved.model,
                 max_tokens=self._config.max_tokens,
                 system=system,
                 messages=transcript,
-                output_config={"effort": self._config.effort},
+                output_config={"effort": resolved.effort},
                 tools=[
                     {
                         "type": WEB_SEARCH_TOOL_TYPE,
@@ -103,13 +131,19 @@ class AnthropicResearchClient:
                     }
                 ],
             )
+            self._track_usage(response, usage)
             transcript.append({"role": "assistant", "content": response.content})
             if getattr(response, "stop_reason", None) != "pause_turn":
                 break
         return transcript
 
     def _request_report(
-        self, system: str, messages: list[dict[str, Any]], tool: dict[str, Any]
+        self,
+        system: str,
+        messages: list[dict[str, Any]],
+        tool: dict[str, Any],
+        resolved: "ModelTier",  # noqa: F821
+        usage: dict[str, int],
     ) -> LLMResult:
         """Phase 2: force the report tool. One attempt."""
         if messages and messages[-1].get("role") == "assistant":
@@ -123,18 +157,31 @@ class AnthropicResearchClient:
             ]
 
         response = self._client.messages.create(
-            model=self._config.model,
+            model=resolved.model,
             max_tokens=self._config.max_tokens,
             system=system,
             messages=messages,
-            output_config={"effort": self._config.effort},
+            output_config={"effort": resolved.effort},
             tools=[tool],
             tool_choice={"type": "tool", "name": REPORT_TOOL_NAME},
         )
-        return self._to_result(response)
+        self._track_usage(response, usage)
+        return self._to_result(
+            response,
+            input_tokens=usage["input"],
+            output_tokens=usage["output"],
+            est_cost_usd=self._config.estimate_cost_usd(
+                resolved.model, usage["input"], usage["output"]
+            ),
+        )
 
     @staticmethod
-    def _to_result(response: Any) -> LLMResult:
+    def _to_result(
+        response: Any,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        est_cost_usd: Optional[Decimal] = None,
+    ) -> LLMResult:
         structured: Optional[dict[str, Any]] = None
         texts: list[str] = []
         for block in getattr(response, "content", []) or []:
@@ -150,4 +197,7 @@ class AnthropicResearchClient:
             text="\n".join(texts),
             stop_reason=getattr(response, "stop_reason", None),
             model=getattr(response, "model", ""),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            est_cost_usd=est_cost_usd,
         )

@@ -38,6 +38,29 @@ class ClassificationRules(_Strict):
     ambiguity_markers: tuple[str, ...] = ()
 
 
+class PrefilterConfig(_Strict):
+    """Deterministic research pre-filter thresholds (cost pass, 2026-08-19).
+
+    Free filters in front of expensive LLM judgment. Every field is optional —
+    a rule left unset simply does not run. Skips are recorded as ``pre_filter``
+    stage rejections, same auditable pattern as the trump_posts theme filter.
+    """
+
+    #: Class 2: skip disclosures whose amount-range MAXIMUM is below this many
+    #: dollars. Strictly below — a "$1,001 - $15,000" range with the threshold at
+    #: 15000 still goes to research.
+    min_amount_max: Optional[int] = Field(default=None, gt=0)
+    #: Class 2: skip disclosures observed more than this many days after the
+    #: trade (ReportDate - TransactionDate). Strictly above.
+    max_lag_days: Optional[int] = Field(default=None, gt=0)
+    #: Class 2: skip sale disclosures in names the system does not hold — someone
+    #: else's exit from a position we never entered is not an entry thesis.
+    skip_unheld_sales: bool = False
+    #: Class 3: skip filings whose period-of-report is older than this many days.
+    #: The research layer has already proven it rejects these; stop paying it to.
+    max_period_age_days: Optional[int] = Field(default=None, gt=0)
+
+
 class SourceConfig(_Strict):
     id: str
     platforms: tuple[str, ...] = ()
@@ -67,6 +90,8 @@ class SourceConfig(_Strict):
     #: stems. Everything else is recorded as a pre_filter stage rejection instead of
     #: spending a research pass. Human-approved 2026-08-18 for trump_posts.
     research_prefilter_themes: tuple[str, ...] = ()
+    #: Deterministic pre-filter thresholds for this source (class 2/3 rules).
+    prefilter: Optional[PrefilterConfig] = None
     #: For pay-per-use feeds (X): warn once the day's posts read passes this. A
     #: since_id regression re-reads the same posts every poll, and the bug should
     #: show in run.log before it shows on the bill.

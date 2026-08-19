@@ -43,7 +43,7 @@ from typing import Any, Callable, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
-from research.client import LLMClient
+from research.client import LLMClient, ResearchUsage
 from research.reports import (
     ResearchRejectionCode,
     strip_unsupported_schema_keywords,
@@ -264,6 +264,13 @@ class ExitReviewPass:
     ) -> None:
         self._client = client
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._last_usage: Optional[ResearchUsage] = None
+
+    @property
+    def last_usage(self) -> Optional[ResearchUsage]:
+        """Token/cost estimate of the most recent review call (same contract as
+        ``ResearchPass.last_usage``)."""
+        return self._last_usage
 
     def run(self, position: PositionUnderReview) -> ExitReviewOutcome:
         """Review a position. Returns a validated verdict or a typed rejection.
@@ -271,11 +278,13 @@ class ExitReviewPass:
         One attempt, no re-roll — the same rule as the entry pass, for the same
         reason. The caller treats every rejection as HOLD.
         """
+        self._last_usage = None
         try:
             result = self._client.research(
                 system=EXIT_SYSTEM_PROMPT,
                 user=build_review_prompt(position),
                 tool=exit_review_tool_definition(),
+                tier="exit_review",
             )
         except Exception as error:  # noqa: BLE001 - upstream failures are data here
             return self._reject(
@@ -283,6 +292,11 @@ class ExitReviewPass:
                 ResearchRejectionCode.UPSTREAM_ERROR,
                 f"review call failed: {type(error).__name__}: {error}",
             )
+        self._last_usage = ResearchUsage(
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            cost_usd=result.est_cost_usd,
+        )
 
         if not result.structured:
             return self._reject(

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Literal, Optional
 
@@ -239,6 +240,20 @@ def strip_unsupported_schema_keywords(schema: Any) -> Any:
 
 
 #: Name of the tool the model must call to deliver a report.
+@dataclass(frozen=True, slots=True)
+class ResearchUsage:
+    """Token/cost estimate of one research or review pass, for the audit trail.
+
+    Defined here (not in ``client``) because ``audit`` is allowed to import
+    ``research.reports`` and nothing else from the research layer — the topology
+    stays one-way: audit may look at research types, research never at audit.
+    """
+
+    input_tokens: int
+    output_tokens: int
+    cost_usd: Optional[Decimal]
+
+
 REPORT_TOOL_NAME = "submit_research"
 
 

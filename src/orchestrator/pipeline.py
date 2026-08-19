@@ -43,7 +43,7 @@ from typing import Callable, Optional, Protocol
 from audit.log import AuditLog, AuditLogError
 from audit.records import DecisionRecord, RejectedStage, StageRejectionRecord
 from execution.base import BrokerAdapter, BrokerError, OrderReceipt
-from research.reports import Direction, ResearchReport
+from research.reports import Direction, ResearchReport, ResearchUsage
 from research.research_pass import ResearchPass
 from risk_gate.gate import ApprovedOrder, BuyingPowerBreached, RiskGate
 from risk_gate.schema import EquityBuyOrder, LimitExecution
@@ -184,6 +184,7 @@ class SignalPipeline:
     def _process(self, decision_id: str, signal: Signal) -> PipelineResult:
         # 1. Research.
         outcome = self._research.run(signal)
+        usage = self._research.last_usage
         if not isinstance(outcome, ResearchReport):
             return self._stopped(
                 decision_id,
@@ -191,6 +192,7 @@ class SignalPipeline:
                 RejectedStage.RESEARCH,
                 str(outcome.code),
                 outcome.message,
+                usage=usage,
             )
         report = outcome
 
@@ -206,6 +208,7 @@ class SignalPipeline:
                 proposal.rationale,
                 report=report,
                 proposal=proposal,
+                usage=usage,
             )
 
         # 3. Order construction.
@@ -220,12 +223,13 @@ class SignalPipeline:
                 message,
                 report=report,
                 proposal=proposal,
+                usage=usage,
             )
 
         # 4. The risk gate. Approved or rejected, this writes the full decision record.
         decision = self._gate.submit(order)
         record = self._audit.record_decision(
-            signal, report, proposal, decision, decision_id=decision_id
+            signal, report, proposal, decision, decision_id=decision_id, usage=usage
         )
         if not decision.is_approved:
             return PipelineResult(
@@ -473,9 +477,17 @@ class SignalPipeline:
         message: str,
         report: Optional[ResearchReport] = None,
         proposal: Optional[SizedProposal] = None,
+        usage: Optional["ResearchUsage"] = None,
     ) -> PipelineResult:
         rejection = self._audit.record_stage_rejection(
-            decision_id, stage, code, message, signal, report=report, proposal=proposal
+            decision_id,
+            stage,
+            code,
+            message,
+            signal,
+            report=report,
+            proposal=proposal,
+            usage=usage,
         )
         return PipelineResult(
             decision_id=decision_id,

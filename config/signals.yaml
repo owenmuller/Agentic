@@ -162,6 +162,21 @@ classes:
         # Feed cost, prorated against this class's P&L in the weekly attribution
         # report. Class 2 must out-earn its own subscription.
         monthly_cost: 30
+        # RESEARCH PRE-FILTER (cost pass, 2026-08-19): free deterministic checks
+        # before the LLM spends a pass. A disclosure is skipped (recorded as a
+        # pre_filter stage rejection, never silently dropped) when:
+        #   - the amount range tops out below $15,000 (too small to signal
+        #     conviction; the range MAX must be strictly below to skip), or
+        #   - the observed lag between trade and report exceeds 75 days (STOCK
+        #     Act allows 45; far beyond that the move is long priced in), or
+        #   - it is a SALE in a name the system does not hold (someone else's
+        #     exit from a position we never entered is not an entry thesis).
+        # Unparseable amounts/lags fail OPEN to research - the budget bounds the
+        # cost of erring toward research; erring away silently drops signal.
+        prefilter:
+          min_amount_max: 15000
+          max_lag_days: 75
+          skip_unheld_sales: true
         watchlist:
           - { name: Nancy Pelosi, chamber: house }
         # High-signal members; configurable, human approval required per addition.
@@ -183,6 +198,13 @@ classes:
         # SEC-required contact header. EDGAR asks every automated client to identify
         # a way to reach its operator; anonymous scrapers get IP-blocked.
         user_agent: "Agentic trading research omuller@brasacap.com"
+        # RESEARCH PRE-FILTER (cost pass, 2026-08-19): a 13F whose reporting
+        # period is older than this is a portfolio snapshot from two-plus
+        # quarters ago - the research layer has consistently rejected these as
+        # fully priced in; stop paying it to say so. Skips are recorded as
+        # pre_filter stage rejections. Missing/unparseable periods fail OPEN.
+        prefilter:
+          max_period_age_days: 120
         watchlist:
           - { fund: Situational Awareness, manager: Leopold Aschenbrenner }
         additional_funds: []

@@ -170,6 +170,13 @@ class ExitEngine:
 
     # -- learning about positions ----------------------------------------------------
 
+    def held_symbols(self) -> frozenset[str]:
+        """Symbols with a tracked open position — the pre-filter's answer to
+        "is this a sale in a name we hold". Deterministic and local."""
+        return frozenset(
+            position.symbol.upper() for position in self._tracked.values()
+        )
+
     def track_fill(self, working: WorkingOrder, filled: int, price: Decimal) -> None:
         """Called by the pipeline's fill sink when an entry order settles with a fill."""
         order = working.approved.order
@@ -397,6 +404,7 @@ class ExitEngine:
                     ReviewOutcome.REVIEW_FAILED,
                     code=str(outcome.code),
                     message=outcome.message,
+                    usage=self._reviews.last_usage,
                 )
                 logger.warning(
                     "thesis review of %s failed (%s); holding — guardrails still "
@@ -411,6 +419,7 @@ class ExitEngine:
                 ReviewOutcome.CLOSE if outcome.should_close else ReviewOutcome.HOLD,
                 assessment=outcome.assessment,
                 invalidation_triggered=outcome.invalidation_triggered,
+                usage=self._reviews.last_usage,
             )
             if not outcome.should_close:
                 continue
