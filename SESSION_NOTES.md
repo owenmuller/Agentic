@@ -664,6 +664,10 @@ exists on the box). Same commit as the laptop.
 - health:      `ssh agentic@137.184.59.200 'cd ~/Agentic && .venv/bin/python -m orchestrator health'`
 - attribution: `ssh agentic@137.184.59.200 'cd ~/Agentic && .venv/bin/python -m orchestrator attribution'`
 - run log:     `ssh agentic@137.184.59.200 'tail -20 ~/Agentic/data/run.log'`
+- monthly:     re-run the Robinhood MCP tool inventory (spike client,
+  `rh_mcp.py tools`, read-only) and diff against the known 54 tools — the
+  appearance of event-contract tools triggers the prediction-sleeve Plan A
+  design (see the venue plan section below).
 
 **Cutover protocol (no gap day, no double-host day — locks are per-machine, two
 hosts would double-trade the paper account):** after the laptop's 2026-08-19
@@ -729,6 +733,25 @@ OPEN (an unreadable field sends the signal to research, bounded by the budget).
 confidence band underperforming the 55–85 bands on hit rate or net P&L over a
 60-day window, that is the trigger to revisit an adversarial red-team pass on
 top-band trades before they size at the 5% cap.
+
+## Prediction sleeve (10%): venue plan (queued 2026-08-19)
+
+Designed-but-unbuilt: the order schema, sleeve caps (0.5% arb / 2% directional),
+and the fee-clearance rule exist; no adapter, no odds feed, no arb engine.
+
+- **Plan A (default): Robinhood Agentic event contracts.** On their stated
+  roadmap ("event contracts, futures, and more"), NOT in the current 54-tool MCP
+  surface. **Monthly re-check:** re-run the read-only tool inventory via the
+  spike client (`rh_mcp.py tools`) and diff against the known 54-tool list —
+  event-contract tools appearing is the trigger to design the build.
+- **Plan B (fallback): Kalshi direct API.** Only if Plan A has not shipped by
+  the time the equity leg passes the paper gate AND attribution justifies
+  funding the sleeve.
+- **Build trigger regardless of venue:** paper gate passed + a human funding
+  decision (deposits are human-only, CLAUDE.md). Directional strategy builds
+  first — it reuses the research pipeline end to end; the arb engine builds
+  last, because it needs empirical fee-schedule and order-book validation that
+  only live venue access provides.
 
 ## Standing reminders
 
