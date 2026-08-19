@@ -1,0 +1,15 @@
+# One-shot: the Robinhood headless-refresh natural experiment (spike part 3).
+# Requires the token file at /home/agentic/.config/agentic/rh_oauth.json,
+# transferred BY THE HUMAN (same rule as .env). If the file is absent the
+# check fails loudly in the log — that is the correct behavior.
+[Unit]
+Description=Agentic Robinhood OAuth refresh check (post-expiry proof)
+
+[Service]
+Type=oneshot
+User=agentic
+WorkingDirectory=/home/agentic/Agentic
+Environment=AGENTIC_RH_CRED=/home/agentic/.config/agentic/rh_oauth.json
+ExecStart=/home/agentic/Agentic/.venv/bin/python ops/rh_refresh_check.py
+StandardOutput=append:/home/agentic/Agentic/data/rh_refresh_check.log
+StandardError=append:/home/agentic/Agentic/data/rh_refresh_check.log

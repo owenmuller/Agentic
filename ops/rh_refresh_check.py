@@ -33,12 +33,21 @@ def _h(secret: str) -> str:
 
 
 def main() -> int:
-    cred_path = os.path.join(os.path.expanduser("~"), ".claude", ".credentials.json")
+    # Two homes for the credential: Claude Code's store on the laptop (default),
+    # or a standalone JSON file named by AGENTIC_RH_CRED on the VPS — flat dict
+    # with accessToken / refreshToken / clientId / expiresAt. Exactly ONE host
+    # may hold a live copy: the refresh token rotates on use, so a second
+    # refresher strands the first.
+    cred_path = os.environ.get("AGENTIC_RH_CRED") or os.path.join(
+        os.path.expanduser("~"), ".claude", ".credentials.json")
     store = json.load(open(cred_path, encoding="utf-8"))
-    entry = next(
-        v for v in store["mcpOAuth"].values()
-        if v.get("serverName") == "robinhood-trading"
-    )
+    if "mcpOAuth" in store:
+        entry = next(
+            v for v in store["mcpOAuth"].values()
+            if v.get("serverName") == "robinhood-trading"
+        )
+    else:
+        entry = store  # standalone flat file
 
     now_ms = int(time.time() * 1000)
     expired = now_ms >= entry["expiresAt"]
@@ -79,6 +88,7 @@ def main() -> int:
     if tok.get("expires_in"):
         entry["expiresAt"] = now_ms + int(tok["expires_in"]) * 1000
     json.dump(store, open(cred_path, "w", encoding="utf-8"))
+    os.chmod(cred_path, 0o600)
     print("credential store updated with the rotated pair")
 
     # Authenticated read with the fresh token: MCP initialize + get_portfolio.

@@ -1,0 +1,22 @@
+# Agentic paper trading session. The process self-gates: it computes the
+# 9:30-16:00 ET session in America/New_York at runtime, sleeps until the open,
+# ticks until the close, then shuts down cleanly. PAPER_MODE is enforced inside
+# the process at startup (CLAUDE.md Constraint #4); this unit adds no mode logic
+# and carries no secrets (.env is loaded by the process via python-dotenv).
+[Unit]
+Description=Agentic paper trading session (self-gates to 9:30-16:00 ET)
+After=network-online.target
+Wants=network-online.target
+# Mirror the laptop task's RestartCount=2 / 5-minute spacing.
+StartLimitIntervalSec=1h
+StartLimitBurst=3
+
+[Service]
+Type=exec
+User=agentic
+WorkingDirectory=/home/agentic/Agentic
+ExecStart=/home/agentic/Agentic/.venv/bin/python -m orchestrator run
+Restart=on-failure
+RestartSec=300
+# Mirror the laptop task's 9h execution time limit.
+RuntimeMaxSec=9h

@@ -1,0 +1,9 @@
+[Unit]
+Description=Agentic nightly data backup (21:07 ET, after close)
+
+[Timer]
+OnCalendar=*-*-* 21:07 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

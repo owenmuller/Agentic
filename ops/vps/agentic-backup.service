@@ -1,0 +1,8 @@
+# Nightly on-box backup of data/ (audit log = the system of record).
+# Off-box layer: enable DigitalOcean droplet backups in the control panel.
+[Unit]
+Description=Agentic data/ nightly backup
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'mkdir -p /var/backups/agentic && tar -czf /var/backups/agentic/data-$(date +%%F).tar.gz -C /home/agentic/Agentic data && find /var/backups/agentic -name "data-*.tar.gz" -mtime +14 -delete'

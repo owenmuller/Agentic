@@ -56,8 +56,17 @@ $trigger = New-ScheduledTaskTrigger `
     -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday `
     -At $triggerLocal
 
+# Laptop reality (learned 2026-08-19, the first scheduled session was silently
+# missed): the machine was ASLEEP at trigger time, WakeToRun was off, and the
+# StartWhenAvailable catch-up did not fire after wake — sleep-missed triggers are
+# not reliably treated as "missed" by Task Scheduler. So: wake the machine for the
+# session, allow starting on battery, and don't kill a mid-session run on unplug.
+# StartWhenAvailable stays as a second net for the powered-off case.
 $settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
+    -WakeToRun `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
     -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Hours 9) `
     -RestartCount 2 `

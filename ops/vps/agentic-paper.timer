@@ -1,0 +1,17 @@
+# Weekdays 9:15 AM Eastern, DST-correct via the calendar timezone suffix
+# (systemd >= 235; this box runs 255). Persistent=true replays a missed
+# trigger at boot — the runtime market-hours gate remains the real guard, so a
+# late catch-up start trades the remainder of the session or exits cleanly.
+#
+# NOT enabled by the provisioning flow: enabling a schedule that trades is the
+# human's trigger to pull (see CLAUDE.md).  Enable with:
+#   systemctl enable --now agentic-paper.timer
+[Unit]
+Description=Agentic paper session trigger (weekdays 9:15 ET)
+
+[Timer]
+OnCalendar=Mon..Fri 09:15 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target
