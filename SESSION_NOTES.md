@@ -4,7 +4,7 @@ Rolling handover between sessions. Written at the end of a session, read at the 
 of the next one. `CLAUDE.md` is the constitution and does not change here; this file is
 only ever a record of where the work got to and what comes next.
 
-**Last updated:** 2026-08-18 · all three classes LIVE (X enrollment fixed, smoke green); trump_posts research pre-filter built; Robinhood Agentic Trading assessed as live-phase broker candidate
+**Last updated:** 2026-08-19 · runtime migrating to VPS (system of record moves at cutover); Robinhood spike complete (GO verdict); first paper session ran on the laptop 2026-08-19 (late start — missed 6:15 trigger, laptop was asleep)
 
 ---
 
@@ -620,6 +620,58 @@ own live-gate rules):
 
 Paper period continues on Alpaca regardless; the live-venue decision itself
 waits for the 2–4 week paper gate and the human's two-key live confirmation.
+
+## Host migration: VPS is the system of record (from cutover)
+
+**VPS:** DigitalOcean droplet `agentic`, Ubuntu 24.04.4, 137.184.59.200. Service
+user `agentic` (no sudo, key-only; same ed25519 key as root). Hardened 2026-08-19:
+password auth off, ufw SSH-only inbound, unattended security upgrades on.
+
+**Why:** the laptop missed the first scheduled session outright (asleep at 6:15,
+WakeToRun off, Task Scheduler did not catch up after wake). A trading runtime
+belongs on a host that is always awake.
+
+**Deploy path (no GitHub credentials on the box):** laptop pushes to a bare repo
+(`git push vps main`, remote = `agentic@137.184.59.200:agentic.git`), working
+clone at `/home/agentic/Agentic`, venv at `.venv`, `pip install -e .[dev]`.
+Full suite on the VPS 2026-08-19: **585 passed, 11 skipped** (= the laptop's
+593/3 with the 8 keyed Alpaca integration tests auto-skipping until `.env`
+exists on the box). Same commit as the laptop.
+
+**Scheduling (systemd, units in `ops/vps/`):**
+- `agentic-paper.timer`: `OnCalendar=Mon..Fri 09:15 America/New_York`,
+  `Persistent=true` (missed trigger replays at boot; the runtime market-hours
+  gate stays the real guard). Verified: next elapse resolves to 9:15 **EDT**.
+  Installed but **deliberately not enabled** — enabling a schedule that trades
+  is the human's trigger: `systemctl enable --now agentic-paper.timer`.
+- `agentic-backup.timer`: nightly 21:07 ET tar of `data/` to
+  `/var/backups/agentic/`, 14-day rotation (enabled). Off-box layer: enable
+  DigitalOcean droplet backups in the control panel (human, checkbox).
+- `agentic-rh-refresh.timer`: one-shot 2026-08-27 10:03 ET (enabled) → runs the
+  refresh check with `AGENTIC_RH_CRED=~/.config/agentic/rh_oauth.json`. The
+  token file is transferred BY THE HUMAN; if absent the check FAILs loudly in
+  `data/rh_refresh_check.log`, which is correct. **Exactly one host may hold a
+  live copy of the rotating refresh token** — after transfer, delete the
+  laptop's "Agentic RH Refresh Check" task, and using the robinhood MCP from
+  laptop Claude Code may rotate the grant out from under the VPS copy (finding
+  from part 3). Longer term the VPS orchestrator needs its OWN OAuth grant
+  (own consent, own secret store) — noted, deliberately not acted on yet.
+
+**Secrets:** `.env` (same five keys) created directly on the box by the human,
+`chmod 600`, never through chat/repo/agent tool calls.
+
+**Ops parity (from the laptop):**
+- health:      `ssh agentic@137.184.59.200 'cd ~/Agentic && .venv/bin/python -m orchestrator health'`
+- attribution: `ssh agentic@137.184.59.200 'cd ~/Agentic && .venv/bin/python -m orchestrator attribution'`
+- run log:     `ssh agentic@137.184.59.200 'tail -20 ~/Agentic/data/run.log'`
+
+**Cutover protocol (no gap day, no double-host day — locks are per-machine, two
+hosts would double-trade the paper account):** after the laptop's 2026-08-19
+session STOPs at 16:00 ET, in one motion: (1) copy `data/` laptop→VPS (audit
+log, session state, run.log — the system of record travels), (2) disable the
+laptop task (`Disable-ScheduledTask "Agentic Paper Trading"`), (3) enable the
+VPS timer. 2026-08-20 is the VPS verification session (STARTED → polls →
+STOPPED); rollback = disable the timer and re-enable the laptop task.
 
 ## Standing reminders
 
