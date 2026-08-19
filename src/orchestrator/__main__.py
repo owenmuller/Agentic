@@ -43,7 +43,7 @@ from datetime import datetime, timezone, timedelta
 
 from audit.attribution import DEFAULT_WINDOW_DAYS, build_attribution
 from audit.log import default_data_dir
-from execution import AlpacaPriceSource
+from execution import AlpacaDailyBars, AlpacaPriceSource, MarketContextBuilder
 from signals import (
     Form13FFetcher,
     QuiverCongressFetcher,
@@ -133,13 +133,24 @@ def attribution() -> int:
         for key, monthly in checks.signals_config.monthly_feed_costs().items()
     }
     generated_at = checks.clock()
+    window_start = generated_at - timedelta(days=DEFAULT_WINDOW_DAYS)
+
+    # SPY over the same window: a bull market must not flatter a signal class.
+    # Unavailable degrades to None — the report says so instead of guessing.
+    benchmark = None
+    try:
+        bars = AlpacaDailyBars()
+        benchmark = bars.window_return_pct("SPY", window_start, generated_at)
+        bars.close()
+    except Exception as error:  # noqa: BLE001 - a report without alpha beats no report
+        print(f"benchmark fetch failed: {error}", file=sys.stderr)
+
     report = build_attribution(
         checks.audit.trails(),
         generated_at=generated_at,
         feed_costs=costs,
-        research_costs=checks.audit.research_costs_by_class(
-            generated_at - timedelta(days=DEFAULT_WINDOW_DAYS)
-        ),
+        research_costs=checks.audit.research_costs_by_class(window_start),
+        benchmark_return_pct=benchmark,
     )
     print(report.render())
     return 0
@@ -250,7 +261,13 @@ def run() -> int:
                 checks.orchestrator_config.market_data.max_quote_age_seconds
             ),
         )
-        startup = start(fetcher=fetcher, prices=prices, checks=checks)
+        context_builder = MarketContextBuilder(AlpacaDailyBars())
+        startup = start(
+            fetcher=fetcher,
+            prices=prices,
+            checks=checks,
+            market_context=context_builder.context_for,
+        )
         loop = startup.loop
 
         while datetime.now(timezone.utc) < open_utc:

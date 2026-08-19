@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Optional
 from urllib.parse import quote
@@ -177,3 +177,209 @@ class AlpacaPriceSource:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+class AlpacaDailyBars:
+    """Daily bars from the same data host — the deterministic raw material for
+    market context and benchmark returns.
+
+    Same failure philosophy as the quote source: every failure path returns an
+    empty list, never a fabricated bar. Callers render "unavailable", not zero.
+    """
+
+    def __init__(
+        self,
+        client: Optional[httpx.Client] = None,
+        *,
+        base_url: str = DATA_BASE_URL,
+        api_key: Optional[str] = None,
+        api_secret: Optional[str] = None,
+        feed: str = "iex",
+        timeout: float = 10.0,
+    ) -> None:
+        self._feed = feed
+        if client is not None:
+            self._client = client
+        else:
+            load_environment()
+            self._client = httpx.Client(
+                base_url=base_url,
+                timeout=timeout,
+                headers={
+                    "APCA-API-KEY-ID": api_key or require_env("ALPACA_API_KEY"),
+                    "APCA-API-SECRET-KEY": api_secret
+                    or require_env("ALPACA_API_SECRET"),
+                },
+            )
+
+    def bars(
+        self, symbol: str, start: datetime, end: datetime
+    ) -> list[dict[str, Any]]:
+        """Daily bars, oldest first. Empty on any failure — missing, never zero."""
+        try:
+            response = self._client.get(
+                f"/v2/stocks/{quote(symbol)}/bars",
+                params={
+                    "timeframe": "1Day",
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                    "feed": self._feed,
+                    "limit": 10_000,
+                    "adjustment": "split",
+                },
+            )
+        except Exception as error:  # noqa: BLE001 - an outage is missing data
+            logger.warning("bars request for %s failed: %s", symbol, error)
+            return []
+        if response.status_code >= 400:
+            logger.warning(
+                "bars for %s returned HTTP %d", symbol, response.status_code
+            )
+            return []
+        try:
+            payload: Any = response.json()
+        except ValueError:
+            logger.warning("bars for %s were not JSON", symbol)
+            return []
+        bars = payload.get("bars") if isinstance(payload, dict) else None
+        if not isinstance(bars, list):
+            return []
+        return [bar for bar in bars if isinstance(bar, dict)]
+
+    def window_return_pct(
+        self, symbol: str, start: datetime, end: datetime
+    ) -> Optional[Decimal]:
+        """Close-to-close total return over the window, percent. None on any gap."""
+        bars = self.bars(symbol, start, end)
+        closes: list[Decimal] = []
+        for bar in bars:
+            raw = bar.get("c")
+            try:
+                close = Decimal(str(raw))
+            except (InvalidOperation, ValueError, TypeError):
+                continue
+            if close > ZERO:
+                closes.append(close)
+        if len(closes) < 2:
+            return None
+        return ((closes[-1] / closes[0] - 1) * 100).quantize(Decimal("0.01"))
+
+    def close(self) -> None:
+        self._client.close()
+
+
+class MarketContextBuilder:
+    """Deterministic market context for research prompts. Zero LLM cost.
+
+    Pure arithmetic over daily bars: recent price change, distance from the
+    52-week high, current volume against its 20-day average, and — when a
+    provider is configured — days until the next earnings date. Missing data
+    degrades to a sentence saying so; the pass always proceeds, and nothing is
+    ever fabricated to fill a gap.
+    """
+
+    #: At most this many tickers get context — a many-ticker signal gets the
+    #: leaders, not an unbounded fetch loop.
+    MAX_TICKERS = 3
+
+    def __init__(
+        self,
+        bars: AlpacaDailyBars,
+        clock: Optional[Callable[[], datetime]] = None,
+        earnings_provider: Optional[Callable[[str], Optional[Any]]] = None,
+    ) -> None:
+        self._bars = bars
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._earnings = earnings_provider
+
+    def context_for(self, signal: Any) -> str:
+        """A context block for the signal's extracted tickers. Never raises."""
+        raw = (signal.metadata.get("tickers") or "").strip()
+        tickers = [t.strip().upper() for t in raw.split(",") if t.strip()]
+        if not tickers:
+            return (
+                "No instrument was extracted from this signal; no market "
+                "context is available. Proceed on the signal content alone."
+            )
+        sections = []
+        for ticker in tickers[: self.MAX_TICKERS]:
+            try:
+                sections.append(self._section_for(ticker))
+            except Exception as error:  # noqa: BLE001 - context must never block
+                logger.warning("market context for %s failed: %s", ticker, error)
+                sections.append(
+                    f"{ticker}: market context unavailable (data fetch failed). "
+                    f"Proceed without it; do not infer or invent these numbers."
+                )
+        return "\n\n".join(sections)
+
+    def _section_for(self, ticker: str) -> str:
+        now = self._clock()
+        bars = self._bars.bars(ticker, now - timedelta(days=380), now)
+        closes: list[Decimal] = []
+        volumes: list[Decimal] = []
+        for bar in bars:
+            try:
+                close = Decimal(str(bar.get("c")))
+                volume = Decimal(str(bar.get("v")))
+            except (InvalidOperation, ValueError, TypeError):
+                continue
+            if close > ZERO:
+                closes.append(close)
+                volumes.append(volume)
+        if len(closes) < 2:
+            return (
+                f"{ticker}: market context unavailable (no usable price history). "
+                f"Proceed without it; do not infer or invent these numbers."
+            )
+
+        last = closes[-1]
+        lines = [f"{ticker}: last close {last}"]
+
+        def pct_change(days: int) -> Optional[Decimal]:
+            if len(closes) <= days:
+                return None
+            base = closes[-1 - days]
+            if base <= ZERO:
+                return None
+            return ((last / base - 1) * 100).quantize(Decimal("0.01"))
+
+        for days, label in ((5, "5-day"), (20, "20-day")):
+            change = pct_change(days)
+            lines.append(
+                f"- {label} change: "
+                + (f"{change:+.2f}%" if change is not None else "unavailable")
+            )
+
+        high = max(closes)
+        from_high = ((last / high - 1) * 100).quantize(Decimal("0.01"))
+        lines.append(f"- vs 52-week high ({high}): {from_high:+.2f}%")
+
+        if len(volumes) >= 21:
+            window = volumes[-21:-1]
+            average = sum(window, ZERO) / Decimal(len(window))
+            if average > ZERO:
+                ratio = (volumes[-1] / average).quantize(Decimal("0.01"))
+                lines.append(
+                    f"- latest volume vs 20-day average: {ratio}x "
+                    f"({volumes[-1]:.0f} vs {average:.0f})"
+                )
+            else:
+                lines.append("- latest volume vs 20-day average: unavailable")
+        else:
+            lines.append("- latest volume vs 20-day average: unavailable")
+
+        if self._earnings is None:
+            lines.append(
+                "- next earnings date: unavailable (no earnings data source "
+                "configured)"
+            )
+        else:
+            earnings_date = self._earnings(ticker)
+            if earnings_date is None:
+                lines.append("- next earnings date: unavailable")
+            else:
+                days_until = (earnings_date - now.date()).days
+                lines.append(
+                    f"- next earnings: {earnings_date.isoformat()} "
+                    f"({days_until} days away)"
+                )
+        return "\n".join(lines)

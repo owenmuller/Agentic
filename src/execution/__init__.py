@@ -12,7 +12,12 @@ passed the risk gate cannot be submitted.
 """
 
 from execution.alpaca import LIVE_BASE_URL, PAPER_BASE_URL, AlpacaAdapter
-from execution.market_data import DATA_BASE_URL, AlpacaPriceSource
+from execution.market_data import (
+    DATA_BASE_URL,
+    AlpacaDailyBars,
+    AlpacaPriceSource,
+    MarketContextBuilder,
+)
 from execution.base import (
     BrokerAdapter,
     BrokerError,
@@ -42,7 +47,11 @@ __all__ = [
     "LiveModeMisconfigured",
     "PAPER_BASE_URL",
     "AlpacaAdapter",
+    "AlpacaDailyBars",
+    "AlpacaDailyBars",
     "AlpacaPriceSource",
+    "MarketContextBuilder",
+    "MarketContextBuilder",
     "live_trading_confirmed",
     "require_paper_or_confirmed_live",
     "BrokerAdapter",

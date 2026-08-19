@@ -257,6 +257,7 @@ def start(
     checks: Optional[Preflight] = None,
     sleeper: Optional[Callable[[float], None]] = None,
     id_factory: Optional[Callable[[], str]] = None,
+    market_context: Optional[Callable] = None,
     **preflight_kwargs: object,
 ) -> Startup:
     """Run the startup sequence and return a loop ready to tick.
@@ -297,7 +298,9 @@ def start(
     )
     client = llm_client or AnthropicResearchClient(checks.research_config)
     credibility = CredibilityTracker(credibility_log)
-    research = ResearchPass(client, credibility, checks.clock)
+    research = ResearchPass(
+        client, credibility, checks.clock, market_context=market_context
+    )
     exits = ExitEngine(
         gate=checks.gate,
         adapter=checks.adapter,

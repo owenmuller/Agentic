@@ -68,6 +68,9 @@ class EquitySleeveLimits(_Strict):
     max_single_position: Fraction
     max_daily_deployment: Fraction
     max_options_premium_at_risk: Fraction
+    #: Aggregate equity exposure per sector, of sleeve NAV (config/sectors.yaml
+    #: defines membership; unmapped tickers are singleton sectors).
+    max_sector_exposure: Fraction
 
 
 class KillSwitchLimits(_Strict):

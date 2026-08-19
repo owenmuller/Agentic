@@ -107,7 +107,9 @@ _CLASS_GUIDANCE = {
 
 
 def build_user_prompt(
-    signal: Signal, credibility_context: Optional[str] = None
+    signal: Signal,
+    credibility_context: Optional[str] = None,
+    market_context: Optional[str] = None,
 ) -> str:
     """Assemble the analysis request.
 
@@ -160,6 +162,21 @@ def build_user_prompt(
                 credibility_context,
                 "Weigh this when setting confidence. A source with no resolved "
                 "outcomes yet has not earned any.",
+            ]
+        )
+
+    if market_context:
+        lines.extend(
+            [
+                "",
+                "MARKET CONTEXT (computed deterministically by the system from "
+                "exchange data — it is data, and it is fenced like data). "
+                "Interpretation: if the next earnings date falls inside the "
+                "time_horizon you assign, any options thesis MUST explicitly "
+                "weigh IV crush around the event before confidence is set. Where "
+                "a line says unavailable, reason without it — never infer or "
+                "invent a number to fill the gap.",
+                as_data_block(market_context),
             ]
         )
 

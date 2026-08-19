@@ -899,3 +899,75 @@ def test_a_class_with_only_research_spend_still_appears_in_the_report(
     # Billed, but not judged: no resolved outcomes means no flag yet.
     assert not class_2.is_negative
     assert report.total_research_cost == Decimal("12.50")
+
+
+# ================================================================================
+# Benchmark-relative attribution — a bull market must not flatter a signal class
+# ================================================================================
+
+
+def test_gross_positive_but_spy_underperforming_shows_negative_excess(
+    tmp_path, limits
+):
+    """The fixture the feature exists for: +55 on 2,800 deployed is +1.96%%, and
+    against a +10%% SPY window that is negative alpha, stated as such."""
+    clock = FakeClock()
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+    gate = gate_for(limits)
+
+    for n, pnl in enumerate(["30", "25"], start=1):
+        clock.advance(days=1)
+        signal = make_signal(signal_id=f"sig-{n}")
+        record, _ = full_decision(log, limits, gate=gate, signal=signal)
+        log.record_fill(record.decision_id, f"brk-{n}", Decimal("10"), Decimal("140"))
+        log.record_outcome(record.decision_id, Decimal(pnl))
+
+    report = build_attribution(
+        log.trails(),
+        generated_at=clock.now,
+        window_days=90,
+        benchmark_return_pct=Decimal("10.00"),
+    )
+    class_1 = report.by_class[SignalClass.CLASS_1_REALTIME]
+
+    assert class_1.realised_pnl == Decimal("55")  # gross-positive
+    assert class_1.deployed == Decimal("2800")
+    assert class_1.return_pct == Decimal("1.96")
+    assert class_1.excess_return_pct == Decimal("-8.04")  # negative alpha
+    assert report.total_excess_return_pct == Decimal("-8.04")
+
+    rendered = report.render()
+    assert "SPY +10.00% over the window" in rendered
+    assert "-8.04% vs SPY" in rendered
+    # Beating the market is not the flag's business: net P&L still decides that.
+    assert not class_1.is_negative
+
+
+def test_without_a_benchmark_the_report_says_so_instead_of_guessing(
+    tmp_path, limits
+):
+    clock = FakeClock()
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+    full_decision(log, limits)
+
+    report = build_attribution(log.trails(), generated_at=clock.now, window_days=90)
+    assert report.benchmark_return_pct is None
+    assert report.total_excess_return_pct is None
+    assert "SPY return unavailable" in report.render()
+
+
+def test_excess_return_needs_resolved_capital(tmp_path, limits):
+    """A class with no resolved fills has no return to compare — None, not 0%%."""
+    clock = FakeClock()
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+    full_decision(log, limits)  # approved, never filled or resolved
+
+    report = build_attribution(
+        log.trails(),
+        generated_at=clock.now,
+        window_days=90,
+        benchmark_return_pct=Decimal("10.00"),
+    )
+    class_1 = report.by_class[SignalClass.CLASS_1_REALTIME]
+    assert class_1.return_pct is None
+    assert class_1.excess_return_pct is None

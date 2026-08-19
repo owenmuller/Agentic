@@ -50,12 +50,14 @@ class ResearchPass:
         credibility: Optional[CredibilityTracker] = None,
         clock: Optional[Callable[[], datetime]] = None,
         rejection_sink: Optional[Callable[[ResearchRejection], None]] = None,
+        market_context: Optional[Callable[[Signal], str]] = None,
     ) -> None:
         self._client = client
         self._credibility = credibility
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._rejections: list[ResearchRejection] = []
         self._sink = rejection_sink
+        self._market_context = market_context
         self._last_usage: Optional["ResearchUsage"] = None
 
     @property
@@ -76,7 +78,19 @@ class ResearchPass:
     def run(self, signal: Signal) -> ResearchOutcome:
         """Score a signal. Returns a validated report or a typed rejection."""
         credibility_context = self._context_for(signal)
-        user_prompt = build_user_prompt(signal, credibility_context)
+        market_context = None
+        if self._market_context is not None:
+            try:
+                market_context = self._market_context(signal)
+            except Exception as error:  # noqa: BLE001 - context must never block a pass
+                market_context = (
+                    "market context unavailable (context builder failed: "
+                    f"{type(error).__name__}). Proceed without it; never infer "
+                    "or invent these numbers."
+                )
+        user_prompt = build_user_prompt(
+            signal, credibility_context, market_context=market_context
+        )
 
         self._last_usage = None
         try:

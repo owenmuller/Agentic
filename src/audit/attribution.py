@@ -61,6 +61,12 @@ class ClassAttribution:
     #: Estimated LLM research spend attributed to this class over the window —
     #: entry passes and thesis reviews, from the audit records' cost estimates.
     research_cost: Decimal = ZERO
+    #: Cost basis actually deployed into RESOLVED positions (buy-fill value), the
+    #: denominator that turns P&L into a return comparable to a benchmark.
+    deployed: Decimal = ZERO
+    #: The benchmark's (SPY) total return over the same window, in percent.
+    #: None when the benchmark could not be fetched — absent, never guessed.
+    benchmark_return_pct: Optional[Decimal] = None
 
     @property
     def hit_rate(self) -> Optional[float]:
@@ -74,6 +80,22 @@ class ClassAttribution:
         if self.decisions <= 0:
             return None
         return self.rejected / self.decisions
+
+    @property
+    def return_pct(self) -> Optional[Decimal]:
+        """Gross return on deployed capital, percent. None until capital resolved."""
+        if self.deployed <= ZERO:
+            return None
+        return (self.realised_pnl / self.deployed * 100).quantize(CENTS)
+
+    @property
+    def excess_return_pct(self) -> Optional[Decimal]:
+        """Return over the benchmark — alpha, not a bull market. None when either
+        side is unknown: an excess return needs both a return and a benchmark."""
+        ours = self.return_pct
+        if ours is None or self.benchmark_return_pct is None:
+            return None
+        return (ours - self.benchmark_return_pct).quantize(CENTS)
 
     @property
     def net_pnl(self) -> Decimal:
@@ -105,6 +127,12 @@ class ClassAttribution:
             verdict = "no resolved outcomes yet"
         else:
             verdict = f"{self.hit_rate:.0%} hit rate over {self.resolved} closed"
+        excess = self.excess_return_pct
+        if excess is not None:
+            verdict += (
+                f"; {self.return_pct:+.2f}% on {self.deployed:.2f} deployed, "
+                f"{excess:+.2f}% vs SPY"
+            )
         return (
             f"{self.signal_class}: {pnl}, {verdict}; "
             f"{self.approved} approved / {self.rejected} rejected of {self.decisions}"
@@ -119,6 +147,8 @@ class AttributionReport:
     window_days: int
     window_start: datetime
     by_class: dict[SignalClass, ClassAttribution] = field(default_factory=dict)
+    #: SPY total return over the window, percent. None when unavailable.
+    benchmark_return_pct: Optional[Decimal] = None
 
     @property
     def total_pnl(self) -> Decimal:
@@ -132,6 +162,18 @@ class AttributionReport:
     @property
     def total_research_cost(self) -> Decimal:
         return sum((c.research_cost for c in self.by_class.values()), ZERO)
+
+    @property
+    def total_deployed(self) -> Decimal:
+        return sum((c.deployed for c in self.by_class.values()), ZERO)
+
+    @property
+    def total_excess_return_pct(self) -> Optional[Decimal]:
+        """Overall alpha vs SPY. None without a benchmark or deployed capital."""
+        if self.benchmark_return_pct is None or self.total_deployed <= ZERO:
+            return None
+        ours = (self.total_pnl / self.total_deployed * 100).quantize(CENTS)
+        return (ours - self.benchmark_return_pct).quantize(CENTS)
 
     @property
     def total_net_pnl(self) -> Decimal:
@@ -153,8 +195,24 @@ class AttributionReport:
             f"Total: {self.total_pnl:+.2f} gross, {self.total_feed_cost:.2f} feed "
             f"costs, {self.total_research_cost:.2f} research costs, "
             f"{self.total_net_pnl:+.2f} net",
-            "",
         ]
+        if self.benchmark_return_pct is not None:
+            benchmark_line = (
+                f"Benchmark: SPY {self.benchmark_return_pct:+.2f}% over the window"
+            )
+            excess = self.total_excess_return_pct
+            if excess is not None:
+                benchmark_line += (
+                    f"; portfolio excess return {excess:+.2f}% "
+                    f"(a bull market must not flatter a signal class)"
+                )
+            lines.append(benchmark_line)
+        else:
+            lines.append(
+                "Benchmark: SPY return unavailable for this window — excess "
+                "returns not computed"
+            )
+        lines.append("")
         for signal_class in sorted(self.by_class):
             lines.append(f"  {self.by_class[signal_class].summary()}")
 
@@ -183,6 +241,7 @@ def build_attribution(
     window_days: int = DEFAULT_WINDOW_DAYS,
     feed_costs: Optional[Mapping[SignalClass, Decimal]] = None,
     research_costs: Optional[Mapping[SignalClass, Decimal]] = None,
+    benchmark_return_pct: Optional[Decimal] = None,
 ) -> AttributionReport:
     """Compute attribution from audit trails.
 
@@ -207,6 +266,7 @@ def build_attribution(
             "wins": 0,
             "pnl": ZERO,
             "flags": 0,
+            "deployed": ZERO,
         }
 
     # A paid class appears even when it made no decisions: the bill does not wait
@@ -236,6 +296,9 @@ def build_attribution(
             bucket["pnl"] += trail.outcome.realised_pnl  # type: ignore[operator]
             if trail.outcome.won:
                 bucket["wins"] += 1  # type: ignore[operator]
+            bucket["deployed"] += sum(  # type: ignore[operator]
+                (f.filled_value for f in trail.fills if f.side == "buy"), ZERO
+            )
 
     def prorated_cost(signal_class: SignalClass) -> Decimal:
         monthly = (feed_costs or {}).get(signal_class, ZERO)
@@ -256,6 +319,8 @@ def build_attribution(
             manipulation_flags=int(values["flags"]),  # type: ignore[arg-type]
             feed_cost=prorated_cost(signal_class),
             research_cost=(research_costs or {}).get(signal_class, ZERO),
+            deployed=values["deployed"],  # type: ignore[arg-type]
+            benchmark_return_pct=benchmark_return_pct,
         )
         for signal_class, values in buckets.items()
     }
@@ -265,4 +330,5 @@ def build_attribution(
         window_days=window_days,
         window_start=window_start,
         by_class=by_class,
+        benchmark_return_pct=benchmark_return_pct,
     )

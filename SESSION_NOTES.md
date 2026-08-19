@@ -700,6 +700,36 @@ OPEN (an unreadable field sends the signal to research, bounded by the budget).
   keep/cut flag fires on. A class whose every pass died pre-gate still shows
   its research bill in the report.
 
+## Bolt-ons from the open-source landscape (2026-08-19) — no architecture changes
+
+- **Benchmark-relative attribution:** the weekly report now carries SPY's total
+  return over the same window (one Alpaca daily-bars fetch, close-to-close) and
+  states excess return per class and overall — a bull market must not flatter a
+  signal class. Return denominators are resolved buy-fill cost basis; anything
+  missing (no benchmark, no resolved capital) renders as unavailable, never 0%.
+  The keep/cut flag still fires on net P&L — alpha is context, not the trigger.
+- **Deterministic market context in research prompts:** `MarketContextBuilder`
+  (execution layer, injected into ResearchPass as a callable — topology intact)
+  computes 5d/20d change, distance from 52-week high, latest-vs-20d-average
+  volume, and days-to-earnings when a provider is configured (none is today —
+  the block says "unavailable", it never invents). Injected INSIDE a data fence;
+  guidance outside the fence requires any options thesis to weigh IV crush when
+  earnings land inside the assigned time_horizon. A builder crash degrades to a
+  sentence in the prompt; a research pass is never blocked by missing context.
+- **Sector concentration guard in the risk gate:** `equity_sleeve.
+  max_sector_exposure: 0.15` in risk_limits.yaml; membership is the static
+  human-editable table `config/sectors.yaml`; an unmapped ticker is its own
+  singleton sector (unknown names never share a bucket — the cap degrades to
+  per-name, tighter, never looser). Typed rejection `sector_concentration`.
+  Equity positions only: options keep their aggregate-premium cap, and mapping
+  option symbols to underlyings would smuggle parsing into the gate. The
+  property suite gained a per-sector invariant checked after every step.
+
+**Deferred (trigger noted, not built):** if attribution ever shows the 86+
+confidence band underperforming the 55–85 bands on hit rate or net P&L over a
+60-day window, that is the trigger to revisit an adversarial red-team pass on
+top-band trades before they size at the 5% cap.
+
 ## Standing reminders
 
 - `PAPER_MODE=true`. Live needs two variables, both set by a human, and the agent must

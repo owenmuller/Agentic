@@ -23,6 +23,10 @@ equity_sleeve:
   max_single_position: 0.05 # of sleeve NAV
   max_daily_deployment: 0.15 # of sleeve NAV, per trading day
   max_options_premium_at_risk: 0.20 # aggregate open premium, of equity sleeve
+  # Concentration guard (2026-08-19): aggregate equity exposure per sector, of
+  # sleeve NAV. Sector membership comes from the static human-editable table in
+  # config/sectors.yaml; an unmapped ticker is its own singleton sector.
+  max_sector_exposure: 0.15
 
 kill_switch:
   drawdown_from_high_water_mark: 0.12

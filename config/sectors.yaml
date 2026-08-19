@@ -1,0 +1,99 @@
+# Sector mapping for the risk gate's concentration guard (2026-08-19).
+#
+# HUMAN-EDITABLE, static, deterministic. The gate caps aggregate equity exposure
+# per sector (equity_sleeve.max_sector_exposure in risk_limits.yaml). A ticker
+# not listed here is treated as its OWN singleton sector ("unmapped:XYZ") — an
+# unknown name must never silently share a bucket with anything else, so the
+# per-sector cap degrades to a per-name cap until a human classifies it.
+#
+# Covers the current watchlist universe: names the signal sources actually
+# surface (policy-theme plays, congressional favourites, 13F concentrations).
+# Extend freely; a ticker may appear in exactly one sector.
+
+version: 1
+
+sectors:
+  semiconductors:
+    - NVDA
+    - AMD
+    - INTC
+    - TSM
+    - MU
+    - AVGO
+    - QCOM
+    - ARM
+    - SMCI
+  big_tech:
+    - AAPL
+    - MSFT
+    - GOOGL
+    - AMZN
+    - META
+    - TSLA
+    - PLTR
+  steel_materials:
+    - NUE
+    - STLD
+    - X
+    - CLF
+    - AA
+    - FCX
+    - VALE
+  energy:
+    - XOM
+    - CVX
+    - OXY
+    - COP
+    - SLB
+    - HAL
+    - DVN
+  defense:
+    - LMT
+    - RTX
+    - NOC
+    - GD
+    - BA
+    - LHX
+    - AVAV
+  pharma:
+    - PFE
+    - MRK
+    - LLY
+    - JNJ
+    - BMY
+    - ABBV
+    - MRNA
+  crypto_exposed:
+    - COIN
+    - MSTR
+    - HOOD
+    - MARA
+    - RIOT
+  financials:
+    - JPM
+    - GS
+    - BAC
+    - MS
+    - C
+    - WFC
+    - SOFI
+  autos:
+    - F
+    - GM
+    - RIVN
+    - LCID
+    - NIO
+  airlines_travel:
+    - AAL
+    - DAL
+    - UAL
+    - LUV
+    - CCL
+    - RCL
+  retail_consumer:
+    - WMT
+    - TGT
+    - COST
+    - HD
+    - MCD
+    - NKE

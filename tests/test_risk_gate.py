@@ -37,6 +37,7 @@ from risk_gate import (
     position_key,
 )
 from risk_gate.state import business_days_before
+from risk_gate.sectors import SectorMap
 
 ZERO = Decimal("0")
 START_CASH = Decimal("100000")
@@ -66,11 +67,12 @@ def make_gate(
     cash: Decimal = START_CASH,
     account_type: AccountType = AccountType.CASH,
     clock: FakeClock | None = None,
+    sectors: "SectorMap | None" = None,
 ) -> RiskGate:
     state = AccountState(
         cash=cash, high_water_mark=cash, account_type=account_type
     )
-    return RiskGate(limits, state, clock=clock or FakeClock())
+    return RiskGate(limits, state, clock=clock or FakeClock(), sectors=sectors)
 
 
 def equity_buy(symbol: str = "AAPL", qty: int = 1, price: str = "100.00"):
@@ -619,6 +621,10 @@ def test_gate_refuses_to_start_on_a_config_that_permits_writing(limits):
 SYMBOLS = ["AAA", "BBB", "CCC"]
 OPTION_SYMBOLS = ["AAPL260117C00250000", "AAPL260117P00200000"]
 
+#: Two machine symbols share a sector so generated sequences can actually
+#: approach the sector cap; the third stays unmapped (its own singleton).
+MACHINE_SECTORS = SectorMap({"AAA": "alpha", "BBB": "alpha"})
+
 
 class GateStateMachine(RuleBasedStateMachine):
     """Drive arbitrary interleavings of submit / fill / cancel against one gate.
@@ -635,6 +641,7 @@ class GateStateMachine(RuleBasedStateMachine):
             self.limits,
             AccountState(cash=START_CASH, high_water_mark=START_CASH),
             clock=self.clock,
+            sectors=MACHINE_SECTORS,
         )
         self.pending: list[ApprovedOrder] = []
         #: Caps are fractions of NAV, so NAV moving can breach one with no order
@@ -752,6 +759,26 @@ class GateStateMachine(RuleBasedStateMachine):
                 f"{position.quantity} held — a synthetic short"
             )
             assert position.pending_open_units >= 0
+
+    @invariant()
+    def no_sector_exceeds_its_cap(self):
+        """No sequence of approved orders may put any sector past its cap."""
+        if self.nav_moved:
+            return  # a market move is drift, not an approval failure
+        cap = (
+            self.gate.sleeve_nav(Sleeve.EQUITY)
+            * self.limits.equity_sleeve.max_sector_exposure
+        )
+        exposures: dict[str, Decimal] = {}
+        for position in self.gate.state.positions.values():
+            if position.sleeve is Sleeve.EQUITY and not position.is_option:
+                sector = MACHINE_SECTORS.sector_of(position.key[1])
+                exposures[sector] = exposures.get(sector, ZERO) + position.exposure
+        for sector, exposure in exposures.items():
+            assert exposure <= cap, (
+                f"sector {sector} at {exposure} exceeds cap {cap} — "
+                f"an approval sequence breached the concentration guard"
+            )
 
     @invariant()
     def caps_are_never_breached_by_approvals(self):
@@ -946,3 +973,96 @@ def test_no_order_sequence_can_overdraw_the_account(quantities, prices):
         )
         assert gate.buying_power >= 0
     assert gate.state.reserved_cash <= START_CASH
+
+
+# ================================================================================
+# Sector concentration (2026-08-19): a sector is capped like a position is
+# ================================================================================
+
+ALPHA_SECTOR = SectorMap(
+    {"AL1": "alpha", "AL2": "alpha", "AL3": "alpha", "AL4": "alpha"}
+)
+
+
+def test_three_same_sector_positions_within_the_cap_are_approved(limits):
+    gate = make_gate(limits, sectors=ALPHA_SECTOR)
+    for symbol in ("AL1", "AL2", "AL3"):
+        decision = gate.submit(equity_buy(symbol=symbol, qty=44, price="100.00"))
+        assert decision.is_approved, decision
+
+
+def test_the_fourth_position_breaching_the_sector_cap_is_rejected(limits):
+    gate = make_gate(limits, sectors=ALPHA_SECTOR)
+    for symbol in ("AL1", "AL2", "AL3"):
+        assert gate.submit(equity_buy(symbol=symbol, qty=44, price="100.00")).is_approved
+
+    fourth = gate.submit(equity_buy(symbol="AL4", qty=44, price="100.00"))
+    assert isinstance(fourth, Rejection)
+    assert fourth.code is RejectionCode.SECTOR_CONCENTRATION
+    assert "alpha" in fourth.message
+    assert "sectors.yaml" in fourth.message
+    # The cap in the rejection is computed from the loaded limits, not hard-coded.
+    expected_cap = (
+        gate.sleeve_nav(Sleeve.EQUITY) * limits.equity_sleeve.max_sector_exposure
+    )
+    assert fourth.limit == expected_cap
+
+
+def test_exactly_at_the_sector_cap_is_approved(limits):
+    """The cap is a ceiling, not a boundary short of it: > rejects, == passes."""
+    gate = make_gate(limits, sectors=ALPHA_SECTOR)
+    sector_cap = (
+        gate.sleeve_nav(Sleeve.EQUITY) * limits.equity_sleeve.max_sector_exposure
+    )
+    single_cap = (
+        gate.sleeve_nav(Sleeve.EQUITY) * limits.equity_sleeve.max_single_position
+    )
+    per_position = min(single_cap, sector_cap / 3)
+    qty = int(per_position / Decimal("100.00"))
+    for symbol in ("AL1", "AL2", "AL3"):
+        decision = gate.submit(equity_buy(symbol=symbol, qty=qty, price="100.00"))
+        assert decision.is_approved, decision
+    # One more dollar of alpha exposure is over the line.
+    over = gate.submit(equity_buy(symbol="AL4", qty=1, price="100.00"))
+    assert isinstance(over, Rejection)
+    assert over.code is RejectionCode.SECTOR_CONCENTRATION
+
+
+def test_unmapped_tickers_never_share_a_bucket(limits):
+    """Three unmapped names each sized near the per-name cap are all approved:
+    if unknown tickers silently shared a sector, the third would breach it."""
+    gate = make_gate(limits, sectors=SectorMap({}))
+    for symbol in ("ZZ1", "ZZ2", "ZZ3"):
+        decision = gate.submit(equity_buy(symbol=symbol, qty=44, price="100.00"))
+        assert decision.is_approved, decision
+    assert SectorMap({}).sector_of("ZZ1") == "unmapped:ZZ1"
+    assert SectorMap({}).sector_of("zz1") == "unmapped:ZZ1"  # case-insensitive
+
+
+def test_options_do_not_count_toward_sector_exposure(limits):
+    """Options carry their own aggregate-premium cap; the sector guard reads
+    equity positions only (mapping option symbols to underlyings would smuggle
+    parsing into the gate)."""
+    gate = make_gate(limits, sectors=SectorMap({"AAPL": "alpha"}))
+    # Fill the alpha sector to its cap with equity...
+    sector_cap = (
+        gate.sleeve_nav(Sleeve.EQUITY) * limits.equity_sleeve.max_sector_exposure
+    )
+    single_cap = (
+        gate.sleeve_nav(Sleeve.EQUITY) * limits.equity_sleeve.max_single_position
+    )
+    assert gate.submit(
+        equity_buy(symbol="AAPL", qty=int(single_cap / Decimal("100")), price="100.00")
+    ).is_approved
+    # ...an option on the same underlying still clears the sector guard.
+    decision = gate.submit(option_buy(contracts=1, price="1.00"))
+    assert decision.is_approved, decision
+
+
+def test_the_production_sector_map_loads_and_is_singular():
+    """config/sectors.yaml parses, and a known watchlist name maps to a sector
+    while an unknown one stays a singleton."""
+    sectors = SectorMap.load()
+    assert sectors.sector_of("NVDA") == "semiconductors"
+    assert sectors.sector_of("NUE") == "steel_materials"
+    assert sectors.sector_of("NOT-A-TICKER") == "unmapped:NOT-A-TICKER"

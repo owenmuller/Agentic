@@ -25,6 +25,7 @@ from typing import Callable, Final, Mapping, Optional, Union, final
 
 from risk_gate.limits import RiskLimits
 from risk_gate.rejections import Rejection, RejectionCode
+from risk_gate.sectors import SectorMap
 from risk_gate.schema import Order
 from risk_gate.state import (
     AccountState,
@@ -131,10 +132,12 @@ class RiskGate:
         limits: RiskLimits,
         state: AccountState,
         clock: Optional[Callable[[], datetime]] = None,
+        sectors: Optional[SectorMap] = None,
     ) -> None:
         self._limits = limits
         self._state = state
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._sectors = sectors if sectors is not None else SectorMap.load()
         self._sequence = 0
         self._evaluate_kill_switch()
 
@@ -322,6 +325,37 @@ class RiskGate:
                 limit=single_cap,
                 observed=resulting,
             )
+
+        # Sector concentration. Equity positions only: options carry their own
+        # aggregate-premium cap, and mapping option symbols back to underlyings
+        # would smuggle parsing into the gate. Membership is the static table in
+        # config/sectors.yaml; an unmapped name is its own singleton sector, so
+        # this check can only ever be TIGHTER for unknown tickers, never looser.
+        if sleeve is Sleeve.EQUITY and not is_option(order):
+            sector = self._sectors.sector_of(key[1])
+            sector_exposure = cost + sum(
+                (
+                    p.exposure
+                    for p in state.positions.values()
+                    if p.sleeve is Sleeve.EQUITY
+                    and not p.is_option
+                    and self._sectors.sector_of(p.key[1]) == sector
+                ),
+                ZERO,
+            )
+            sector_cap = sleeve_nav * limits.equity_sleeve.max_sector_exposure
+            if sector_exposure > sector_cap:
+                return Rejection(
+                    code=RejectionCode.SECTOR_CONCENTRATION,
+                    message=(
+                        f"equity exposure in sector {sector!r} would reach "
+                        f"{sector_exposure}, above the "
+                        f"{limits.equity_sleeve.max_sector_exposure} cap on "
+                        f"equity sleeve NAV (membership: config/sectors.yaml)"
+                    ),
+                    limit=sector_cap,
+                    observed=sector_exposure,
+                )
 
         # Daily deployment — an equity-sleeve cap in CLAUDE.md § Position Caps.
         if sleeve is Sleeve.EQUITY:
