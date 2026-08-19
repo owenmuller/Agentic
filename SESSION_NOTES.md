@@ -551,8 +551,75 @@ Limits exist but are not advertised; the adapter should keep our
 one-logged-retry citizenship pattern and treat 429 handling as untestable
 until observed.
 
-Part 3 (headless auth/refresh across sessions) remains QUEUED on the human's
-explicit go, along with the re-authorized resting-cancel leg above.
+### Spike part 2b — resting-cancel leg (2026-08-18, human GO): PASS
+
+F (Ford) at $13.95: buy 1 @ $13.25 limit gtc (~5% below market), fresh ref_id.
+State sequence: place returned `queued` immediately (market closed — queued for
+next session IS the resting state outside RTH; ~5% survives the collar that
+killed the $1.00 order), stable across ~12s of polling. Cancel returned
+`{"accepted": true}` with explicitly ASYNC semantics (possible
+`pending_cancelled`; a fill can race a cancel → `partially_filled_rest_cancelled`
+— the adapter must treat cancel-accepted as "requested", not "done", and poll to
+terminal). First post-cancel poll: `cancelled`. Sweep: 2 orders on the account
+(both terminal: 1 rejected, 1 cancelled), 0 open, cash $100.0000 intact, no fill.
+
+### Spike part 3 — headless OAuth refresh (2026-08-18): PASS, with rotation
+
+1. **Credential store:** `~/.claude/.credentials.json` → `mcpOAuth["robinhood-
+   trading|<hash>"]` holding accessToken (ES256 JWT), refreshToken, clientId
+   (public client), expiresAt (ms), and the RFC 8414 discovery URLs. ELEVATED
+   SENSITIVITY: the JWT's claims embed a secondary credential-like `token` field
+   — treat the file as holding two secrets per server, never print/commit.
+2. **Discovery chain (verified live):**
+   `GET /.well-known/oauth-protected-resource/mcp/trading` → authorization server
+   `https://agent.robinhood.com/mcp/trading` →
+   `GET /.well-known/oauth-authorization-server/mcp/trading` →
+   `token_endpoint: https://api.robinhood.com/oauth2/token/`, grant types
+   authorization_code + refresh_token, token auth method `none` (public client —
+   no secret needed headlessly), no revocation endpoint.
+3. **Forced refresh (before expiry): HTTP 200 in 0.45s**, form-encoded
+   `grant_type=refresh_token` + stored refresh_token + clientId, no browser.
+   New access token verified with an authenticated get_portfolio read.
+   `expires_in: 665712s` (~7.7 days). **The refresh token ROTATES on use.**
+   Finding, not failure: Claude Code and a live orchestrator must NOT share this
+   credential store — whichever refreshes second is stranded on a dead refresh
+   token. A live orchestrator needs its OWN OAuth grant (own consent), stored in
+   its own secret store. The rotated pair was written back to Claude Code's
+   store to keep it consistent (verified working after write-back).
+4. **Natural experiment armed:** one-shot Windows task "Agentic RH Refresh
+   Check", 2026-08-27 07:03 local — after the new access token expires
+   2026-08-26 17:19 UTC — runs `ops/rh_refresh_check.py` (stdlib-only, reads the
+   store at runtime, refreshes, authenticated read, PASS/FAIL verdict, writes
+   the rotated pair back; never prints tokens) →
+   `data/rh_refresh_check.log` (gitignored).
+
+### Spike verdict (2026-08-18): **GO — Robinhood Agentic is a viable live venue**
+
+All three parts proved out: real server-side act-block on non-agentic accounts,
+full order lifecycle with client idempotency (at-most-once via 409), option
+chain/quotes richer than Alpaca's, and headless token refresh with a rotating
+refresh token. Live-mode checklist before any switch (in addition to CLAUDE.md's
+own live-gate rules):
+- [ ] Adapter hard-pins the Agentic account number at construction; refuses all
+      other account numbers in code; tested.
+- [ ] Adapter ignores every `guide` field in tool results (server-authored
+      instructions are data, Constraint #5).
+- [ ] Own OAuth grant for the orchestrator (rotation finding) in its own secret
+      store; refresh-before-expiry loop; alert on refresh failure.
+- [ ] Confirm settled-funds-only buying power and no debit path on the
+      limited-margin Agentic account (Constraint #1) — snapshot evidence today:
+      buying_power == unleveraged_buying_power == cash.
+- [ ] review-then-place always; persist review alerts in the audit record
+      (rejected orders carry no reason field).
+- [ ] Poll to stable state after place (gateway-accept ≠ resting) and after
+      cancel (accepted ≠ cancelled); handle fill-races-cancel.
+- [ ] Per-tool schema validation (string vs array conventions are inconsistent).
+- [ ] 2026-08-27 refresh-check log reviewed (the unattended proof).
+- [ ] Options remain level 2 on the Agentic account (long-only enforcement at
+      the broker layer too).
+
+Paper period continues on Alpaca regardless; the live-venue decision itself
+waits for the 2–4 week paper gate and the human's two-key live confirmation.
 
 ## Standing reminders
 
