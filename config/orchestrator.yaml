@@ -16,6 +16,13 @@ version: 1
 # second time. See audit.log.AuditLog.research_passes_on.
 max_research_passes_per_day: 40
 
+# COST TRIPWIRE. Same pattern as the X reads counter: when a day's cumulative
+# estimated research spend (entry passes + exit reviews, rejected passes included
+# because they were paid for) crosses this many dollars, ONE COST warning line is
+# written to run.log — once per day, not per pass. Estimates come from the pricing
+# table in research.yaml; the console bill is the truth this warns ahead of.
+daily_cost_warning_usd: 10
+
 # How often the loop wakes. Each scanner still polls on its own cadence from
 # signals.yaml — this only has to be fast enough not to be the binding constraint on
 # the fastest of them (Class 1, 60s).

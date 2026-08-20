@@ -145,12 +145,16 @@ def attribution() -> int:
     except Exception as error:  # noqa: BLE001 - a report without alpha beats no report
         print(f"benchmark fetch failed: {error}", file=sys.stderr)
 
+    month_start = generated_at.replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    )
     report = build_attribution(
         checks.audit.trails(),
         generated_at=generated_at,
         feed_costs=costs,
         research_costs=checks.audit.research_costs_by_class(window_start),
         benchmark_return_pct=benchmark,
+        mtd_research_cost=checks.audit.research_cost_between(month_start),
     )
     print(report.render())
     return 0
@@ -267,6 +271,7 @@ def run() -> int:
             prices=prices,
             checks=checks,
             market_context=context_builder.context_for,
+            cost_warn_sink=lambda message: run_log.note("COST", message),
         )
         loop = startup.loop
 

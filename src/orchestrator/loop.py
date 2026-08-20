@@ -36,7 +36,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable, Optional, Sequence
+from typing import TYPE_CHECKING, Callable, Optional, Sequence
 
 from audit.log import AuditLog
 from execution.base import BrokerAdapter
@@ -48,6 +48,9 @@ from orchestrator.budget import ResearchBudget
 from orchestrator.exits import ExitEngine
 from orchestrator.pipeline import PipelineResult, SignalPipeline
 from orchestrator.prefilter import ResearchPreFilter
+
+if TYPE_CHECKING:  # pragma: no cover - annotation only
+    from orchestrator.ops import CostMeter
 from orchestrator.state import SessionState
 
 logger = logging.getLogger("orchestrator.loop")
@@ -89,6 +92,7 @@ class TradingLoop:
         pipeline: SignalPipeline,
         exits: ExitEngine,
         prefilter: Optional[ResearchPreFilter],
+        cost_meter: Optional["CostMeter"],
         budget: ResearchBudget,
         session: SessionState,
         gate: RiskGate,
@@ -103,6 +107,7 @@ class TradingLoop:
         self._pipeline = pipeline
         self._exits = exits
         self._prefilter = prefilter
+        self._cost_meter = cost_meter
         self._budget = budget
         self._session = session
         self._gate = gate
@@ -173,7 +178,14 @@ class TradingLoop:
                 self._deferred = pending[index:]
                 report.deferred = len(self._deferred)
                 break
-            report.processed.append(self._pipeline.process(signal))
+            result = self._pipeline.process(signal)
+            report.processed.append(result)
+            if self._cost_meter is not None:
+                # One cost per pass: when both records exist (an execution
+                # rejection after the decision) they carry the same estimate,
+                # so the decision record wins and the pass bills once.
+                record = result.decision or result.rejection
+                self._cost_meter.add(getattr(record, "est_cost_usd", None))
 
         report.settled = len(self._pipeline.reconcile())
 

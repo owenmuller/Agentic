@@ -147,11 +147,15 @@ class ExitEngine:
         config: ExitsConfig,
         clock,
         credibility=None,
+        cost_sink=None,
     ) -> None:
         self._gate = gate
         self._adapter = adapter
         self._audit = audit
         self._prices = prices
+        #: Called with each review's estimated cost (None = unpriced/no call),
+        #: so the daily cost tripwire sees reviews as well as entry passes.
+        self._cost_sink = cost_sink
         self._reviews = review_pass
         self._budget = budget
         self._config = config
@@ -399,13 +403,16 @@ class ExitEngine:
             if not isinstance(outcome, ExitReview):
                 # No verdict is a HOLD, logged as its own outcome. Never a close on
                 # bad data; the guardrails above still apply to this position.
+                usage = self._reviews.last_usage
                 self._audit.record_thesis_review(
                     position.decision_id,
                     ReviewOutcome.REVIEW_FAILED,
                     code=str(outcome.code),
                     message=outcome.message,
-                    usage=self._reviews.last_usage,
+                    usage=usage,
                 )
+                if self._cost_sink is not None:
+                    self._cost_sink(usage.cost_usd if usage else None)
                 logger.warning(
                     "thesis review of %s failed (%s); holding — guardrails still "
                     "apply",
@@ -414,13 +421,16 @@ class ExitEngine:
                 )
                 continue
 
+            usage = self._reviews.last_usage
             self._audit.record_thesis_review(
                 position.decision_id,
                 ReviewOutcome.CLOSE if outcome.should_close else ReviewOutcome.HOLD,
                 assessment=outcome.assessment,
                 invalidation_triggered=outcome.invalidation_triggered,
-                usage=self._reviews.last_usage,
+                usage=usage,
             )
+            if self._cost_sink is not None:
+                self._cost_sink(usage.cost_usd if usage else None)
             if not outcome.should_close:
                 continue
 

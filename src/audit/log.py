@@ -481,5 +481,33 @@ class AuditLog:
             totals[signal_class] = totals.get(signal_class, Decimal("0")) + cost
         return totals
 
+    def research_cost_between(
+        self, start: datetime, end: Optional[datetime] = None
+    ) -> Decimal:
+        """Total estimated LLM spend recorded in [start, end). Same counting rules
+        as ``research_costs_by_class``: an entry pass bills once per decision_id
+        (a decision record and a later execution rejection share one call);
+        thesis reviews bill per record; records with no estimate — pre_filter
+        rejections, unpriced models — contribute exactly zero.
+        """
+        total = Decimal("0")
+        entry_counted: set[str] = set()
+        for record in self.records():
+            cost = getattr(record, "est_cost_usd", None)
+            if cost is None:
+                continue
+            if record.recorded_at < start:
+                continue
+            if end is not None and record.recorded_at >= end:
+                continue
+            if isinstance(record, (DecisionRecord, StageRejectionRecord)):
+                if record.decision_id in entry_counted:
+                    continue
+                entry_counted.add(record.decision_id)
+            elif not isinstance(record, ThesisReviewRecord):
+                continue
+            total += cost
+        return total
+
     def trails(self) -> list[AuditTrail]:
         return [self.trail(d.decision_id) for d in self.decisions()]

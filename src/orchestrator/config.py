@@ -77,6 +77,10 @@ class OrchestratorConfig(BaseModel):
     version: int
     #: Research passes per UTC day. Zero is a valid, if inert, configuration.
     max_research_passes_per_day: int = Field(ge=0)
+    #: Dollars of estimated research spend per UTC day before ONE COST warning
+    #: line goes to run.log. A warning, not a stop — the pass budget above is
+    #: the hard ceiling; this makes the bill visible before the console does.
+    daily_cost_warning_usd: Decimal = Field(default=Decimal("10"), ge=Decimal("0"))
     tick_interval_seconds: int = Field(gt=0)
     account_type: AccountType
     exits: ExitsConfig

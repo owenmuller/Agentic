@@ -149,6 +149,9 @@ class AttributionReport:
     by_class: dict[SignalClass, ClassAttribution] = field(default_factory=dict)
     #: SPY total return over the window, percent. None when unavailable.
     benchmark_return_pct: Optional[Decimal] = None
+    #: Estimated research spend this calendar month, across all classes — a
+    #: shorter horizon than the window costs above, for bill anticipation.
+    mtd_research_cost: Optional[Decimal] = None
 
     @property
     def total_pnl(self) -> Decimal:
@@ -196,6 +199,11 @@ class AttributionReport:
             f"costs, {self.total_research_cost:.2f} research costs, "
             f"{self.total_net_pnl:+.2f} net",
         ]
+        if self.mtd_research_cost is not None:
+            lines.append(
+                f"Research cost month-to-date: ${self.mtd_research_cost:.2f} "
+                f"(estimates; console bill is truth)"
+            )
         if self.benchmark_return_pct is not None:
             benchmark_line = (
                 f"Benchmark: SPY {self.benchmark_return_pct:+.2f}% over the window"
@@ -242,6 +250,7 @@ def build_attribution(
     feed_costs: Optional[Mapping[SignalClass, Decimal]] = None,
     research_costs: Optional[Mapping[SignalClass, Decimal]] = None,
     benchmark_return_pct: Optional[Decimal] = None,
+    mtd_research_cost: Optional[Decimal] = None,
 ) -> AttributionReport:
     """Compute attribution from audit trails.
 
@@ -331,4 +340,5 @@ def build_attribution(
         window_start=window_start,
         by_class=by_class,
         benchmark_return_pct=benchmark_return_pct,
+        mtd_research_cost=mtd_research_cost,
     )

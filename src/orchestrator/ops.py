@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
@@ -298,6 +299,25 @@ def mirror_silence(
 # ================================================================================
 
 
+def _cost_line(checks: Preflight, moment: datetime) -> str:
+    """Today / yesterday / month-to-date estimated research spend, from the log.
+
+    Rejected passes are included — they were paid for. Estimates only; the
+    weekly console reconciliation is the truth.
+    """
+    day_start = datetime.combine(moment.date(), time.min, tzinfo=timezone.utc)
+    month_start = day_start.replace(day=1)
+    today = checks.audit.research_cost_between(day_start)
+    yesterday = checks.audit.research_cost_between(
+        day_start - timedelta(days=1), day_start
+    )
+    month = checks.audit.research_cost_between(month_start)
+    return (
+        f"est. research cost: today ${today:.2f}  |  yesterday ${yesterday:.2f}"
+        f"  |  month-to-date ${month:.2f}  (estimates; console bill is truth)"
+    )
+
+
 def _fmt_position(position: TrackedPosition, now: datetime) -> str:
     reviewed = (
         position.last_review_at.date().isoformat()
@@ -315,6 +335,66 @@ def _fmt_position(position: TrackedPosition, now: datetime) -> str:
         f"leash {position.days_held(now)}/{position.leash_days}d "
         f"({position.time_horizon})  reviewed {reviewed}{flags}"
     )
+
+
+class CostMeter:
+    """Daily research-spend tripwire, same pattern as the X reads counter.
+
+    Accumulates estimated dollars per UTC day; the first time a day's total
+    crosses the threshold, exactly one warning goes to ``warn_sink``. Seeded at
+    startup with what the audit log says today already cost, so a restart cannot
+    reset the tripwire. Estimates only — the console bill is the truth this
+    warns ahead of.
+    """
+
+    def __init__(
+        self,
+        threshold_usd: Decimal,
+        warn_sink: Optional[Callable[[str], None]] = None,
+        clock: Optional[Callable[[], datetime]] = None,
+        initial_spent: Decimal = Decimal("0"),
+    ) -> None:
+        self._threshold = threshold_usd
+        self._sink = warn_sink
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._day = self._clock().date()
+        self._spent = initial_spent
+        # Not pre-warned even when seeded above the threshold: after a mid-day
+        # restart the first new pass re-warns once. Twice across a crash beats
+        # never.
+        self._warned = False
+
+    @property
+    def today_spent(self) -> Decimal:
+        self._roll()
+        return self._spent
+
+    def _roll(self) -> None:
+        today = self._clock().date()
+        if today != self._day:
+            self._day = today
+            self._spent = Decimal("0")
+            self._warned = False
+
+    def add(self, cost: Optional[Decimal]) -> None:
+        """Fold one pass's estimated cost in. None (unpriced, or no pass) is zero."""
+        self._roll()
+        if cost is None:
+            return
+        self._spent += cost
+        if (
+            not self._warned
+            and self._threshold > Decimal("0")
+            and self._spent > self._threshold
+        ):
+            self._warned = True
+            if self._sink is not None:
+                self._sink(
+                    f"estimated research spend today ${self._spent:.2f} crossed "
+                    f"the ${self._threshold:.2f}/day warning threshold "
+                    f"(orchestrator.yaml daily_cost_warning_usd); estimates from "
+                    f"research.yaml pricing — reconcile against the console bill"
+                )
 
 
 def health_report(
@@ -343,6 +423,7 @@ def health_report(
         f"deployed today: {state.deployed_today}  |  research budget: "
         f"{checks.budget.spent} of {checks.budget.max_per_day} spent for "
         f"{checks.budget.day}",
+        _cost_line(checks, moment),
         f"broker permits: {checks.permissions.describe()}"
         + (
             "  [EXCEEDS the code - schema is the enforcement]"

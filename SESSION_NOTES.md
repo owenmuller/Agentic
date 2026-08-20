@@ -790,6 +790,26 @@ free); one mapped to a Ted Cruz post.
   NOT cover "economic" (stem-prefix matching) — ruled 2026-08-20: stem changed
   to `econom`, covering economy/economic/economics.
 
+## Daily cost visibility (2026-08-20): spend is a number you read
+
+- **Health** gains an `est. research cost` line: today / yesterday /
+  month-to-date, summed from `est_cost_usd` across audit records (entry passes
+  once per decision_id, exit reviews per record, rejected passes included —
+  they were paid for; pre_filter records contribute zero by construction).
+- **Tripwire:** `daily_cost_warning_usd: 10` in orchestrator.yaml. The CostMeter
+  (seeded from the log at startup so a restart cannot reset it) writes ONE COST
+  line to run.log the first time a day's cumulative estimate crosses the
+  threshold — once per day, not per pass; a mid-day restart may re-warn once.
+- **Attribution** report adds a month-to-date research cost total line above the
+  per-class window costs.
+
+**Real unit costs observed (2026-08-19, from manual console math — the audit
+estimates only start 2026-08-20, so yesterday reads $0.00 in health):**
+~$2.12/pass Opus Class 1 (two passes, $4.24 total). Sonnet-tier unit cost still
+unmeasured — no Class 2/3 passes have run yet. Pending Friday's console
+reconciliation, which is also when the research.yaml pricing table gets replaced
+with real numbers.
+
 ## Standing reminders
 
 - `PAPER_MODE=true`. Live needs two variables, both set by a human, and the agent must

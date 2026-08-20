@@ -258,6 +258,7 @@ def start(
     sleeper: Optional[Callable[[float], None]] = None,
     id_factory: Optional[Callable[[], str]] = None,
     market_context: Optional[Callable] = None,
+    cost_warn_sink: Optional[Callable[[str], None]] = None,
     **preflight_kwargs: object,
 ) -> Startup:
     """Run the startup sequence and return a loop ready to tick.
@@ -301,6 +302,20 @@ def start(
     research = ResearchPass(
         client, credibility, checks.clock, market_context=market_context
     )
+    from datetime import time as _time
+
+    from orchestrator.ops import CostMeter
+
+    now = checks.clock()
+    day_start = datetime.combine(now.date(), _time.min, tzinfo=timezone.utc)
+    cost_meter = CostMeter(
+        checks.orchestrator_config.daily_cost_warning_usd,
+        warn_sink=cost_warn_sink,
+        clock=checks.clock,
+        # Seeded from the log: a restart cannot reset the tripwire.
+        initial_spent=checks.audit.research_cost_between(day_start),
+    )
+
     exits = ExitEngine(
         gate=checks.gate,
         adapter=checks.adapter,
@@ -311,6 +326,7 @@ def start(
         config=checks.orchestrator_config.exits,
         clock=checks.clock,
         credibility=credibility,
+        cost_sink=cost_meter.add,
     )
     # Positions opened by earlier runs, rebuilt from the log with stops re-armed. Part
     # of the replay step in spirit, but it needs the wired engine, so it runs here.
@@ -340,6 +356,7 @@ def start(
         pipeline=pipeline,
         exits=exits,
         prefilter=ResearchPreFilter.from_config(checks.signals_config),
+        cost_meter=cost_meter,
         budget=checks.budget,
         session=checks.session,
         gate=checks.gate,

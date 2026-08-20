@@ -311,3 +311,154 @@ def test_a_review_that_never_reached_the_model_has_no_usage():
     review = ExitReviewPass(Exploding())
     review.run(_position())
     assert review.last_usage is None
+
+
+# ================================================================================
+# Daily cost visibility (2026-08-20): spend is a number you read, not a surprise
+# ================================================================================
+
+
+def test_cost_summation_counts_passes_once_and_null_costs_as_zero(tmp_path):
+    from datetime import timedelta
+
+    from audit import AuditLog, RejectedStage
+    from research.reports import ResearchUsage
+    from test_audit import FakeClock, NOW, _counter, full_decision, make_signal
+
+    clock = FakeClock()
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+
+    # An entry pass whose decision AND execution rejection share one estimate.
+    signal = make_signal()
+    record, _ = full_decision(log, RiskLimits.load(), signal=signal)
+    usage = ResearchUsage(10_000, 500, Decimal("2.12"))
+    log.record_stage_rejection(
+        record.decision_id, RejectedStage.EXECUTION, "BrokerError", "refused",
+        signal, usage=usage,
+    )
+    # Rewrite the decision's cost is not possible (append-only) — instead assert
+    # the shared-id rule with the rejection carrying the estimate: bills once.
+    # A review under the same decision bills separately.
+    from audit.records import ReviewOutcome
+
+    log.record_fill(record.decision_id, "brk", Decimal("10"), Decimal("140"))
+    log.record_thesis_review(
+        record.decision_id, ReviewOutcome.HOLD, assessment="fine",
+        invalidation_triggered=False,
+        usage=ResearchUsage(9_000, 400, Decimal("0.03")),
+    )
+    # A pre_filter rejection: decision_id exists, usage is None — contributes 0.
+    log.record_stage_rejection(
+        "dec-pref", RejectedStage.PRE_FILTER, "pre_filter", "no theme",
+        make_signal(signal_id="sig-pref"),
+    )
+
+    day_start = NOW.replace(hour=0, minute=0, second=0, microsecond=0)
+    total = log.research_cost_between(day_start)
+    assert total == Decimal("2.15")  # 2.12 once + 0.03 review; pre_filter adds 0
+
+
+def test_month_to_date_excludes_last_month(tmp_path):
+    from datetime import timedelta
+
+    from audit import AuditLog, RejectedStage
+    from research.reports import ResearchUsage
+    from test_audit import FakeClock, NOW, _counter, make_signal
+
+    clock = FakeClock(NOW - timedelta(days=40))  # last month
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+    log.record_stage_rejection(
+        "dec-old", RejectedStage.RESEARCH, "no_structured_output", "prose",
+        make_signal(signal_id="sig-old"),
+        usage=ResearchUsage(10_000, 500, Decimal("5.00")),
+    )
+    clock.now = NOW  # this month
+    log.record_stage_rejection(
+        "dec-new", RejectedStage.RESEARCH, "no_structured_output", "prose",
+        make_signal(signal_id="sig-new"),
+        usage=ResearchUsage(10_000, 500, Decimal("1.25")),
+    )
+
+    month_start = NOW.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    assert log.research_cost_between(month_start) == Decimal("1.25")
+    assert log.research_cost_between(
+        month_start - timedelta(days=31), month_start
+    ) == Decimal("5.00")
+
+
+def test_the_cost_tripwire_warns_once_per_day_and_resets_at_midnight():
+    from datetime import datetime, timedelta, timezone
+
+    from orchestrator.ops import CostMeter
+
+    class Clock:
+        def __init__(self):
+            self.now = datetime(2026, 8, 20, 14, 0, tzinfo=timezone.utc)
+
+        def __call__(self):
+            return self.now
+
+    clock = Clock()
+    warnings: list[str] = []
+    meter = CostMeter(Decimal("10"), warn_sink=warnings.append, clock=clock)
+
+    meter.add(Decimal("6.00"))
+    meter.add(None)  # unpriced pass: zero, never a crash
+    assert warnings == []
+    meter.add(Decimal("5.00"))  # 11.00 crosses 10
+    assert len(warnings) == 1
+    assert "crossed" in warnings[0] and "$11.00" in warnings[0]
+    meter.add(Decimal("4.00"))  # still the same day: no second warning
+    assert len(warnings) == 1
+
+    clock.now += timedelta(days=1)  # midnight passed: fresh day, fresh tripwire
+    assert meter.today_spent == Decimal("0")
+    meter.add(Decimal("12.00"))
+    assert len(warnings) == 2
+
+
+def test_the_meter_seed_survives_a_restart():
+    from datetime import datetime, timezone
+
+    from orchestrator.ops import CostMeter
+
+    clock = lambda: datetime(2026, 8, 20, 14, 0, tzinfo=timezone.utc)  # noqa: E731
+    warnings: list[str] = []
+    meter = CostMeter(
+        Decimal("10"), warn_sink=warnings.append, clock=clock,
+        initial_spent=Decimal("9.50"),
+    )
+    meter.add(Decimal("1.00"))  # 10.50 crosses on the first post-restart pass
+    assert len(warnings) == 1
+
+
+def test_health_output_carries_the_cost_line(tmp_path, limits, signals_config, research_config):
+    from orchestrator.ops import RunLog, health_report
+
+    started = build(
+        tmp_path, limits, signals_config, research_config,
+        llm=FakeLLM(usage_result(REPORT)),
+    )
+    started.loop.tick()
+    started.loop.shutdown()
+
+    report = health_report(
+        started.preflight, started.exits.tracked, RunLog(tmp_path / "run.log")
+    )
+    assert "est. research cost: today $0.66" in report
+    assert "yesterday $0.00" in report
+    assert "month-to-date $0.66" in report
+
+
+def test_attribution_renders_the_mtd_research_cost():
+    from datetime import datetime, timezone
+
+    from audit.attribution import build_attribution
+
+    report = build_attribution(
+        [],
+        generated_at=datetime(2026, 8, 20, tzinfo=timezone.utc),
+        window_days=90,
+        mtd_research_cost=Decimal("12.34"),
+    )
+    assert "Research cost month-to-date: $12.34" in report.render()
