@@ -386,11 +386,18 @@ class SignalPipeline:
         # Round the bound UP. It is the worst case the gate reserves against and the
         # limit the broker is sent, so rounding it down would shave the protection.
         limit_price = quote.quantize(CENTS, rounding=ROUND_UP)
-        quantity = int((proposal.capital / limit_price).to_integral_value(ROUND_DOWN))
-        if quantity < 1:
+        # Fractional shares (2026-08-20): round DOWN to the venue's quantity step —
+        # rounding must never increase exposure. Whole-share venues keep step 1, so
+        # this is the old behaviour wherever fractional is unproven.
+        step = self._adapter.equity_quantity_step
+        quantity = (proposal.capital / limit_price).quantize(step, rounding=ROUND_DOWN)
+        floor = self._gate.limits.equity_sleeve.min_order_notional_usd
+        if quantity <= ZERO or quantity * limit_price < floor:
             return None, (
-                "size_below_one_unit",
-                f"{proposal.capital} at {limit_price} buys no whole shares of {symbol}",
+                "below_min_notional",
+                f"{proposal.capital} at {limit_price} rounds to {quantity} shares "
+                f"of {symbol} ({(quantity * limit_price).quantize(CENTS)} notional), "
+                f"below the {floor} minimum — dust, not a position",
             )
 
         return (
@@ -437,7 +444,7 @@ class SignalPipeline:
     ) -> None:
         """Book a terminal order and release it from the working set."""
         del self._working[working.receipt.broker_order_id]
-        filled = int(filled_quantity)
+        filled = filled_quantity
 
         if filled <= 0 or filled_avg_price is None:
             self._gate.cancel(working.approved)

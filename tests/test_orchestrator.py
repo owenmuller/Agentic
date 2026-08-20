@@ -516,7 +516,7 @@ def test_a_sizing_rejection_leaves_a_complete_trail(
         ({"tickers": ["NUE", "STLD"]}, None, "ambiguous_instrument"),
         ({"tickers": []}, None, "ambiguous_instrument"),
         ({}, prices_of(), "no_price"),
-        ({"confidence": 56}, prices_of(NUE="9000000.00"), "size_below_one_unit"),
+        ({"confidence": 56}, prices_of(NUE="9000000.00"), "below_min_notional"),
     ],
 )
 def test_an_order_construction_rejection_leaves_a_complete_trail(
@@ -1284,3 +1284,62 @@ def test_the_priority_of_a_signal_never_comes_from_its_content(
     # PRIORITY" text in the other post is not what decided it.
     assert len(report.processed) == 1
     assert started.audit.rejections_for(report.processed[0].decision_id)[0].signal.source_id == "trump_posts"
+
+
+# ================================================================================
+# Fractional shares (2026-08-20): order construction rounds down to venue precision
+# ================================================================================
+
+
+class FractionalBroker(FakeBroker):
+    """Alpaca-like venue: nine decimal places of equity quantity precision."""
+
+    equity_quantity_step = Decimal("0.000000001")
+
+
+def test_a_fractional_venue_gets_a_round_down_fractional_order(
+    tmp_path, limits, signals_config, research_config
+):
+    """$900 of confidence-56 capital at $123.45: whole shares would buy 7 and
+    strand $36; a fractional venue deploys to within one step, rounded DOWN so
+    the order's notional can never exceed the sized capital."""
+    broker = FractionalBroker()
+    started = build(
+        tmp_path,
+        limits,
+        signals_config,
+        research_config,
+        llm=FakeLLM(structured({**REPORT, "confidence": 56})),
+        prices=prices_of(NUE="123.45"),
+        broker=broker,
+    )
+    result = started.loop.tick().processed[0]
+    assert result.traded
+
+    qty = broker.payloads[0]["qty"]
+    price = broker.payloads[0]["limit_price"]
+    capital = Decimal("900.00")  # 1% of the 90_000 equity sleeve
+    assert qty * price <= capital  # round-down invariant: never over-deploys
+    assert qty != qty.to_integral_value()  # genuinely fractional
+    assert -qty.as_tuple().exponent <= 9  # never finer than the venue accepts
+    # Rounding down leaves less than one quantity-step of capital undeployed.
+    assert capital - qty * price < price * FractionalBroker.equity_quantity_step
+
+
+def test_a_whole_share_venue_still_rounds_to_whole_shares(
+    tmp_path, limits, signals_config, research_config
+):
+    """The default step is 1: venues with unproven fractional support (Robinhood)
+    keep the old whole-share behaviour without any code knowing about them."""
+    broker = FakeBroker()
+    started = build(
+        tmp_path,
+        limits,
+        signals_config,
+        research_config,
+        llm=FakeLLM(structured({**REPORT, "confidence": 56})),
+        prices=prices_of(NUE="123.45"),
+        broker=broker,
+    )
+    assert started.loop.tick().processed[0].traded
+    assert broker.payloads[0]["qty"] == Decimal("7")

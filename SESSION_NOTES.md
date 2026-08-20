@@ -617,6 +617,12 @@ own live-gate rules):
 - [ ] 2026-08-27 refresh-check log reviewed (the unattended proof).
 - [ ] Options remain level 2 on the Agentic account (long-only enforcement at
       the broker layer too).
+- [ ] Fractional quantities: verify the Agentic MCP's order tools ACCEPT
+      fractional qty and at what precision — unverified by the spike (all spike
+      orders were whole-share). Until proven, a Robinhood adapter must keep
+      `equity_quantity_step = 1` (whole shares), which the base adapter now
+      defaults to; fractional going live there requires its own review-order
+      probe first.
 
 Paper period continues on Alpaca regardless; the live-venue decision itself
 waits for the 2–4 week paper gate and the human's two-key live confirmation.
@@ -844,6 +850,55 @@ still uncomfortable:**
 - Sonnet-everywhere (move Class 1 off Opus)
 - Batch API for Class 2/3 (they carry 45-day lags; batch latency is free money)
 - exit-review cadence stretch (24h → 48h)
+
+## Fractional shares (2026-08-20): the bottom confidence band survives a $10K account
+
+Human-authorized design change. Rationale: intended initial live funding ~$10K
+means a ~$9K equity sleeve; a 1% (confidence 55-70) position is $90, which
+rounds to ZERO whole shares of most large caps — whole-share rounding was
+silently deleting the bottom band.
+
+What changed:
+- **Schema:** equity `quantity` is now `ShareQuantity` — exact Decimal, >0, max
+  9 decimal places (Alpaca's documented fractional maximum). Options and event
+  `contracts` remain whole ints: fractional applies to equity shares only.
+- **Money path is float-free:** gate arithmetic, position tracking (Position
+  quantity/reserved_close/pending_open_units are Decimal), sell-to-close
+  validation, partial-fill settlement, exit tracking, and broker replay
+  (`position_from_broker` no longer truncates — that int() would have dropped
+  fractional holdings on every restart).
+- **Rounding is always DOWN, to the venue's precision:** `BrokerAdapter.
+  equity_quantity_step` defaults to 1 (whole shares — safe for venues with
+  unproven fractional support); `AlpacaAdapter` sets 1e-9 per docs. Order
+  construction quantizes capital/price down to the step, so notional can never
+  exceed sized capital.
+- **Minimum notional floor:** `equity_sleeve.min_order_notional_usd: 5` in
+  risk_limits.yaml. Below it: typed rejection `below_min_notional`, enforced in
+  the gate AND at order construction. Scope: OPENING EQUITY orders only —
+  closes are risk-reducing and never floor-blocked; the prediction sleeve's arb
+  strategy is micro-unit by design ($10K account -> 0.5% of the $1K sleeve is
+  $5 — a floor there would kill arb entirely). Exactly at the floor passes
+  ("below" is explicit; Constraint #6 resolves ambiguity, not stated rules).
+  The old `size_below_one_unit` construction rejection is subsumed by
+  `below_min_notional`.
+- **Broker reality check (docs verified 2026-08-20, not memory):** Alpaca
+  fractional supports market, LIMIT, stop & stop-limit orders, time_in_force=
+  day ONLY, qty/notional up to 9 decimal places, per-asset fractionable=true
+  flag. Our posture already sends every order as a limit with TIF=day, so
+  **no conflict with the marketable-limit posture — no ruling was needed**.
+  The adapter still guards: a fractional qty with a non-day TIF raises locally
+  before the wire. A non-fractionable asset order is rejected broker-side and
+  logged like any broker rejection (no pre-check lookup built; revisit if it
+  ever actually fires in paper).
+- **Tests (+18, suite 693 passed 3 skipped):** hypothesis machine and the
+  straight-line overdraw property now mix fractional and whole quantities
+  (buying power never negative, no net short, reserved closes never exceed
+  held); fractional oversell / double-close rejected; exact-Decimal
+  reservation and partial fill; floor edges (below/at, close exemption,
+  prediction-sleeve exemption); schema refuses 10dp and fractional contracts;
+  wire format sends "0.5" (no trailing zeros, no E-notation); whole-Decimal
+  qty doesn't trip the TIF guard. The $1 live-probe order in
+  test_execution_integration became $6 (it was our own dust now).
 
 ## Standing reminders
 

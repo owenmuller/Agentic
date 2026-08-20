@@ -592,3 +592,56 @@ def test_the_effective_trading_level_wins_over_the_approved_level():
         )
     )
     assert adapter.permissions().options_level == 2
+
+
+# ================================================================================
+# Fractional shares (2026-08-20): wire format and the day-TIF requirement
+# ================================================================================
+
+
+def test_fractional_quantity_is_sent_plain_without_trailing_zeros(gate):
+    adapter, recorder = adapter_with(ORDER_ACCEPTED)
+    approved = gate.submit(
+        EquityBuyOrder(
+            symbol="AAPL",
+            quantity=Decimal("0.500000000"),
+            execution=LimitExecution(limit_price=Decimal("100.00")),
+        )
+    )
+    adapter.submit_order(approved)
+    payload = recorder.last_payload
+    assert payload["qty"] == "0.5"
+    assert payload["type"] == "limit"
+    assert payload["time_in_force"] == "day"
+
+
+def test_a_fractional_order_with_non_day_tif_fails_loudly(gate):
+    """Alpaca only accepts fractional quantities with time_in_force=day (docs
+    2026-08-20). A misconfigured adapter must refuse locally, not send an order
+    the broker will bounce with a less useful error."""
+    adapter, _ = adapter_with(ORDER_ACCEPTED)
+    adapter.time_in_force = "gtc"
+    approved = gate.submit(
+        EquityBuyOrder(
+            symbol="AAPL",
+            quantity=Decimal("0.5"),
+            execution=LimitExecution(limit_price=Decimal("100.00")),
+        )
+    )
+    with pytest.raises(UnsupportedInstrument, match="time_in_force"):
+        adapter.build_payload(approved)
+
+
+def test_a_whole_decimal_quantity_is_not_fractional(gate):
+    """Decimal("10") is ten whole shares; the day-TIF guard must not fire."""
+    adapter, recorder = adapter_with(ORDER_ACCEPTED)
+    adapter.time_in_force = "gtc"
+    approved = gate.submit(
+        EquityBuyOrder(
+            symbol="AAPL",
+            quantity=Decimal("10"),
+            execution=LimitExecution(limit_price=Decimal("100.00")),
+        )
+    )
+    adapter.submit_order(approved)
+    assert recorder.last_payload["qty"] == "10"

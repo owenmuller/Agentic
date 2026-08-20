@@ -85,8 +85,9 @@ class TrackedPosition:
     decision_id: str
     symbol: str
     #: Units this decision still holds (the gate's merged position may hold more).
-    quantity: int
-    entry_quantity: int
+    #: Decimal: equity positions may be fractional.
+    quantity: Decimal
+    entry_quantity: Decimal
     entry_price: Decimal
     #: Total cash the entry fills committed. P&L closes against this.
     entry_cost: Decimal
@@ -181,7 +182,7 @@ class ExitEngine:
             position.symbol.upper() for position in self._tracked.values()
         )
 
-    def track_fill(self, working: WorkingOrder, filled: int, price: Decimal) -> None:
+    def track_fill(self, working: WorkingOrder, filled: Decimal, price: Decimal) -> None:
         """Called by the pipeline's fill sink when an entry order settles with a fill."""
         order = working.approved.order
         if not isinstance(order, EquityBuyOrder) or filled <= 0:
@@ -240,8 +241,8 @@ class ExitEngine:
             if order.get("kind") != "equity_buy":
                 continue
 
-            entry_quantity = int(sum(f.filled_quantity for f in buys))
-            quantity = entry_quantity - int(sum(f.filled_quantity for f in sells))
+            entry_quantity = sum((f.filled_quantity for f in buys), ZERO)
+            quantity = entry_quantity - sum((f.filled_quantity for f in sells), ZERO)
             if quantity <= 0:
                 continue
 
@@ -249,7 +250,7 @@ class ExitEngine:
             gate_position = self._gate.state.position(("equity", symbol))
             if gate_position is None or gate_position.quantity <= 0:
                 logger.warning(
-                    "audit log says %s holds %d %s but the broker does not; "
+                    "audit log says %s holds %s %s but the broker does not; "
                     "not tracking — the broker is authoritative",
                     decision.decision_id,
                     quantity,
@@ -469,11 +470,11 @@ class ExitEngine:
             return False
 
         gate_position = self._gate.state.position(position.key)
-        available = gate_position.available_to_close if gate_position else 0
+        available = gate_position.available_to_close if gate_position else ZERO
         quantity = min(position.quantity, available)
-        if quantity < 1:
+        if quantity <= ZERO:
             logger.error(
-                "wanted to exit %s but the gate shows %d units available for %s; "
+                "wanted to exit %s but the gate shows %s units available for %s; "
                 "dropping tracking — the broker is authoritative",
                 position.decision_id,
                 available,
@@ -550,7 +551,7 @@ class ExitEngine:
         return True
 
     def _order_for(
-        self, position: TrackedPosition, quantity: int, limit: Decimal
+        self, position: TrackedPosition, quantity: Decimal, limit: Decimal
     ) -> EquitySellToCloseOrder:
         return EquitySellToCloseOrder(
             symbol=position.symbol,
@@ -588,7 +589,7 @@ class ExitEngine:
         del self._working[working.broker_order_id]
         position = working.position
         position.pending_exit = None
-        filled = int(filled_quantity)
+        filled = filled_quantity
 
         if filled <= 0 or filled_avg_price is None:
             # Nothing printed. Release the close reservation; the breach (or the
@@ -615,7 +616,7 @@ class ExitEngine:
         if position.quantity > 0:
             # Partial: the remainder is still held, still tracked, still stopped.
             logger.info(
-                "exit of %s filled %d, %d still held; will re-close next cycle",
+                "exit of %s filled %s, %s still held; will re-close next cycle",
                 position.decision_id,
                 filled,
                 position.quantity,

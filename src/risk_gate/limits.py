@@ -71,6 +71,12 @@ class EquitySleeveLimits(_Strict):
     #: Aggregate equity exposure per sector, of sleeve NAV (config/sectors.yaml
     #: defines membership; unmapped tickers are singleton sectors).
     max_sector_exposure: Fraction
+    #: Smallest opening equity order the gate will pass, in dollars. Fractional
+    #: shares (2026-08-20) can compute dust positions; below this floor the order is
+    #: a typed rejection, not a trade. Scoped to opening equity orders only: closes
+    #: are risk-reducing and must never be trapped by a floor, and the prediction
+    #: sleeve's arb strategy is explicitly micro-unit.
+    min_order_notional_usd: Annotated[Decimal, Field(ge=Decimal("0"))]
 
 
 class KillSwitchLimits(_Strict):

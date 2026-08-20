@@ -670,7 +670,14 @@ class GateStateMachine(RuleBasedStateMachine):
 
     @rule(
         symbol=st.sampled_from(SYMBOLS),
-        qty=st.integers(min_value=1, max_value=200),
+        # Fractional shares (2026-08-20): the machine mixes whole and fractional
+        # quantities so every invariant below holds across both.
+        qty=st.one_of(
+            st.integers(min_value=1, max_value=200),
+            st.decimals(
+                min_value=Decimal("0.001"), max_value=Decimal("200"), places=3
+            ),
+        ),
         price=st.sampled_from(["1.00", "10.00", "100.00"]),
     )
     def buy_equity(self, symbol, qty, price):
@@ -697,7 +704,15 @@ class GateStateMachine(RuleBasedStateMachine):
             )
         )
 
-    @rule(symbol=st.sampled_from(SYMBOLS), qty=st.integers(min_value=1, max_value=300))
+    @rule(
+        symbol=st.sampled_from(SYMBOLS),
+        qty=st.one_of(
+            st.integers(min_value=1, max_value=300),
+            st.decimals(
+                min_value=Decimal("0.001"), max_value=Decimal("300"), places=3
+            ),
+        ),
+    )
     def sell_equity(self, symbol, qty):
         self._submit(equity_sell(symbol=symbol, qty=qty))
 
@@ -947,7 +962,14 @@ TestGateSequences.settings = settings(
 
 @given(
     quantities=st.lists(
-        st.integers(min_value=1, max_value=500), min_size=1, max_size=25
+        st.one_of(
+            st.integers(min_value=1, max_value=500),
+            st.decimals(
+                min_value=Decimal("0.001"), max_value=Decimal("500"), places=3
+            ),
+        ),
+        min_size=1,
+        max_size=25,
     ),
     prices=st.lists(
         st.sampled_from([Decimal("1.00"), Decimal("25.00"), Decimal("400.00")]),
@@ -1066,3 +1088,96 @@ def test_the_production_sector_map_loads_and_is_singular():
     assert sectors.sector_of("NVDA") == "semiconductors"
     assert sectors.sector_of("NUE") == "steel_materials"
     assert sectors.sector_of("NOT-A-TICKER") == "unmapped:NOT-A-TICKER"
+
+
+# ================================================================================
+# Fractional shares (2026-08-20): exact Decimal money path, floored not dusted
+# ================================================================================
+
+from pydantic import ValidationError  # noqa: E402
+
+
+def test_a_fractional_buy_reserves_the_exact_decimal_worst_case(limits):
+    """No floats anywhere: 0.375 x 79.99 reserves 29.99625, to the digit."""
+    gate = make_gate(limits)
+    approved = approve(gate, equity_buy(qty=Decimal("0.375"), price="79.99"))
+    assert approved.max_loss == Decimal("29.99625")
+    assert gate.buying_power == START_CASH - Decimal("29.99625")
+
+
+def test_an_opening_equity_order_below_the_notional_floor_is_rejected(limits):
+    gate = make_gate(limits)
+    rejection = reject(gate, equity_buy(qty=Decimal("0.04"), price="100.00"))
+    assert rejection.code is RejectionCode.BELOW_MIN_NOTIONAL
+    assert rejection.observed == Decimal("4.00")
+    # Nothing was reserved by the refusal.
+    assert gate.buying_power == START_CASH
+
+
+def test_an_order_exactly_at_the_floor_passes(limits):
+    """"Below the floor" is the explicit rule. Constraint #6 resolves genuine
+    ambiguity; it does not tighten a boundary that already says what it means."""
+    gate = make_gate(limits)
+    approve(gate, equity_buy(qty=Decimal("0.05"), price="100.00"))
+
+
+def test_the_floor_never_blocks_a_risk_reducing_close(limits):
+    """A dust-sized close is still a close. Trapping it would hold risk open."""
+    gate = make_gate(limits)
+    approved = approve(gate, equity_buy(qty=Decimal("0.06"), price="100.00"))
+    gate.record_fill(approved, Decimal("100.00"))
+    approve(gate, equity_sell(qty=Decimal("0.01"), price="100.00"))  # $1 notional
+
+
+def test_the_floor_does_not_apply_to_the_prediction_sleeve(limits):
+    """Arb is micro-unit by design; a $0.50 event position is not dust."""
+    gate = make_gate(limits)
+    approve(gate, event_buy(contracts=1, price="0.50", strategy="arb"))
+
+
+def test_a_fractional_close_cannot_oversell(limits):
+    gate = make_gate(limits)
+    approved = approve(gate, equity_buy(qty=Decimal("1.2"), price="100.00"))
+    gate.record_fill(approved, Decimal("100.00"))
+    rejection = reject(gate, equity_sell(qty=Decimal("1.5"), price="100.00"))
+    assert rejection.code is RejectionCode.CLOSE_EXCEEDS_HELD_QUANTITY
+
+
+def test_two_fractional_closes_cannot_sell_the_same_fraction(limits):
+    gate = make_gate(limits)
+    approved = approve(gate, equity_buy(qty=Decimal("1.2"), price="100.00"))
+    gate.record_fill(approved, Decimal("100.00"))
+    approve(gate, equity_sell(qty=Decimal("0.7"), price="100.00"))
+    rejection = reject(gate, equity_sell(qty=Decimal("0.7"), price="100.00"))
+    assert rejection.code is RejectionCode.CLOSE_EXCEEDS_HELD_QUANTITY
+
+
+def test_a_fractional_partial_fill_books_exact_units(limits):
+    gate = make_gate(limits)
+    approved = approve(gate, equity_buy(qty=Decimal("2.5"), price="100.00"))
+    gate.record_fill(approved, Decimal("100.00"), filled_units=Decimal("1.25"))
+    position = gate.state.position(("equity", "AAPL"))
+    assert position.quantity == Decimal("1.25")
+    assert gate.state.cash == START_CASH - Decimal("125.00")
+
+
+def test_share_quantity_refuses_finer_than_broker_precision():
+    """Nine decimal places is Alpaca's documented maximum; the schema stops a
+    tenth at construction rather than letting a broker reject it later."""
+    with pytest.raises(ValidationError):
+        equity_buy(qty=Decimal("0.0000000001"), price="100.00")
+
+
+@pytest.mark.parametrize("bad", [Decimal("0"), Decimal("-1"), Decimal("-0.5")])
+def test_share_quantity_refuses_zero_and_negative(bad):
+    with pytest.raises(ValidationError):
+        equity_buy(qty=bad, price="100.00")
+
+
+def test_contracts_remain_whole_numbers():
+    """Fractional applies to equity shares only; a fractional contract count is
+    unrepresentable, same as before."""
+    with pytest.raises(ValidationError):
+        option_buy(contracts=1.5)
+    with pytest.raises(ValidationError):
+        event_buy(contracts=0.5)

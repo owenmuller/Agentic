@@ -175,6 +175,13 @@ class OrderReceipt:
 class BrokerAdapter(ABC):
     """What every execution backend must provide."""
 
+    #: Smallest equity share increment this venue accepts. Whole shares unless a
+    #: backend has verified finer support against its broker's CURRENT docs — order
+    #: construction rounds DOWN to this step, so a coarser step can only shrink an
+    #: order, never grow it. (Robinhood: fractional acceptance and precision are
+    #: unverified by the spike — its adapter must keep 1 until proven.)
+    equity_quantity_step: Decimal = Decimal("1")
+
     @abstractmethod
     def submit_order(self, approved: ApprovedOrder) -> OrderReceipt:
         """Send a gate-approved order. Only an ``ApprovedOrder`` is accepted."""

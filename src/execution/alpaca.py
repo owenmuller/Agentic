@@ -68,6 +68,13 @@ _SIDES = {
 class AlpacaAdapter(BrokerAdapter):
     """Equity and long-option execution against Alpaca."""
 
+    #: Alpaca fractional trading, docs verified 2026-08-20: supported for market,
+    #: limit, stop & stop-limit orders with time_in_force=day only; "both notional
+    #: and qty fields can take up to 9 decimal point values"; asset must carry
+    #: fractionable=true (a fractional order on a non-fractionable name is rejected
+    #: broker-side, which the audit trail records like any other rejection).
+    equity_quantity_step = Decimal("0.000000001")
+
     def __init__(
         self,
         client: Optional[httpx.Client] = None,
@@ -231,9 +238,23 @@ class AlpacaAdapter(BrokerAdapter):
             order.quantity if hasattr(order, "quantity") else order.contracts
         )
 
+        # Fractional quantities are only valid at Alpaca with time_in_force=day
+        # (docs 2026-08-20). This adapter defaults to day; if it is ever configured
+        # otherwise, a fractional order must fail loudly here rather than be
+        # silently reshaped or rejected downstream with a confusing broker error.
+        is_fractional = (
+            isinstance(quantity, Decimal)
+            and quantity != quantity.to_integral_value()
+        )
+        if is_fractional and self.time_in_force != "day":
+            raise UnsupportedInstrument(
+                f"fractional quantity {quantity} requires time_in_force='day' at "
+                f"Alpaca; this adapter is configured {self.time_in_force!r}"
+            )
+
         return {
             "symbol": order.symbol,
-            "qty": str(quantity),
+            "qty": _quantity_str(quantity),
             "side": side,
             "type": "limit",
             "time_in_force": self.time_in_force,
@@ -271,6 +292,18 @@ class AlpacaAdapter(BrokerAdapter):
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+
+def _quantity_str(quantity: object) -> str:
+    """Decimal quantities without trailing zeros or scientific notation.
+
+    ``str(Decimal("2.500000000"))`` keeps the zeros and ``normalize()`` alone can
+    emit ``1E+2``; ``format(..., "f")`` after normalize gives the plain form the
+    wire wants.
+    """
+    if isinstance(quantity, Decimal):
+        return format(quantity.normalize(), "f")
+    return str(quantity)
 
 
 def _parse_timestamp(raw: Optional[str]) -> Optional[datetime]:

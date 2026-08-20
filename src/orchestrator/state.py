@@ -142,7 +142,9 @@ def position_from_broker(
     account.
     """
     option = holding.is_option
-    quantity = int(holding.quantity)
+    # Kept exact: a broker may report fractional equity holdings, and truncating
+    # here would misstate what the account holds on every restart.
+    quantity = holding.quantity
     return Position(
         key=("option", holding.symbol) if option else ("equity", holding.symbol),
         sleeve=Sleeve.EQUITY,

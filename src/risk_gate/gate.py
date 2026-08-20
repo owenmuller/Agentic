@@ -228,7 +228,7 @@ class RiskGate:
                 code=RejectionCode.POSITION_NOT_HELD,
                 message=f"no held position for {key} to close",
                 limit=ZERO,
-                observed=Decimal(units),
+                observed=units,
             )
 
         if units > position.available_to_close:
@@ -238,8 +238,8 @@ class RiskGate:
                     f"close of {units} units exceeds {position.available_to_close} "
                     f"available for {key}; approving it would create a net short"
                 ),
-                limit=Decimal(position.available_to_close),
-                observed=Decimal(units),
+                limit=position.available_to_close,
+                observed=units,
             )
 
         completes_day_trade = position.last_open_date == today
@@ -302,6 +302,24 @@ class RiskGate:
                 limit=state.buying_power,
                 observed=cost,
             )
+
+        # Dust floor (fractional shares, 2026-08-20). Opening equity orders only:
+        # closes are risk-reducing and are never trapped by a floor, options carry
+        # whole contracts, and the prediction sleeve's arb strategy is micro-unit
+        # by design. "Below the floor" is the explicit rule, so exactly at the
+        # floor passes.
+        if sleeve is Sleeve.EQUITY and not is_option(order):
+            floor = limits.equity_sleeve.min_order_notional_usd
+            if cost < floor:
+                return Rejection(
+                    code=RejectionCode.BELOW_MIN_NOTIONAL,
+                    message=(
+                        f"opening order for {key} reserves {cost}, below the "
+                        f"{floor} minimum notional — dust, not a position"
+                    ),
+                    limit=floor,
+                    observed=cost,
+                )
 
         sleeve_nav = self.sleeve_nav(sleeve)
 
@@ -447,7 +465,7 @@ class RiskGate:
         self,
         approved: ApprovedOrder,
         fill_price: Decimal,
-        filled_units: Optional[int] = None,
+        filled_units: Optional[Decimal] = None,
     ) -> None:
         """Settle an approved order at its actual fill price.
 

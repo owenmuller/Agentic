@@ -101,7 +101,7 @@ def test_resting_order_round_trip(adapter):
         EquityBuyOrder(
             symbol="AAPL",
             quantity=1,
-            execution=LimitExecution(limit_price=Decimal("1.00")),
+            execution=LimitExecution(limit_price=Decimal("6.00")),
         )
     )
     assert decision.is_approved, f"gate rejected the probe order: {decision}"
@@ -110,7 +110,7 @@ def test_resting_order_round_trip(adapter):
     try:
         assert receipt.broker_order_id
         assert receipt.status in {"accepted", "new", "pending_new"}
-        assert receipt.limit_price == Decimal("1.00")
+        assert receipt.limit_price == Decimal("6.00")
     finally:
         adapter.cancel_order(receipt.broker_order_id)
 

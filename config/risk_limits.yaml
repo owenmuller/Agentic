@@ -27,6 +27,10 @@ equity_sleeve:
   # sleeve NAV. Sector membership comes from the static human-editable table in
   # config/sectors.yaml; an unmapped ticker is its own singleton sector.
   max_sector_exposure: 0.15
+  # Fractional shares (2026-08-20): smallest opening equity order, in dollars. A
+  # computed position below this floor is a typed rejection (below_min_notional),
+  # not a dust order. Opening equity orders only — closes are never floor-blocked.
+  min_order_notional_usd: 5
 
 kill_switch:
   drawdown_from_high_water_mark: 0.12

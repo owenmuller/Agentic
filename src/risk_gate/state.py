@@ -81,11 +81,15 @@ def position_key(order: Order) -> PositionKey:
     raise TypeError(f"unclassifiable order type: {type(order).__name__}")
 
 
-def units_of(order: Order) -> int:
-    """Shares for equity, contracts for options and event contracts."""
+def units_of(order: Order) -> Decimal:
+    """Shares for equity (possibly fractional), contracts for the rest.
+
+    Always Decimal so position arithmetic is one exact code path: contract counts
+    are whole numbers, which Decimal represents exactly.
+    """
     if isinstance(order, (EquityBuyOrder, EquitySellToCloseOrder)):
         return order.quantity
-    return order.contracts
+    return Decimal(order.contracts)
 
 
 def unit_multiplier(order: Order) -> int:
@@ -101,21 +105,23 @@ class Position:
 
     key: PositionKey
     sleeve: Sleeve
-    quantity: int = 0
+    #: Decimal, not int: equity may hold fractional shares. Options and event
+    #: contracts remain whole numbers, which Decimal carries exactly.
+    quantity: Decimal = ZERO
     cost_basis: Decimal = ZERO
     market_value: Decimal = ZERO
     unit_multiplier: int = 1
     is_option: bool = False
     #: Units promised to approved-but-unfilled close orders.
-    reserved_close: int = 0
+    reserved_close: Decimal = ZERO
     #: Units and cash promised to approved-but-unfilled open orders.
-    pending_open_units: int = 0
+    pending_open_units: Decimal = ZERO
     pending_open_cost: Decimal = ZERO
     #: Approval date of the most recent opening order — drives day-trade detection.
     last_open_date: date | None = None
 
     @property
-    def available_to_close(self) -> int:
+    def available_to_close(self) -> Decimal:
         """Units a new close order may claim without overselling."""
         return self.quantity - self.reserved_close
 

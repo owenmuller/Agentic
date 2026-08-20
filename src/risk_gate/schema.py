@@ -64,7 +64,14 @@ ZERO = Decimal("0")
 ONE = Decimal("1")
 
 Money = Annotated[Decimal, Field(gt=ZERO, max_digits=18, decimal_places=6)]
+#: Contracts (options, event contracts) are indivisible: whole units only.
 Quantity = Annotated[int, Field(gt=0)]
+#: Equity shares may be fractional (2026-08-20, human-authorized): a ~$9K sleeve makes
+#: a 1% position ~$90, which rounds to zero whole shares of most large caps and would
+#: silently delete the bottom confidence band. Nine decimal places is Alpaca's stated
+#: maximum for fractional qty (docs verified 2026-08-20); the schema refuses finer.
+#: Exact Decimal, never float — this number multiplies money.
+ShareQuantity = Annotated[Decimal, Field(gt=ZERO, max_digits=19, decimal_places=9)]
 Confidence = Annotated[int, Field(ge=0, le=100)]
 Ticker = Annotated[str, Field(min_length=1, max_length=32)]
 
@@ -188,7 +195,7 @@ class EquityBuyOrder(_OrderBase):
 
     kind: Literal["equity_buy"] = "equity_buy"
     symbol: Ticker
-    quantity: Quantity
+    quantity: ShareQuantity
     execution: BuyExecution
 
     def max_loss(self) -> Decimal:
@@ -209,7 +216,7 @@ class EquitySellToCloseOrder(_OrderBase):
 
     kind: Literal["equity_sell_to_close"] = "equity_sell_to_close"
     symbol: Ticker
-    quantity: Quantity
+    quantity: ShareQuantity
     execution: SellExecution
 
     def max_loss(self) -> Decimal:

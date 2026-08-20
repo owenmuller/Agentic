@@ -21,6 +21,9 @@ class RejectionCode(StrEnum):
     KILL_SWITCH_ACTIVE = "kill_switch_active"
     #: Order's worst-case cost exceeds available cash. Cash-secured means cash-secured.
     INSUFFICIENT_BUYING_POWER = "insufficient_buying_power"
+    #: Opening equity order below the configured minimum notional. Fractional rounding
+    #: can compute dust; dust is refused, not sent to a broker.
+    BELOW_MIN_NOTIONAL = "below_min_notional"
     #: Close-only order against a position the account does not hold at all.
     POSITION_NOT_HELD = "position_not_held"
     #: Close-only order larger than the un-reserved held quantity. Allowing this would
