@@ -786,9 +786,9 @@ free); one mapped to a Ted Cruz post.
   commentary is a fact about the delivery, not about Trump.
 - Themes: added `iran` to research_prefilter_themes. NOTE: `sanction` and
   `oil` were ALREADY present — the missed Iran post ("tremendous economic
-  consequences") matched neither; also observed that the `economy` stem does
-  NOT cover "economic" (stem-prefix matching), flagged for a human ruling
-  rather than silently widened.
+  consequences") matched neither; also observed that the `economy` stem did
+  NOT cover "economic" (stem-prefix matching) — ruled 2026-08-20: stem changed
+  to `econom`, covering economy/economic/economics.
 
 ## Standing reminders
 
