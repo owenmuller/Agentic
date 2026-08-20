@@ -81,6 +81,13 @@ class SourceConfig(_Strict):
     type: Optional[str] = None
     #: For mirror sources: the source id the content actually belongs to.
     mirror_of: Optional[str] = None
+    #: For mirror sources: a regex the delivered content MUST match to be treated
+    #: as the principal's words. Mirror accounts post their own commentary between
+    #: relays (verified live 2026-08-20: @TrumpDailyPosts' recent output was 100%
+    #: own commentary), and headerless content mislabeled as the principal is a
+    #: manipulation channel. Content without the marker is logged to the mirror's
+    #: credibility record and never emitted as a principal signal.
+    required_marker: Optional[str] = None
     #: For mirror sources: warn in run.log after this many trading days without a
     #: delivery — silence might mean the principal is quiet, or the bot died, and a
     #: human should check which.

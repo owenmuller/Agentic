@@ -114,7 +114,7 @@ def test_the_same_truth_from_two_mirrors_is_one_signal(signals_config):
 
 def test_different_truths_from_the_same_mirror_are_distinct(signals_config):
     scanner, queue = scanner_with(
-        feed(trump_mirror_ttox=[TTOX_FORMAT, "A completely different post."]),
+        feed(trump_mirror_ttox=[TTOX_FORMAT, "A completely different post. (TS: 18 Aug 15:02 ET)"]),
         signals_config,
     )
     scanner.poll(force=True)
@@ -401,3 +401,179 @@ def test_genuinely_different_posts_keep_different_keys():
     assert mirror_content_key(ORIGINAL_TEXT) != mirror_content_key(
         "A 10% tariff on all foreign steel."
     )
+
+
+# ================================================================================
+# Mirror integrity (2026-08-20): no marker, no principal signal
+# ================================================================================
+
+#: Real formats, verified against live posts 2026-08-20. ttox's stamp has a space
+#: after the paren and trailing zero-width padding; tdp's genuine relays carry the
+#: header, and everything else it posts is its own commentary.
+REAL_TTOX = (
+    ORIGINAL_TEXT
+    + " \n\n( TS: Aug 19 2026, 6:59 PM ET )\u200b\u200d\u200c"
+)
+TDP_COMMENTARY = (
+    "Nike stock just hit a 12 year low. Nike made the decision 10 years ago to "
+    "back Colin Kaepernick. Go woke, go broke."
+)
+
+
+def test_headerless_tdp_content_is_commentary_not_a_principal_signal(signals_config):
+    """The finding this fix exists for: 24/24 recent tdp posts were its own
+    commentary, two of which reached research at Opus prices. No header -> no
+    signal, logged to the MIRROR's credibility record, free."""
+    scanner, queue = scanner_with(
+        feed(trump_mirror_tdp=[TDP_COMMENTARY]), signals_config
+    )
+    emitted = scanner.poll(force=True)
+
+    assert emitted == []
+    assert queue.drain() == []
+    records = scanner.credibility_log.records
+    assert len(records) == 1
+    assert records[0].source_id == "trump_mirror_tdp"  # the channel, not Trump
+    assert "required marker absent" in records[0].reason
+    assert TDP_COMMENTARY in records[0].content
+
+
+def test_headered_tdp_content_passes_through_as_the_principal(signals_config):
+    scanner, queue = scanner_with(feed(trump_mirror_tdp=[TDP_FORMAT]), signals_config)
+    emitted = scanner.poll(force=True)
+
+    assert len(emitted) == 1
+    assert emitted[0].source_id == "trump_posts"
+    assert emitted[0].metadata["delivered_by"] == "trump_mirror_tdp"
+    assert scanner.credibility_log.records == ()
+
+
+def test_stampless_ttox_content_is_commentary_too(signals_config):
+    scanner, queue = scanner_with(
+        feed(trump_mirror_ttox=["My own hot take about the market today."]),
+        signals_config,
+    )
+    assert scanner.poll(force=True) == []
+    records = scanner.credibility_log.records
+    assert len(records) == 1
+    assert records[0].source_id == "trump_mirror_ttox"
+
+
+def test_the_real_ttox_format_passes_the_marker_and_deduplicates(signals_config):
+    """The live '( TS: ... )' spacing passes the marker AND normalises: the same
+    Truth via real-format ttox and headered tdp is ONE signal (the spacing bug in
+    the old suffix regex broke this on every real post)."""
+    scanner, queue = scanner_with(
+        feed(trump_mirror_ttox=[REAL_TTOX], trump_mirror_tdp=[TDP_FORMAT]),
+        signals_config,
+    )
+    emitted = scanner.poll(force=True)
+    assert len(emitted) == 1  # second delivery deduped against the first
+    assert mirror_content_key(REAL_TTOX) == mirror_content_key(TDP_FORMAT)
+
+
+def test_headerless_content_never_reaches_research(tmp_path, signals_config):
+    """Loop-level: the mislabeled commentary that cost ~$4.24 on 2026-08-19 now
+    costs nothing — no signal, no budget, no LLM call, no audit decision."""
+    llm = RoutingLLM(**{REPORT_TOOL_NAME: structured(REPORT)})
+    started = start(
+        fetcher=SourceRouter(
+            routes={
+                "trump_mirror_ttox": feed(),
+                "trump_mirror_tdp": feed(trump_mirror_tdp=[TDP_COMMENTARY]),
+                "nolimitgains": feed(),
+            },
+            unbuilt={"trump_posts"},
+        ),
+        prices=MutablePrices(),
+        llm_client=llm,
+        adapter=FakeBroker(),
+        clock=FakeClock(NOW),
+        data_dir=tmp_path,
+        limits=__import__("risk_gate").RiskLimits.load(),
+        signals_config=signals_config,
+        research_config=__import__("research.config", fromlist=["ResearchConfig"]).ResearchConfig.load(),
+        orchestrator_config=orchestrator_config(),
+        id_factory=counter(),
+    )
+    report = started.loop.tick()
+    assert report.processed == []
+    assert report.prefiltered == 0
+    assert started.budget.spent == 0
+    assert llm.calls == []
+    assert list(started.audit.records()) == []
+    started.loop.shutdown()
+
+
+# ================================================================================
+# Flag separation: the leaky channel accumulates the record, not the principal
+# ================================================================================
+
+
+def test_a_mirror_delivered_flag_lands_on_the_channel():
+    from research.credibility import CredibilityTracker
+    from research.reports import ResearchReport
+    from test_orchestrator import REPORT as REPORT_PAYLOAD
+
+    tracker = CredibilityTracker()
+    flagged = ResearchReport.model_validate(
+        {
+            **REPORT_PAYLOAD,
+            "manipulation_assessment": (
+                "Content does not match any post by the principal; probable "
+                "mirror commentary mislabeled as a Trump post."
+            ),
+        }
+    )
+    tracker.record_report(
+        "trump_posts", flagged, delivered_by="trump_mirror_tdp"
+    )
+
+    principal = tracker.summary_for("trump_posts")
+    channel = tracker.summary_for("trump_mirror_tdp")
+    assert principal.manipulation_flags == 0  # clean principal, not penalized
+    assert principal.reports_scored == 1
+    assert channel.manipulation_flags == 1  # the leaky channel owns the record
+    assert channel.reports_scored == 1
+    assert channel.recent_manipulation_notes
+
+
+def test_a_direct_flag_still_lands_on_the_principal():
+    from research.credibility import CredibilityTracker
+    from research.reports import ResearchReport
+    from test_orchestrator import REPORT as REPORT_PAYLOAD
+
+    tracker = CredibilityTracker()
+    flagged = ResearchReport.model_validate(
+        {
+            **REPORT_PAYLOAD,
+            "manipulation_assessment": "pump-shaped urgency in the original post",
+        }
+    )
+    tracker.record_report("nolimitgains", flagged)
+
+    summary = tracker.summary_for("nolimitgains")
+    assert summary.manipulation_flags == 1
+    assert summary.reports_scored == 1
+
+
+def test_the_channel_record_reaches_the_prompt_context(signals_config):
+    from research.credibility import CredibilityTracker
+    from research.reports import ResearchReport
+    from research.research_pass import ResearchPass
+    from test_orchestrator import REPORT as REPORT_PAYLOAD, FakeLLM
+
+    tracker = CredibilityTracker()
+    flagged = ResearchReport.model_validate(
+        {**REPORT_PAYLOAD, "manipulation_assessment": "mislabeled commentary"}
+    )
+    tracker.record_report("trump_posts", flagged, delivered_by="trump_mirror_tdp")
+
+    scanner, _ = scanner_with(feed(trump_mirror_tdp=[TDP_FORMAT]), signals_config)
+    signal = scanner.poll(force=True)[0]
+    llm = FakeLLM(structured(REPORT))
+    ResearchPass(llm, credibility=tracker).run(signal)
+
+    prompt = llm.calls[0]["user"]
+    assert "DELIVERY CHANNEL RECORD" in prompt
+    assert "mislabeled commentary" in prompt

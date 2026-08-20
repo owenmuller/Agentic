@@ -63,6 +63,7 @@ classes:
           - drug
           - china
           - opec
+          - iran
           - stock
           - market
           - economy
@@ -81,6 +82,12 @@ classes:
         handle: "@TrumpTruthOnX"
         type: mirror
         mirror_of: trump_posts
+        # REQUIRED MARKER (verified against live posts 2026-08-20, 25/25
+        # genuine relays carried it): every TrumpTruthOnX relay ends with a
+        # "( TS: Aug 19 2026, 6:59 PM ET )"-style original-timestamp stamp,
+        # sometimes followed by media links. Content without it is the account's
+        # own commentary and is logged to its credibility record instead.
+        required_marker: '\(\s*TS:[^)]*\)'
         silence_warning_trading_days: 2
         daily_read_warning: 200
         monthly_cost: 0 # rides the Class 1 X pay-per-use budget above
@@ -92,6 +99,17 @@ classes:
         handle: "@TrumpDailyPosts"
         type: mirror
         mirror_of: trump_posts
+        # REQUIRED MARKER (verified against live posts 2026-08-20): genuine
+        # relays carry the "Donald J. Trump Truth Social Post [time] [date]"
+        # header; the account's between-relay output is its OWN commentary,
+        # including market-shaped claims, delivered with no header (24/24 recent
+        # posts were headerless commentary — two reached research 2026-08-19 and
+        # cost ~$4.24 of Opus spend to catch). Headerless content is classified
+        # "other": logged to this mirror's credibility record, never emitted as
+        # a trump_posts signal. If the mirror's genuine-relay format changes,
+        # this filter silences the source and the 2-trading-day mirror-silence
+        # warning is the watchdog that tells a human to re-verify the format.
+        required_marker: 'donald\s+j\.?\s*trump\s+truth\s+social\s+post'
         silence_warning_trading_days: 2
         daily_read_warning: 200
         monthly_cost: 0

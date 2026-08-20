@@ -24,6 +24,7 @@ interface the real ones will use.
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta, timezone
@@ -218,6 +219,29 @@ class Class1RealtimeScanner(Scanner):
     def _handle(
         self, source: SourceConfig, item: RawItem, now: datetime
     ) -> Iterable[Signal]:
+        if source.mirror_of and source.required_marker:
+            # Mirror integrity (2026-08-20): a mirror account posts its own
+            # commentary between relays, and commentary mislabeled as the
+            # principal is a manipulation channel the research layer should
+            # never have to catch at Opus prices. No marker, no principal
+            # signal — classified "other", logged to the MIRROR's own
+            # credibility record (the leaky channel accumulates the record,
+            # not the principal), and dropped for free at ingest.
+            if not re.search(source.required_marker, item.content, re.IGNORECASE):
+                self.credibility_log.record(
+                    CredibilityRecord(
+                        source_id=source.id,
+                        observed_at=now,
+                        content=item.content,
+                        external_id=item.external_id,
+                        reason=(
+                            "mirror commentary: required marker absent; "
+                            "classified other, never a principal signal"
+                        ),
+                    )
+                )
+                return []
+
         if not source.classifies_posts:
             signal = self._build(
                 source,

@@ -144,18 +144,39 @@ class ResearchPass:
 
         if self._credibility is not None:
             # Every accepted report updates the source's record, flagged or not.
-            self._credibility.record_report(signal.source_id, report)
+            self._credibility.record_report(
+                signal.source_id,
+                report,
+                delivered_by=signal.metadata.get("delivered_by") or None,
+            )
 
         return report
 
     # -- internals ----------------------------------------------------------------
 
     def _context_for(self, signal: Signal) -> Optional[str]:
-        """Credibility context, for sources the system actually tracks."""
+        """Credibility context, for sources the system actually tracks.
+
+        A mirror-delivered signal also carries the CHANNEL's record when it has
+        one — a mirror that has previously delivered mislabeled commentary is a
+        fact about this delivery, not about the principal.
+        """
         if self._credibility is None:
             return None
+        parts: list[str] = []
         summary = self._credibility.summary_for(signal.source_id)
-        return summary.as_context() if summary.has_record else None
+        if summary.has_record:
+            parts.append(summary.as_context())
+        delivered_by = signal.metadata.get("delivered_by")
+        if delivered_by:
+            channel = self._credibility.summary_for(delivered_by)
+            if channel.has_record:
+                parts.append(
+                    "DELIVERY CHANNEL RECORD (the unofficial mirror that "
+                    "delivered this post, tracked separately from the "
+                    "principal):\n" + channel.as_context()
+                )
+        return "\n".join(parts) if parts else None
 
     def _reject(
         self,

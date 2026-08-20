@@ -753,6 +753,43 @@ and the fee-clearance rule exist; no adapter, no odds feed, no arb engine.
   last, because it needs empirical fee-schedule and order-book validation that
   only live venue access provides.
 
+## Mirror integrity fix (2026-08-20): no marker, no principal signal
+
+**The finding:** trump_mirror_tdp delivers its own commentary between genuine
+relays, mislabeled as Trump content. Verified live 2026-08-20: 24/24 recent
+@TrumpDailyPosts posts were its own replies/commentary/promos — including
+market-shaped claims (Nike, Iran, "tariffs paused") — and 33/33 of the day's tdp
+deliveries in the audit log were headerless junk. Two reached research
+2026-08-19 (~$4.24 of Opus spend catching what ingest should have discarded
+free); one mapped to a Ted Cruz post.
+
+**The fix, at ingest (all verified against live posts before pinning):**
+- `SourceConfig.required_marker` (regex, per mirror). tdp: the
+  "Donald J. Trump Truth Social Post [time] [date]" header — zero of 24 recent
+  posts carried it, so ALL current tdp output is rightly discarded; if the
+  genuine-relay format has changed, the 2-trading-day mirror-silence warning is
+  the watchdog that sends a human to re-verify. ttox: the "( TS: ... )" stamp —
+  25/25 recent posts carried it.
+- Markerless mirror content is classified "other": logged to the MIRROR's own
+  credibility record (reason: required marker absent), never emitted as a
+  principal signal. Free at ingest.
+- **Bonus live bug found and fixed:** the dedup normaliser's TS-suffix regex
+  required "(TS:" with no space; the real format is "( TS: Aug 19 2026, ...)"
+  — cross-mirror dedup was silently broken on every real ttox post. Regex now
+  space-tolerant; test pins real-format ttox and headered tdp of the same Truth
+  deduping to one signal.
+- **Flag separation:** `CredibilityTracker.record_report` takes
+  `delivered_by`; a manipulation flag on a mirror-delivered signal lands on the
+  CHANNEL's record, not the principal's (both keep the report in their
+  denominators). The research prompt now shows a DELIVERY CHANNEL RECORD block
+  when the deliverer has one — a mirror that previously delivered mislabeled
+  commentary is a fact about the delivery, not about Trump.
+- Themes: added `iran` to research_prefilter_themes. NOTE: `sanction` and
+  `oil` were ALREADY present — the missed Iran post ("tremendous economic
+  consequences") matched neither; also observed that the `economy` stem does
+  NOT cover "economic" (stem-prefix matching), flagged for a human ruling
+  rather than silently widened.
+
 ## Standing reminders
 
 - `PAPER_MODE=true`. Live needs two variables, both set by a human, and the agent must

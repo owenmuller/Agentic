@@ -151,6 +151,14 @@ def run_loop(tmp_path, signals_config, posts, clock=None):
     from research.config import ResearchConfig
     from risk_gate import RiskLimits
 
+    # Genuine ttox relays carry the "( TS: ... )" stamp; ingest-level marker
+    # enforcement (2026-08-20) drops anything without it as mirror commentary,
+    # so these fixtures carry it too (unless a test stamped its own).
+    posts = [
+        post if "TS:" in post else f"{post} (TS: 18 Aug 14:31 ET)"
+        for post in posts
+    ]
+
     llm = RoutingLLM(
         **{REPORT_TOOL_NAME: structured({**REPORT, "confidence": 40})}
     )

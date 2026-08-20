@@ -145,18 +145,32 @@ class CredibilityTracker:
             self._forward_calls.get(signal.source_id, 0) + 1
         )
 
-    def record_report(self, source_id: str, report: "ResearchReport") -> None:
+    def record_report(
+        self,
+        source_id: str,
+        report: "ResearchReport",
+        delivered_by: Optional[str] = None,
+    ) -> None:
         """Fold a finished report's manipulation assessment into the source's record.
 
         Called by the research pass on every report it produces, flagged or not — the
         denominator matters as much as the numerator. A source flagged once in fifty
         reports is a different source from one flagged once in two.
+
+        Mirror separation (2026-08-20): when the signal arrived through a mirror
+        (``delivered_by``), a manipulation flag belongs to the CHANNEL, not the
+        principal — a clean principal must not be penalized for a leaky mirror,
+        and a leaky mirror must accumulate its own record. Both parties get the
+        report in their denominator; only the responsible one gets the flag.
         """
         self._reports[source_id] = self._reports.get(source_id, 0) + 1
+        if delivered_by:
+            self._reports[delivered_by] = self._reports.get(delivered_by, 0) + 1
         if not report.flags_manipulation:
             return
-        self._flags[source_id] = self._flags.get(source_id, 0) + 1
-        notes = self._notes.setdefault(source_id, [])
+        flagged = delivered_by or source_id
+        self._flags[flagged] = self._flags.get(flagged, 0) + 1
+        notes = self._notes.setdefault(flagged, [])
         notes.append(_truncate(str(report.manipulation_assessment), self.NOTE_CHARS))
         del notes[: -self.NOTE_HISTORY]
 

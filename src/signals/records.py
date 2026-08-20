@@ -210,7 +210,10 @@ _MIRROR_HEADER = re.compile(
     r"^\s*donald\s+j\.?\s*trump\s+truth\s+social\s+post.{0,40}?\d{2}\.\d{2}\.\d{2}",
     re.IGNORECASE | re.DOTALL,
 )
-_MIRROR_TS_SUFFIX = re.compile(r"\(ts:[^)]*\)\s*$", re.IGNORECASE)
+# Space-tolerant: the live format (verified 2026-08-20) is "( TS: Aug 19 2026,
+# 6:59 PM ET )" — a space after the paren, which the original pattern missed,
+# silently breaking cross-mirror dedup on every real TrumpTruthOnX post.
+_MIRROR_TS_SUFFIX = re.compile(r"\(\s*ts:[^)]*\)\s*$", re.IGNORECASE)
 _URLS = re.compile(r"https?://\S+")
 _INVISIBLE = re.compile(r"[\u200b-\u200f\u2060\ufeff\u2028\u2029]")
 _NON_ALNUM = re.compile(r"[^a-z0-9 ]+")
