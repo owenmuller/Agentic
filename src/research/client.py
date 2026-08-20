@@ -63,6 +63,69 @@ class LLMClient(Protocol):
         ...
 
 
+def _fresh_usage() -> dict[str, int]:
+    return {"input": 0, "output": 0, "cache_write": 0, "cache_read": 0}
+
+
+def _cached_system(system: str) -> list[dict[str, Any]]:
+    """System prompt as a cache-controlled block (verified against the prompt
+    caching docs 2026-08-20: list-of-blocks form, cache_control on the block;
+    the tools->system hierarchy means this breakpoint covers the tools too).
+    Below the model's minimum cacheable size the marker is simply ignored."""
+    return [
+        {
+            "type": "text",
+            "text": system,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+
+
+#: Marker appended to the report-phase instruction when search-result payloads
+#: were elided from the replay. Honest by construction: it states what was cut
+#: and why the analysis text is still trustworthy — nothing is summarised by a
+#: model to save tokens.
+ELISION_MARKER = (
+    "[NOTE: {count} web-search result payload(s) from your research phase were "
+    "elided from this replay to bound context size. Your own written analysis "
+    "above was produced with the full results in view — rely on it. Do not "
+    "guess at elided content.]"
+)
+
+
+def _elide_search_results(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Strip server-tool search blocks from the transcript, keeping the model's
+    own text. Result payloads are encrypted and must otherwise be replayed
+    byte-identical (API contract), so the only honest budget is elision — the
+    marker says exactly what happened."""
+    elided = 0
+    out: list[dict[str, Any]] = []
+    for message in messages:
+        content = message.get("content")
+        if message.get("role") != "assistant" or isinstance(content, str):
+            out.append(message)
+            continue
+        kept = []
+        for block in content or []:
+            block_type = getattr(block, "type", None) or (
+                block.get("type") if isinstance(block, dict) else None
+            )
+            if block_type in ("server_tool_use", "web_search_tool_result"):
+                if block_type == "web_search_tool_result":
+                    elided += 1
+                continue
+            kept.append(block)
+        if not kept:
+            # Never drop the whole assistant turn: role alternation must hold.
+            kept = [{"type": "text", "text": "(ran web searches; payloads elided)"}]
+        out.append({"role": "assistant", "content": kept})
+    if elided:
+        out.append(
+            {"role": "user", "content": ELISION_MARKER.format(count=elided)}
+        )
+    return out
+
+
 class AnthropicResearchClient:
     """Calls Claude for a structured research verdict."""
 
@@ -88,19 +151,59 @@ class AnthropicResearchClient:
         self, *, system: str, user: str, tool: dict[str, Any], tier: str = "class_1"
     ) -> LLMResult:
         resolved = self._config.tier_for(tier)
-        usage = {"input": 0, "output": 0}
+        usage = _fresh_usage()
         messages: list[dict[str, Any]] = [{"role": "user", "content": user}]
 
         if self._config.web_search.enabled:
             messages = self._gather_evidence(system, messages, resolved, usage)
+            if not self._config.web_search.replay_results_in_report:
+                messages = _elide_search_results(messages)
 
         return self._request_report(system, messages, tool, resolved, usage)
+
+    def triage(
+        self, *, system: str, user: str, tool: dict[str, Any]
+    ) -> LLMResult:
+        """One cheap forced-tool call. No search, no phases, no authority."""
+        triage_config = self._config.triage
+        if triage_config is None:
+            raise RuntimeError("triage called with no triage config")
+        usage = _fresh_usage()
+        response = self._client.messages.create(
+            model=triage_config.model,
+            max_tokens=triage_config.max_tokens,
+            system=_cached_system(system),
+            messages=[{"role": "user", "content": user}],
+            tools=[tool],
+            tool_choice={"type": "tool", "name": tool["name"]},
+        )
+        self._track_usage(response, usage)
+        return self._to_result(
+            response,
+            usage=usage,
+            est_cost_usd=self._estimate(triage_config.model, usage),
+        )
+
+    def _estimate(self, model: str, usage: dict[str, int]) -> Optional[Decimal]:
+        return self._config.estimate_cost_usd(
+            model,
+            usage["input"],
+            usage["output"],
+            cache_write_tokens=usage["cache_write"],
+            cache_read_tokens=usage["cache_read"],
+        )
 
     @staticmethod
     def _track_usage(response: Any, usage: dict[str, int]) -> None:
         reported = getattr(response, "usage", None)
         usage["input"] += int(getattr(reported, "input_tokens", 0) or 0)
         usage["output"] += int(getattr(reported, "output_tokens", 0) or 0)
+        usage["cache_write"] += int(
+            getattr(reported, "cache_creation_input_tokens", 0) or 0
+        )
+        usage["cache_read"] += int(
+            getattr(reported, "cache_read_input_tokens", 0) or 0
+        )
 
     def _gather_evidence(
         self,
@@ -120,7 +223,7 @@ class AnthropicResearchClient:
             response = self._client.messages.create(
                 model=resolved.model,
                 max_tokens=self._config.max_tokens,
-                system=system,
+                system=_cached_system(system),
                 messages=transcript,
                 output_config={"effort": resolved.effort},
                 tools=[
@@ -159,7 +262,7 @@ class AnthropicResearchClient:
         response = self._client.messages.create(
             model=resolved.model,
             max_tokens=self._config.max_tokens,
-            system=system,
+            system=_cached_system(system),
             messages=messages,
             output_config={"effort": resolved.effort},
             tools=[tool],
@@ -168,18 +271,14 @@ class AnthropicResearchClient:
         self._track_usage(response, usage)
         return self._to_result(
             response,
-            input_tokens=usage["input"],
-            output_tokens=usage["output"],
-            est_cost_usd=self._config.estimate_cost_usd(
-                resolved.model, usage["input"], usage["output"]
-            ),
+            usage=usage,
+            est_cost_usd=self._estimate(resolved.model, usage),
         )
 
     @staticmethod
     def _to_result(
         response: Any,
-        input_tokens: int = 0,
-        output_tokens: int = 0,
+        usage: Optional[dict[str, int]] = None,
         est_cost_usd: Optional[Decimal] = None,
     ) -> LLMResult:
         structured: Optional[dict[str, Any]] = None
@@ -192,12 +291,15 @@ class AnthropicResearchClient:
                 structured = getattr(block, "input", None)
             elif block_type == "text":
                 texts.append(getattr(block, "text", ""))
+        usage = usage or _fresh_usage()
         return LLMResult(
             structured=structured,
             text="\n".join(texts),
             stop_reason=getattr(response, "stop_reason", None),
             model=getattr(response, "model", ""),
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
+            # Total context handled, cache tiers included — the record shows the
+            # size; the cost estimate prices each tier at its own rate.
+            input_tokens=usage["input"] + usage["cache_write"] + usage["cache_read"],
+            output_tokens=usage["output"],
             est_cost_usd=est_cost_usd,
         )

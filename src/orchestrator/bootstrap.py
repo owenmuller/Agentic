@@ -37,6 +37,7 @@ from research.client import AnthropicResearchClient, LLMClient
 from research.config import ResearchConfig
 from research.credibility import CredibilityTracker
 from research.exit_review import ExitReviewPass
+from research.triage import TriagePass
 from research.research_pass import ResearchPass
 from risk_gate.gate import RiskGate
 from risk_gate.limits import RiskLimits
@@ -302,6 +303,11 @@ def start(
     research = ResearchPass(
         client, credibility, checks.clock, market_context=market_context
     )
+    # The triage gate: only when configured AND the client can actually run one.
+    # Fakes without a triage method simply have no gate — fail-open by absence.
+    triage = None
+    if checks.research_config.triage is not None and hasattr(client, "triage"):
+        triage = TriagePass(client)
     from datetime import time as _time
 
     from orchestrator.ops import CostMeter
@@ -342,6 +348,7 @@ def start(
         )
     pipeline = SignalPipeline(
         research=research,
+        triage=triage,
         sizing=SizingEngine(checks.limits),
         gate=checks.gate,
         adapter=checks.adapter,

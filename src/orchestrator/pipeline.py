@@ -45,6 +45,32 @@ from audit.records import DecisionRecord, RejectedStage, StageRejectionRecord
 from execution.base import BrokerAdapter, BrokerError, OrderReceipt
 from research.reports import Direction, ResearchReport, ResearchUsage
 from research.research_pass import ResearchPass
+from research.triage import TriagePass
+
+
+def _combine_usage(
+    first: Optional[ResearchUsage], second: Optional[ResearchUsage]
+) -> Optional[ResearchUsage]:
+    """Sum triage and full-pass usage into one estimate for the record.
+
+    Costs only add when both are priced; one unpriced side keeps the priced
+    side's number rather than erasing it.
+    """
+    if first is None:
+        return second
+    if second is None:
+        return first
+    if first.cost_usd is None:
+        cost = second.cost_usd
+    elif second.cost_usd is None:
+        cost = first.cost_usd
+    else:
+        cost = first.cost_usd + second.cost_usd
+    return ResearchUsage(
+        input_tokens=first.input_tokens + second.input_tokens,
+        output_tokens=first.output_tokens + second.output_tokens,
+        cost_usd=cost,
+    )
 from risk_gate.gate import ApprovedOrder, BuyingPowerBreached, RiskGate
 from risk_gate.schema import EquityBuyOrder, LimitExecution
 from risk_gate.state import Sleeve, units_of
@@ -105,6 +131,7 @@ class SignalPipeline:
         self,
         *,
         research: ResearchPass,
+        triage: Optional["TriagePass"] = None,
         sizing: SizingEngine,
         gate: RiskGate,
         adapter: BrokerAdapter,
@@ -114,6 +141,8 @@ class SignalPipeline:
         fill_sink: Optional[Callable[["WorkingOrder", int, Decimal], None]] = None,
     ) -> None:
         self._research = research
+        self._triage = triage
+        self._pending_triage_usage: Optional[ResearchUsage] = None
         self._sizing = sizing
         self._gate = gate
         self._adapter = adapter
@@ -130,6 +159,37 @@ class SignalPipeline:
         return tuple(self._working.values())
 
     # -- the pipeline ----------------------------------------------------------------
+
+    def triage_gate(self, signal: Signal) -> Optional[PipelineResult]:
+        """Run the cheap triage gate. A no writes the trail and returns the
+        result (the full pass never starts, the pass budget is never spent);
+        a yes — or any gate failure, which fails open — returns None and the
+        caller proceeds exactly as before. The triage call's own cost rides on
+        the rejection record (a no) or is folded into the full pass's usage
+        (a yes) so the cost meter sees every dollar either way.
+        """
+        if self._triage is None:
+            return None
+        outcome = self._triage.run(signal)
+        if outcome.proceed:
+            self._pending_triage_usage = outcome.usage
+            return None
+        decision_id = self._id_factory()
+        rejection = self._audit.record_stage_rejection(
+            decision_id,
+            RejectedStage.TRIAGE,
+            "triage",
+            outcome.reason,
+            signal,
+            usage=outcome.usage,
+        )
+        return PipelineResult(
+            decision_id=decision_id,
+            signal_id=signal.signal_id,
+            stage_reached=str(RejectedStage.TRIAGE),
+            traded=False,
+            rejection=rejection,
+        )
 
     def record_prefiltered(self, signal: Signal, reason: str) -> PipelineResult:
         """Write the trail for a signal the pre-filter kept from research.
@@ -184,7 +244,8 @@ class SignalPipeline:
     def _process(self, decision_id: str, signal: Signal) -> PipelineResult:
         # 1. Research.
         outcome = self._research.run(signal)
-        usage = self._research.last_usage
+        usage = _combine_usage(self._pending_triage_usage, self._research.last_usage)
+        self._pending_triage_usage = None
         if not isinstance(outcome, ResearchReport):
             return self._stopped(
                 decision_id,

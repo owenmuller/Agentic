@@ -300,6 +300,11 @@ class RejectedStage(StrEnum):
     #: point — every filtered post stays readable, so a filter that eats alpha can
     #: be caught by reading what it skipped.
     PRE_FILTER = "pre_filter"
+    #: Stopped by the cheap triage gate before the full research pass: the gate
+    #: judged the signal untradeable/unverifiable/stale. The gate's one-line
+    #: reason is the record's message; the triage call's own cost is stamped on
+    #: the record. Spends the COST meter, never the research-pass budget.
+    TRIAGE = "triage"
     #: The research pass returned a typed rejection instead of a report.
     RESEARCH = "research"
     #: A report was produced, and sizing resolved it to nothing: confidence below the

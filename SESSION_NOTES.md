@@ -810,6 +810,41 @@ unmeasured — no Class 2/3 passes have run yet. Pending Friday's console
 reconciliation, which is also when the research.yaml pricing table gets replaced
 with real numbers.
 
+## Cost reduction pass (2026-08-20): three efficiency changes, no strategy changes
+
+1. **Search budget:** `web_search.max_uses: 2` (was 5). And an honest deviation
+   from the requested per-result truncation: the docs (verified 2026-08-20) say
+   search-result content is ENCRYPTED and must be replayed byte-identical or
+   the request 400s — per-result truncation is impossible by API contract. The
+   implementable form: `replay_results_in_report: false` ELIDES the opaque
+   payloads from the report-phase replay entirely, keeps the model's own
+   written analysis, and appends an explicit marker stating what was cut. One
+   config switch restores full replay. Search payloads were 79K–119K input
+   tokens/pass; they are now paid for once (search phase), not twice.
+2. **Prompt caching:** `cache_control: {type: ephemeral}` on the system block
+   of every research, report, and triage request (list-of-blocks form per
+   docs; the tools→system hierarchy means the breakpoint covers tools too).
+   **Verified live:** two-call probe showed `cache_creation_input_tokens: 1329`
+   then `cache_read_input_tokens: 1329`. Cost estimates now price cache tiers
+   properly (writes 1.25x, reads 0.1x input rate).
+3. **Haiku triage gate:** one forced-tool claude-haiku-4-5 call before any full
+   pass — "plausibly tradeable, verifiable, non-stale thesis?" No → stage
+   `triage` rejection (~$0.02, reason preserved, own est_cost stamped), full
+   pass never starts. Yes → proceeds EXACTLY as before, gate cost folded into
+   the pass's record. Counts toward the COST meter, never the 40-pass budget
+   (replay excludes triage rejections like pre_filter). Signal content is
+   fenced as data; the gate's output has no authority beyond the yes/no —
+   smuggled extra fields fail the closed schema, which FAILS OPEN to the full
+   pass, as does every other gate failure (a broken gate must not stop the
+   research layer).
+
+**Levers held in reserve — revisit ONLY if Friday's console reconciliation is
+still uncomfortable:**
+- research budget cap 40 → 15 passes/day
+- Sonnet-everywhere (move Class 1 off Opus)
+- Batch API for Class 2/3 (they carry 45-day lags; batch latency is free money)
+- exit-review cadence stretch (24h → 48h)
+
 ## Standing reminders
 
 - `PAPER_MODE=true`. Live needs two variables, both set by a human, and the agent must

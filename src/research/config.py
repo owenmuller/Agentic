@@ -17,6 +17,10 @@ class _Strict(BaseModel):
 class WebSearchConfig(_Strict):
     enabled: bool
     max_uses: int
+    #: Replay raw search-result blocks into the report phase. False elides them
+    #: (with a marker) — result content is encrypted and must be replayed
+    #: byte-identical or the API 400s, so elision is the only honest payload cut.
+    replay_results_in_report: bool = True
 
 
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
@@ -43,6 +47,13 @@ class TierOverrides(_Strict):
     exit_review: Optional[ModelTier] = None
 
 
+class TriageConfig(_Strict):
+    """The cheap yes/no gate in front of the full research pass."""
+
+    model: str
+    max_tokens: int = Field(gt=0)
+
+
 class ModelPricing(_Strict):
     """Dollars per million tokens. Estimates for the audit record — the console
     bill is the truth; these exist so attribution can charge research spend to
@@ -64,6 +75,8 @@ class ResearchConfig(_Strict):
     #: Cost-estimate table, keyed by model id. A model missing from the table
     #: yields no estimate (None), never a guessed one.
     pricing: dict[str, ModelPricing] = Field(default_factory=dict)
+    #: The triage gate. None disables it (every signal goes straight to research).
+    triage: Optional[TriageConfig] = None
 
     def tier_for(self, name: str) -> ModelTier:
         """Resolve which model/effort a tier runs on. Unknown names are a bug."""
@@ -75,9 +88,19 @@ class ResearchConfig(_Strict):
         return ModelTier(model=self.model, effort=self.effort)
 
     def estimate_cost_usd(
-        self, model: str, input_tokens: int, output_tokens: int
+        self,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cache_write_tokens: int = 0,
+        cache_read_tokens: int = 0,
     ) -> Optional[Decimal]:
-        """Estimated dollars for one call, or None when the model is unpriced."""
+        """Estimated dollars for one call, or None when the model is unpriced.
+
+        Cache tokens are priced per Anthropic's published multipliers: writes at
+        1.25x the input rate, reads at 0.1x — so the estimate reflects the
+        savings caching actually buys rather than overstating the bill.
+        """
         pricing = self.pricing.get(model)
         if pricing is None:
             return None
@@ -85,6 +108,10 @@ class ResearchConfig(_Strict):
         cost = (
             Decimal(input_tokens) * pricing.input_per_mtok
             + Decimal(output_tokens) * pricing.output_per_mtok
+            + Decimal(cache_write_tokens)
+            * pricing.input_per_mtok
+            * Decimal("1.25")
+            + Decimal(cache_read_tokens) * pricing.input_per_mtok * Decimal("0.1")
         ) / mtok
         return cost.quantize(Decimal("0.000001"))
 

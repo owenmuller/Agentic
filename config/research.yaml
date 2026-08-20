@@ -18,11 +18,32 @@ effort: high
 web_search:
   # CLAUDE.md § Research: "Research may use web search to pressure-test the thesis."
   enabled: true
-  max_uses: 5
+  # Cost reduction 2026-08-20: 2, down from 5. Search payloads were the dominant
+  # input cost (79K-119K tokens/pass observed 2026-08-19).
+  max_uses: 2
+  # Whether the raw search-result blocks are replayed into the report phase.
+  # False (default): the report phase sees the model's own written analysis from
+  # the search phase, with the opaque result payloads elided and an explicit
+  # marker saying so. Per Anthropic's docs (verified 2026-08-20), result content
+  # is encrypted and MUST be replayed byte-identical or the request 400s — so
+  # per-result truncation is impossible by API contract; elision-with-marker is
+  # the honest implementable form of a payload budget. True restores full replay.
+  replay_results_in_report: false
 
 # How many times a search phase may be resumed after the server-side tool loop pauses.
 # Bounds the evidence-gathering phase; the report phase always runs exactly once.
 max_search_continuations: 3
+
+# TRIAGE GATE (cost reduction 2026-08-20). One cheap forced-tool call before any
+# full research pass: "does this signal contain a plausibly tradeable, verifiable,
+# non-stale thesis?" No -> stage_rejection code "triage" (~$0.02), full pass never
+# invoked. Yes -> proceeds exactly as before; nothing the triage model returns has
+# any authority beyond the yes/no. Counts toward the daily COST meter, NOT the
+# 40-pass research budget. A triage failure (outage, malformed output) FAILS OPEN
+# to the full pass - a broken gate must not silently stop the research layer.
+triage:
+  model: claude-haiku-4-5-20251001
+  max_tokens: 200
 
 # Per-class model tiers (cost-efficiency pass, 2026-08-19). Class 1 is the only
 # latency class where speed is genuine edge and the only one that inherits the
@@ -51,3 +72,6 @@ pricing:
   claude-sonnet-4-6:
     input_per_mtok: "3.00"
     output_per_mtok: "15.00"
+  claude-haiku-4-5-20251001:
+    input_per_mtok: "1.00"
+    output_per_mtok: "5.00"

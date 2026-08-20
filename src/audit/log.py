@@ -383,11 +383,13 @@ class AuditLog:
             1
             for record in first_by_id.values()
             if record.recorded_at.date() == day
-            # A pre-filtered signal got a decision_id and a record but no research
-            # call — it spent nothing, so it must not be replayed as spent.
+            # A pre-filtered or triage-gated signal got a decision_id and a
+            # record but no FULL research pass — neither spends the pass budget,
+            # so neither may be replayed as spent. (Triage spends dollars, which
+            # the COST meter tracks; this counter is passes, not dollars.)
             and not (
                 isinstance(record, StageRejectionRecord)
-                and record.stage is RejectedStage.PRE_FILTER
+                and record.stage in (RejectedStage.PRE_FILTER, RejectedStage.TRIAGE)
             )
         )
         return new_ids + reviews
