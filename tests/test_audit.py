@@ -971,3 +971,25 @@ def test_excess_return_needs_resolved_capital(tmp_path, limits):
     class_1 = report.by_class[SignalClass.CLASS_1_REALTIME]
     assert class_1.return_pct is None
     assert class_1.excess_return_pct is None
+
+
+def test_attribution_with_zero_deployment_renders_without_a_return():
+    """A class (or an inactive sleeve) with nothing deployed must render as
+    unresolved — never as a 0% return, a NaN, or a divide-by-zero."""
+    from audit.attribution import ClassAttribution
+
+    empty = ClassAttribution(
+        signal_class=SignalClass.CLASS_1_REALTIME,
+        decisions=0,
+        approved=0,
+        rejected=0,
+        resolved=0,
+        wins=0,
+        realised_pnl=Decimal("0"),
+        manipulation_flags=0,
+        benchmark_return_pct=Decimal("2.10"),  # a benchmark alone must not force a %
+    )
+    assert empty.return_pct is None
+    assert empty.excess_return_pct is None
+    assert "no resolved outcomes yet" in empty.summary()
+    assert "vs SPY" not in empty.summary()

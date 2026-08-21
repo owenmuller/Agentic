@@ -352,18 +352,18 @@ def test_a_signal_becomes_a_paper_order_and_a_complete_audit_trail(
     sent = broker.payloads[0]
     assert sent["symbol"] == "NUE"
     assert sent["limit_price"] == QUOTE
-    # Confidence 71 -> 2.5% of a 90,000 equity sleeve = 2,250; at 140 that is 16 shares.
-    assert sent["qty"] == 16
+    # Confidence 71 -> 2.5% of a 100,000 equity sleeve = 2,500; at 140 that is 17 shares.
+    assert sent["qty"] == 17
 
     # And the whole trail, joined by one decision_id.
     trail = started.audit.trail(result.decision_id)
     assert trail.decision.signal.raw_content == PURE_FORWARD_CALL
     assert trail.decision.research.confidence == 71
-    assert trail.decision.sizing.capital == Decimal("2250.00")
+    assert trail.decision.sizing.capital == Decimal("2500.00")
     assert trail.decision.gate.approved is True
     assert len(trail.fills) == 1
     assert trail.fills[0].fill_price == QUOTE
-    assert trail.fills[0].filled_quantity == Decimal("16")
+    assert trail.fills[0].filled_quantity == Decimal("17")
     # Not yet complete: the position is open, and an outcome is what closing writes.
     assert not trail.is_complete
 
@@ -380,7 +380,7 @@ def test_every_stage_of_the_trail_is_present_and_ordered(
     assert decision.research.thesis
     assert decision.research.confidence == 71
     assert decision.sizing.rationale
-    assert decision.gate.max_loss == Decimal("2240.00")  # 16 x 140
+    assert decision.gate.max_loss == Decimal("2380.00")  # 17 x 140
     assert decision.gate.approval_sequence == 1
 
 
@@ -393,8 +393,8 @@ def test_the_fill_settles_against_the_gate_not_just_the_log(
 
     state = started.gate.state
     assert state.reserved_cash == Decimal("0")
-    assert state.cash == START_CASH - Decimal("2240.00")
-    assert state.position(("equity", "NUE")).quantity == 16
+    assert state.cash == START_CASH - Decimal("2380.00")
+    assert state.position(("equity", "NUE")).quantity == 17
     assert started.loop.pipeline.working_orders == ()
 
 
@@ -406,7 +406,7 @@ def test_an_order_that_terminates_unfilled_releases_its_reservation(
     result = started.loop.tick().processed[0]
 
     # Still working after the first reconcile: the cash stays committed.
-    assert started.gate.state.reserved_cash == Decimal("2240.00")
+    assert started.gate.state.reserved_cash == Decimal("2380.00")
 
     broker.set_status(
         "brk-1",
@@ -437,7 +437,7 @@ def test_a_partial_fill_is_booked_and_the_difference_is_recorded(
     assert started.gate.state.reserved_cash == Decimal("0")
     trail = started.audit.trail(result.decision_id)
     assert trail.fills[0].filled_quantity == Decimal("6")
-    assert any("filled 6 of 16" in r.message for r in trail.stage_rejections)
+    assert any("filled 6 of 17" in r.message for r in trail.stage_rejections)
 
 
 # ================================================================================
@@ -878,10 +878,10 @@ def test_the_daily_deployment_total_survives_a_restart(
         **kwargs,
     )
     first.loop.tick()
-    assert first.gate.state.deployed_today == Decimal("2240.00")
+    assert first.gate.state.deployed_today == Decimal("2380.00")
 
     restarted = preflight(adapter=FakeBroker(), id_factory=counter("b"), **kwargs)
-    assert restarted.gate.state.deployed_today == Decimal("2240.00")
+    assert restarted.gate.state.deployed_today == Decimal("2380.00")
 
     clock.advance(days=1)
     tomorrow = preflight(adapter=FakeBroker(), id_factory=counter("c"), **kwargs)
@@ -1066,7 +1066,7 @@ def test_shutdown_cancels_what_is_still_working(
     broker = FakeBroker(fill="new")
     started = build(tmp_path, limits, signals_config, research_config, broker=broker)
     result = started.loop.tick().processed[0]
-    assert started.gate.state.reserved_cash == Decimal("2240.00")
+    assert started.gate.state.reserved_cash == Decimal("2380.00")
 
     started.loop.shutdown()
 
@@ -1209,10 +1209,10 @@ def test_a_model_that_obeys_the_injection_still_cannot_exceed_the_caps(
     # the size the table allows, which is 5% of the equity sleeve and nothing more.
     assert result.traded
     trail = started.audit.trail(result.decision_id)
-    assert trail.decision.sizing.capital == Decimal("4500.00")  # 5% of 90,000
+    assert trail.decision.sizing.capital == Decimal("5000.00")  # 5% of 100,000
     assert trail.decision.sizing.fraction_of_sleeve_nav == Decimal("0.050")
-    assert broker.payloads[0]["qty"] == 32  # 4500 / 140
-    assert trail.decision.gate.max_loss == Decimal("4480.00")
+    assert broker.payloads[0]["qty"] == 35  # 5000 / 140, rounded down
+    assert trail.decision.gate.max_loss == Decimal("4900.00")  # 35 x 140
     assert started.gate.state.cash > Decimal("95000")
 
 
@@ -1300,7 +1300,7 @@ class FractionalBroker(FakeBroker):
 def test_a_fractional_venue_gets_a_round_down_fractional_order(
     tmp_path, limits, signals_config, research_config
 ):
-    """$900 of confidence-56 capital at $123.45: whole shares would buy 7 and
+    """$1,000 of confidence-56 capital at $123.45: whole shares would buy 8 and
     strand $36; a fractional venue deploys to within one step, rounded DOWN so
     the order's notional can never exceed the sized capital."""
     broker = FractionalBroker()
@@ -1318,7 +1318,7 @@ def test_a_fractional_venue_gets_a_round_down_fractional_order(
 
     qty = broker.payloads[0]["qty"]
     price = broker.payloads[0]["limit_price"]
-    capital = Decimal("900.00")  # 1% of the 90_000 equity sleeve
+    capital = Decimal("1000.00")  # 1% of the 100_000 equity sleeve
     assert qty * price <= capital  # round-down invariant: never over-deploys
     assert qty != qty.to_integral_value()  # genuinely fractional
     assert -qty.as_tuple().exponent <= 9  # never finer than the venue accepts
@@ -1342,4 +1342,14 @@ def test_a_whole_share_venue_still_rounds_to_whole_shares(
         broker=broker,
     )
     assert started.loop.tick().processed[0].traded
-    assert broker.payloads[0]["qty"] == Decimal("7")
+    assert broker.payloads[0]["qty"] == Decimal("8")
+
+
+def test_health_describe_marks_the_zero_weight_sleeve_inactive(
+    tmp_path, limits, signals_config, research_config
+):
+    """An operator reading health must see a deliberate ruling, not dead capital."""
+    started = build(tmp_path, limits, signals_config, research_config)
+    summary = started.preflight.describe()
+    assert "equity 100%" in summary
+    assert "prediction 0% (inactive)" in summary

@@ -360,3 +360,13 @@ def test_no_confidence_score_makes_a_no_position_report_tradeable(limits, confid
         (engine.propose_option, EQUITY_SLEEVE_NAV),
     ):
         assert propose(no_trade_report(confidence), nav).capital == Decimal("0")
+
+
+def test_an_event_proposal_on_a_zero_sleeve_is_no_trade():
+    """100/0 allocation (2026-08-21): a $0 prediction sleeve sizes every event
+    proposal to zero capital — no trade, no exception, rationale intact."""
+    engine = SizingEngine(RiskLimits.load())
+    for strategy in (EventStrategy.ARB, EventStrategy.DIRECTIONAL):
+        proposal = engine.propose_event_contract(report(90), Decimal("0"), strategy)
+        assert not proposal.is_tradeable
+        assert proposal.capital == Decimal("0")

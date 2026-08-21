@@ -18,7 +18,8 @@ Claude Code reads this file every session. These rules govern all code written i
 
 ## Portfolio Structure
 
-- **90% equities & long options / 10% prediction markets (event contracts).** Enforced at portfolio level, rebalanced weekly. Drift beyond ±3% triggers rebalance at next session open.
+- **Current allocation: 100% equities & long options / 0% prediction markets (human ruling, 2026-08-21).** The prediction sleeve has no execution path yet (Robinhood event contracts are roadmap-only; Kalshi is Plan B behind the paper gate), and NAV reserved for an unexecutable sleeve is dead capital. This is a config value (`config/risk_limits.yaml` sleeves), not a design removal — the 90/10 target, rebalance logic, and prediction-sleeve caps below all remain in the codebase and remain tested.
+- **Design allocation — restores when a prediction-market venue ships (see the Plan A/B venue queue item): 90% equities & long options / 10% prediction markets (event contracts).** Enforced at portfolio level, rebalanced weekly. Drift beyond ±3% triggers rebalance at next session open. Flipping the config back to 90/10 is itself a human ruling under § Requires Explicit Human Approval, like the change that set it to 100/0.
 - **Position caps (equity sleeve):**
   - Max single position: 5% of sleeve NAV
   - Max daily capital deployment: 15% of sleeve NAV

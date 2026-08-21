@@ -75,6 +75,17 @@ def make_gate(
     return RiskGate(limits, state, clock=clock or FakeClock(), sectors=sectors)
 
 
+def design_limits(equity: str = "0.90", prediction: str = "0.10") -> RiskLimits:
+    """The DESIGN allocation, for tests exercising prediction-sleeve mechanics.
+
+    The live config is 100/0 (2026-08-21 ruling: no prediction venue exists), which
+    makes every prediction-sleeve cap zero. The mechanisms stay in the codebase and
+    stay tested — against the weights they were designed for."""
+    raw = RiskLimits.load().model_dump()
+    raw["portfolio"]["sleeves"] = {"equity": equity, "prediction": prediction}
+    return RiskLimits.model_validate(raw)
+
+
 def equity_buy(symbol: str = "AAPL", qty: int = 1, price: str = "100.00"):
     return EquityBuyOrder(
         symbol=symbol,
@@ -331,7 +342,8 @@ def test_aggregate_option_premium_cap(limits):
     assert gate.state.options_premium_at_risk <= premium_cap
 
 
-def test_directional_event_position_capped_at_two_percent(limits):
+def test_directional_event_position_capped_at_two_percent():
+    limits = design_limits()
     gate = make_gate(limits)
     prediction_cap = (
         gate.sleeve_nav(Sleeve.PREDICTION)
@@ -343,7 +355,8 @@ def test_directional_event_position_capped_at_two_percent(limits):
     assert rejection.limit == prediction_cap
 
 
-def test_arb_event_position_capped_at_the_tighter_half_percent(limits):
+def test_arb_event_position_capped_at_the_tighter_half_percent():
+    limits = design_limits()
     gate = make_gate(limits)
     arb_cap = (
         gate.sleeve_nav(Sleeve.PREDICTION)
@@ -355,7 +368,8 @@ def test_arb_event_position_capped_at_the_tighter_half_percent(limits):
     assert rejection.limit == arb_cap
 
 
-def test_the_same_size_passes_as_directional_and_fails_as_arb(limits):
+def test_the_same_size_passes_as_directional_and_fails_as_arb():
+    limits = design_limits()
     """The strategy tag is what distinguishes them — nothing else about the order."""
     gate = make_gate(limits)
     arb_cap = (
@@ -371,8 +385,13 @@ def test_the_same_size_passes_as_directional_and_fails_as_arb(limits):
     )
 
 
-def test_sleeve_allocation_ceiling_is_target_plus_drift(limits):
-    """Enough small equity positions must eventually hit the 90+3% ceiling."""
+def test_sleeve_allocation_ceiling_is_target_plus_drift():
+    """Enough small equity positions must eventually hit the 90+3% ceiling.
+
+    Pinned to the design weights: at the live 100/0 allocation the equity ceiling
+    is 103% of NAV, which cash-securing makes unreachable — the mechanism still
+    has to be proven for the day 90/10 comes back."""
+    limits = design_limits()
     gate = make_gate(limits)
     ceiling = (
         limits.portfolio.sleeves.equity + limits.portfolio.drift_tolerance
@@ -635,7 +654,9 @@ class GateStateMachine(RuleBasedStateMachine):
 
     def __init__(self) -> None:
         super().__init__()
-        self.limits = RiskLimits.load()
+        # Design weights, not the live 100/0: a zero prediction sleeve would turn
+        # every buy_event rule into the same degenerate rejection.
+        self.limits = design_limits()
         self.clock = FakeClock()
         self.gate = RiskGate(
             self.limits,
@@ -1129,7 +1150,8 @@ def test_the_floor_never_blocks_a_risk_reducing_close(limits):
     approve(gate, equity_sell(qty=Decimal("0.01"), price="100.00"))  # $1 notional
 
 
-def test_the_floor_does_not_apply_to_the_prediction_sleeve(limits):
+def test_the_floor_does_not_apply_to_the_prediction_sleeve():
+    limits = design_limits()
     """Arb is micro-unit by design; a $0.50 event position is not dust."""
     gate = make_gate(limits)
     approve(gate, event_buy(contracts=1, price="0.50", strategy="arb"))
@@ -1181,3 +1203,40 @@ def test_contracts_remain_whole_numbers():
         option_buy(contracts=1.5)
     with pytest.raises(ValidationError):
         event_buy(contracts=0.5)
+
+
+# ================================================================================
+# 100/0 allocation (2026-08-21): a zero-weight sleeve refuses cleanly
+# ================================================================================
+
+
+def test_a_zero_weight_sleeve_rejects_orders_with_a_typed_rejection(limits):
+    """Live config: prediction weight 0. Every event order dies at the position
+    cap (0.x% of a $0 sleeve) — a typed rejection, never a crash or a div-zero."""
+    gate = make_gate(limits)
+    assert gate.sleeve_nav(Sleeve.PREDICTION) == ZERO
+    for strategy in ("arb", "directional"):
+        rejection = reject(gate, event_buy(price="0.50", strategy=strategy))
+        assert rejection.code is RejectionCode.MAX_SINGLE_POSITION_EXCEEDED
+    # And nothing was reserved by the refusals.
+    assert gate.buying_power == START_CASH
+
+
+def test_the_equity_sleeve_now_spans_the_whole_nav(limits):
+    """100/0: the 5% single-position cap is 5% of full NAV, not of 90%."""
+    gate = make_gate(limits)
+    assert gate.sleeve_nav(Sleeve.EQUITY) == START_CASH
+    approve(gate, equity_buy(qty=50, price="100.00"))  # 5,000 == the new cap
+    rejection = reject(gate, equity_buy(symbol="MSFT", qty=51, price="100.00"))
+    assert rejection.code is RejectionCode.MAX_SINGLE_POSITION_EXCEEDED
+
+
+def test_zero_weight_drift_math_never_divides_by_the_weight(limits):
+    """The allocation ceiling divides by NAV, never by a sleeve weight — filling
+    the account with equity under 100/0 must not raise."""
+    gate = make_gate(limits)
+    for n in range(3):
+        decision = gate.submit(equity_buy(symbol=f"Z{n}", qty=49, price="100.00"))
+        if decision.is_approved:
+            gate.record_fill(decision, Decimal("100.00"))
+    assert gate.buying_power >= ZERO

@@ -340,7 +340,7 @@ def test_unmanaged_exposure_math(tmp_path, limits, signals_config, research_conf
     )
     started.loop.shutdown()
 
-    # The broker holds 20 NUE but the trail only accounts for 16 — plus 100 AAPL
+    # The broker holds 20 NUE but the trail only accounts for 17 — plus 100 AAPL
     # nothing accounts for at all.
     checks = preflight(
         adapter=FakeBroker(
@@ -354,7 +354,7 @@ def test_unmanaged_exposure_math(tmp_path, limits, signals_config, research_conf
     )
     engine = inert_engine(checks)
 
-    assert unmanaged_exposure(checks.gate, engine.tracked) == {"NUE": 4, "AAPL": 100}
+    assert unmanaged_exposure(checks.gate, engine.tracked) == {"NUE": 3, "AAPL": 100}
 
 
 # ================================================================================

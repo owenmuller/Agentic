@@ -211,14 +211,14 @@ def test_a_guardrail_breach_closes_the_position_end_to_end(
     assert trail.exits[0].gate.approved is True
     assert trail.exits[0].submitted is True
     assert trail.outcome is not None
-    assert trail.outcome.realised_pnl == Decimal("-336.00")  # 16 x (119 - 140)
+    assert trail.outcome.realised_pnl == Decimal("-357.00")  # 17 x (119 - 140)
     assert not trail.outcome.won
     assert trail.is_complete
 
     # The gate settled the close: the position is gone and the proceeds are cash.
     assert started.gate.state.position(("equity", "NUE")) is None
-    assert started.gate.state.cash == Decimal("100000") - Decimal("2240") + Decimal(
-        "1904"
+    assert started.gate.state.cash == Decimal("100000") - Decimal("2380") + Decimal(
+        "2023"
     )
 
     # And the loss resolved back to the source that called it. Hit rates are real now.
@@ -754,22 +754,22 @@ def test_a_partially_filled_exit_keeps_the_remainder_stopped(
     started.loop.tick()
     exit_id = started.exits.working_exits[0]
 
-    # It fills 6 of 16 and is then cancelled. The breach is still standing, so the
-    # same tick that settles the partial re-fires an exit for the remaining 10 —
+    # It fills 6 of 17 and is then cancelled. The breach is still standing, so the
+    # same tick that settles the partial re-fires an exit for the remaining 11 —
     # which, with the broker filling again, completes on the next tick.
     broker.set_status(exit_id, OrderStatus(exit_id, "canceled", Decimal("6"), STOP))
     broker.fill = "filled"
     report = started.loop.tick()
     assert report.positions_closed == 0
     assert report.exits_started == 1
-    assert started.exits.tracked[0].quantity == 10
+    assert started.exits.tracked[0].quantity == 11
 
     report = started.loop.tick()
     assert report.positions_closed == 1
 
     trail = started.audit.trail("dec-1")
     assert [f.side for f in trail.fills] == ["buy", "sell", "sell"]
-    assert trail.outcome.realised_pnl == Decimal("-336.00")  # 16 x (119 - 140), across two fills
+    assert trail.outcome.realised_pnl == Decimal("-357.00")  # 17 x (119 - 140), across two fills
     assert len(trail.exits) == 2  # two attempts, both recorded
 
 
@@ -807,7 +807,7 @@ def test_shutdown_cancels_a_working_exit_and_releases_its_reservation(
     prices.set("NUE", "119.00")
     broker.fill = "new"
     started.loop.tick()
-    assert started.gate.state.position(("equity", "NUE")).reserved_close == 16
+    assert started.gate.state.position(("equity", "NUE")).reserved_close == 17
 
     started.loop.shutdown()
 

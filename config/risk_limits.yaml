@@ -13,9 +13,16 @@ account:
   option_writing: forbidden # also structurally unrepresentable in the order schema
 
 portfolio:
+  # Allocation ruling (2026-08-21, human-authorized): 100/0 until a prediction-market
+  # venue actually exists — the 10% sleeve has no execution path (Robinhood event
+  # contracts are roadmap-only, Kalshi is Plan B behind the paper gate), and NAV
+  # reserved for an unexecutable sleeve is dead capital. The 90/10 design target,
+  # rebalance logic, and prediction-sleeve caps below all stay: restoring 90/10 when
+  # a venue ships is a config flip — and itself a human ruling (CLAUDE.md
+  # § Requires Explicit Human Approval).
   sleeves:
-    equity: 0.90 # equities & long options
-    prediction: 0.10 # event contracts
+    equity: 1.00 # equities & long options (design target: 0.90)
+    prediction: 0.00 # event contracts — INACTIVE, no venue (design target: 0.10)
   drift_tolerance: 0.03 # +/-3% from target triggers rebalance
   rebalance: weekly_at_next_session_open
 

@@ -57,6 +57,14 @@ from orchestrator.state import SessionState, replay_deployed_today, seed_account
 logger = logging.getLogger("orchestrator.bootstrap")
 
 
+def _sleeve_label(weight) -> str:
+    """A 0%-weight sleeve is INACTIVE, not a sleeve earning 0% — say so rather
+    than letting an operator read dead capital into a deliberate ruling."""
+    if weight <= 0:
+        return "0% (inactive)"
+    return f"{weight:.0%}"
+
+
 @dataclass(frozen=True, slots=True)
 class Preflight:
     """Steps 1-4: the checks and the replay, with no loop built.
@@ -83,6 +91,7 @@ class Preflight:
     def describe(self) -> str:
         """Operator-readable summary of the state that was reconstructed."""
         state = self.gate.state
+        sleeves = self.gate.limits.portfolio.sleeves
         halt = (
             "TRIPPED - opening orders halted"
             if self.gate.kill_switch_tripped
@@ -97,6 +106,8 @@ class Preflight:
                 f"high-water mark:   {state.high_water_mark}",
                 f"drawdown:          {state.drawdown():.2%}",
                 f"kill switch:       {halt}",
+                f"sleeves:           equity {_sleeve_label(sleeves.equity)}, "
+                f"prediction {_sleeve_label(sleeves.prediction)}",
                 f"deployed today:    {state.deployed_today}",
                 f"research budget:   {self.budget.spent} of "
                 f"{self.budget.max_per_day} spent for {self.budget.day}",

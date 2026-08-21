@@ -900,6 +900,39 @@ What changed:
   qty doesn't trip the TIF guard. The $1 live-probe order in
   test_execution_integration became $6 (it was our own dust now).
 
+## Allocation change (2026-08-21): 90/10 -> 100/0 until a prediction venue exists
+
+Human-authorized. Rationale: the 10% prediction sleeve has NO execution path
+(Robinhood event contracts are roadmap-only, Kalshi is Plan B behind the paper
+gate) — reserving NAV for an unexecutable sleeve is dead capital at any
+funding size.
+
+- **Config only:** `portfolio.sleeves` in risk_limits.yaml is now 1.00 / 0.00.
+  The 90/10 design target, drift/rebalance logic, prediction-sleeve caps, and
+  the whole Kalshi-facing order schema are untouched and still tested —
+  prediction-mechanism tests are pinned to the design weights via
+  `design_limits()` in test_risk_gate (the live config would make them
+  degenerate: every cap x $0 sleeve = 0).
+- **Zero-sleeve behavior verified, no div-by-zero anywhere:** sleeve math only
+  ever multiplies by the weight (sleeve_nav = NAV x weight) and divides by NAV.
+  A prediction order under 100/0 dies at the position cap with a typed
+  `max_single_position_exceeded` — rejection, never a crash. Sizing on a $0
+  sleeve returns capital 0 / no-trade. Attribution with zero deployment renders
+  "no resolved outcomes yet" (return_pct is None — never 0% or NaN).
+- **Operator rendering:** health/startup `describe()` gained a sleeves line —
+  `sleeves: equity 100%, prediction 0% (inactive)` — so the zero reads as a
+  deliberate ruling, not dead capital.
+- **Restore trigger:** 90/10 comes back when a prediction-market venue ships
+  (Plan A: Robinhood event contracts via the monthly MCP tool-inventory
+  re-check; Plan B: Kalshi). Flipping back is a human ruling on the
+  stop-and-ask list, same as this change. CLAUDE.md § Portfolio Structure now
+  states both allocations and the trigger.
+- Suite: 699 passed, 3 skipped (+6: zero-sleeve gate rejection typed, equity
+  sleeve spans full NAV, drift math never divides by weight, zero-sleeve
+  sizing no-trade, zero-deployment attribution render, describe() inactive
+  marker). Sleeve-dependent dollar expectations retargeted (2,500 capital /
+  17 shares at the 2.5% band, 5,000 at the 5% cap).
+
 ## Standing reminders
 
 - `PAPER_MODE=true`. Live needs two variables, both set by a human, and the agent must

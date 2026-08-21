@@ -244,7 +244,15 @@ def test_option_order_sends_the_occ_symbol_and_contract_count(gate):
     assert payload["limit_price"] == "1.50"  # premium per share
 
 
-def test_event_contracts_are_not_routed_to_alpaca(gate):
+def test_event_contracts_are_not_routed_to_alpaca():
+    # Design weights: the live 100/0 config zeroes the prediction sleeve, and this
+    # test needs an APPROVED event order to prove the adapter refuses the routing.
+    raw = RiskLimits.load().model_dump()
+    raw["portfolio"]["sleeves"] = {"equity": "0.90", "prediction": "0.10"}
+    gate = RiskGate(
+        RiskLimits.model_validate(raw),
+        AccountState(cash=START_CASH, high_water_mark=START_CASH),
+    )
     adapter, _ = adapter_with(ORDER_ACCEPTED)
     approved = gate.submit(
         EventContractBuyOrder(
