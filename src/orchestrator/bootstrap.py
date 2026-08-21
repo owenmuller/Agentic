@@ -59,7 +59,10 @@ logger = logging.getLogger("orchestrator.bootstrap")
 
 def _sleeve_label(weight) -> str:
     """A 0%-weight sleeve is INACTIVE, not a sleeve earning 0% — say so rather
-    than letting an operator read dead capital into a deliberate ruling."""
+    than letting an operator read dead capital into a deliberate ruling.
+
+    Shared by startup describe() and the daily health report (ops.health_report),
+    so the allocation renders identically wherever an operator looks."""
     if weight <= 0:
         return "0% (inactive)"
     return f"{weight:.0%}"

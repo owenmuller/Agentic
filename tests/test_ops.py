@@ -493,3 +493,19 @@ def test_health_shows_the_permission_line(
     )
     report = health_report(checks, inert_engine(checks).tracked, RunLog(tmp_path / "run.log"))
     assert "broker permits: options level 2, shorting disabled, margin 1x" in report
+
+
+def test_health_report_shows_the_allocation_with_the_inactive_marker(
+    tmp_path, limits, signals_config, research_config
+):
+    """The daily check must show the allocation, not just the startup log —
+    a zero-weight sleeve reads as a ruling ("inactive"), never as dead capital."""
+    checks = preflight(
+        adapter=FakeBroker(),
+        id_factory=counter("h"),
+        **preflight_kwargs(tmp_path, limits, signals_config, research_config),
+    )
+    report = health_report(
+        checks, inert_engine(checks).tracked, RunLog(tmp_path / "run.log")
+    )
+    assert "sleeves: equity 100%, prediction 0% (inactive)" in report

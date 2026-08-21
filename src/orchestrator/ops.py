@@ -40,7 +40,7 @@ except ImportError:  # POSIX
 from audit.log import AuditLog
 from signals.scanners import MARKET_CLOSE, MARKET_OPEN, MARKET_TIMEZONE
 
-from orchestrator.bootstrap import Preflight
+from orchestrator.bootstrap import Preflight, _sleeve_label
 from orchestrator.exits import TrackedPosition, unmanaged_exposure
 
 logger = logging.getLogger("orchestrator.ops")
@@ -420,6 +420,8 @@ def health_report(
         f"{'TRIPPED - opening orders halted' if checks.gate.kill_switch_tripped else 'clear'}",
         f"cash {state.cash}  |  NAV {state.nav}  |  "
         f"drawdown {state.drawdown():.2%} (high-water {state.high_water_mark})",
+        f"sleeves: equity {_sleeve_label(checks.gate.limits.portfolio.sleeves.equity)}, "
+        f"prediction {_sleeve_label(checks.gate.limits.portfolio.sleeves.prediction)}",
         f"deployed today: {state.deployed_today}  |  research budget: "
         f"{checks.budget.spent} of {checks.budget.max_per_day} spent for "
         f"{checks.budget.day}",

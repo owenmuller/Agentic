@@ -935,6 +935,12 @@ funding size.
 
 ## Standing reminders
 
+- **Verified pushes (2026-08-21 ruling):** "pushed to both hosts" means CHECKED,
+  not attempted — after every push, `git rev-parse HEAD` must match
+  `git ls-remote vps refs/heads/main` (and origin). The droplet checkout at
+  /home/agentic/Agentic still needs its `git pull` — the bare repo alone is not
+  what the service runs.
+
 - `PAPER_MODE=true`. Live needs two variables, both set by a human, and the agent must
   never set, suggest setting, or write code that sets either.
 - The kill switch resets manually or not at all.
