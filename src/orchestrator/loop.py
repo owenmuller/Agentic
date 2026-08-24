@@ -95,6 +95,7 @@ class TradingLoop:
         exits: ExitEngine,
         prefilter: Optional[ResearchPreFilter],
         cost_meter: Optional["CostMeter"],
+        error_sink: Optional[Callable[[str], None]] = None,
         budget: ResearchBudget,
         session: SessionState,
         gate: RiskGate,
@@ -110,6 +111,7 @@ class TradingLoop:
         self._exits = exits
         self._prefilter = prefilter
         self._cost_meter = cost_meter
+        self._error_sink = error_sink
         self._budget = budget
         self._session = session
         self._gate = gate
@@ -192,6 +194,20 @@ class TradingLoop:
                 break
             result = self._pipeline.process(signal)
             report.processed.append(result)
+            if (
+                self._error_sink is not None
+                and result.rejection is not None
+                and result.rejection.code == "upstream_error"
+            ):
+                # A failed research CALL is a typed rejection to the pipeline but
+                # an ERROR to the operator: five of these in a row is a broken
+                # API contract, and it must show in run.log / health, not sit
+                # silently in the audit trail (2026-08-24 incident: every pass
+                # 400ed for three sessions and health said 'last error: none').
+                self._error_sink(
+                    f"research upstream_error decision={result.decision_id}: "
+                    f"{result.rejection.message[:200]}"
+                )
             if self._cost_meter is not None:
                 # One cost per pass: when both records exist (an execution
                 # rejection after the decision) they carry the same estimate,

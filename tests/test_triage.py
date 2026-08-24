@@ -168,6 +168,86 @@ def test_full_replay_is_one_config_switch_away():
     assert "web_search_tool_result" in types  # verbatim, encrypted payload included
 
 
+def filtered_search_response():
+    """A dynamic-filtering transcript (web_search_20260209+): the search runs
+    inside code execution, so code_execution_tool_result blocks appear alongside
+    the nested search pair, and the model's text carries citations."""
+    return SimpleNamespace(
+        content=[
+            SimpleNamespace(
+                type="server_tool_use", id="srvce1", name="code_execution",
+                input={"code": "search_and_filter(...)"},
+            ),
+            SimpleNamespace(
+                type="code_execution_tool_result", tool_use_id="srvce1",
+                content=[SimpleNamespace(type="code_execution_output", stdout="…")],
+            ),
+            SimpleNamespace(
+                type="server_tool_use", id="srv1", name="web_search",
+                input={"query": "steel tariffs"}, caller="srvce1",
+            ),
+            SimpleNamespace(
+                type="web_search_tool_result", tool_use_id="srv1",
+                content=[SimpleNamespace(
+                    type="web_search_result", url="https://x", title="t",
+                    encrypted_content="OPAQUE-ENCRYPTED-PAYLOAD",
+                )],
+            ),
+            SimpleNamespace(
+                type="text", text="Filtered notes: tariff on.",
+                citations=[SimpleNamespace(
+                    type="web_search_result_location", url="https://x",
+                    encrypted_index="OPAQUE-ENCRYPTED-INDEX",
+                )],
+            ),
+        ],
+        stop_reason="end_turn",
+        model="claude-opus-5",
+        usage=SimpleNamespace(input_tokens=9_000, output_tokens=700),
+    )
+
+
+def test_elision_survives_dynamic_filtering_transcripts():
+    """The 2026-08-24 incident: with dynamic filtering, stripping only the two
+    basic block types orphans code_execution_tool_result blocks and the API
+    400s on every replay. The fix keeps ONLY plain text — assert the replayed
+    assistant turns cannot orphan anything."""
+    api = RecordingAPI(filtered_search_response(), _response(1000, 200))
+    client = AnthropicResearchClient(config_with(), client=api)
+    client.research(system="s", user="u", tool={"name": REPORT_TOOL_NAME})
+
+    report_call = api.create_calls[1]
+    for message in report_call["messages"]:
+        if message.get("role") != "assistant":
+            continue
+        for block in message["content"]:
+            # Plain dicts, text only, no citations: nothing paired, nothing
+            # encrypted, nothing a validator can find orphaned.
+            assert isinstance(block, dict)
+            assert set(block) == {"type", "text"}
+            assert block["type"] == "text"
+
+    joined = str(report_call["messages"])
+    assert "OPAQUE-ENCRYPTED-PAYLOAD" not in joined
+    assert "OPAQUE-ENCRYPTED-INDEX" not in joined
+    assert "Filtered notes: tariff on." in joined  # the model's prose survives
+    # Both payload blocks count: one code-execution result, one search result.
+    assert ELISION_MARKER.format(count=2) in joined
+
+
+def test_elision_keeps_only_plain_text_even_for_basic_search():
+    """Same invariant on the pre-dynamic-filtering transcript shape."""
+    api = RecordingAPI(search_response(), _response(1000, 200))
+    client = AnthropicResearchClient(config_with(), client=api)
+    client.research(system="s", user="u", tool={"name": REPORT_TOOL_NAME})
+
+    for message in api.create_calls[1]["messages"]:
+        if message.get("role") != "assistant":
+            continue
+        for block in message["content"]:
+            assert isinstance(block, dict) and set(block) == {"type", "text"}
+
+
 # ================================================================================
 # 2: prompt caching on every request
 # ================================================================================

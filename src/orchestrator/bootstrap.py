@@ -274,6 +274,7 @@ def start(
     id_factory: Optional[Callable[[], str]] = None,
     market_context: Optional[Callable] = None,
     cost_warn_sink: Optional[Callable[[str], None]] = None,
+    error_sink: Optional[Callable[[str], None]] = None,
     **preflight_kwargs: object,
 ) -> Startup:
     """Run the startup sequence and return a loop ready to tick.
@@ -378,6 +379,7 @@ def start(
         exits=exits,
         prefilter=ResearchPreFilter.from_config(checks.signals_config),
         cost_meter=cost_meter,
+        error_sink=error_sink,
         budget=checks.budget,
         session=checks.session,
         gate=checks.gate,

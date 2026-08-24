@@ -310,9 +310,11 @@ def build(
     clock=None,
     config=None,
     sleeper=None,
+    error_sink=None,
 ):
     """Wire a loop with fakes at the edges and everything real in between."""
     return start(
+        error_sink=error_sink,
         fetcher=fetcher or feed(trump_posts=[PURE_FORWARD_CALL]),
         prices=prices or prices_of(NUE=str(QUOTE)),
         llm_client=llm or FakeLLM(),
@@ -478,6 +480,26 @@ def test_a_failed_research_call_is_a_rejection_not_a_crash(
 
     assert not result.traded
     assert started.audit.rejections_for(result.decision_id)[0].code == "upstream_error"
+
+
+def test_an_upstream_error_reaches_the_operator_error_sink(
+    tmp_path, limits, signals_config, research_config
+):
+    """A dead research layer must show in run.log/health, not only in the audit
+    trail: three sessions of 400s read as 'last error: none' before this sink."""
+    errors: list[str] = []
+    started = build(
+        tmp_path,
+        limits,
+        signals_config,
+        research_config,
+        llm=ExplodingLLM(),
+        error_sink=errors.append,
+    )
+    started.loop.tick()
+    assert len(errors) == 1
+    assert "upstream_error" in errors[0]
+    assert "decision=" in errors[0]
 
 
 @pytest.mark.parametrize(

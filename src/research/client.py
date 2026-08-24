@@ -94,10 +94,22 @@ ELISION_MARKER = (
 
 
 def _elide_search_results(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Strip server-tool search blocks from the transcript, keeping the model's
-    own text. Result payloads are encrypted and must otherwise be replayed
+    """Keep ONLY the model's own prose from assistant turns; strip every tool
+    block. Result payloads are encrypted and must otherwise be replayed
     byte-identical (API contract), so the only honest budget is elision — the
-    marker says exactly what happened."""
+    marker says exactly what happened.
+
+    The keep-list (rather than a strip-list) is the load-bearing part. The first
+    version stripped exactly server_tool_use and web_search_tool_result — but
+    with dynamic filtering (web_search_20260209+, docs re-verified 2026-08-24)
+    searches run INSIDE code execution, so transcripts also carry
+    code_execution_tool_result blocks. Stripping a pair's server_tool_use while
+    keeping its result orphans the result, and the API 400s on every replay —
+    which killed every research pass from 2026-08-20 to 2026-08-24 (live
+    incident). Kept text is re-emitted as a plain {type, text} dict for the same
+    reason: a text block's `citations` carry encrypted_index references into the
+    elided results. Plain text cannot orphan anything.
+    """
     elided = 0
     out: list[dict[str, Any]] = []
     for message in messages:
@@ -110,11 +122,19 @@ def _elide_search_results(messages: list[dict[str, Any]]) -> list[dict[str, Any]
             block_type = getattr(block, "type", None) or (
                 block.get("type") if isinstance(block, dict) else None
             )
-            if block_type in ("server_tool_use", "web_search_tool_result"):
-                if block_type == "web_search_tool_result":
-                    elided += 1
-                continue
-            kept.append(block)
+            if block_type == "text":
+                text = (
+                    block.get("text", "")
+                    if isinstance(block, dict)
+                    else getattr(block, "text", "")
+                )
+                kept.append({"type": "text", "text": text or ""})
+            elif isinstance(block_type, str) and block_type.endswith("_tool_result"):
+                # Any server tool's payload counts as an elided payload —
+                # web search, code execution, whatever ships next.
+                elided += 1
+            # Everything else (server_tool_use, thinking, unknown future types)
+            # is dropped without counting: not prose, not a payload.
         if not kept:
             # Never drop the whole assistant turn: role alternation must hold.
             kept = [{"type": "text", "text": "(ran web searches; payloads elided)"}]

@@ -272,6 +272,7 @@ def run() -> int:
             checks=checks,
             market_context=context_builder.context_for,
             cost_warn_sink=lambda message: run_log.note("COST", message),
+            error_sink=lambda message: run_log.note("ERROR", message),
         )
         loop = startup.loop
 

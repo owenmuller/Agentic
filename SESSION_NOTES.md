@@ -933,6 +933,39 @@ funding size.
   marker). Sleeve-dependent dollar expectations retargeted (2,500 capital /
   17 shares at the 2.5% band, 5,000 at the 5% cap).
 
+## Incident (2026-08-24): elision 400 killed every research pass since 08-20
+
+Surfaced by the operator's health reconciliation: budget showed 5 of 40 spent
+but cost was $0.01. Neither counter was wrong — the 5 were RESEARCH-stage
+`upstream_error` rejections: triage said yes (the $0.01 is five Haiku yeses),
+then every full research call 400ed. One more on 08-20; Friday 08-22 attempted
+none (all signals pre-filtered), so the first real exposure was Monday.
+
+- **Root cause:** `_elide_search_results` stripped exactly `server_tool_use` +
+  `web_search_tool_result`. But our tool version `web_search_20260209` runs
+  search through DYNAMIC FILTERING (docs re-verified 2026-08-24): searches
+  execute inside code execution, so transcripts also carry
+  `code_execution_tool_result` blocks — whose paired `server_tool_use` we
+  stripped, orphaning them -> 400 on the report-phase replay, every time.
+- **Fix:** elision is now a keep-list — replayed assistant turns contain ONLY
+  plain `{type, text}` blocks (citations dropped too: their encrypted_index
+  points into elided results); every `*_tool_result` counts as an elided
+  payload for the marker. 400-proof by construction against future block
+  types. **Live-validated this time** (the omission that caused the incident):
+  a real search+report pass with elision on returned a structured report,
+  $0.034 on the Sonnet tier.
+- **Visibility fix:** upstream_error rejections now fire an error_sink ->
+  run.log ERROR line -> health "last error". Three sessions of 100% research
+  failure had shown "last error: none on record".
+- **Counters verdict:** budget counts ATTEMPTS (slot spent at try_spend,
+  replay-consistent, the tighter reading); cost counts actual estimated spend.
+  Both correct; unchanged. The five 08-24 signals are in the seen set and will
+  not be retried (Class 1/2 signals were stale within the session anyway).
+- **Future lever:** `web_search_20260318` adds `response_inclusion: "excluded"`
+  — the API drops consumed search/code pairs from the response server-side.
+  Cheaper than client elision (they never come back at all); needs its own
+  live validation before adoption.
+
 ## Standing reminders
 
 - **Verified pushes (2026-08-21 ruling):** "pushed to both hosts" means CHECKED,
