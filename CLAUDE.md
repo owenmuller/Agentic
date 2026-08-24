@@ -61,6 +61,11 @@ Three classes. Scan cadence is matched to signal decay speed so options and buy/
   - `invalidation_condition` (what kills the thesis — feeds automated exit logic)
 - Research may use web search to pressure-test the thesis before scoring.
 
+## LLM Request-Path Changes (ruling 2026-08-24)
+
+- Any change touching the LLM request/response path — elision or any transcript manipulation, prompt caching, tool configuration, model or tier changes — requires a **live end-to-end validation of the exact request shape production sends** before it may be reported as shipped: a full search→report round trip against the real API, not a component probe.
+- "Verified live" means the production path ran. A proxy for it (a two-call cache probe, a fake-transcript test, a doc citation) is not verification, however convincing. Origin: the 2026-08-24 elision incident — a doc-verified, unit-tested transcript change 400ed on every production research pass for three sessions because the one thing never run was the real round trip.
+
 ## Sizing Engine — Confidence-Weighted
 
 Investment size is weighted by research confidence. Deterministic mapping, applied after risk-gate caps:

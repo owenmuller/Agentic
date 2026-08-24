@@ -968,6 +968,10 @@ none (all signals pre-filtered), so the first real exposure was Monday.
 
 ## Standing reminders
 
+- **LLM-path changes need a live round trip (2026-08-24 ruling, now in
+  CLAUDE.md § LLM Request-Path Changes):** elision/caching/tool-config/model
+  changes are not "shipped" until the exact production request shape — full
+  search→report — has run against the real API.
 - **Verified pushes (2026-08-21 ruling):** "pushed to both hosts" means CHECKED,
   not attempted — after every push, `git rev-parse HEAD` must match
   `git ls-remote vps refs/heads/main` (and origin). The droplet checkout at
