@@ -122,6 +122,10 @@ class ResearchSnapshot(_Record):
     invalidation_condition: str
     manipulation_assessment: Optional[str]
     flagged_manipulation: bool
+    #: Catalyst verdict (2026-08-24). Defaults keep every record written before
+    #: the field existed parseable — an absent catalyst reads as none reported.
+    catalyst_present: Optional[bool] = None
+    catalyst_description: Optional[str] = None
 
     @classmethod
     def of(cls, report: ResearchReport) -> "ResearchSnapshot":
@@ -135,7 +139,46 @@ class ResearchSnapshot(_Record):
             invalidation_condition=report.invalidation_condition,
             manipulation_assessment=report.manipulation_assessment,
             flagged_manipulation=report.flags_manipulation,
+            catalyst_present=(
+                report.catalyst_within_horizon.present
+                if report.catalyst_within_horizon is not None
+                else None
+            ),
+            catalyst_description=(
+                report.catalyst_within_horizon.description
+                if report.catalyst_within_horizon is not None
+                else None
+            ),
         )
+
+
+class NearMissSnapshot(_Record):
+    """The contract a fallback almost picked, and the gate that killed it —
+    so "are our liquidity gates too tight?" is answerable from records."""
+
+    occ_symbol: str
+    delta: Optional[Decimal]
+    open_interest: int
+    spread_pct: Optional[Decimal]
+    killed_by: str
+
+
+class ExpressionSnapshot(_Record):
+    """How the thesis was expressed: the chosen contract, or why not (2026-08-24)."""
+
+    #: Whether an options expression was even on the table for this decision.
+    considered: bool
+    #: "option" | "equity" | "none" (puts theses with no valid contract trade nothing).
+    chosen: str
+    fallback_reason: Optional[str] = None
+    detail: Optional[str] = None
+    contract_symbol: Optional[str] = None
+    delta: Optional[Decimal] = None
+    iv_percentile: Optional[Decimal] = None
+    expiration: Optional[str] = None
+    open_interest: Optional[int] = None
+    spread_pct: Optional[Decimal] = None
+    near_miss: Optional[NearMissSnapshot] = None
 
 
 class SizingSnapshot(_Record):
@@ -222,6 +265,8 @@ class DecisionRecord(_Record):
     signal: SignalSnapshot
     research: ResearchSnapshot
     sizing: SizingSnapshot
+    #: How the thesis was expressed (options vs equity), when routing ran.
+    expression: Optional[ExpressionSnapshot] = None
     gate: GateSnapshot
     #: Estimated LLM spend of the research pass that produced this record —
     #: tokens summed across every API call, dollars from the pricing table in
@@ -345,6 +390,8 @@ class StageRejectionRecord(_Record):
     #: tokens summed across every API call, dollars from the pricing table in
     #: research.yaml. Estimates for attribution; the console bill is the truth.
     #: None when no research ran (or the model is unpriced, for the cost).
+    #: Expression routing outcome, when the rejection happened at or after it.
+    expression: Optional["ExpressionSnapshot"] = None
     est_input_tokens: Optional[int] = None
     est_output_tokens: Optional[int] = None
     est_cost_usd: Optional[Decimal] = None
@@ -362,6 +409,9 @@ class ExitReason(StrEnum):
     #: verdict, or a triggered invalidation condition (which closes whatever the
     #: action field said; the contradiction resolves toward the exit).
     THESIS_INVALIDATED = "thesis_invalidated"
+    #: Long option inside the configured pre-expiry window. Closed regardless of
+    #: thesis state: theta endgame is not a place this system holds (2026-08-24).
+    EXPIRY_CLOSE = "expiry_close"
 
 
 class ReviewOutcome(StrEnum):

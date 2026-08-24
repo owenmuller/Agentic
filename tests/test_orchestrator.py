@@ -66,6 +66,7 @@ REPORT = {
     "confidence": 71,
     "invalidation_condition": "Exemption granted for the named importers.",
     "manipulation_assessment": "none detected",
+    "catalyst_within_horizon": None,
 }
 
 
@@ -154,22 +155,25 @@ class FakeBroker(BrokerAdapter):
         order = approved.order
         order_id = f"brk-{len(self.submitted) + 1}"
         price = order.execution.price_bound
+        quantity = getattr(order, "quantity", None)
+        if quantity is None:
+            quantity = order.contracts
         receipt = OrderReceipt(
             broker_order_id=order_id,
             status="accepted",
             symbol=order.symbol,
-            quantity=Decimal(order.quantity),
+            quantity=Decimal(quantity),
             limit_price=price,
             client_order_id=f"agentic-{approved.sequence}",
         )
         self.submitted.append(receipt)
         self.payloads.append(
-            {"symbol": order.symbol, "qty": order.quantity, "limit_price": price}
+            {"symbol": order.symbol, "qty": quantity, "limit_price": price}
         )
         self._statuses[order_id] = OrderStatus(
             broker_order_id=order_id,
             status=self.fill or "new",
-            filled_quantity=Decimal(order.quantity) if self.fill == "filled" else Decimal("0"),
+            filled_quantity=Decimal(quantity) if self.fill == "filled" else Decimal("0"),
             filled_avg_price=price if self.fill == "filled" else None,
         )
         return receipt
@@ -311,10 +315,13 @@ def build(
     config=None,
     sleeper=None,
     error_sink=None,
+    options_chain=None,
+    id_factory=None,
 ):
     """Wire a loop with fakes at the edges and everything real in between."""
     return start(
         error_sink=error_sink,
+        options_chain=options_chain,
         fetcher=fetcher or feed(trump_posts=[PURE_FORWARD_CALL]),
         prices=prices or prices_of(NUE=str(QUOTE)),
         llm_client=llm or FakeLLM(),
@@ -326,7 +333,7 @@ def build(
         research_config=research_config,
         orchestrator_config=config or orchestrator_config(),
         sleeper=sleeper,
-        id_factory=counter(),
+        id_factory=id_factory or counter(),
     )
 
 
@@ -1274,6 +1281,9 @@ def test_no_record_written_by_an_adversarial_run_is_anything_but_a_known_kind(
         "research",
         "sizing",
         "gate",
+        # Expression routing (2026-08-24): how the thesis was expressed —
+        # option contract chosen, or the typed fallback to equity.
+        "expression",
         # Cost instrumentation (2026-08-19): estimates, set by the pipeline,
         # never parsed from content.
         "est_input_tokens",

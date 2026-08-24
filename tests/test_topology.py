@@ -76,6 +76,9 @@ TOPOLOGY: dict[str, Rules] = {
         because="deterministic; reads a report type, never a research client",
     ),
     # The adapter takes an ApprovedOrder and nothing else, so it needs the gate's types.
+    # The options chain source produces quotes the deterministic selector
+    # consumes — but through a structural type (a Protocol in sizing.selection),
+    # not an import in either direction. The DAG stays a DAG.
     "execution": Rules(
         may_import=frozenset({"risk_gate"}),
         may_reach_network=True,
@@ -101,6 +104,7 @@ TOPOLOGY: dict[str, Rules] = {
                 "signals",
                 "research.reports",
                 "sizing.engine",
+                "sizing.selection",
                 "risk_gate.gate",
                 "risk_gate.rejections",
             }

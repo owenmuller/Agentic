@@ -82,6 +82,24 @@ prediction_sleeve:
     min_divergence_points: 10 # research probability vs market-implied odds
     max_position: 0.02 # of prediction sleeve, per position
 
+# Options instrument selection (human ruling 2026-08-24): deterministic contract
+# choice for catalyst-backed theses. Leverage is earned by timing specificity;
+# every threshold here fails toward the equity expression.
+options_selection:
+  min_expiry_days: # shortest expiry >= this, by report time horizon (~2x rule)
+    days: 14
+    weeks: 60
+    months: 180
+  delta_bands: # confidence -> |delta| range; boundaries take the deeper-ITM band
+    - { min: 55, max: 70, delta_min: 0.70, delta_max: 0.85, lower_inclusive: true }
+    - { min: 70, max: 85, delta_min: 0.60, delta_max: 0.75 }
+    - { min: 85, max: 100, delta_min: 0.50, delta_max: 0.65 }
+  min_delta_floor: 0.45 # never OTM lottery strikes, any band
+  min_open_interest: 500
+  max_spread_pct_of_mid: 0.10
+  max_iv_percentile: 0.90 # vs the fetched chain's own IV distribution
+  close_before_expiry_days: 5 # theta endgame is not a place this system holds
+
 execution:
   default_order_type: limit
   market_orders_require_justification: true

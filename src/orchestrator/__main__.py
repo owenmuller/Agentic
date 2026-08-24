@@ -44,6 +44,7 @@ from datetime import datetime, timezone, timedelta
 from audit.attribution import DEFAULT_WINDOW_DAYS, build_attribution
 from audit.log import default_data_dir
 from execution import AlpacaDailyBars, AlpacaPriceSource, MarketContextBuilder
+from execution.options_data import AlpacaOptionsChain
 from signals import (
     Form13FFetcher,
     QuiverCongressFetcher,
@@ -192,6 +193,7 @@ def run() -> int:
     quiver = None
     x_search = None
     prices = None
+    options_chain = None
     try:
         if not is_trading_weekday(now):
             run_log.note("STOPPED", "not a trading weekday; nothing to do")
@@ -259,6 +261,7 @@ def run() -> int:
             logger.warning("%s", message)
             run_log.note("MIRROR", message)
 
+        options_chain = AlpacaOptionsChain()
         prices = AlpacaPriceSource(
             feed=checks.orchestrator_config.market_data.feed,
             max_quote_age_seconds=(
@@ -273,6 +276,7 @@ def run() -> int:
             market_context=context_builder.context_for,
             cost_warn_sink=lambda message: run_log.note("COST", message),
             error_sink=lambda message: run_log.note("ERROR", message),
+            options_chain=options_chain,
         )
         loop = startup.loop
 
@@ -316,6 +320,8 @@ def run() -> int:
                 run_log.note("ERROR", "shutdown after failure also failed")
         if prices is not None:
             prices.close()
+        if options_chain is not None:
+            options_chain.close()
         if edgar is not None:
             edgar.close()
         if quiver is not None:

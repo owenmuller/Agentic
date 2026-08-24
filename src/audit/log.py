@@ -24,6 +24,7 @@ from typing import Callable, Iterator, Optional
 from pydantic import TypeAdapter
 
 from audit.records import (
+    ExpressionSnapshot,
     AuditRecord,
     AuditTrail,
     CorrectionRecord,
@@ -87,6 +88,7 @@ class AuditLog:
         gate_decision: object,
         decision_id: Optional[str] = None,
         usage: Optional[ResearchUsage] = None,
+        expression: Optional["ExpressionSnapshot"] = None,
     ) -> DecisionRecord:
         """Write the complete decision-time record. Approved or rejected, both land."""
         record = DecisionRecord(
@@ -96,6 +98,7 @@ class AuditLog:
             research=ResearchSnapshot.of(report),
             sizing=SizingSnapshot.of(proposal),
             gate=GateSnapshot.of(gate_decision),  # type: ignore[arg-type]
+            expression=expression,
             est_input_tokens=usage.input_tokens if usage else None,
             est_output_tokens=usage.output_tokens if usage else None,
             est_cost_usd=usage.cost_usd if usage else None,
@@ -113,6 +116,7 @@ class AuditLog:
         report: Optional[ResearchReport] = None,
         proposal: Optional[SizedProposal] = None,
         usage: Optional[ResearchUsage] = None,
+        expression: Optional["ExpressionSnapshot"] = None,
     ) -> StageRejectionRecord:
         """Record a signal that stopped before the gate, or an order the broker refused.
 
@@ -129,6 +133,7 @@ class AuditLog:
             signal=SignalSnapshot.of(signal),
             research=ResearchSnapshot.of(report) if report is not None else None,
             sizing=SizingSnapshot.of(proposal) if proposal is not None else None,
+            expression=expression,
             est_input_tokens=usage.input_tokens if usage else None,
             est_output_tokens=usage.output_tokens if usage else None,
             est_cost_usd=usage.cost_usd if usage else None,

@@ -36,12 +36,19 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from decimal import ROUND_DOWN, ROUND_UP, Decimal
 from typing import Callable, Optional, Protocol
 
 from audit.log import AuditLog, AuditLogError
-from audit.records import DecisionRecord, RejectedStage, StageRejectionRecord
+from audit.records import (
+    DecisionRecord,
+    ExpressionSnapshot,
+    NearMissSnapshot,
+    RejectedStage,
+    StageRejectionRecord,
+)
 from execution.base import BrokerAdapter, BrokerError, OrderReceipt
 from research.reports import Direction, ResearchReport, ResearchUsage
 from research.research_pass import ResearchPass
@@ -72,8 +79,14 @@ def _combine_usage(
         cost_usd=cost,
     )
 from risk_gate.gate import ApprovedOrder, BuyingPowerBreached, RiskGate
-from risk_gate.schema import EquityBuyOrder, LimitExecution
-from risk_gate.state import Sleeve, units_of
+from risk_gate.schema import EquityBuyOrder, LimitExecution, OptionBuyToOpenOrder
+from risk_gate.state import Sleeve, unit_multiplier, units_of
+from sizing.selection import (
+    FallbackReason,
+    OptionFallback,
+    OptionSelector,
+    SelectedOption,
+)
 from signals import Signal
 from sizing.engine import SizedProposal, SizingEngine
 
@@ -124,6 +137,39 @@ class PipelineResult:
     receipt: Optional[OrderReceipt] = None
 
 
+def _selected_snapshot(selection: SelectedOption) -> ExpressionSnapshot:
+    quote = selection.quote
+    return ExpressionSnapshot(
+        considered=True,
+        chosen="option",
+        contract_symbol=quote.occ_symbol,
+        delta=quote.delta,
+        iv_percentile=selection.iv_percentile,
+        expiration=quote.expiration.isoformat(),
+        open_interest=quote.open_interest,
+        spread_pct=quote.spread_pct,
+    )
+
+
+def _fallback_snapshot(fallback: OptionFallback, chosen: str) -> ExpressionSnapshot:
+    near_miss = fallback.near_miss
+    if near_miss is not None and not isinstance(near_miss, NearMissSnapshot):
+        near_miss = NearMissSnapshot(
+            occ_symbol=near_miss.occ_symbol,
+            delta=near_miss.delta,
+            open_interest=near_miss.open_interest,
+            spread_pct=near_miss.spread_pct,
+            killed_by=near_miss.killed_by,
+        )
+    return ExpressionSnapshot(
+        considered=True,
+        chosen=chosen,
+        fallback_reason=str(fallback.reason),
+        detail=fallback.detail,
+        near_miss=near_miss,
+    )
+
+
 class SignalPipeline:
     """Runs one signal through every stage, and settles what the broker does next."""
 
@@ -138,7 +184,10 @@ class SignalPipeline:
         audit: AuditLog,
         prices: PriceSource,
         id_factory: Optional[Callable[[], str]] = None,
-        fill_sink: Optional[Callable[["WorkingOrder", int, Decimal], None]] = None,
+        fill_sink: Optional[Callable[["WorkingOrder", Decimal, Decimal], None]] = None,
+        options_chain=None,
+        option_selector: Optional[OptionSelector] = None,
+        clock: Optional[Callable[[], datetime]] = None,
     ) -> None:
         self._research = research
         self._triage = triage
@@ -148,6 +197,12 @@ class SignalPipeline:
         self._adapter = adapter
         self._audit = audit
         self._prices = prices
+        #: The options expression seam (2026-08-24). Both None = equity-only
+        #: pipeline, byte-identical to the pre-options behaviour — which is what
+        #: every harness without a chain gets.
+        self._options_chain = options_chain
+        self._option_selector = option_selector
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._id_factory = id_factory or (lambda: uuid.uuid4().hex[:16])
         #: Told about every settled opening fill — this is how the exit engine learns
         #: a position exists without the pipeline knowing what an exit engine is.
@@ -258,8 +313,20 @@ class SignalPipeline:
         report = outcome
 
         # 2. Sizing. Sub-floor confidence and a no_position verdict both land here.
+        # The table is picked by intended instrument: a catalyst-backed thesis (or
+        # any puts thesis — puts are its only expression) sizes on the halved
+        # options table; everything else on the full equity table. A later
+        # fallback to equity RE-sizes at the full table (ruling 2026-08-24 #2:
+        # no phantom half-size penalty for chain illiquidity).
         sleeve_nav = self._gate.sleeve_nav(Sleeve.EQUITY)
-        proposal = self._sizing.propose_equity(report, sleeve_nav)
+        wants_puts = report.direction is Direction.SHORT_VIA_PUTS
+        intends_option = self._option_selector is not None and (
+            wants_puts or (report.direction is Direction.LONG and report.has_catalyst)
+        )
+        if intends_option:
+            proposal = self._sizing.propose_option(report, sleeve_nav)
+        else:
+            proposal = self._sizing.propose_equity(report, sleeve_nav)
         if not proposal.is_tradeable:
             return self._stopped(
                 decision_id,
@@ -272,8 +339,10 @@ class SignalPipeline:
                 usage=usage,
             )
 
-        # 3. Order construction.
-        order, problem = self._build_order(signal, report, proposal)
+        # 3. Order construction (expression routing lives inside).
+        order, problem, proposal, expression = self._build_order(
+            signal, report, proposal
+        )
         if order is None:
             code, message = problem  # type: ignore[misc]
             return self._stopped(
@@ -285,12 +354,19 @@ class SignalPipeline:
                 report=report,
                 proposal=proposal,
                 usage=usage,
+                expression=expression,
             )
 
         # 4. The risk gate. Approved or rejected, this writes the full decision record.
         decision = self._gate.submit(order)
         record = self._audit.record_decision(
-            signal, report, proposal, decision, decision_id=decision_id, usage=usage
+            signal,
+            report,
+            proposal,
+            decision,
+            decision_id=decision_id,
+            usage=usage,
+            expression=expression,
         )
         if not decision.is_approved:
             return PipelineResult(
@@ -354,16 +430,19 @@ class SignalPipeline:
 
     def _build_order(
         self, signal: Signal, report: ResearchReport, proposal: SizedProposal
-    ) -> tuple[Optional[EquityBuyOrder], Optional[tuple[str, str]]]:
-        """Turn a dollar figure into a concrete order, or explain why not."""
-        if report.direction is not Direction.LONG:
-            return None, (
-                "instrument_not_supported",
-                f"direction {report.direction} needs an options chain to express as a "
-                f"bought put; no contract-selection source is built, so no order is "
-                f"placed. See this module's docstring.",
-            )
+    ) -> tuple[
+        Optional[object],
+        Optional[tuple[str, str]],
+        SizedProposal,
+        Optional[ExpressionSnapshot],
+    ]:
+        """Expression routing + order construction (ruling 2026-08-24).
 
+        Returns ``(order, problem, proposal, expression)``. The proposal comes
+        back because a fallback from options to equity RE-sizes at the full
+        equity table — a phantom half-size penalty for chain illiquidity would
+        be wrong. Every path writes an ExpressionSnapshot when routing ran.
+        """
         if len(report.tickers) != 1:
             # Constraint #6: where a spec admits more than one reading, take the fewer
             # trades and surface the ambiguity rather than silently picking one.
@@ -372,8 +451,125 @@ class SignalPipeline:
                 f"report names {len(report.tickers)} tickers ({', '.join(report.tickers) or 'none'}); "
                 f"one sized proposal cannot be split across them and choosing one would "
                 f"be a guess, so no order is placed",
+            ), proposal, None
+
+        wants_puts = report.direction is Direction.SHORT_VIA_PUTS
+
+        if self._option_selector is None:
+            # No expression layer wired: the pre-options pipeline, unchanged.
+            if report.direction is not Direction.LONG:
+                return None, (
+                    "instrument_not_supported",
+                    f"direction {report.direction} needs an options chain to express as a "
+                    f"bought put; no contract-selection source is built, so no order is "
+                    f"placed. See this module's docstring.",
+                ), proposal, None
+            return self._build_equity_order(signal, report, proposal, expression=None)
+
+        # -- expression routing ---------------------------------------------------
+        if not report.has_catalyst:
+            if wants_puts:
+                fallback = OptionFallback(
+                    FallbackReason.NO_CATALYST_FOR_PUTS,
+                    "short thesis with no catalyst inside the horizon; puts are its "
+                    "only expression and leverage is earned by timing specificity, "
+                    "so no order is placed",
+                )
+                return None, (
+                    str(fallback.reason),
+                    fallback.detail,
+                ), proposal, _fallback_snapshot(fallback, chosen="none")
+            fallback = OptionFallback(
+                FallbackReason.NO_CATALYST,
+                "directional-but-patient thesis: no catalyst inside the horizon, "
+                "so the position expresses as stock",
+            )
+            proposal = self._sizing.propose_equity(report, proposal.sleeve_nav)
+            return self._build_equity_order(
+                signal, report, proposal,
+                expression=_fallback_snapshot(fallback, chosen="equity"),
             )
 
+        # Catalyst present: fetch the chain and select.
+        symbol = report.tickers[0]
+        today = self._clock().date()
+        config = self._option_selector._config  # noqa: SLF001 - same package seam
+        min_expiry = today + timedelta(
+            days=config.min_expiry_days.for_horizon(str(report.time_horizon))
+        )
+        chain = (
+            self._options_chain.chain_for(symbol, min_expiry=min_expiry)
+            if self._options_chain is not None
+            else None
+        )
+        selection = self._option_selector.select(
+            direction=str(report.direction),
+            time_horizon=str(report.time_horizon),
+            confidence=report.confidence,
+            chain=chain,
+            today=today,
+        )
+
+        if isinstance(selection, SelectedOption):
+            quote = selection.quote
+            limit = quote.mid.quantize(CENTS, rounding=ROUND_UP)  # type: ignore[union-attr]
+            contracts = int(
+                (proposal.capital / (limit * quote.multiplier)).to_integral_value(
+                    ROUND_DOWN
+                )
+            )
+            if contracts >= 1:
+                order = OptionBuyToOpenOrder(
+                    symbol=quote.occ_symbol,
+                    underlying=quote.underlying,
+                    right=quote.right,  # type: ignore[arg-type]
+                    expiration=quote.expiration,
+                    strike=quote.strike,
+                    contracts=contracts,
+                    multiplier=quote.multiplier,
+                    execution=LimitExecution(limit_price=limit),
+                    signal_id=signal.signal_id,
+                    confidence=report.confidence,
+                )
+                return order, None, proposal, _selected_snapshot(selection)
+            selection = OptionFallback(
+                FallbackReason.PREMIUM_EXCEEDS_SIZE,
+                f"{proposal.capital} premium at risk buys no whole contract of "
+                f"{quote.occ_symbol} at {limit} x {quote.multiplier}",
+                near_miss=NearMissSnapshot(
+                    occ_symbol=quote.occ_symbol,
+                    delta=quote.delta,
+                    open_interest=quote.open_interest,
+                    spread_pct=quote.spread_pct,
+                    killed_by="premium_exceeds_size",
+                ),
+            )
+
+        # Selector (or affordability) fell back.
+        fallback: OptionFallback = selection  # type: ignore[assignment]
+        if wants_puts:
+            return None, (
+                str(fallback.reason),
+                f"puts thesis with no valid contract: {fallback.detail}",
+            ), proposal, _fallback_snapshot(fallback, chosen="none")
+        proposal = self._sizing.propose_equity(report, proposal.sleeve_nav)
+        return self._build_equity_order(
+            signal, report, proposal,
+            expression=_fallback_snapshot(fallback, chosen="equity"),
+        )
+
+    def _build_equity_order(
+        self,
+        signal: Signal,
+        report: ResearchReport,
+        proposal: SizedProposal,
+        expression: Optional[ExpressionSnapshot],
+    ) -> tuple[
+        Optional[object],
+        Optional[tuple[str, str]],
+        SizedProposal,
+        Optional[ExpressionSnapshot],
+    ]:
         symbol = report.tickers[0]
         quote = self._prices(symbol)
         if quote is None or quote <= ZERO:
@@ -381,7 +577,7 @@ class SignalPipeline:
                 "no_price",
                 f"no usable price for {symbol}; an order priced on a guess is an order "
                 f"the gate would cash-secure against a guess",
-            )
+            ), proposal, expression
 
         # Round the bound UP. It is the worst case the gate reserves against and the
         # limit the broker is sent, so rounding it down would shave the protection.
@@ -398,7 +594,7 @@ class SignalPipeline:
                 f"{proposal.capital} at {limit_price} rounds to {quantity} shares "
                 f"of {symbol} ({(quantity * limit_price).quantize(CENTS)} notional), "
                 f"below the {floor} minimum — dust, not a position",
-            )
+            ), proposal, expression
 
         return (
             EquityBuyOrder(
@@ -409,6 +605,8 @@ class SignalPipeline:
                 confidence=report.confidence,
             ),
             None,
+            proposal,
+            expression,
         )
 
     # -- settlement --------------------------------------------------------------------
@@ -467,6 +665,11 @@ class SignalPipeline:
             working.receipt.broker_order_id,
             Decimal(filled),
             filled_avg_price,
+            # True cash committed: contracts carry a share multiplier the raw
+            # quantity x price product misses (equity multiplier is 1).
+            filled_value=filled
+            * filled_avg_price
+            * unit_multiplier(working.approved.order),
         )
         if self._fill_sink is not None:
             self._fill_sink(working, filled, filled_avg_price)
@@ -546,6 +749,7 @@ class SignalPipeline:
         report: Optional[ResearchReport] = None,
         proposal: Optional[SizedProposal] = None,
         usage: Optional["ResearchUsage"] = None,
+        expression: Optional[ExpressionSnapshot] = None,
     ) -> PipelineResult:
         rejection = self._audit.record_stage_rejection(
             decision_id,
@@ -556,6 +760,7 @@ class SignalPipeline:
             report=report,
             proposal=proposal,
             usage=usage,
+            expression=expression,
         )
         return PipelineResult(
             decision_id=decision_id,

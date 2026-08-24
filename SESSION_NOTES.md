@@ -617,6 +617,10 @@ own live-gate rules):
 - [ ] 2026-08-27 refresh-check log reviewed (the unattended proof).
 - [ ] Options remain level 2 on the Agentic account (long-only enforcement at
       the broker layer too).
+- [ ] Options data feed: paper runs on Alpaca's free `indicative` feed (delayed
+      trades, modified quotes). Before options trade real money, confirm an
+      OPRA subscription and feed=opra — selection gates fed by modified quotes
+      are gates fed by fiction.
 - [ ] Fractional quantities: verify the Agentic MCP's order tools ACCEPT
       fractional qty and at what precision — unverified by the spike (all spike
       orders were whole-share). Until proven, a Robinhood adapter must keep
@@ -965,6 +969,59 @@ none (all signals pre-filtered), so the first real exposure was Monday.
   — the API drops consumed search/code pairs from the response server-side.
   Cheaper than client elision (they never come back at all); needs its own
   live validation before adoption.
+
+## Options execution build (2026-08-24): leverage earned by timing specificity
+
+Human ruling: equity-only was build-order sequencing, not strategy. Shipped in
+one pass, guardrails WITH it. Suite 732 passed 3 skipped (+29 tests).
+
+**The path a levered trade takes:** research report gains
+`catalyst_within_horizon` (nullable-but-required, present+description; null ==
+false == no leverage) -> pipeline routes: catalyst + long/short_via_puts ->
+chain fetch (AlpacaOptionsChain: /v2/options/contracts for OI + universe,
+/v1beta1/options/snapshots for bid/ask/IV/greeks, joined on OCC symbol, never
+raises) -> deterministic OptionSelector (sizing/selection.py, total ordering:
+delta-gap to band midpoint, OI desc, spread, strike) -> gates in order: expiry
+floor (days>=14/weeks>=60/months>=180), confidence->|delta| band (55-70:
+0.70-0.85 deep ITM per ruling #3; 70-85: 0.60-0.75; 85+: 0.50-0.65; absolute
+floor 0.45), OI>=500, spread<=10% of mid, chain-internal IV percentile<=90 ->
+limit at mid (rounded up), contracts floored into the HALVED options table,
+gate enforces the 20% aggregate premium cap as built.
+
+- **Ruling #1:** options stops = equity stop fraction on premium (tighter).
+  Revisit only with attribution data showing premium-stops eating recoverable
+  winners.
+- **Ruling #2:** long + catalyst + selector-fallback -> equity at the FULL
+  equity table (re-sized; no phantom half-size penalty). Puts + fallback ->
+  no trade, typed construction rejection with the reason.
+- **Ruling #3:** 55-70 band deep ITM [0.70-0.85] confirmed — low confidence +
+  leverage is the dangerous quadrant.
+- **ExpressionSnapshot on every routed decision:** chosen contract (symbol,
+  delta, IV percentile, OI, spread) or fallback reason + NEAR-MISS (occ, delta,
+  OI, spread, killed_by) so "are the liquidity gates too tight?" is answerable
+  from records (addition #5).
+- **IV gate limitation (addition #4, documented in selection.py):**
+  chain-internal percentile cannot detect a uniformly panic-priced chain —
+  everything elevated together passes. Accepted as the only history-free
+  method. FUTURE LEVER: IV-rank-vs-history if attribution shows systematic
+  overpaying on entries.
+- **Exits:** options ride the existing stop/leash/review machinery (premium
+  marks via option_mid; multiplier-correct P&L end to end) plus EXPIRY_CLOSE
+  at T-minus-5 (config close_before_expiry_days), quote-independent, permitted
+  under a tripped kill switch. NOTE: with current config the leash (7/45/120d)
+  is always shorter than the horizon's expiry floor (14/60/180d), so the time
+  stop normally fires first — EXPIRY_CLOSE is the backstop for stalled exits
+  and config drift, not the common path.
+- **Live-validated (both halves):** real AAPL chain -> 2,374 contracts joined,
+  greeks/IV on 1,855, selector picked AAPL260911C00305000 (delta 0.657
+  in-band, OI 2,764, spread 4.9%, IV 7th pct) and the order constructed (not
+  placed). LLM round trip per CLAUDE.md § LLM Request-Path Changes: real
+  search->report with the new schema returned catalyst present=false with a
+  dated reason (no NVDA earnings in horizon), no_position, confidence 8 —
+  validated end to end ($0.11, Sonnet tier).
+- **Topology:** OptionQuote is a Protocol in sizing.selection; the concrete
+  dataclass lives in execution.options_data. No edge in either direction; the
+  DAG test stays honest.
 
 ## Standing reminders
 

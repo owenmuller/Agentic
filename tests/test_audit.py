@@ -47,6 +47,7 @@ REPORT_PAYLOAD = {
     "confidence": 71,
     "invalidation_condition": "Exemption granted.",
     "manipulation_assessment": "none detected",
+    "catalyst_within_horizon": None,
 }
 
 

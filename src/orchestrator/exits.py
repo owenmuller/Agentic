@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
 from typing import Iterable, Optional
 
@@ -59,7 +59,14 @@ from execution.base import BrokerAdapter, BrokerError
 from research.exit_review import ExitReview, ExitReviewPass, PositionUnderReview
 from risk_gate.gate import ApprovedOrder, RiskGate
 from risk_gate.rejections import Rejection, RejectionCode
-from risk_gate.schema import EquityBuyOrder, EquitySellToCloseOrder, LimitExecution
+from risk_gate.schema import (
+    EquityBuyOrder,
+    EquitySellToCloseOrder,
+    LimitExecution,
+    OptionBuyToOpenOrder,
+    OptionSellToCloseOrder,
+    parse_order,
+)
 
 from orchestrator.budget import ResearchBudget
 from orchestrator.config import ExitsConfig
@@ -113,10 +120,22 @@ class TrackedPosition:
     close_detail: str = ""
     #: Broker id of a working exit order, if one is out. Blocks duplicate exits.
     pending_exit: Optional[str] = None
+    #: "equity" or "option" — options carry an expiration and a share multiplier,
+    #: and their close orders need the full contract identity (entry_order).
+    instrument_kind: str = "equity"
+    expiration: Optional[date] = None
+    multiplier: int = 1
+    #: The parsed opening order, kept so an option close can be built with the
+    #: exact contract identity the entry carried. None for equity.
+    entry_order: Optional[object] = None
 
     @property
     def key(self) -> tuple[str, str]:
-        return ("equity", self.symbol)
+        return (self.instrument_kind, self.symbol)
+
+    @property
+    def is_option(self) -> bool:
+        return self.instrument_kind == "option"
 
     def days_held(self, now: datetime) -> int:
         return (now.date() - self.opened_at.date()).days
@@ -149,6 +168,8 @@ class ExitEngine:
         clock,
         credibility=None,
         cost_sink=None,
+        option_prices=None,
+        close_before_expiry_days: Optional[int] = None,
     ) -> None:
         self._gate = gate
         self._adapter = adapter
@@ -162,6 +183,11 @@ class ExitEngine:
         self._config = config
         self._clock = clock
         self._credibility = credibility
+        #: Premium marks for OCC symbols (the chain source's option_mid). None =
+        #: no options venue wired; option positions then mark stale and reviews
+        #: run without a current price — degraded, never invented.
+        self._option_prices = option_prices
+        self._close_before_expiry_days = close_before_expiry_days
         self._tracked: dict[str, TrackedPosition] = {}
         self._working: dict[str, _WorkingExit] = {}
 
@@ -185,9 +211,11 @@ class ExitEngine:
     def track_fill(self, working: WorkingOrder, filled: Decimal, price: Decimal) -> None:
         """Called by the pipeline's fill sink when an entry order settles with a fill."""
         order = working.approved.order
-        if not isinstance(order, EquityBuyOrder) or filled <= 0:
+        if not isinstance(order, (EquityBuyOrder, OptionBuyToOpenOrder)) or filled <= 0:
             return
-        cost = price * filled
+        is_option = isinstance(order, OptionBuyToOpenOrder)
+        multiplier = order.multiplier if is_option else 1
+        cost = price * filled * multiplier
         existing = self._tracked.get(working.decision_id)
         if existing is not None:
             # A second terminal fill against the same decision should not happen, but
@@ -217,6 +245,10 @@ class ExitEngine:
             leash_days=self._config.time_stop_days.for_horizon(
                 str(report.time_horizon)
             ),
+            instrument_kind="option" if is_option else "equity",
+            expiration=order.expiration if is_option else None,
+            multiplier=multiplier,
+            entry_order=order if is_option else None,
         )
 
     def replay(self, trails: Iterable[AuditTrail]) -> int:
@@ -238,8 +270,10 @@ class ExitEngine:
             if not buys:
                 continue
             order = decision.gate.order or {}
-            if order.get("kind") != "equity_buy":
+            if order.get("kind") not in ("equity_buy", "option_buy_to_open"):
                 continue
+            is_option = order.get("kind") == "option_buy_to_open"
+            multiplier = int(order.get("multiplier", 100)) if is_option else 1
 
             entry_quantity = sum((f.filled_quantity for f in buys), ZERO)
             quantity = entry_quantity - sum((f.filled_quantity for f in sells), ZERO)
@@ -247,7 +281,8 @@ class ExitEngine:
                 continue
 
             symbol = str(order["symbol"])
-            gate_position = self._gate.state.position(("equity", symbol))
+            kind = "option" if is_option else "equity"
+            gate_position = self._gate.state.position((kind, symbol))
             if gate_position is None or gate_position.quantity <= 0:
                 logger.warning(
                     "audit log says %s holds %s %s but the broker does not; "
@@ -260,7 +295,9 @@ class ExitEngine:
             quantity = min(quantity, gate_position.quantity)
 
             entry_cost = sum((f.filled_value for f in buys), ZERO)
-            entry_price = entry_cost / entry_quantity
+            # Per-unit premium/price: filled_value carries the multiplier for
+            # options, so divide it back out to compare against per-unit marks.
+            entry_price = entry_cost / entry_quantity / multiplier
             research = decision.research
 
             # A close verdict the previous process recorded but died before executing
@@ -291,6 +328,12 @@ class ExitEngine:
                     research.time_horizon
                 ),
                 proceeds=sum((f.filled_value for f in sells), ZERO),
+                instrument_kind=kind,
+                expiration=(
+                    date.fromisoformat(str(order["expiration"])) if is_option else None
+                ),
+                multiplier=multiplier,
+                entry_order=parse_order(order) if is_option else None,
                 last_review_at=(last_review.recorded_at if last_review else None),
                 close_verdict=close_verdict,
                 close_detail=(
@@ -321,7 +364,7 @@ class ExitEngine:
         moment = now or self._clock()
         marks: dict[tuple[str, ...], Decimal] = {}
         for position in self._tracked.values():
-            price = self._price_for(position.symbol)
+            price = self._mark_for(position)
             if price is not None:
                 marks[position.key] = price
         if marks:
@@ -341,6 +384,20 @@ class ExitEngine:
                     f"{position.stop_price} stop set at entry "
                     f"({self._config.max_loss_fraction:%} below entry "
                     f"{position.entry_price})"
+                )
+            elif (
+                position.expiration is not None
+                and self._close_before_expiry_days is not None
+                and (position.expiration - moment.date()).days
+                <= self._close_before_expiry_days
+            ):
+                # Deliberately quote-independent: an option this close to expiry
+                # exits whether or not a mark arrived this cycle.
+                reason = ExitReason.EXPIRY_CLOSE
+                detail = (
+                    f"{position.symbol} expires {position.expiration}, inside the "
+                    f"{self._close_before_expiry_days}-day pre-expiry window; theta "
+                    f"endgame is not a place this system holds"
                 )
             elif position.days_held(moment) >= position.leash_days:
                 reason = ExitReason.TIME_STOP
@@ -382,7 +439,7 @@ class ExitEngine:
             if not self._budget.try_spend():
                 break
 
-            price = self._price_for(position.symbol)
+            price = self._mark_for(position)
             outcome = self._reviews.run(
                 PositionUnderReview(
                     symbol=position.symbol,
@@ -459,7 +516,7 @@ class ExitEngine:
     ) -> bool:
         """Build and submit one sell-to-close. True if the broker accepted it."""
         if price is None:
-            price = self._price_for(position.symbol)
+            price = self._mark_for(position)
         if price is None or price <= ZERO:
             logger.warning(
                 "cannot exit %s (%s): no usable quote for %s; will retry next cycle",
@@ -550,9 +607,26 @@ class ExitEngine:
         )
         return True
 
-    def _order_for(
-        self, position: TrackedPosition, quantity: Decimal, limit: Decimal
-    ) -> EquitySellToCloseOrder:
+    def _order_for(self, position: TrackedPosition, quantity: Decimal, limit: Decimal):
+        # A deep-loss premium can round to zero; the schema (rightly) refuses a
+        # zero price, and a floor of one cent only LOWERS the proceeds floor of
+        # a risk-reducing exit — the safe direction.
+        limit = max(limit, CENTS)
+        if position.is_option:
+            entry = position.entry_order
+            assert isinstance(entry, OptionBuyToOpenOrder)
+            return OptionSellToCloseOrder(
+                symbol=entry.symbol,
+                underlying=entry.underlying,
+                right=entry.right,
+                expiration=entry.expiration,
+                strike=entry.strike,
+                contracts=int(quantity),
+                multiplier=entry.multiplier,
+                execution=LimitExecution(limit_price=limit),
+                signal_id=position.signal_id,
+                confidence=position.confidence,
+            )
         return EquitySellToCloseOrder(
             symbol=position.symbol,
             quantity=quantity,
@@ -608,10 +682,11 @@ class ExitEngine:
             working.broker_order_id,
             Decimal(filled),
             filled_avg_price,
+            filled_value=filled_avg_price * filled * position.multiplier,
             side="sell",
         )
         position.quantity -= filled
-        position.proceeds += filled_avg_price * filled
+        position.proceeds += filled_avg_price * filled * position.multiplier
 
         if position.quantity > 0:
             # Partial: the remainder is still held, still tracked, still stopped.
@@ -672,6 +747,18 @@ class ExitEngine:
 
     # -- internals -------------------------------------------------------------------------
 
+    def _mark_for(self, position: TrackedPosition) -> Optional[Decimal]:
+        """Per-unit mark: premium mid for options, the price source for equity."""
+        if position.is_option:
+            if self._option_prices is None:
+                return None
+            try:
+                return self._option_prices(position.symbol)
+            except Exception:  # noqa: BLE001 - degrade, never crash the cycle
+                logger.exception("option mark failed for %s", position.symbol)
+                return None
+        return self._price_for(position.symbol)
+
     def _price_for(self, symbol: str) -> Optional[Decimal]:
         """A quote, or None. A price-source bug must not kill the loop."""
         try:
@@ -697,7 +784,9 @@ def unmanaged_exposure(
 
     unmanaged: dict[str, int] = {}
     for key, held in gate.state.positions.items():
-        if key[0] != "equity" or held.quantity <= 0:
+        # Options included (2026-08-24): an untracked option is the WORSE kind of
+        # unmanaged — it decays while nobody's stops are armed.
+        if key[0] not in ("equity", "option") or held.quantity <= 0:
             continue
         symbol = key[1]
         excess = held.quantity - covered.get(symbol, 0)

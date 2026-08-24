@@ -781,6 +781,18 @@ class GateStateMachine(RuleBasedStateMachine):
     # -- invariants -------------------------------------------------------------
 
     @invariant()
+    def option_premium_never_breaches_its_cap(self):
+        """Options build (2026-08-24): no sequence of bought options — whatever
+        the selector picked — pushes aggregate premium past its cap."""
+        if self.nav_moved:
+            return
+        cap = (
+            self.gate.sleeve_nav(Sleeve.EQUITY)
+            * self.limits.equity_sleeve.max_options_premium_at_risk
+        )
+        assert self.gate.state.options_premium_at_risk <= cap
+
+    @invariant()
     def buying_power_never_goes_negative(self):
         assert self.gate.buying_power >= 0, (
             f"buying power {self.gate.buying_power} — Constraint #1 violated"

@@ -29,6 +29,7 @@ BASE_REPORT = {
     "confidence": 62,
     "invalidation_condition": "Exemption granted.",
     "manipulation_assessment": "none detected",
+    "catalyst_within_horizon": None,
 }
 
 

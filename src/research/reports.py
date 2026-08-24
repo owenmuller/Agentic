@@ -31,7 +31,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 #: JSON Schema keywords the structured-output layer does not accept. Stripped from the
 #: generated tool schema and enforced by pydantic on the way back in instead — the same
@@ -82,6 +82,30 @@ class TimeHorizon(StrEnum):
     MONTHS = "months"
 
 
+class CatalystAssessment(BaseModel):
+    """Whether a specific event inside the time horizon backs the thesis.
+
+    This is the gate that decides options expression: leverage is earned by
+    timing specificity, not conviction level (ruling 2026-08-24). ``present``
+    is the machine-read verdict; ``description`` names the event for the audit
+    trail and must not be blank when present is true.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    present: bool
+    description: str
+
+    @model_validator(mode="after")
+    def _present_needs_an_event(self) -> "CatalystAssessment":
+        if self.present and not self.description.strip():
+            raise ValueError(
+                "a catalyst reported present must name the event; a nameless "
+                "catalyst is a vibe, not a catalyst"
+            )
+        return self
+
+
 class ResearchReport(BaseModel):
     """A structured research verdict. The model fills exactly these fields."""
 
@@ -97,6 +121,12 @@ class ResearchReport(BaseModel):
     priced_in_analysis: Optional[str]
     confidence: int
     invalidation_condition: str
+    #: A specific, dated-or-datable event inside the time horizon — policy action,
+    #: earnings, ruling — or the explicit statement that there is none. Nullable
+    #: (like priced_in_analysis) so the model must say "not applicable" rather than
+    #: silently omit; a null is treated exactly as present=false. Options expression
+    #: is permitted ONLY when present is true.
+    catalyst_within_horizon: Optional[CatalystAssessment]
     #: Whether the signal looks engineered to induce a trade, and why. Nullable so the
     #: model can say the assessment does not apply, but the prompt asks for an explicit
     #: "none detected" instead — an absent assessment and a clean one are different
@@ -133,6 +163,15 @@ class ResearchReport(BaseModel):
     @property
     def has_priced_in_analysis(self) -> bool:
         return bool(self.priced_in_analysis)
+
+    @property
+    def has_catalyst(self) -> bool:
+        """True only on an explicit, named catalyst. Null and false read the same:
+        no leverage."""
+        return (
+            self.catalyst_within_horizon is not None
+            and self.catalyst_within_horizon.present
+        )
 
     @property
     def flags_manipulation(self) -> bool:
@@ -277,7 +316,13 @@ def report_tool_definition() -> dict[str, Any]:
             "found nothing. Use direction \"no_position\" when your conclusion is "
             "that nothing should be traded on this signal; it produces no position at "
             "any confidence, and it is a more honest answer than naming a direction "
-            "you do not hold."
+            "you do not hold. For catalyst_within_horizon: a catalyst is a "
+            "specific, dated-or-datable event inside your stated time horizon — a "
+            "policy action, an earnings date, a ruling — not general momentum or "
+            "conviction. Report present=true with a one-line description of the "
+            "event, present=false for a directional-but-patient thesis, and null "
+            "only when the concept does not apply to this signal at all. Do not "
+            "stretch: a thesis without a nameable event is present=false."
         ),
         "strict": True,
         "input_schema": schema,

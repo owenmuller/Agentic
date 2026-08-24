@@ -141,3 +141,69 @@ def test_the_account_can_actually_see_the_options_market(adapter):
     for symbol in contracts:
         assert symbol.startswith("AAPL")
         assert len(symbol) >= 16  # OCC symbology: root + yymmdd + C/P + strike
+
+
+@needs_keys
+def test_real_chain_feeds_the_selector_and_constructs_an_order(adapter):
+    """Pull the real AAPL chain from paper, run the deterministic selector on a
+    fixture report, and CONSTRUCT (never place) the order.
+
+    A liquidity/IV fallback is an honest market outcome and passes with its
+    near-miss recorded; a plumbing failure (no chain, no expiry on the most
+    heavily listed underlying in the market) fails the test.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from execution.options_data import AlpacaOptionsChain
+    from risk_gate.schema import OptionBuyToOpenOrder
+    from sizing.selection import FallbackReason, OptionSelector, SelectedOption
+
+    limits = RiskLimits.load()
+    today = datetime.now(timezone.utc).date()
+    chain_source = AlpacaOptionsChain()
+    try:
+        chain = chain_source.chain_for(
+            "AAPL", min_expiry=today + timedelta(days=14)
+        )
+        assert chain, "no AAPL chain from the paper account — plumbing, not market"
+        sample = chain[0]
+        assert sample.occ_symbol.startswith("AAPL")
+        assert sample.right in ("call", "put")
+        assert sample.strike > 0
+
+        selection = OptionSelector(limits.options_selection).select(
+            direction="long",
+            time_horizon="days",
+            confidence=72,
+            chain=chain,
+            today=today,
+        )
+        if isinstance(selection, SelectedOption):
+            quote = selection.quote
+            band = selection.band
+            assert band.delta_min <= abs(quote.delta) <= band.delta_max
+            assert quote.open_interest >= limits.options_selection.min_open_interest
+            order = OptionBuyToOpenOrder(
+                symbol=quote.occ_symbol,
+                underlying="AAPL",
+                right=quote.right,
+                expiration=quote.expiration,
+                strike=quote.strike,
+                contracts=1,
+                multiplier=quote.multiplier,
+                execution=LimitExecution(
+                    limit_price=quote.mid.quantize(Decimal("0.01"))
+                ),
+            )
+            assert order.max_loss() == order.execution.limit_price * 100
+        else:
+            # Market said no — fine. Plumbing saying no is not.
+            assert selection.reason not in (
+                FallbackReason.CHAIN_UNAVAILABLE,
+                FallbackReason.NO_EXPIRY_IN_RANGE,
+            ), selection.detail
+            assert selection.near_miss is not None or selection.reason is (
+                FallbackReason.NO_GREEKS
+            )
+    finally:
+        chain_source.close()

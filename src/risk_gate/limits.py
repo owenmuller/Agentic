@@ -166,6 +166,84 @@ class PredictionSleeveLimits(_Strict):
     directional: DirectionalLimits
 
 
+class DeltaBand(_Strict):
+    """Confidence -> |delta| range for strike selection. Same boundary semantics
+    as SizingBand: (min, max] unless lower_inclusive — a confidence landing on a
+    shared boundary takes the DEEPER-ITM band (more intrinsic = less risk,
+    Constraint #6)."""
+
+    min: int
+    max: int
+    delta_min: Decimal
+    delta_max: Decimal
+    lower_inclusive: bool = False
+
+    def contains(self, confidence: int) -> bool:
+        lower_ok = (
+            confidence >= self.min if self.lower_inclusive else confidence > self.min
+        )
+        return lower_ok and confidence <= self.max
+
+    @model_validator(mode="after")
+    def _range_is_sane(self) -> "DeltaBand":
+        if not Decimal("0") < self.delta_min < self.delta_max <= Decimal("1"):
+            raise ValueError(
+                f"delta band must satisfy 0 < delta_min < delta_max <= 1, got "
+                f"[{self.delta_min}, {self.delta_max}]"
+            )
+        return self
+
+
+class MinExpiryDays(_Strict):
+    """Per-horizon expiry floors: the thesis gets room to be slow."""
+
+    days: int
+    weeks: int
+    months: int
+
+    def for_horizon(self, horizon: str) -> int:
+        table = {"days": self.days, "weeks": self.weeks, "months": self.months}
+        if horizon not in table:
+            raise ValueError(f"unknown time horizon {horizon!r}")
+        return table[horizon]
+
+
+class OptionsSelectionLimits(_Strict):
+    """Deterministic option-selection thresholds (build ruling 2026-08-24).
+
+    Loaded like every other cap: no defaults, human approval to change."""
+
+    min_expiry_days: MinExpiryDays
+    delta_bands: tuple[DeltaBand, ...]
+    #: Absolute |delta| floor for ANY band — never OTM lottery strikes.
+    min_delta_floor: Decimal
+    min_open_interest: int
+    max_spread_pct_of_mid: Fraction
+    #: Ceiling on the pick's IV percentile within its own chain's IV population.
+    max_iv_percentile: Fraction
+    #: Close any long option this many days before expiry, thesis or no thesis.
+    close_before_expiry_days: int
+
+    def band_for(self, confidence: int) -> Optional[DeltaBand]:
+        for band in self.delta_bands:
+            if band.contains(confidence):
+                return band
+        return None
+
+    @model_validator(mode="after")
+    def _bands_respect_the_floor(self) -> "OptionsSelectionLimits":
+        """A band below the floor is a config contradiction, not a preference."""
+        for band in self.delta_bands:
+            if band.delta_min < self.min_delta_floor:
+                raise ValueError(
+                    f"delta band {band.min}-{band.max} starts at {band.delta_min}, "
+                    f"below the {self.min_delta_floor} floor"
+                )
+        if self.close_before_expiry_days < 1:
+            raise ValueError("close_before_expiry_days must be at least 1")
+        return self
+
+
 class ExecutionLimits(_Strict):
     default_order_type: str
     market_orders_require_justification: bool
@@ -182,6 +260,7 @@ class RiskLimits(_Strict):
     pdt: PdtLimits
     sizing: SizingLimits
     prediction_sleeve: PredictionSleeveLimits
+    options_selection: OptionsSelectionLimits
     execution: ExecutionLimits
 
     @classmethod

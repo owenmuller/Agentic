@@ -50,6 +50,7 @@ VALID_REPORT = {
     "confidence": 62,
     "invalidation_condition": "Tariff exemption granted, or steel futures break 800.",
     "manipulation_assessment": "none detected",
+    "catalyst_within_horizon": None,
 }
 
 
@@ -283,7 +284,7 @@ def test_confidence_100_sizes_exactly_like_any_other_top_band_score(limits):
     assert limits.sizing.size_for(a.confidence) == limits.sizing.size_for(b.confidence)
 
 
-def test_report_fields_are_exactly_the_eight_the_spec_names():
+def test_report_fields_are_exactly_the_nine_the_spec_names():
     assert set(ResearchReport.model_fields) == {
         "thesis",
         "tickers",
@@ -293,6 +294,7 @@ def test_report_fields_are_exactly_the_eight_the_spec_names():
         "confidence",
         "invalidation_condition",
         "manipulation_assessment",
+        "catalyst_within_horizon",
     }
 
 

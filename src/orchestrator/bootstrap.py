@@ -45,6 +45,7 @@ from signals.config import SignalsConfig
 from signals.records import CredibilityLog, SignalQueue
 from signals.scanners import Fetcher, build_scanners
 from sizing.engine import SizingEngine
+from sizing.selection import OptionSelector
 
 from orchestrator.budget import ResearchBudget
 from orchestrator.config import OrchestratorConfig
@@ -275,6 +276,7 @@ def start(
     market_context: Optional[Callable] = None,
     cost_warn_sink: Optional[Callable[[str], None]] = None,
     error_sink: Optional[Callable[[str], None]] = None,
+    options_chain=None,
     **preflight_kwargs: object,
 ) -> Startup:
     """Run the startup sequence and return a loop ready to tick.
@@ -348,6 +350,10 @@ def start(
         clock=checks.clock,
         credibility=credibility,
         cost_sink=cost_meter.add,
+        option_prices=(options_chain.option_mid if options_chain is not None else None),
+        close_before_expiry_days=(
+            checks.gate.limits.options_selection.close_before_expiry_days
+        ),
     )
     # Positions opened by earlier runs, rebuilt from the log with stops re-armed. Part
     # of the replay step in spirit, but it needs the wired engine, so it runs here.
@@ -361,6 +367,13 @@ def start(
             quantity,
             symbol,
         )
+    # Options expression (2026-08-24): the selector exists only when a chain
+    # source does — no chain, no options, equity-only pipeline as before.
+    option_selector = (
+        OptionSelector(checks.gate.limits.options_selection)
+        if options_chain is not None
+        else None
+    )
     pipeline = SignalPipeline(
         research=research,
         triage=triage,
@@ -371,6 +384,9 @@ def start(
         prices=prices,
         id_factory=id_factory,
         fill_sink=exits.track_fill,
+        options_chain=options_chain,
+        option_selector=option_selector,
+        clock=checks.clock,
     )
     loop = TradingLoop(
         scanners=scanners,
