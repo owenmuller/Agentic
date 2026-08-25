@@ -123,6 +123,12 @@ class SourceConfig(_Strict):
     #: it, the day's remaining signals from this source are recorded as
     #: pre_filtered with code source_cap — never silently dropped. None = no cap.
     daily_research_cap: Optional[int] = None
+    #: Probation (human ruling 2026-08-25; first source: optionshawk). Signals
+    #: classify, research, and accrue credibility exactly as normal, but sizing
+    #: short-circuits to zero with rejection code ``probation`` — the audit
+    #: trail accumulates the would-have-traded record a promote-or-drop review
+    #: needs, and no dollar rides on the source until a human promotes it.
+    probation: bool = False
     #: For pay-per-use feeds (X): warn once the day's posts read passes this. A
     #: since_id regression re-reads the same posts every poll, and the bug should
     #: show in run.log before it shows on the bill.

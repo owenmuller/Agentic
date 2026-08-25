@@ -431,3 +431,197 @@ def test_unusual_whales_ships_with_the_governance_it_was_ruled_in_with(
     congressional = signals_config.source("class_2", "congressional_disclosures")
     assert congressional.daily_research_cap == 5
     assert congressional.watchlist == ()
+
+
+# ================================================================================
+# Breadth round 2 (2026-08-25): probation, citrini at class-2 cadence, 13F round 1
+# ================================================================================
+
+
+def test_probation_short_circuits_sizing_with_the_code(tmp_path, signals_config):
+    """optionshawk researches and accrues credibility, but a would-be trade
+    stops at sizing with code probation — zero dollars ride on the source."""
+    from research.config import ResearchConfig
+    from risk_gate import RiskLimits
+
+    broker = FakeBroker()
+    started = build(
+        tmp_path,
+        RiskLimits.load(),
+        signals_config,
+        ResearchConfig.load(),
+        llm=FakeLLM(),  # confidence 71: this WOULD have traded
+        fetcher=feed(
+            optionshawk=["Loading $NUE here. Setup is live, entry: 140.20."]
+        ),
+        prices=prices_of(NUE="140.00"),
+        broker=broker,
+    )
+    result = started.loop.tick().processed[0]
+    assert result.traded is False
+    rejection = result.rejection
+    assert rejection is not None
+    assert rejection.stage == RejectedStage.SIZING
+    assert rejection.code == "probation"
+    # The research and the proposed size ride on the record — that is the
+    # would-have-traded evidence the promote-or-drop review counts.
+    assert rejection.research is not None
+    assert rejection.sizing is not None
+    assert "would have deployed" in rejection.message.lower()
+    assert broker.submitted == []
+
+
+def test_probation_never_masks_an_honest_no(tmp_path, signals_config):
+    """A below-floor verdict from a probation source keeps its own code —
+    probation intercepts only what WOULD have traded."""
+    from research.config import ResearchConfig
+    from risk_gate import RiskLimits
+
+    from test_orchestrator import REPORT, structured
+
+    started = build(
+        tmp_path,
+        RiskLimits.load(),
+        signals_config,
+        ResearchConfig.load(),
+        llm=FakeLLM(structured({**REPORT, "confidence": 40})),
+        fetcher=feed(
+            optionshawk=["Loading $NUE here. Setup is live, entry: 140.20."]
+        ),
+        prices=prices_of(NUE="140.00"),
+        broker=FakeBroker(),
+    )
+    result = started.loop.tick().processed[0]
+    assert result.rejection is not None
+    assert result.rejection.code == "below_floor"
+
+
+def test_citrini_classifies_at_class_2_cadence(signals_config):
+    """The class-2 scanner routes classification-flagged sources through the
+    trade-call path: retrospectives to the credibility log, forward calls
+    enqueued as class-2 signals with the scanner's own ticker extraction."""
+    from fixture_posts import PURE_RETROSPECTIVE
+    from signals.records import SignalQueue
+    from signals.scanners import Class2CongressionalScanner, RawItem
+
+    posts = [
+        PURE_RETROSPECTIVE,
+        "Loading $NUE here. Setup is live, entry: 140.20.",
+    ]
+
+    def fetcher(source):
+        if source.id != "citrini":
+            return []
+        return [
+            RawItem(external_id=f"c-{index}", content=content, published_at=NOW)
+            for index, content in enumerate(posts)
+        ]
+
+    queue = SignalQueue()
+    scanner = Class2CongressionalScanner(
+        signals_config.klass("class_2"), fetcher, queue
+    )
+    emitted = scanner.poll(force=True)
+
+    assert len(emitted) == 1
+    forward = emitted[0]
+    assert forward.source_id == "citrini"
+    assert forward.signal_class == SignalClass.CLASS_2_MOMENTUM
+    assert forward.classification == Classification.FORWARD_CALL
+    assert "NUE" in forward.metadata["tickers"]
+    assert len(scanner.credibility_log) == 1  # the brag: tracked, never traded
+
+
+def test_citrini_trades_end_to_end_at_class_2(tmp_path, signals_config):
+    """Loop-level: a citrini forward call flows scanner -> classification ->
+    research (priced_in mandatory at class 2) -> order, on the real config."""
+    from research.config import ResearchConfig
+    from risk_gate import RiskLimits
+
+    from test_orchestrator import REPORT, structured
+
+    broker = FakeBroker()
+    started = build(
+        tmp_path,
+        RiskLimits.load(),
+        signals_config,
+        ResearchConfig.load(),
+        llm=FakeLLM(
+            structured(
+                {
+                    **REPORT,
+                    "priced_in_analysis": "NUE up 2% since the post; thesis "
+                    "not fully priced.",
+                }
+            )
+        ),
+        fetcher=feed(citrini=["Loading $NUE here. Setup is live, entry: 140.20."]),
+        prices=prices_of(NUE="140.00"),
+        broker=broker,
+    )
+    result = started.loop.tick().processed[0]
+    assert result.traded is True
+    assert len(broker.submitted) == 1
+
+
+def test_a_class_2_trade_call_prompt_speaks_call_language_not_disclosure():
+    """citrini prompts must not claim the post is a congressional disclosure;
+    disclosures keep their guidance, and both demand priced_in_analysis."""
+    from research.prompts import build_user_prompt
+
+    def class_2_signal(classification):
+        return Signal(
+            signal_id="sig-c2",
+            source_id="citrini" if classification else "congressional_disclosures",
+            signal_class=SignalClass.CLASS_2_MOMENTUM,
+            observed_at=NOW,
+            content="Loading $NUE here. Setup is live, entry: 140.20.",
+            raw_content="raw",
+            priority=Priority.ROUTINE,
+            classification=classification,
+            metadata={"tickers": "NUE"},
+        )
+
+    call_prompt = build_user_prompt(class_2_signal(Classification.FORWARD_CALL))
+    assert "congressional disclosure" not in call_prompt
+    assert "polled hourly" in call_prompt
+    assert "priced_in_analysis is MANDATORY" in call_prompt
+
+    disclosure_prompt = build_user_prompt(class_2_signal(None))
+    assert "congressional disclosure" in disclosure_prompt
+    assert "priced_in_analysis is MANDATORY" in disclosure_prompt
+
+
+def test_round_two_sources_ship_with_their_ruled_governance(signals_config):
+    citrini = signals_config.source("class_2", "citrini")
+    assert citrini.require_instrument is True
+    assert citrini.research_tier == "class_1"  # prose caller: Opus verification
+    assert citrini.daily_research_cap == 3
+    assert citrini.copy_trade is False
+    assert citrini.treatment == "thesis_input_only"
+    assert citrini.probation is False
+
+    hawk = signals_config.source("class_1", "optionshawk")
+    assert hawk.probation is True  # the first probation source
+    assert hawk.require_instrument is True
+    assert hawk.research_tier == "class_1"
+    assert hawk.daily_research_cap == 3
+    assert hawk.copy_trade is False
+
+    # Sources never ruled onto probation must not drift onto it.
+    assert signals_config.source("class_1", "nolimitgains").probation is False
+    assert signals_config.source("class_1", "unusual_whales").probation is False
+
+
+def test_13f_round_one_watchlist_is_exactly_the_ruling(signals_config):
+    source = signals_config.source("class_3", "form_13f")
+    funds = [entry["fund"] for entry in source.watchlist]
+    assert funds == [
+        "Situational Awareness",
+        "Appaloosa",
+        "Altimeter Capital Management",
+        "Pershing Square Capital Management",
+        "TCI Fund Management",
+    ]
+    # Duquesne deferred (theme-cluster mode pending); Scion deregistered.
+    assert not any("Duquesne" in fund or "Scion" in fund for fund in funds)

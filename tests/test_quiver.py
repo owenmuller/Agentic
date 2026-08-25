@@ -322,6 +322,8 @@ def test_the_router_dispatches_each_class_to_its_fetcher(signals_config):
             "congressional_disclosures": fake("quiver"),
             "nolimitgains": fake("x"),
             "unusual_whales": fake("x"),
+            "optionshawk": fake("x"),
+            "citrini": fake("x"),
             "trump_mirror_ttox": fake("x"),
             "trump_mirror_tdp": fake("x"),
         },
@@ -335,8 +337,10 @@ def test_the_router_dispatches_each_class_to_its_fetcher(signals_config):
         "x:trump_mirror_ttox",
         "x:trump_mirror_tdp",
         "x:unusual_whales",
+        "x:optionshawk",
         "x:nolimitgains",
         "quiver:congressional_disclosures",
+        "x:citrini",
         "edgar:form_13f",
     ]
 
@@ -374,6 +378,8 @@ def test_every_configured_source_has_a_wiring_decision(signals_config):
             "congressional_disclosures": lambda s: [],
             "nolimitgains": lambda s: [],
             "unusual_whales": lambda s: [],
+            "optionshawk": lambda s: [],
+            "citrini": lambda s: [],
             "trump_mirror_ttox": lambda s: [],
             "trump_mirror_tdp": lambda s: [],
         },

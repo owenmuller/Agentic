@@ -165,7 +165,21 @@ def build_user_prompt(
     if tickers:
         lines.append(f"- tickers extracted by the scanner: {tickers}")
 
-    lines.extend(["", _CLASS_GUIDANCE[signal.signal_class]])
+    guidance = _CLASS_GUIDANCE[signal.signal_class]
+    if (
+        signal.signal_class is SignalClass.CLASS_2_MOMENTUM
+        and signal.classification is not None
+    ):
+        # Class-2 trade calls (citrini, 2026-08-25): hourly-polled X thesis
+        # callers, not disclosures. Same lag discipline, honest provenance.
+        guidance = (
+            "This is a trade call from an X account polled hourly — medium "
+            "latency, not real time. The call may be hours old by the time you "
+            "read it. priced_in_analysis is MANDATORY: state what has moved in "
+            "the named instrument since the post was published. A report "
+            "without it is discarded."
+        )
+    lines.extend(["", guidance])
 
     delivered_by = signal.metadata.get("delivered_by")
     if delivered_by:

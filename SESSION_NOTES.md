@@ -1131,6 +1131,54 @@ Human-authorized per the stop-and-ask list. Suite 762 passed 3 skipped.
    TCI; Scion DEREGISTERED Nov 2025, do not wire. Nothing wired without
    confirmation.
 
+## Breadth round 2 (2026-08-25): rulings on the round-1 proposals
+
+All five rulings received and wired. Suite 769 passed 3 skipped.
+
+1. **citrini (@Citrini7) — wired at class_2 cadence** per the ruling: medium
+   latency, hourly polling, not 60s. require_instrument, research_tier
+   class_1 (Opus verification — prose caller), daily_research_cap 3,
+   credibility from zero. Build note: the trade-call classification path
+   (classify, discard retrospectives to the credibility log, emit forward
+   calls only) moved from the Class 1 scanner to the shared base so the
+   class-2 scanner runs it for classification-flagged sources; class-2
+   placement makes priced_in_analysis MANDATORY for his calls (an
+   hourly-polled call can be hours stale), and the class-2 prompt guidance
+   now distinguishes trade calls from disclosures.
+2. **optionshawk (@OptionsHawk) — the system's FIRST PROBATION source.** New
+   `probation: true` source flag: signals classify, research, and accrue
+   credibility exactly as normal, but sizing short-circuits to zero with
+   rejection code `probation`. The check runs AFTER the honest verdicts
+   (no_position / below_floor keep their own codes), so probation records
+   are exactly the trades that WOULD have happened, each carrying the
+   research report and the proposed size. Opus tier, require_instrument,
+   cap 3/day.
+   **REVIEW TRIGGER: 2026-10-24 → 2026-11-23 (60-90 days from wiring) — a
+   promote-or-drop ruling on the accumulated probation records' hit rate.
+   Query: stage_rejections with code `probation`, join their research
+   snapshots against subsequent price action.**
+3. **Fintwit dispositions (recorded in signals.yaml against re-litigation):**
+   @traderstewie DEFERRED (real public entries since 2009 but paid-room brag
+   volume demands a stricter classifier first); @PeterLBrandt REJECTED
+   (documented deletion of failed calls; forced retraction of an "audited"
+   claim); @KobeissiLetter REJECTED (index-level engagement bait; published
+   scam allegations).
+4. **13F round 1 — wired:** Appaloosa (Tepper), Altimeter Capital Management
+   (Gerstner), Pershing Square Capital Management (Ackman), TCI Fund
+   Management (Hohn). TCI sits at ~$53B, above the $50B proposal ceiling —
+   admitted by PER-FUND OVERRIDE (the chosen mechanism: the ceiling itself
+   stays at $50B for future proposal rounds; less-risk reading of the
+   raise-or-override ruling). Fund names chosen to substring-match EDGAR
+   filer display names, which is how the fetcher attributes filings.
+   **Duquesne DEFERRED pending a theme-cluster consumption mode — QUEUE
+   ITEM, not a build.** Scion recorded DEREGISTERED (Nov 2025) / do-not-wire.
+5. **unusual_whales monthly_cost 25 — approved**, no change needed.
+
+Wiring: both new X sources route through the shared XRecentSearchFetcher
+(one seen-set, post ids globally unique); production router + seen-set in
+orchestrator/__main__.py updated; probation set wired bootstrap → pipeline.
+Feed-cost expectations updated (class_1 $45, class_2 $35).
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

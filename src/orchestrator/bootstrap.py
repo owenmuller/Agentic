@@ -404,6 +404,12 @@ def start(
         options_chain=options_chain,
         option_selector=option_selector,
         clock=checks.clock,
+        probation_sources={
+            source.id
+            for klass in checks.signals_config.classes.values()
+            for source in klass.sources
+            if source.probation
+        },
     )
     loop = TradingLoop(
         scanners=scanners,

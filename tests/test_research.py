@@ -170,9 +170,19 @@ def test_lagged_signal_with_the_analysis_is_accepted():
 
 
 def test_the_prompt_tells_lagged_classes_the_field_is_mandatory():
-    prompt = build_user_prompt(signal(signal_class=SignalClass.CLASS_2_MOMENTUM))
+    # A class-2 signal with no post classification is a disclosure and keeps
+    # the STOCK Act framing.
+    prompt = build_user_prompt(
+        signal(signal_class=SignalClass.CLASS_2_MOMENTUM, classification=None)
+    )
     assert "MANDATORY" in prompt
     assert "45 days" in prompt
+    # A classified class-2 signal is a trade call (citrini, 2026-08-25): the
+    # mandate stays, the provenance turns honest — it is not a disclosure.
+    call_prompt = build_user_prompt(signal(signal_class=SignalClass.CLASS_2_MOMENTUM))
+    assert "MANDATORY" in call_prompt
+    assert "polled hourly" in call_prompt
+    assert "congressional" not in call_prompt
 
 
 # ================================================================================

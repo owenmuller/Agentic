@@ -39,7 +39,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from decimal import ROUND_DOWN, ROUND_UP, Decimal
-from typing import Callable, Optional, Protocol
+from typing import Callable, Collection, Optional, Protocol
 
 from audit.log import AuditLog, AuditLogError
 from audit.records import (
@@ -188,6 +188,7 @@ class SignalPipeline:
         options_chain=None,
         option_selector: Optional[OptionSelector] = None,
         clock: Optional[Callable[[], datetime]] = None,
+        probation_sources: Collection[str] = (),
     ) -> None:
         self._research = research
         self._triage = triage
@@ -203,6 +204,9 @@ class SignalPipeline:
         self._options_chain = options_chain
         self._option_selector = option_selector
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        #: Probation sources (human ruling 2026-08-25): researched and
+        #: credibility-tracked as normal, sized to zero at this stage.
+        self._probation = frozenset(probation_sources)
         self._id_factory = id_factory or (lambda: uuid.uuid4().hex[:16])
         #: Told about every settled opening fill — this is how the exit engine learns
         #: a position exists without the pipeline knowing what an exit engine is.
@@ -340,6 +344,29 @@ class SignalPipeline:
                 RejectedStage.SIZING,
                 "no_position" if report.recommends_no_position else "below_floor",
                 proposal.rationale,
+                report=report,
+                proposal=proposal,
+                usage=usage,
+                screen_report=screen_report,
+                screen_usage=screen_usage,
+            )
+
+        # 2b. Probation (human ruling 2026-08-25, first source: optionshawk).
+        # The research and the credibility record are real; the position is
+        # not. Checked AFTER the honest verdicts so a no_position or
+        # below_floor from a probation source keeps its own code — probation
+        # records exactly the trades that WOULD have happened, which is what
+        # the 60-90 day promote-or-drop review counts. The proposal rides on
+        # the record so the review sees the size each one would have taken.
+        if signal.source_id in self._probation:
+            return self._stopped(
+                decision_id,
+                signal,
+                RejectedStage.SIZING,
+                "probation",
+                f"{signal.source_id} is on probation: report and credibility "
+                f"accrue normally, sizing short-circuits to zero. Would have "
+                f"deployed {proposal.capital} at confidence {report.confidence}.",
                 report=report,
                 proposal=proposal,
                 usage=usage,

@@ -217,8 +217,14 @@ def run() -> int:
         quiver = QuiverCongressFetcher(seen=seen_for("congressional_disclosures"))
         x_search = XRecentSearchFetcher(
             # Post ids are globally unique on X, so one seen-set serves every
-            # account the fetcher polls (2026-08-25: + unusual_whales).
-            seen=seen_for("nolimitgains") | seen_for("unusual_whales"),
+            # account the fetcher polls (2026-08-25: + unusual_whales,
+            # optionshawk, citrini).
+            seen=(
+                seen_for("nolimitgains")
+                | seen_for("unusual_whales")
+                | seen_for("optionshawk")
+                | seen_for("citrini")
+            ),
             # The billing tripwire writes straight into run.log: a since_id bug
             # must show up there before it shows up on the bill.
             warn_sink=lambda message: run_log.note("READS", message),
@@ -245,6 +251,12 @@ def run() -> int:
                 "nolimitgains": logged("nolimitgains", x_search),
                 # Options-flow free taste (human-authorized 2026-08-25).
                 "unusual_whales": logged("unusual_whales", x_search),
+                # First probation source (human ruling 2026-08-25): researched
+                # and credibility-tracked, sized to zero until promoted.
+                "optionshawk": logged("optionshawk", x_search),
+                # Medium-latency thesis caller: lives in class_2 (hourly), but
+                # it is an X account, so the same fetcher serves it.
+                "citrini": logged("citrini", x_search),
                 # The Trump leg, decided 2026-08-18: X mirror accounts, not the
                 # Truth API — the upgrade decision belongs to attribution data.
                 # Signals attribute to trump_posts; the audit record keeps the

@@ -95,12 +95,20 @@ class Scanner(ABC):
         fetcher: Fetcher,
         queue: SignalQueue,
         clock: Optional[Callable[[], datetime]] = None,
+        credibility_log: Optional[CredibilityLog] = None,
     ) -> None:
         self._config = config
         self._fetcher = fetcher
         self._queue = queue
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._last_poll: Optional[datetime] = None
+        # `is None`, not `or`: an empty log must not be swapped for a fresh one.
+        # On the base class since 2026-08-25: classification-flagged sources now
+        # exist in class 2 as well (citrini), and the retrospective-discard path
+        # writes here whichever scanner runs it.
+        self.credibility_log = (
+            CredibilityLog() if credibility_log is None else credibility_log
+        )
 
     @property
     def interval(self) -> timedelta:
@@ -184,77 +192,6 @@ class Scanner(ABC):
             metadata=meta,
         )
 
-    @abstractmethod
-    def _handle(
-        self, source: SourceConfig, item: RawItem, now: datetime
-    ) -> Iterable[Signal]:
-        """Turn one raw item into zero or more enqueued signals."""
-
-
-class Class1RealtimeScanner(Scanner):
-    """Trump posts and trade-call accounts. Polls every 60-120s during market hours.
-
-    The only class where speed is genuine edge. Sources flagged with classification
-    rules in ``signals.yaml`` go through the post classifier; sources without them
-    (Trump posts) are emitted as-is for the research layer to score, because they are
-    not trade calls and there is no forward/retrospective distinction to draw.
-    """
-
-    signal_class = SignalClass.CLASS_1_REALTIME
-
-    def __init__(
-        self,
-        config: ClassConfig,
-        fetcher: Fetcher,
-        queue: SignalQueue,
-        clock: Optional[Callable[[], datetime]] = None,
-        credibility_log: Optional[CredibilityLog] = None,
-    ) -> None:
-        super().__init__(config, fetcher, queue, clock)
-        # `is None`, not `or`: an empty log must not be swapped for a fresh one.
-        self.credibility_log = (
-            CredibilityLog() if credibility_log is None else credibility_log
-        )
-
-    def _handle(
-        self, source: SourceConfig, item: RawItem, now: datetime
-    ) -> Iterable[Signal]:
-        if source.mirror_of and source.required_marker:
-            # Mirror integrity (2026-08-20): a mirror account posts its own
-            # commentary between relays, and commentary mislabeled as the
-            # principal is a manipulation channel the research layer should
-            # never have to catch at Opus prices. No marker, no principal
-            # signal — classified "other", logged to the MIRROR's own
-            # credibility record (the leaky channel accumulates the record,
-            # not the principal), and dropped for free at ingest.
-            if not re.search(source.required_marker, item.content, re.IGNORECASE):
-                self.credibility_log.record(
-                    CredibilityRecord(
-                        source_id=source.id,
-                        observed_at=now,
-                        content=item.content,
-                        external_id=item.external_id,
-                        reason=(
-                            "mirror commentary: required marker absent; "
-                            "classified other, never a principal signal"
-                        ),
-                    )
-                )
-                return []
-
-        if not source.classifies_posts:
-            signal = self._build(
-                source,
-                item,
-                item.content,
-                now,
-                metadata={**item.fields, "tickers": ",".join(extract_tickers(item.content))},
-            )
-            enqueued = self._enqueue(signal)
-            return [enqueued] if enqueued else []
-
-        return self._handle_trade_call(source, item, now)
-
     def _handle_trade_call(
         self, source: SourceConfig, item: RawItem, now: datetime
     ) -> list[Signal]:
@@ -299,6 +236,64 @@ class Class1RealtimeScanner(Scanner):
         return [enqueued] if enqueued else []
 
 
+    @abstractmethod
+    def _handle(
+        self, source: SourceConfig, item: RawItem, now: datetime
+    ) -> Iterable[Signal]:
+        """Turn one raw item into zero or more enqueued signals."""
+
+
+class Class1RealtimeScanner(Scanner):
+    """Trump posts and trade-call accounts. Polls every 60-120s during market hours.
+
+    The only class where speed is genuine edge. Sources flagged with classification
+    rules in ``signals.yaml`` go through the post classifier; sources without them
+    (Trump posts) are emitted as-is for the research layer to score, because they are
+    not trade calls and there is no forward/retrospective distinction to draw.
+    """
+
+    signal_class = SignalClass.CLASS_1_REALTIME
+
+    def _handle(
+        self, source: SourceConfig, item: RawItem, now: datetime
+    ) -> Iterable[Signal]:
+        if source.mirror_of and source.required_marker:
+            # Mirror integrity (2026-08-20): a mirror account posts its own
+            # commentary between relays, and commentary mislabeled as the
+            # principal is a manipulation channel the research layer should
+            # never have to catch at Opus prices. No marker, no principal
+            # signal — classified "other", logged to the MIRROR's own
+            # credibility record (the leaky channel accumulates the record,
+            # not the principal), and dropped for free at ingest.
+            if not re.search(source.required_marker, item.content, re.IGNORECASE):
+                self.credibility_log.record(
+                    CredibilityRecord(
+                        source_id=source.id,
+                        observed_at=now,
+                        content=item.content,
+                        external_id=item.external_id,
+                        reason=(
+                            "mirror commentary: required marker absent; "
+                            "classified other, never a principal signal"
+                        ),
+                    )
+                )
+                return []
+
+        if not source.classifies_posts:
+            signal = self._build(
+                source,
+                item,
+                item.content,
+                now,
+                metadata={**item.fields, "tickers": ",".join(extract_tickers(item.content))},
+            )
+            enqueued = self._enqueue(signal)
+            return [enqueued] if enqueued else []
+
+        return self._handle_trade_call(source, item, now)
+
+
 class Class2CongressionalScanner(Scanner):
     """Congressional disclosures, hourly.
 
@@ -312,6 +307,15 @@ class Class2CongressionalScanner(Scanner):
     def _handle(
         self, source: SourceConfig, item: RawItem, now: datetime
     ) -> Iterable[Signal]:
+        if source.classifies_posts:
+            # citrini (human ruling 2026-08-25): a thesis-calling X account
+            # wired at THIS class's cadence — medium latency, hourly, not 60s.
+            # Same trade-call treatment as the Class 1 callers: classify,
+            # discard retrospectives to the credibility log, emit only forward
+            # calls. The class-2 signal class still demands priced_in_analysis
+            # downstream — an hourly-polled call can be hours stale, and the
+            # research layer must say what has already moved since the post.
+            return self._handle_trade_call(source, item, now)
         metadata = {
             **item.fields,
             "priced_in_analysis_required": "true",
@@ -361,6 +365,8 @@ def build_scanners(
         Class1RealtimeScanner(
             config.klass("class_1"), fetcher, queue, clock, credibility_log
         ),
-        Class2CongressionalScanner(config.klass("class_2"), fetcher, queue, clock),
+        Class2CongressionalScanner(
+            config.klass("class_2"), fetcher, queue, clock, credibility_log
+        ),
         Class3Form13FScanner(config.klass("class_3"), fetcher, queue, clock),
     )

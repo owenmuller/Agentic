@@ -370,6 +370,7 @@ def route_to_nolimitgains(fetcher):
         routes={
             "nolimitgains": fetcher,
             "unusual_whales": lambda source: [],
+            "optionshawk": lambda source: [],
             "trump_mirror_ttox": lambda source: [],
             "trump_mirror_tdp": lambda source: [],
         },

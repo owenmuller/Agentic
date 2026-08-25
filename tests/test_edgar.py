@@ -268,9 +268,11 @@ def test_a_repoll_does_not_refetch_or_reemit_a_seen_filing(source):
     before = len(recorder.requests)
 
     assert fetcher(source) == []
-    # Only the FTS query re-ran; the archives were not touched again.
-    assert len(recorder.requests) == before + 1
-    assert "efts.sec.gov" in str(recorder.requests[-1].url)
+    # Only the FTS queries re-ran (one per watchlist fund since the round-1
+    # expansion, 2026-08-25); the archives were not touched again.
+    assert len(recorder.requests) == before + len(source.watchlist)
+    for request in recorder.requests[before:]:
+        assert "efts.sec.gov" in str(request.url)
 
 
 def test_a_failed_search_raises_so_the_loop_logs_the_cycle(source):

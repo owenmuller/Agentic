@@ -155,6 +155,34 @@ classes:
             - missing_entry_price
             - missing_timeframe
             - celebrating_an_exit
+      - id: optionshawk
+        # Human-authorized 2026-08-25 — the system's FIRST PROBATION source.
+        # Public option-idea callouts with strikes/expiries since ~2010, but no
+        # independent audit and a paid-hub funnel: signals classify, research,
+        # and accrue credibility exactly as normal, while sizing short-circuits
+        # to zero (rejection code: probation). Promote-or-drop review on the
+        # accumulated would-have-traded record due 60-90 days from wiring
+        # (SESSION_NOTES carries the trigger).
+        probation: true
+        require_instrument: true
+        research_tier: class_1 # Opus per ruling (the class default, stated for the record)
+        daily_research_cap: 3
+        platforms: [x]
+        monthly_cost: 10
+        daily_read_warning: 300
+        handle: "@OptionsHawk"
+        treatment: thesis_input_only
+        copy_trade: false
+        classification:
+          required_before_research_pass: true
+          labels: [forward_call, retrospective, other]
+          default_when_ambiguous: retrospective
+          when_in_doubt: discard
+          ambiguity_markers:
+            - past_tense
+            - missing_entry_price
+            - missing_timeframe
+            - celebrating_an_exit
       - id: nolimitgains
         # Hardening 2026-08-25: genuine calls always name instruments; a
         # forward_call with no extracted ticker is no_instrument, not a pass.
@@ -204,6 +232,16 @@ classes:
         # Additional accounts may be added here — human approval required per source.
         additional_accounts: []
 
+      # Fintwit round-1 dispositions (human ruling 2026-08-25), recorded so a
+      # future proposal round does not re-litigate them:
+      #   @traderstewie   DEFERRED — real public entries/stops/targets since
+      #                   2009, but the paid-room brag volume demands a
+      #                   stricter classifier before wiring.
+      #   @PeterLBrandt   REJECTED — documented deletion of failed calls and a
+      #                   forced retraction of an "audited track record" claim.
+      #   @KobeissiLetter REJECTED — index-level engagement bait; published
+      #                   scam allegations.
+
   class_2:
     name: medium_latency_momentum_confirmation
     poll_interval_seconds: 3600 # hourly
@@ -245,6 +283,35 @@ classes:
         # pre_filtered code source_cap. Survives restarts (seeded from audit).
         daily_research_cap: 5
 
+      - id: citrini
+        # Human-authorized 2026-08-25. Thematic thesis caller (@Citrini7) with
+        # a self-published tracker (the Citrindex) covering ALL published
+        # theses from publication date, losers included. Wired at THIS class's
+        # cadence per the ruling: medium latency, hourly polling, not 60s —
+        # the calls play out over weeks to months and speed is not the edge.
+        # Class-2 placement also makes priced_in_analysis mandatory: an
+        # hourly-polled call can be hours old, and the research layer must say
+        # what has already moved since the post. Credibility from zero.
+        require_instrument: true
+        research_tier: class_1 # prose caller — Opus verification per ruling
+        daily_research_cap: 3
+        platforms: [x]
+        monthly_cost: 5
+        daily_read_warning: 200
+        handle: "@Citrini7"
+        treatment: thesis_input_only
+        copy_trade: false
+        classification:
+          required_before_research_pass: true
+          labels: [forward_call, retrospective, other]
+          default_when_ambiguous: retrospective
+          when_in_doubt: discard
+          ambiguity_markers:
+            - past_tense
+            - missing_entry_price
+            - missing_timeframe
+            - celebrating_an_exit
+
   class_3:
     name: slow_thesis_anchoring
     poll_interval_seconds: 86400 # daily
@@ -268,6 +335,28 @@ classes:
         # pre_filter stage rejections. Missing/unparseable periods fail OPEN.
         prefilter:
           max_period_age_days: 120
+        # Round-1 expansion (human ruling 2026-08-25). Fund names must
+        # substring-match the EDGAR filer display name — that is how the
+        # fetcher keeps filings BY a fund apart from filings that cite it.
+        # CIKs are recorded for the human reader; the fetcher resolves CIKs
+        # from the search hits themselves.
         watchlist:
           - { fund: Situational Awareness, manager: Leopold Aschenbrenner }
+          # ~31 names; sizing changes are loud and policy-sensitive.
+          - { fund: Appaloosa, manager: David Tepper, cik: "0001656456" }
+          # 13-20 names; the purest AI-infrastructure overlap on the list.
+          - { fund: Altimeter Capital Management, manager: Brad Gerstner, cik: "0001541617" }
+          # 10-14 names, near-zero turnover — the 45-day lag costs nothing.
+          - { fund: Pershing Square Capital Management, manager: Bill Ackman, cik: "0001336528" }
+          # 11 names at ~$53B AUM — above the $50B proposal ceiling; admitted
+          # by PER-FUND OVERRIDE (human ruling 2026-08-25) rather than raising
+          # the ceiling, which stays at $50B for future proposal rounds.
+          - { fund: TCI Fund Management, manager: Chris Hohn, cik: "0001647251" }
+        # Round-1 dispositions (2026-08-25), recorded against re-litigation:
+        #   Duquesne (Druckenmiller)  DEFERRED pending a theme-cluster
+        #                             consumption mode — name-level churn makes
+        #                             per-holding reads misleading. Queue item,
+        #                             not a build.
+        #   Scion (Burry)             DO NOT WIRE — deregistered with the SEC
+        #                             Nov 2025; no longer files 13Fs.
         additional_funds: []
