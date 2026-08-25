@@ -246,7 +246,9 @@ class SignalPipeline:
             rejection=rejection,
         )
 
-    def record_prefiltered(self, signal: Signal, reason: str) -> PipelineResult:
+    def record_prefiltered(
+        self, signal: Signal, reason: str, code: str = "pre_filter"
+    ) -> PipelineResult:
         """Write the trail for a signal the pre-filter kept from research.
 
         No budget was spent and no model was called; the record is the whole point —
@@ -257,7 +259,7 @@ class SignalPipeline:
         rejection = self._audit.record_stage_rejection(
             decision_id,
             RejectedStage.PRE_FILTER,
-            "pre_filter",
+            code,
             reason,
             signal,
         )

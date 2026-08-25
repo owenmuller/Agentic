@@ -99,6 +99,18 @@ class SourceConfig(_Strict):
     research_prefilter_themes: tuple[str, ...] = ()
     #: Deterministic pre-filter thresholds for this source (class 2/3 rules).
     prefilter: Optional[PrefilterConfig] = None
+    #: When true, a forward_call from this source is researched ONLY if the
+    #: scanner extracted a ticker (hardening ruling 2026-08-25, nolimitgains:
+    #: his genuine calls always name instruments; instrument-less commentary
+    #: cannot be traded regardless of research verdict). Everything else is a
+    #: no_instrument stage rejection. Scoped per source — Trump theme posts
+    #: legitimately trade without tickers via sector effects.
+    require_instrument: bool = False
+    #: Bare-link rule (2026-08-25): a theme-matched post with no ticker whose
+    #: content MINUS URLs is shorter than this is pre_filtered with code
+    #: bare_link — a headline with a link is not a thesis, and researching it
+    #: is paying a frontier model to read a t.co URL. None = rule off.
+    bare_link_min_chars: Optional[int] = None
     #: For pay-per-use feeds (X): warn once the day's posts read passes this. A
     #: since_id regression re-reads the same posts every poll, and the bug should
     #: show in run.log before it shows on the bill.

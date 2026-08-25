@@ -1023,6 +1023,35 @@ gate enforces the 20% aggregate premium cap as built.
   dataclass lives in execution.options_data. No edge in either direction; the
   DAG test stays honest.
 
+## Hardening + funnel efficiency (2026-08-25): three ingest rules
+
+1. **Invisible-character sanitization, structural:** `Signal.__post_init__`
+   strips Unicode Cf (zero-width space/joiner/non-joiner, word joiner, BOM,
+   soft hyphen, directional marks) + variation selectors from `content` before
+   it can enter ANY prompt (triage, research, review — exits now carry
+   sanitized content too). `raw_content` keeps the verbatim bytes; `sanitized`
+   flag + `invisible_stripped` count ride the Signal and the audit
+   SignalSnapshot. Rationale: ttox payloads carry structured zero-width runs
+   (4/4 scored reports flagged them; one pass wasted effort decoding one) — a
+   covert channel into LLM context by construction. In-constructor means no
+   scanner can forget.
+2. **no_instrument (nolimitgains only):** `require_instrument: true` in
+   signals.yaml; a forward_call with no extracted ticker is recorded as a
+   PRE_FILTER stage rejection with code `no_instrument` and never spends
+   triage or a pass — his genuine calls always name instruments. Scoped per
+   source: trump_posts legitimately trades ticker-less via sector effects.
+3. **bare_link (trump_posts):** `bare_link_min_chars: 120`; a THEME-MATCHED,
+   ticker-less post whose content minus URLs is under the threshold is code
+   `bare_link` — a headline with a link is not a thesis. INTERPRETATION
+   surfaced for ruling: the condition as specified doesn't require a URL to be
+   present, so a one-line themed brag with NO link also filters (Constraint #6
+   tighter reading). If the intent was link-posts-only, say so and the rule
+   gains a has-URL condition. Unthemed short posts stay with the theme rule's
+   own rejection (codes stay precise for later analytics).
+
+All three are deterministic, run before triage/budget, cost nothing, and write
+readable rejections. Suite 749 passed 3 skipped (+17).
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

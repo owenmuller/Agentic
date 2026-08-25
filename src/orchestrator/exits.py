@@ -236,7 +236,8 @@ class ExitEngine:
             opened_at=self._clock(),
             signal_id=working.signal.signal_id,
             source_id=working.signal.source_id,
-            content=working.signal.raw_content,
+            # Sanitized: this string re-enters the review prompt every cycle.
+            content=working.signal.content,
             thesis=report.thesis,
             invalidation_condition=report.invalidation_condition,
             time_horizon=str(report.time_horizon),
@@ -318,7 +319,7 @@ class ExitEngine:
                 opened_at=buys[0].recorded_at,
                 signal_id=decision.signal.signal_id,
                 source_id=decision.signal.source_id,
-                content=decision.signal.raw_content,
+                content=decision.signal.content,
                 thesis=research.thesis,
                 invalidation_condition=research.invalidation_condition,
                 time_horizon=research.time_horizon,

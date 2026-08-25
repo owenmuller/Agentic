@@ -59,6 +59,9 @@ def _parse_date(raw: str) -> Optional[date]:
         return None
 
 
+_URLS = re.compile(r"https?://\S+", re.IGNORECASE)
+
+
 class ResearchPreFilter:
     """Decides which signals earn a research pass. Built from ``signals.yaml``.
 
@@ -79,9 +82,13 @@ class ResearchPreFilter:
         self,
         themes_by_source: dict[str, tuple[str, ...]],
         rules_by_source: Optional[dict[str, PrefilterConfig]] = None,
+        instrument_required: Collection[str] = (),
+        bare_link_min_chars: Optional[dict[str, int]] = None,
     ) -> None:
         self._patterns: dict[str, re.Pattern] = {}
         self._rules: dict[str, PrefilterConfig] = dict(rules_by_source or {})
+        self._instrument_required = frozenset(instrument_required)
+        self._bare_link_min_chars = dict(bare_link_min_chars or {})
         for source_id, themes in themes_by_source.items():
             if not themes:
                 continue
@@ -103,11 +110,66 @@ class ResearchPreFilter:
                     themes[source.id] = source.research_prefilter_themes
                 if source.prefilter is not None:
                     rules[source.id] = source.prefilter
-        return cls(themes, rules)
+        instrument_required = tuple(
+            source.id
+            for klass in config.classes.values()
+            for source in klass.sources
+            if source.require_instrument
+        )
+        bare_link = {
+            source.id: source.bare_link_min_chars
+            for klass in config.classes.values()
+            for source in klass.sources
+            if source.bare_link_min_chars is not None
+        }
+        return cls(
+            themes,
+            rules,
+            instrument_required=instrument_required,
+            bare_link_min_chars=bare_link,
+        )
 
     @property
     def filtered_sources(self) -> tuple[str, ...]:
         return tuple(sorted(set(self._patterns) | set(self._rules)))
+
+    def missing_instrument(self, signal: Signal) -> Optional[str]:
+        """The no_instrument rule (2026-08-25), for sources configured with
+        ``require_instrument``: a forward_call that names no ticker cannot be
+        traded regardless of research verdict, so it never spends triage or a
+        pass. Deterministic — the scanner's extraction already ran."""
+        if signal.source_id not in self._instrument_required:
+            return None
+        if (signal.metadata.get("tickers") or "").strip():
+            return None
+        return (
+            f"{signal.source_id} forward_call names no instrument; a call that "
+            f"cannot be traded is commentary, and commentary is not researched"
+        )
+
+    def bare_link(self, signal: Signal) -> Optional[str]:
+        """The bare-link rule (2026-08-25), for sources configured with
+        ``bare_link_min_chars``: a THEME-MATCHED post with no ticker whose
+        content minus URLs is under the threshold is a headline with a link,
+        not a thesis. Posts that fail the theme gate entirely are left to the
+        theme rule — this rule only names the reason more precisely for the
+        ones that would otherwise have earned a pass."""
+        threshold = self._bare_link_min_chars.get(signal.source_id)
+        if threshold is None:
+            return None
+        if (signal.metadata.get("tickers") or "").strip():
+            return None
+        pattern = self._patterns.get(signal.source_id)
+        if pattern is not None and not pattern.search(signal.content):
+            return None  # unthemed: the theme rule owns that rejection
+        remaining = _URLS.sub("", signal.content).strip()
+        if len(remaining) >= threshold:
+            return None
+        return (
+            f"theme-matched but {len(remaining)} chars once URLs are removed "
+            f"(threshold {threshold}) and no ticker named — a headline with a "
+            f"link is not a thesis"
+        )
 
     def skip_reason(
         self,

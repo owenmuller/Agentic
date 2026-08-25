@@ -170,6 +170,20 @@ class TradingLoop:
             # The pre-filter runs BEFORE the budget: a signal the deterministic
             # rules can already dismiss is written down, not paid for.
             if self._prefilter is not None:
+                # Cheapest rule first: a call that names nothing tradeable is
+                # commentary, whatever the research verdict would have been.
+                missing = self._prefilter.missing_instrument(signal)
+                if missing is not None:
+                    self._pipeline.record_prefiltered(
+                        signal, missing, code="no_instrument"
+                    )
+                    report.prefiltered += 1
+                    continue
+                bare = self._prefilter.bare_link(signal)
+                if bare is not None:
+                    self._pipeline.record_prefiltered(signal, bare, code="bare_link")
+                    report.prefiltered += 1
+                    continue
                 reason = self._prefilter.skip_reason(
                     signal, held=held, now=dispatch_now
                 )

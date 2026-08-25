@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
+import unicodedata
 from datetime import datetime
 from enum import IntEnum, StrEnum
 from typing import Iterable, Mapping, Optional
@@ -78,6 +79,35 @@ _FENCE = "-----BEGIN UNTRUSTED THIRD-PARTY CONTENT-----"
 _FENCE_END = "-----END UNTRUSTED THIRD-PARTY CONTENT-----"
 
 
+#: Codepoint ranges that render as nothing. Unicode category "Cf" (format
+#: controls: zero-width space/joiner/non-joiner, word joiner, BOM, soft hyphen,
+#: directional marks) plus the variation selectors, which are Mn but invisible.
+_VARIATION_SELECTORS = tuple(
+    (start, end) for start, end in ((0xFE00, 0xFE0F), (0xE0100, 0xE01EF))
+)
+
+
+def _is_invisible(char: str) -> bool:
+    if unicodedata.category(char) == "Cf":
+        return True
+    point = ord(char)
+    return any(start <= point <= end for start, end in _VARIATION_SELECTORS)
+
+
+def sanitize_invisible(text: str) -> tuple[str, int]:
+    """Strip invisible codepoints; return (clean_text, stripped_count).
+
+    Hardening ruling 2026-08-25: ttox payloads carry structured zero-width runs —
+    likely benign watermarking, but a covert channel into LLM context by
+    construction (4/4 scored reports flagged them, and one research pass wasted
+    effort trying to decode one). Content entering a model should contain only
+    what a human reader sees. The verbatim bytes stay in ``raw_content``.
+    """
+    kept = [char for char in text if not _is_invisible(char)]
+    stripped = len(text) - len(kept)
+    return ("".join(kept), stripped)
+
+
 def as_data_block(content: str) -> str:
     """Fence untrusted content for downstream LLM consumption.
 
@@ -91,19 +121,22 @@ def as_data_block(content: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class Signal:
-    """One observation from one source. Immutable; content is verbatim.
+    """One observation from one source. Immutable.
 
-    ``content`` is preserved exactly as fetched — the audit trail needs the real text,
-    including any injection attempt it carries, because "what did the source actually
-    say" is a question incident review will ask.
+    ``raw_content`` is preserved exactly as fetched — the audit trail needs the
+    real bytes, including any injection attempt or invisible-character payload,
+    because "what did the source actually say" is a question incident review
+    will ask. ``content`` is what a human reader sees: invisible codepoints are
+    stripped at construction (see ``sanitize_invisible``), structurally — no
+    scanner can forget, because it happens in ``__post_init__``.
     """
 
     signal_id: str
     source_id: str
     signal_class: SignalClass
     observed_at: datetime
-    #: The text this signal is *about*. For a mixed post this is the forward-looking
-    #: component only — the historical half is stripped and logged separately.
+    #: The text this signal is *about*, sanitized. For a mixed post this is the
+    #: forward-looking component only — the historical half is logged separately.
     content: str
     #: The verbatim original, always. ``content`` may be a subset of it, so audit never
     #: has to join two records to answer "what did the source actually say".
@@ -115,6 +148,18 @@ class Signal:
     classification: Optional[Classification] = None
     #: Structured, scanner-derived facts. Never anything parsed as a directive.
     metadata: Mapping[str, str] = field(default_factory=dict)
+    #: True when construction stripped invisible codepoints from ``content``.
+    sanitized: bool = False
+    #: How many invisible codepoints were stripped. Recorded, not discarded:
+    #: a structured zero-width payload is a fact about the source.
+    invisible_stripped: int = 0
+
+    def __post_init__(self) -> None:
+        clean, stripped = sanitize_invisible(self.content)
+        if stripped:
+            object.__setattr__(self, "content", clean)
+            object.__setattr__(self, "sanitized", True)
+            object.__setattr__(self, "invisible_stripped", stripped)
 
     def for_research_prompt(self) -> str:
         """Render for the research layer, fenced and labelled as data."""

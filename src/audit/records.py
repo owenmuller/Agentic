@@ -87,6 +87,11 @@ class SignalSnapshot(_Record):
     raw_content: str
     classification: Optional[str] = None
     external_id: Optional[str] = None
+    #: Invisible-character sanitization (2026-08-25): whether construction
+    #: stripped invisible codepoints from ``content``, and how many. The bytes
+    #: themselves are still in ``raw_content``.
+    sanitized: bool = False
+    invisible_stripped: int = 0
     #: For mirrored content: the mirror source that actually delivered it.
     #: ``source_id`` names whose words these are; this names who carried them —
     #: attribution goes to the principal, accountability stays with the mirror.
@@ -105,6 +110,8 @@ class SignalSnapshot(_Record):
                 str(signal.classification) if signal.classification else None
             ),
             external_id=signal.external_id,
+            sanitized=signal.sanitized,
+            invisible_stripped=signal.invisible_stripped,
             delivered_by=signal.metadata.get("delivered_by") or None,
         )
 

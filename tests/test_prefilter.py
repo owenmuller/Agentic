@@ -33,7 +33,13 @@ from test_orchestrator import (
 )
 
 CHITCHAT = "Happy Birthday to the great Elvis Presley. Nobody sings like Elvis!"
-THEMED = "The Fake News won't tell you: our Tariffs are bringing in BILLIONS!"
+#: Substantive: over the bare_link length floor (2026-08-25), so the theme pass
+#: still earns research. A one-line themed brag now filters as bare_link.
+THEMED = (
+    "The Fake News won't tell you: our Tariffs are bringing in BILLIONS every "
+    "single month, the Steel Mills of Pennsylvania and Ohio are ROARING back, "
+    "and countries that cheated us for decades are finally paying their fair share!"
+)
 TICKERED = "$NVDA is the greatest American company. Powerful!"
 
 

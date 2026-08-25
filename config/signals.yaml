@@ -20,6 +20,9 @@ classes:
       within minutes.
     sources:
       - id: trump_posts
+        # Bare-link rule (2026-08-25): theme-matched, ticker-less posts whose
+        # content minus URLs is under this length are bare_link rejections.
+        bare_link_min_chars: 120
         platforms: [truth_social, x]
         # Pending the Truth API decision: X is only a partial, sometimes-late mirror
         # of Truth Social for this account. The handle is here so that joining the X
@@ -121,6 +124,9 @@ classes:
           policy_themes: [tariffs, energy, defense, crypto]
 
       - id: nolimitgains
+        # Hardening 2026-08-25: genuine calls always name instruments; a
+        # forward_call with no extracted ticker is no_instrument, not a pass.
+        require_instrument: true
         platforms: [x]
         # X API pay-per-use: ~$0.005 per post read, requests free, since_id keeps a
         # quiet minute at zero. $10/month is the conservative budget figure the
