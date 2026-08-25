@@ -1090,6 +1090,47 @@ under test (13 new tests incl. override-wins and no-fallback-to-screen).
 ~$2.12 -> ~$1.10-1.40 (screen + Opus verify, 1+2 searches); Class 2/3
 unactionable ~halved by the 1-search cap.
 
+## Breadth expansion round 1 (2026-08-25): full roster, unusual_whales, source caps
+
+Human-authorized per the stop-and-ask list. Suite 762 passed 3 skipped.
+
+1. **Class 2 full roster:** congressional watchlist is now EMPTY = every filer
+   (a non-empty watchlist still narrows; mechanism kept). Per-member
+   credibility from zero via `credibility_key` metadata
+   (congressional_disclosures/<member>) — research priors, report
+   denominators, and OUTCOMES all key per member, so attribution ranks filers
+   empirically. Probe of the live full feed (1000 rows, 171 days, 57 members):
+   ~41 raw/week -> ~12.4 survivors/week at current filters ($15K floor, 75-day
+   lag, unheld-sale rule). Spend at the new two-stage economics: most
+   congressional signals screen out on Sonnet (~$0.08-0.25 each) -> ~$1-3/wk.
+   NOT noisy — the $50K floor alternative (would cut to ~2/wk) was NOT needed
+   and NOT applied.
+2. **unusual_whales (Class 1):** free public X account; require_instrument
+   true, research_tier class_2 (Sonnet verification — structured callouts),
+   daily_research_cap 3, thesis-input-only, credibility from zero. Config
+   notes it as the FREE TASTE of the options-flow class; the UW API ($150/mo)
+   stays queued behind attribution proving flow-derived signals convert.
+   monthly_cost 25 (X read costs at UW volume; estimate, reconcile against
+   the console).
+3. **Per-source daily caps (cost governance):** SourceConfig
+   daily_research_cap; beyond it, signals record as pre_filtered code
+   `source_cap`. unusual_whales 3/day, congressional roster 5/day (the ruled
+   defaults; volume probe says congressional averages ~1.8/day so the cap
+   binds only on batch-filing bursts — recommended values unchanged). Counts
+   seed from the audit log at startup (restart cannot reset a cap) and roll
+   at the UTC day boundary.
+4. **Lag analysis (report-only):** the feed's lag distribution is BIMODAL —
+   63% within 45 days, 36% in a 101-150d batch-filing cluster, ~nothing at
+   76-100. Extending 75 -> 90-100 would admit ~zero additional signals: keep
+   75. Zero lag kills in paper so far (watchlist era had little flow); the 2
+   researched congressional disclosures show priced_in reasoning handling
+   82-day-old trades correctly.
+5. **Proposals awaiting ruling (in the 2026-08-25 report):** fintwit — Citrini
+   (strong), OptionsHawk (probation), TraderStewie (marginal), Brandt/Kobeissi
+   avoid; 13F — Appaloosa, Duquesne (theme-level reads), Altimeter, Pershing,
+   TCI; Scion DEREGISTERED Nov 2025, do not wire. Nothing wired without
+   confirmation.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

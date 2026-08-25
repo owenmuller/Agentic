@@ -92,17 +92,18 @@ class QuiverCongressFetcher:
             for entry in source.watchlist
         ]
         names = [name for name in names if name]
-        if not names:
-            return []
 
         rows = self._fetch_recent()
         items: list[RawItem] = []
         for row in rows:
             representative = str(row.get("Representative", ""))
-            matched = next(
-                (name for name in names if _matches_name(representative, name)), None
-            )
-            if matched is None:
+            # Full roster (human ruling 2026-08-25): an EMPTY watchlist means
+            # every filer. The deterministic pre-filters ($15K floor, lag rule,
+            # held-sale rule) do the triage; per-member credibility ranks the
+            # roster empirically from zero. A non-empty watchlist still narrows.
+            if names and not any(
+                _matches_name(representative, name) for name in names
+            ):
                 continue
             item = self._item_from_row(row)
             if item is not None:
@@ -180,6 +181,9 @@ class QuiverCongressFetcher:
             content=content,
             published_at=published_at,
             fields={
+                # Per-member credibility (2026-08-25): outcomes, reports, and
+                # research-context priors key on the member, not the firehose.
+                "credibility_key": f"congressional_disclosures/{representative}",
                 "representative": representative,
                 "chamber": chamber,
                 "ticker": ticker,

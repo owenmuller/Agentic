@@ -92,6 +92,10 @@ class SignalSnapshot(_Record):
     #: themselves are still in ``raw_content``.
     sanitized: bool = False
     invisible_stripped: int = 0
+    #: Per-member/sub-source credibility key (2026-08-25). None = the source_id
+    #: is the credibility identity, which is every source except the
+    #: congressional roster (keyed per member so attribution can rank filers).
+    credibility_key: Optional[str] = None
     #: For mirrored content: the mirror source that actually delivered it.
     #: ``source_id`` names whose words these are; this names who carried them —
     #: attribution goes to the principal, accountability stays with the mirror.
@@ -112,6 +116,7 @@ class SignalSnapshot(_Record):
             external_id=signal.external_id,
             sanitized=signal.sanitized,
             invisible_stripped=signal.invisible_stripped,
+            credibility_key=signal.metadata.get("credibility_key") or None,
             delivered_by=signal.metadata.get("delivered_by") or None,
         )
 

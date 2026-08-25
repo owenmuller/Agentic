@@ -123,6 +123,38 @@ classes:
           sectors: true
           policy_themes: [tariffs, energy, defense, crypto]
 
+      - id: unusual_whales
+        # Human-authorized 2026-08-25. Curated callouts of unusual options
+        # activity — a THESIS INPUT to verify independently, never a copy-trade
+        # (same rule as nolimitgains). Credibility from zero.
+        # This is the FREE TASTE of the options-flow signal class: the UW API
+        # ($150/mo) stays queued behind attribution proving that flow-derived
+        # signals actually convert.
+        require_instrument: true # callouts always name instruments
+        research_tier: class_2 # structured callouts verify on the Sonnet tier
+        daily_research_cap: 3 # cost governance 2026-08-25
+        platforms: [x]
+        # High-volume account: reads cost ~$0.005/post on the X API. The read
+        # warning is set above organic volume; the cap above bounds research.
+        monthly_cost: 25
+        daily_read_warning: 300
+        handle: "@unusual_whales"
+        treatment: thesis_input_only
+        copy_trade: false
+        note: >
+          The callout is a claim about options flow, not a recommendation. The
+          research layer forms its own view of the underlying setup and assigns
+          its own confidence; a post alone is never sufficient to trade.
+        classification:
+          required_before_research_pass: true
+          labels: [forward_call, retrospective, other]
+          default_when_ambiguous: retrospective
+          when_in_doubt: discard
+          ambiguity_markers:
+            - past_tense
+            - missing_entry_price
+            - missing_timeframe
+            - celebrating_an_exit
       - id: nolimitgains
         # Hardening 2026-08-25: genuine calls always name instruments; a
         # forward_call with no extracted ticker is no_instrument, not a pass.
@@ -203,10 +235,15 @@ classes:
           min_amount_max: 15000
           max_lag_days: 75
           skip_unheld_sales: true
-        watchlist:
-          - { name: Nancy Pelosi, chamber: house }
-        # High-signal members; configurable, human approval required per addition.
-        additional_members: []
+        # FULL ROSTER (human ruling 2026-08-25): an empty watchlist means every
+        # congressional filer. The deterministic pre-filters above do the triage;
+        # credibility is tracked PER MEMBER from zero (credibility_key metadata),
+        # so attribution ranks filers empirically over time.
+        watchlist: []
+        # Cost governance (2026-08-25): at most this many research passes per
+        # UTC day from this source; beyond it, signals are recorded as
+        # pre_filtered code source_cap. Survives restarts (seeded from audit).
+        daily_research_cap: 5
 
   class_3:
     name: slow_thesis_anchoring

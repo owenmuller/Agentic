@@ -92,11 +92,12 @@ def signals_config():
 # ================================================================================
 
 
-def test_a_watchlist_disclosure_becomes_one_raw_item(source):
+def test_a_disclosure_becomes_one_raw_item(source):
+    # Full roster (2026-08-25): the shipped config admits every filer.
     fetcher, recorder = fetcher_with()
     items = fetcher(source)
 
-    assert len(items) == 1
+    assert len(items) == len(FEED)
     item = items[0]
     assert item.fields["representative"] == "Nancy Pelosi"
     assert item.fields["ticker"] == "NVDA"
@@ -123,9 +124,16 @@ def test_the_content_states_both_dates_and_the_gap(source):
     assert "$1,000,001 - $5,000,000" in content
 
 
-def test_a_member_not_on_the_watchlist_is_not_a_signal(source):
+def test_a_member_not_on_a_configured_watchlist_is_not_a_signal():
+    # The narrowing mechanism survives the full-roster default (2026-08-25).
+    from signals.config import SourceConfig
+
+    narrowed = SourceConfig(
+        id="congressional_disclosures",
+        watchlist=({"name": "Nancy Pelosi", "chamber": "house"},),
+    )
     fetcher, _ = fetcher_with()
-    items = fetcher(source)
+    items = fetcher(narrowed)
     assert all("Other" not in item.fields["representative"] for item in items)
 
 
@@ -193,7 +201,7 @@ def test_the_class_2_scanner_stamps_its_standing_metadata(source, signals_config
 
 def test_a_reappearing_disclosure_does_not_reemit(source):
     fetcher, recorder = fetcher_with()
-    assert len(fetcher(source)) == 1
+    assert len(fetcher(source)) == len(FEED)
     assert fetcher(source) == []  # same rows in the next pull
     assert len(recorder.requests) == 2  # it re-polled; it just re-emitted nothing
 
@@ -203,11 +211,11 @@ def test_dedup_survives_a_restart_via_the_audit_log(source):
     the same replay philosophy as the budget and the kill switch."""
     first, _ = fetcher_with()
     emitted = first(source)
-    identity = emitted[0].external_id
+    identities = [item.external_id for item in emitted]
 
-    # ...the signal went through the pipeline and left an audit record carrying its
-    # external_id; a restarted process reads those ids and seeds the new fetcher:
-    restarted, _ = fetcher_with(seen=[identity])
+    # ...the signals went through the pipeline and left audit records carrying
+    # their external_ids; a restarted process reads those and seeds the fetcher:
+    restarted, _ = fetcher_with(seen=identities)
     assert restarted(source) == []
 
 
@@ -215,7 +223,7 @@ def test_an_unresearched_signal_reemits_after_restart(source):
     """The right edge of the seeding rule: queued-but-never-researched left no audit
     record, so it comes back and finally gets its pass — deferred, not dropped."""
     restarted, _ = fetcher_with(seen=[])  # nothing in the log for it
-    assert len(restarted(source)) == 1
+    assert len(restarted(source)) == len(FEED)
 
 
 def test_the_identity_distinguishes_real_differences():
@@ -256,7 +264,7 @@ def test_a_transient_blip_is_retried_once(source):
     fetcher, recorder = fetcher_with(
         [httpx.Response(503, text="down"), httpx.Response(200, json=FEED)]
     )
-    assert len(fetcher(source)) == 1
+    assert len(fetcher(source)) == len(FEED)
     assert len(recorder.requests) == 2
 
 
@@ -313,6 +321,7 @@ def test_the_router_dispatches_each_class_to_its_fetcher(signals_config):
             "form_13f": fake("edgar"),
             "congressional_disclosures": fake("quiver"),
             "nolimitgains": fake("x"),
+            "unusual_whales": fake("x"),
             "trump_mirror_ttox": fake("x"),
             "trump_mirror_tdp": fake("x"),
         },
@@ -325,6 +334,7 @@ def test_the_router_dispatches_each_class_to_its_fetcher(signals_config):
     assert calls == [
         "x:trump_mirror_ttox",
         "x:trump_mirror_tdp",
+        "x:unusual_whales",
         "x:nolimitgains",
         "quiver:congressional_disclosures",
         "edgar:form_13f",
@@ -363,6 +373,7 @@ def test_every_configured_source_has_a_wiring_decision(signals_config):
             "form_13f": lambda s: [],
             "congressional_disclosures": lambda s: [],
             "nolimitgains": lambda s: [],
+            "unusual_whales": lambda s: [],
             "trump_mirror_ttox": lambda s: [],
             "trump_mirror_tdp": lambda s: [],
         },
@@ -403,3 +414,39 @@ def test_live_smoke_against_the_real_congress_feed():
         assert "transaction date:" in item.content
         assert "report date:" in item.content
     print(f"live smoke: {len(items)} watchlist disclosures in the current feed")
+
+
+# ================================================================================
+# Full roster (2026-08-25): an empty watchlist means every filer
+# ================================================================================
+
+
+def test_an_empty_watchlist_admits_the_full_roster(source, signals_config):
+    """The shipped config: every filer becomes a raw item; the pre-filters and
+    the per-source daily cap do the triage downstream."""
+    assert source.watchlist == ()  # the ruling, as shipped
+    fetcher, _ = fetcher_with()
+    items = fetcher(source)
+    assert len(items) == len(FEED)  # Pelosi AND the other member
+
+
+def test_a_nonempty_watchlist_still_narrows(signals_config):
+    """The mechanism is kept: a configured watchlist filters exactly as before."""
+    from signals.config import SourceConfig
+
+    narrowed = SourceConfig(
+        id="congressional_disclosures",
+        watchlist=({"name": "Nancy Pelosi", "chamber": "house"},),
+    )
+    fetcher, _ = fetcher_with()
+    items = fetcher(narrowed)
+    assert len(items) == 1
+    assert "Pelosi" in items[0].fields["representative"]
+
+
+def test_every_item_carries_its_member_credibility_key(source):
+    fetcher, _ = fetcher_with()
+    for item in fetcher(source):
+        key = item.fields["credibility_key"]
+        assert key.startswith("congressional_disclosures/")
+        assert item.fields["representative"] in key

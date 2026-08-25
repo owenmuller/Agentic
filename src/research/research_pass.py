@@ -41,6 +41,12 @@ _EXCERPT_CHARS = 500
 ResearchOutcome = Union[ResearchReport, ResearchRejection]
 
 
+def _credibility_key(signal: Signal) -> str:
+    """Per-member/sub-source credibility identity (2026-08-25), falling back to
+    the source. Set by the scanner as structured metadata, never by content."""
+    return signal.metadata.get("credibility_key") or signal.source_id
+
+
 def _sum_usage(
     first: Optional[ResearchUsage], second: Optional[ResearchUsage]
 ) -> Optional[ResearchUsage]:
@@ -247,7 +253,7 @@ class ResearchPass:
         record — never a superseded screen draft."""
         if isinstance(outcome, ResearchReport) and self._credibility is not None:
             self._credibility.record_report(
-                signal.source_id,
+                _credibility_key(signal),
                 outcome,
                 delivered_by=signal.metadata.get("delivered_by") or None,
             )
@@ -265,7 +271,7 @@ class ResearchPass:
         if self._credibility is None:
             return None
         parts: list[str] = []
-        summary = self._credibility.summary_for(signal.source_id)
+        summary = self._credibility.summary_for(_credibility_key(signal))
         if summary.has_record:
             parts.append(summary.as_context())
         delivered_by = signal.metadata.get("delivered_by")

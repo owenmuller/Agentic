@@ -302,3 +302,132 @@ def test_the_bare_link_rejection_is_coded_through_the_loop(
     rejection = started.audit.stage_rejections()[0]
     assert rejection.code == "bare_link"
     assert "not a thesis" in rejection.message
+
+
+# ================================================================================
+# Breadth round 1 (2026-08-25): per-member credibility, source caps, UW config
+# ================================================================================
+
+
+def test_outcomes_credit_the_member_not_the_firehose(tmp_path):
+    """A congressional win accrues to congressional_disclosures/<member>."""
+    from datetime import datetime, timezone
+    from decimal import Decimal
+
+    from audit.log import AuditLog
+    from risk_gate import (
+        AccountState,
+        EquityBuyOrder,
+        LimitExecution,
+        RiskGate,
+        RiskLimits,
+    )
+
+    class RecordingCredibility:
+        def __init__(self):
+            self.outcomes = []
+
+        def record_outcome(self, source_id, *, won):
+            self.outcomes.append((source_id, won))
+
+    laced = signal(
+        "Purchase NUE $50,001 - $100,000",
+        source_id="congressional_disclosures",
+        metadata={"credibility_key": "congressional_disclosures/Nancy Pelosi"},
+    )
+    audit = AuditLog(path=tmp_path / "audit.jsonl")
+    gate = RiskGate(
+        RiskLimits.load(),
+        AccountState(cash=Decimal("100000"), high_water_mark=Decimal("100000")),
+    )
+    from test_orchestrator import REPORT
+    from research.reports import ResearchReport
+    from sizing import SizingEngine
+
+    report = ResearchReport.model_validate({**REPORT, "tickers": ["NUE"]})
+    proposal = SizingEngine(RiskLimits.load()).propose_equity(
+        report, Decimal("100000")
+    )
+    decision = gate.submit(
+        EquityBuyOrder(
+            symbol="NUE",
+            quantity=10,
+            execution=LimitExecution(limit_price=Decimal("140.00")),
+        )
+    )
+    record = audit.record_decision(laced, report, proposal, decision)
+    audit.record_fill(record.decision_id, "brk-1", Decimal("10"), Decimal("140"))
+
+    credibility = RecordingCredibility()
+    audit.record_outcome(
+        record.decision_id, Decimal("50"), credibility=credibility
+    )
+    assert credibility.outcomes == [
+        ("congressional_disclosures/Nancy Pelosi", True)
+    ]
+
+
+def test_research_passes_by_source_seed_the_caps_across_restarts(tmp_path):
+    from datetime import datetime, timezone
+
+    from audit.log import AuditLog
+
+    audit = AuditLog(path=tmp_path / "audit.jsonl")
+    from audit.records import RejectedStage
+
+    uw = signal("UW callout", source_id="unusual_whales")
+    audit.record_stage_rejection("d1", RejectedStage.RESEARCH, "no_position", "x", uw)
+    audit.record_stage_rejection("d2", RejectedStage.SIZING, "below_floor", "x", uw)
+    # These two spent nothing and must not count toward the cap.
+    audit.record_stage_rejection("d3", RejectedStage.PRE_FILTER, "source_cap", "x", uw)
+    audit.record_stage_rejection("d4", RejectedStage.TRIAGE, "triage", "x", uw)
+
+    today = datetime.now(timezone.utc).date()
+    counts = audit.research_passes_by_source_on(today)
+    assert counts == {"unusual_whales": 2}
+
+
+def test_the_source_cap_stops_the_fourth_pass_with_the_code(
+    tmp_path, signals_config
+):
+    """unusual_whales caps at 3/day: passes 1-3 research, pass 4 is source_cap."""
+    from research.config import ResearchConfig
+    from risk_gate import RiskLimits
+
+    calls = [
+        f"Loading $NVDA here. Setup is live, entry: {180 + n}." for n in range(4)
+    ]
+    llm = FakeLLM()
+    started = build(
+        tmp_path,
+        RiskLimits.load(),
+        signals_config,
+        ResearchConfig.load(),
+        llm=llm,
+        fetcher=feed(unusual_whales=calls),
+        prices=prices_of(NUE="140.00"),
+        broker=FakeBroker(),
+    )
+    report = started.loop.tick()
+    assert len(report.processed) == 3
+    assert report.prefiltered == 1
+
+    capped = [
+        r for r in started.audit.stage_rejections() if r.code == "source_cap"
+    ]
+    assert len(capped) == 1
+    assert "3-pass daily cap" in capped[0].message
+
+
+def test_unusual_whales_ships_with_the_governance_it_was_ruled_in_with(
+    signals_config,
+):
+    source = signals_config.source("class_1", "unusual_whales")
+    assert source.require_instrument is True
+    assert source.research_tier == "class_2"
+    assert source.daily_research_cap == 3
+    assert source.copy_trade is False
+    assert source.treatment == "thesis_input_only"
+    congressional = signals_config.source("class_2", "congressional_disclosures")
+    assert congressional.daily_research_cap == 5
+    assert congressional.watchlist == ()

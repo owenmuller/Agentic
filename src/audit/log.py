@@ -294,7 +294,8 @@ class AuditLog:
 
         if credibility is not None:
             credibility.record_outcome(  # type: ignore[attr-defined]
-                decision.signal.source_id, won=record.won
+                decision.signal.credibility_key or decision.signal.source_id,
+                won=record.won,
             )
         return record
 
@@ -373,6 +374,28 @@ class AuditLog:
             if existing is None or recorded_at < existing:
                 seen[record.decision_id] = recorded_at
         return seen
+
+    def research_passes_by_source_on(self, day: date) -> dict[str, int]:
+        """Research passes dispatched per source on ``day`` — the seed for the
+        per-source daily caps (2026-08-25), so a restart cannot reset a cap.
+        Same counting rule as ``research_passes_on``: pre-filter and triage
+        rejections spent nothing and do not count."""
+        counts: dict[str, int] = {}
+        for record in self.records():
+            if getattr(record, "recorded_at", None) is None:
+                continue
+            if record.recorded_at.date() != day:
+                continue
+            if isinstance(record, DecisionRecord):
+                source = record.signal.source_id
+            elif isinstance(record, StageRejectionRecord):
+                if record.stage in (RejectedStage.PRE_FILTER, RejectedStage.TRIAGE):
+                    continue
+                source = record.signal.source_id
+            else:
+                continue
+            counts[source] = counts.get(source, 0) + 1
+        return counts
 
     def research_passes_on(self, day: date) -> int:
         """How many signals were researched on ``day`` (UTC).

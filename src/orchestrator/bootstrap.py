@@ -413,6 +413,14 @@ def start(
         prefilter=ResearchPreFilter.from_config(checks.signals_config),
         cost_meter=cost_meter,
         error_sink=error_sink,
+        source_caps={
+            source.id: source.daily_research_cap
+            for klass in checks.signals_config.classes.values()
+            for source in klass.sources
+            if source.daily_research_cap is not None
+        },
+        source_passes=checks.audit.research_passes_by_source_on(now.date()),
+        source_pass_day=now.date(),
         budget=checks.budget,
         session=checks.session,
         gate=checks.gate,

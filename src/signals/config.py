@@ -119,6 +119,10 @@ class SourceConfig(_Strict):
     #: Validated against research.yaml at startup, not here (topology: signals
     #: imports nothing first-party).
     research_tier: Optional[str] = None
+    #: Per-source daily research-pass cap (cost governance 2026-08-25). Beyond
+    #: it, the day's remaining signals from this source are recorded as
+    #: pre_filtered with code source_cap — never silently dropped. None = no cap.
+    daily_research_cap: Optional[int] = None
     #: For pay-per-use feeds (X): warn once the day's posts read passes this. A
     #: since_id regression re-reads the same posts every poll, and the bug should
     #: show in run.log before it shows on the bill.

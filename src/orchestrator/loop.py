@@ -35,7 +35,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Callable, Optional, Sequence
 
 from audit.log import AuditLog
@@ -96,6 +96,9 @@ class TradingLoop:
         prefilter: Optional[ResearchPreFilter],
         cost_meter: Optional["CostMeter"],
         error_sink: Optional[Callable[[str], None]] = None,
+        source_caps: Optional[dict[str, int]] = None,
+        source_passes: Optional[dict[str, int]] = None,
+        source_pass_day: Optional[date] = None,
         budget: ResearchBudget,
         session: SessionState,
         gate: RiskGate,
@@ -112,6 +115,11 @@ class TradingLoop:
         self._prefilter = prefilter
         self._cost_meter = cost_meter
         self._error_sink = error_sink
+        #: Per-source daily caps (2026-08-25): counts seed from the audit log at
+        #: startup so a restart cannot reset a cap, and roll at the day boundary.
+        self._source_caps = dict(source_caps or {})
+        self._source_passes = dict(source_passes or {})
+        self._source_pass_day = source_pass_day
         self._budget = budget
         self._session = session
         self._gate = gate
@@ -191,6 +199,23 @@ class TradingLoop:
                     self._pipeline.record_prefiltered(signal, reason)
                     report.prefiltered += 1
                     continue
+            # Per-source daily cap (2026-08-25): after the content rules so the
+            # rejection code stays precise, before triage so a capped source
+            # spends nothing further today.
+            cap = self._source_caps.get(signal.source_id)
+            if cap is not None:
+                if self._source_pass_day != dispatch_now.date():
+                    self._source_pass_day = dispatch_now.date()
+                    self._source_passes = {}
+                if self._source_passes.get(signal.source_id, 0) >= cap:
+                    self._pipeline.record_prefiltered(
+                        signal,
+                        f"{signal.source_id} has spent its {cap}-pass daily cap; "
+                        f"recorded, not researched",
+                        code="source_cap",
+                    )
+                    report.prefiltered += 1
+                    continue
             # The triage gate: dollars (metered) but never a budget pass. A no
             # writes the trail and stops here; a yes or a gate failure proceeds
             # exactly as before. Runs BEFORE the budget so a gated signal cannot
@@ -206,6 +231,9 @@ class TradingLoop:
                 self._deferred = pending[index:]
                 report.deferred = len(self._deferred)
                 break
+            self._source_passes[signal.source_id] = (
+                self._source_passes.get(signal.source_id, 0) + 1
+            )
             result = self._pipeline.process(signal)
             report.processed.append(result)
             if (

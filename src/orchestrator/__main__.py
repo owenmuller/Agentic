@@ -216,7 +216,9 @@ def run() -> int:
         edgar = Form13FFetcher(seen=seen_for("form_13f"))
         quiver = QuiverCongressFetcher(seen=seen_for("congressional_disclosures"))
         x_search = XRecentSearchFetcher(
-            seen=seen_for("nolimitgains"),
+            # Post ids are globally unique on X, so one seen-set serves every
+            # account the fetcher polls (2026-08-25: + unusual_whales).
+            seen=seen_for("nolimitgains") | seen_for("unusual_whales"),
             # The billing tripwire writes straight into run.log: a since_id bug
             # must show up there before it shows up on the bill.
             warn_sink=lambda message: run_log.note("READS", message),
@@ -241,6 +243,8 @@ def run() -> int:
                     "congressional_disclosures", quiver
                 ),
                 "nolimitgains": logged("nolimitgains", x_search),
+                # Options-flow free taste (human-authorized 2026-08-25).
+                "unusual_whales": logged("unusual_whales", x_search),
                 # The Trump leg, decided 2026-08-18: X mirror accounts, not the
                 # Truth API — the upgrade decision belongs to attribution data.
                 # Signals attribute to trump_posts; the audit record keeps the
