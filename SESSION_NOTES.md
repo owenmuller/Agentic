@@ -1052,6 +1052,44 @@ gate enforces the 20% aggregate premium cap as built.
 All three are deterministic, run before triage/budget, cost nothing, and write
 readable rejections. Suite 749 passed 3 skipped (+17).
 
+## Cost architecture (2026-08-25): two-stage research, per-source tiers, search budgets
+
+Precedes the breadth expansion by design: widen the funnel only after making
+each pass cheaper. Suite 755 passed 3 skipped.
+
+1. **Per-source verification tiers:** SourceConfig.research_tier names a
+   research.yaml tier; unset falls back to the signal class. trump_posts and
+   nolimitgains stay on the Opus flagship (adversarial prose); structured-
+   callout sources declare the Sonnet tier. Typos fail at STARTUP (bootstrap
+   validates every declared tier via tier_for), not at 09:31.
+2. **Two-stage research:** every full pass runs the Sonnet screen first
+   (research.yaml `screen`: sonnet/medium, 1 search, graduation_confidence 55).
+   no_position or confidence <55 ends there — that report IS the record and
+   rejections get cheap (~$0.08 live vs ~$2.12 single-pass Opus). Actionable
+   reports graduate: verification on the source tier with the screen draft
+   fenced AS DATA in the prompt; THE VERIFICATION REPORT is what sizes, both
+   reports + both costs persist (DecisionRecord/StageRejection
+   screen_research + screen_est_cost_usd; est_* totals bill both stages).
+   Stage-two failure = rejection, never a fallback to the unverified draft.
+   Credibility sees only the final report, never a superseded draft.
+3. **Search budgets by class:** per-tier max_searches — class_1 verification
+   inherits the global 2 (verification burden); class_2/class_3/exit_review
+   and the screen cap at 1. NOTE: screen=1 was my choice (unspecified in the
+   ruling) — flag if the screen should search more.
+
+**Live validation (CLAUDE.md § LLM Request-Path Changes):** the screen shape
+ran live three times — every scripted probe thesis was HONESTLY refused
+(no_position at conf 62/92/55, ~$0.08 each; the model cannot be scripted into
+graduating, which is itself the mechanism working). The verification shape ran
+live in isolation with a long-61 draft: Opus searched, then OVERRODE to
+no_position at 73 ($1.00) — the exact override path the design exists for.
+The graduation control flow between the two shapes is deterministic Python
+under test (13 new tests incl. override-wins and no-fallback-to-screen).
+
+**Expected economics:** Class 1 rejection ~$2.12 -> ~$0.08; Class 1 trade
+~$2.12 -> ~$1.10-1.40 (screen + Opus verify, 1+2 searches); Class 2/3
+unactionable ~halved by the 1-search cap.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

@@ -207,9 +207,12 @@ def test_an_accepted_pass_stamps_its_cost_on_the_decision_record(
     started.loop.tick()
 
     decision = started.audit.decisions()[0]
-    assert decision.est_input_tokens == 42_000
-    assert decision.est_output_tokens == 2_000
-    assert decision.est_cost_usd == Decimal("0.660000")
+    # Two-stage (2026-08-25): screen + verification, both billed on the record.
+    assert decision.est_input_tokens == 84_000
+    assert decision.est_output_tokens == 4_000
+    assert decision.est_cost_usd == Decimal("1.320000")
+    assert decision.screen_est_cost_usd == Decimal("0.660000")
+    assert decision.screen_research is not None
 
 
 def test_a_rejected_pass_still_bills_its_tokens(
@@ -239,7 +242,8 @@ def test_the_entry_pass_names_the_signals_class_as_its_tier(
     started = build(tmp_path, limits, signals_config, research_config, llm=llm)
     started.loop.tick()
 
-    assert [call["tier"] for call in llm.calls] == ["class_1"]
+    # Two-stage: the screen leads, the class tier verifies.
+    assert [call["tier"] for call in llm.calls] == ["screen", "class_1"]
 
 
 # ================================================================================
@@ -445,9 +449,9 @@ def test_health_output_carries_the_cost_line(tmp_path, limits, signals_config, r
     report = health_report(
         started.preflight, started.exits.tracked, RunLog(tmp_path / "run.log")
     )
-    assert "est. research cost: today $0.66" in report
+    assert "est. research cost: today $1.32" in report
     assert "yesterday $0.00" in report
-    assert "month-to-date $0.66" in report
+    assert "month-to-date $1.32" in report
 
 
 def test_attribution_renders_the_mtd_research_cost():
@@ -462,3 +466,128 @@ def test_attribution_renders_the_mtd_research_cost():
         mtd_research_cost=Decimal("12.34"),
     )
     assert "Research cost month-to-date: $12.34" in report.render()
+
+
+# ================================================================================
+# Two-stage research (cost architecture 2026-08-25)
+# ================================================================================
+
+NO_POSITION_SCREEN = {
+    **REPORT,
+    "direction": "no_position",
+    "confidence": 20,
+    "thesis": "Nothing tradeable here; commentary only.",
+}
+
+LOW_CONFIDENCE_SCREEN = {**REPORT, "confidence": 40}
+
+
+def test_an_unactionable_screen_verdict_is_the_record_and_stage_two_never_runs(
+    tmp_path, limits, signals_config, research_config
+):
+    """Rejections get cheap: one Sonnet call, done, that is the record."""
+    for payload, code in (
+        (NO_POSITION_SCREEN, "no_position"),
+        (LOW_CONFIDENCE_SCREEN, "below_floor"),
+    ):
+        llm = FakeLLM(structured(payload))
+        started = build(
+            tmp_path / code, limits, signals_config, research_config, llm=llm
+        )
+        started.loop.tick()
+        assert [call["tier"] for call in llm.calls] == ["screen"]
+        rejection = started.audit.stage_rejections()[-1]
+        assert rejection.code == code
+        assert rejection.research.confidence == payload["confidence"]
+        # Stage one WAS the record: no separate screen draft is stored.
+        assert rejection.screen_research is None
+
+
+def test_an_actionable_screen_graduates_and_the_verification_report_proceeds(
+    tmp_path, limits, signals_config, research_config
+):
+    screen = {**REPORT, "confidence": 60, "thesis": "Screen draft thesis."}
+    verified = {**REPORT, "confidence": 82, "thesis": "Verified thesis."}
+    llm = FakeLLM(structured(screen), structured(verified))
+    started = build(tmp_path, limits, signals_config, research_config, llm=llm)
+    result = started.loop.tick().processed[0]
+    assert result.traded
+
+    assert [call["tier"] for call in llm.calls] == ["screen", "class_1"]
+    # The verification prompt carries the draft, fenced as data.
+    assert "FIRST-PASS DRAFT" in llm.calls[1]["user"]
+    assert "Screen draft thesis." in llm.calls[1]["user"]
+
+    decision = started.audit.trail(result.decision_id).decision
+    assert decision.research.confidence == 82  # the VERIFIED report is the record
+    assert decision.research.thesis == "Verified thesis."
+    assert decision.screen_research is not None  # and the draft is preserved
+    assert decision.screen_research.confidence == 60
+    assert decision.sizing.confidence == 82  # sizing consumed the verifier
+
+
+def test_an_opus_override_wins(tmp_path, limits, signals_config, research_config):
+    """Screen says trade; the verifier says no_position. Nothing trades, and the
+    record shows exactly that conversation."""
+    screen = {**REPORT, "confidence": 71}
+    override = {
+        **REPORT,
+        "direction": "no_position",
+        "confidence": 15,
+        "thesis": "Verification found the move already priced in.",
+    }
+    llm = FakeLLM(structured(screen), structured(override))
+    started = build(tmp_path, limits, signals_config, research_config, llm=llm)
+    result = started.loop.tick().processed[0]
+    assert not result.traded
+
+    rejection = started.audit.rejections_for(result.decision_id)[0]
+    assert rejection.code == "no_position"
+    assert rejection.research.direction == "no_position"  # the override is the record
+    assert rejection.screen_research is not None
+    assert rejection.screen_research.confidence == 71  # the outvoted draft, preserved
+
+
+def test_no_trade_ever_sizes_on_the_screen_alone(
+    tmp_path, limits, signals_config, research_config
+):
+    """A stage-two upstream failure is a rejection — never a fallback to the
+    unverified screen report."""
+
+    class GraduatesThenDies:
+        def __init__(self):
+            self.calls = []
+
+        def research(self, *, system, user, tool, tier=""):
+            self.calls.append(tier)
+            if tier == "screen":
+                return structured({**REPORT, "confidence": 90})
+            raise ConnectionError("verification tier is down")
+
+    llm = GraduatesThenDies()
+    started = build(tmp_path, limits, signals_config, research_config, llm=llm)
+    result = started.loop.tick().processed[0]
+    assert not result.traded
+    rejection = started.audit.rejections_for(result.decision_id)[0]
+    assert rejection.code == "upstream_error"
+    assert rejection.screen_research is not None  # the draft that died waiting
+
+
+def test_per_source_tier_overrides_the_class_default():
+    """A structured-callout source verifies on its declared tier, not class_1."""
+    from research.research_pass import ResearchPass
+    from research.reports import ResearchReport
+    from test_audit import make_signal
+    from test_orchestrator import FakeLLM as _FakeLLM
+
+    llm = _FakeLLM(structured({**REPORT, "confidence": 70}), structured(REPORT))
+    research = ResearchPass(
+        llm,
+        source_tiers={"unusual_whales": "class_2"},
+        screen_graduation=55,
+    )
+    outcome = research.run(
+        make_signal(source_id="unusual_whales", content="UW callout: $NUE calls")
+    )
+    assert isinstance(outcome, ResearchReport)
+    assert [call["tier"] for call in llm.calls] == ["screen", "class_2"]

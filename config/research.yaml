@@ -45,6 +45,16 @@ triage:
   model: claude-haiku-4-5-20251001
   max_tokens: 200
 
+# Two-stage research (cost architecture 2026-08-25): every full pass screens on
+# Sonnet first. no_position or confidence < 55 ends there (rejections get
+# cheap); an actionable report graduates to the source-tier verification pass
+# with the screen draft as context. No trade sizes on a single unverified pass.
+screen:
+  model: claude-sonnet-4-6
+  effort: medium
+  max_searches: 1
+  graduation_confidence: 55
+
 # Per-class model tiers (cost-efficiency pass, 2026-08-19). Class 1 is the only
 # latency class where speed is genuine edge and the only one that inherits the
 # flagship model above (no override = top-level model/effort). Class 2 and 3 carry
@@ -52,15 +62,21 @@ triage:
 # none of them needs the flagship. The report schema and every validation gate are
 # identical across tiers; only the model and effort change.
 tiers:
+  # Search budgets by class (2026-08-25): class_1 verification inherits the
+  # global web_search.max_uses (2 — it carries the verification burden); the
+  # lagged classes and exit reviews cap at 1.
   class_2:
     model: claude-sonnet-4-6
     effort: medium
+    max_searches: 1
   class_3:
     model: claude-sonnet-4-6
     effort: medium
+    max_searches: 1
   exit_review:
     model: claude-sonnet-4-6
     effort: medium
+    max_searches: 1
 
 # Cost estimates, dollars per million tokens. BASELINE NUMBERS — to be replaced
 # with real console figures after week one of the paper period. A model missing

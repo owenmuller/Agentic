@@ -250,7 +250,12 @@ class AnthropicResearchClient:
                     {
                         "type": WEB_SEARCH_TOOL_TYPE,
                         "name": "web_search",
-                        "max_uses": self._config.web_search.max_uses,
+                        # Per-tier budget (2026-08-25); the global cap is the default.
+                        "max_uses": (
+                            resolved.max_searches
+                            if resolved.max_searches is not None
+                            else self._config.web_search.max_uses
+                        ),
                     }
                 ],
             )

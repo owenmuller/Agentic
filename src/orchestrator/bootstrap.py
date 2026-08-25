@@ -317,8 +317,25 @@ def start(
     )
     client = llm_client or AnthropicResearchClient(checks.research_config)
     credibility = CredibilityTracker(credibility_log)
+    # Per-source verification tiers (cost architecture 2026-08-25), validated
+    # HERE so a typo in signals.yaml is a startup failure, not an upstream_error
+    # at 09:31. Two-stage runs whenever research.yaml configures a screen.
+    source_tiers: dict[str, str] = {}
+    for klass in checks.signals_config.classes.values():
+        for source in klass.sources:
+            if source.research_tier:
+                checks.research_config.tier_for(source.research_tier)  # raises on typo
+                source_tiers[source.id] = source.research_tier
+    screen_config = checks.research_config.screen
     research = ResearchPass(
-        client, credibility, checks.clock, market_context=market_context
+        client,
+        credibility,
+        checks.clock,
+        market_context=market_context,
+        source_tiers=source_tiers,
+        screen_graduation=(
+            screen_config.graduation_confidence if screen_config is not None else None
+        ),
     )
     # The triage gate: only when configured AND the client can actually run one.
     # Fakes without a triage method simply have no gate — fail-open by absence.

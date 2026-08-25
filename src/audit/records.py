@@ -274,6 +274,11 @@ class DecisionRecord(_Record):
     sizing: SizingSnapshot
     #: How the thesis was expressed (options vs equity), when routing ran.
     expression: Optional[ExpressionSnapshot] = None
+    #: Two-stage research (2026-08-25): the stage-one screen draft behind a
+    #: verified verdict, with its own cost. None when the pass ended at stage
+    #: one (``research`` IS the screen report) or two-stage is off.
+    screen_research: Optional[ResearchSnapshot] = None
+    screen_est_cost_usd: Optional[Decimal] = None
     gate: GateSnapshot
     #: Estimated LLM spend of the research pass that produced this record —
     #: tokens summed across every API call, dollars from the pricing table in
@@ -399,6 +404,10 @@ class StageRejectionRecord(_Record):
     #: None when no research ran (or the model is unpriced, for the cost).
     #: Expression routing outcome, when the rejection happened at or after it.
     expression: Optional["ExpressionSnapshot"] = None
+    #: Two-stage research (2026-08-25): the screen draft behind a graduated pass
+    #: that was then rejected downstream. None when no verification ran.
+    screen_research: Optional["ResearchSnapshot"] = None
+    screen_est_cost_usd: Optional[Decimal] = None
     est_input_tokens: Optional[int] = None
     est_output_tokens: Optional[int] = None
     est_cost_usd: Optional[Decimal] = None

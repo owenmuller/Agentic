@@ -1284,6 +1284,9 @@ def test_no_record_written_by_an_adversarial_run_is_anything_but_a_known_kind(
         # Expression routing (2026-08-24): how the thesis was expressed —
         # option contract chosen, or the typed fallback to equity.
         "expression",
+        # Two-stage research (2026-08-25): the screen draft and its cost.
+        "screen_research",
+        "screen_est_cost_usd",
         # Cost instrumentation (2026-08-19): estimates, set by the pipeline,
         # never parsed from content.
         "est_input_tokens",

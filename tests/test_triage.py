@@ -128,6 +128,42 @@ def test_the_search_cap_reaches_the_request():
     assert search_call["tools"][0]["max_uses"] == 2
 
 
+def test_per_tier_search_budgets_reach_the_request():
+    """Cost architecture 2026-08-25: class_2 caps at 1 search; the flagship
+    tier inherits the global 2."""
+    config = ResearchConfig.model_validate(
+        {
+            "version": 1,
+            "model": "claude-opus-5",
+            "max_tokens": 8000,
+            "effort": "high",
+            "web_search": {
+                "enabled": True,
+                "max_uses": 2,
+                "replay_results_in_report": False,
+            },
+            "max_search_continuations": 1,
+            "tiers": {
+                "class_2": {
+                    "model": "claude-sonnet-4-6",
+                    "effort": "medium",
+                    "max_searches": 1,
+                }
+            },
+            "screen": {
+                "model": "claude-sonnet-4-6",
+                "effort": "medium",
+                "max_searches": 1,
+            },
+        }
+    )
+    for tier, expected in (("class_1", 2), ("class_2", 1), ("screen", 1)):
+        api = RecordingAPI(search_response(), _response(1000, 200))
+        client = AnthropicResearchClient(config, client=api)
+        client.research(system="s", user="u", tool={"name": REPORT_TOOL_NAME}, tier=tier)
+        assert api.create_calls[0]["tools"][0]["max_uses"] == expected, tier
+
+
 def test_search_payloads_are_elided_from_the_report_replay_with_a_marker():
     api = RecordingAPI(search_response(), _response(1000, 200))
     client = AnthropicResearchClient(config_with(), client=api)

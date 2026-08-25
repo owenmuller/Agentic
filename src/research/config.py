@@ -34,6 +34,10 @@ class ModelTier(_Strict):
 
     model: str
     effort: Effort
+    #: Per-tier web-search cap (cost architecture 2026-08-25). None inherits the
+    #: global web_search.max_uses — Class 1 verification keeps the full budget;
+    #: cheaper tiers declare 1 in research.yaml.
+    max_searches: Optional[int] = Field(default=None, gt=0)
 
 
 class TierOverrides(_Strict):
@@ -45,6 +49,26 @@ class TierOverrides(_Strict):
     class_2: Optional[ModelTier] = None
     class_3: Optional[ModelTier] = None
     exit_review: Optional[ModelTier] = None
+
+
+class ScreenStage(_Strict):
+    """Two-stage research (2026-08-25): every full pass runs this cheap tier
+    first. A no_position verdict or confidence below ``graduation_confidence``
+    ends there — that report IS the record, and rejections get cheap. An
+    actionable report graduates to a verification pass on the source's tier,
+    with the screen draft included as data; the verification report is the one
+    that proceeds to sizing. No trade ever sizes on a single unverified pass."""
+
+    model: str
+    effort: Effort
+    max_searches: Optional[int] = Field(default=None, gt=0)
+    #: Matches the sizing floor: below it nothing trades, so nothing to verify.
+    graduation_confidence: int = Field(default=55, ge=0, le=100)
+
+    def as_tier(self) -> ModelTier:
+        return ModelTier(
+            model=self.model, effort=self.effort, max_searches=self.max_searches
+        )
 
 
 class TriageConfig(_Strict):
@@ -77,9 +101,15 @@ class ResearchConfig(_Strict):
     pricing: dict[str, ModelPricing] = Field(default_factory=dict)
     #: The triage gate. None disables it (every signal goes straight to research).
     triage: Optional[TriageConfig] = None
+    #: The two-stage screen. None disables it (single pass at the source tier).
+    screen: Optional[ScreenStage] = None
 
     def tier_for(self, name: str) -> ModelTier:
         """Resolve which model/effort a tier runs on. Unknown names are a bug."""
+        if name == "screen":
+            if self.screen is None:
+                raise ValueError("screen tier requested but no screen is configured")
+            return self.screen.as_tier()
         if name not in TIER_NAMES:
             raise ValueError(f"unknown research tier {name!r}; expected one of {TIER_NAMES}")
         override = getattr(self.tiers, name, None) if self.tiers else None

@@ -89,6 +89,8 @@ class AuditLog:
         decision_id: Optional[str] = None,
         usage: Optional[ResearchUsage] = None,
         expression: Optional["ExpressionSnapshot"] = None,
+        screen_report: Optional[ResearchReport] = None,
+        screen_usage: Optional[ResearchUsage] = None,
     ) -> DecisionRecord:
         """Write the complete decision-time record. Approved or rejected, both land."""
         record = DecisionRecord(
@@ -99,6 +101,12 @@ class AuditLog:
             sizing=SizingSnapshot.of(proposal),
             gate=GateSnapshot.of(gate_decision),  # type: ignore[arg-type]
             expression=expression,
+            screen_research=(
+                ResearchSnapshot.of(screen_report)
+                if screen_report is not None
+                else None
+            ),
+            screen_est_cost_usd=(screen_usage.cost_usd if screen_usage else None),
             est_input_tokens=usage.input_tokens if usage else None,
             est_output_tokens=usage.output_tokens if usage else None,
             est_cost_usd=usage.cost_usd if usage else None,
@@ -117,6 +125,8 @@ class AuditLog:
         proposal: Optional[SizedProposal] = None,
         usage: Optional[ResearchUsage] = None,
         expression: Optional["ExpressionSnapshot"] = None,
+        screen_report: Optional[ResearchReport] = None,
+        screen_usage: Optional[ResearchUsage] = None,
     ) -> StageRejectionRecord:
         """Record a signal that stopped before the gate, or an order the broker refused.
 
@@ -134,6 +144,12 @@ class AuditLog:
             research=ResearchSnapshot.of(report) if report is not None else None,
             sizing=SizingSnapshot.of(proposal) if proposal is not None else None,
             expression=expression,
+            screen_research=(
+                ResearchSnapshot.of(screen_report)
+                if screen_report is not None
+                else None
+            ),
+            screen_est_cost_usd=(screen_usage.cost_usd if screen_usage else None),
             est_input_tokens=usage.input_tokens if usage else None,
             est_output_tokens=usage.output_tokens if usage else None,
             est_cost_usd=usage.cost_usd if usage else None,

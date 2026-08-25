@@ -303,6 +303,8 @@ class SignalPipeline:
         outcome = self._research.run(signal)
         usage = _combine_usage(self._pending_triage_usage, self._research.last_usage)
         self._pending_triage_usage = None
+        screen_report = self._research.last_screen
+        screen_usage = self._research.last_screen_usage
         if not isinstance(outcome, ResearchReport):
             return self._stopped(
                 decision_id,
@@ -311,6 +313,8 @@ class SignalPipeline:
                 str(outcome.code),
                 outcome.message,
                 usage=usage,
+                screen_report=screen_report,
+                screen_usage=screen_usage,
             )
         report = outcome
 
@@ -339,6 +343,8 @@ class SignalPipeline:
                 report=report,
                 proposal=proposal,
                 usage=usage,
+                screen_report=screen_report,
+                screen_usage=screen_usage,
             )
 
         # 3. Order construction (expression routing lives inside).
@@ -357,6 +363,8 @@ class SignalPipeline:
                 proposal=proposal,
                 usage=usage,
                 expression=expression,
+                screen_report=screen_report,
+                screen_usage=screen_usage,
             )
 
         # 4. The risk gate. Approved or rejected, this writes the full decision record.
@@ -369,6 +377,8 @@ class SignalPipeline:
             decision_id=decision_id,
             usage=usage,
             expression=expression,
+            screen_report=screen_report,
+            screen_usage=screen_usage,
         )
         if not decision.is_approved:
             return PipelineResult(
@@ -752,6 +762,8 @@ class SignalPipeline:
         proposal: Optional[SizedProposal] = None,
         usage: Optional["ResearchUsage"] = None,
         expression: Optional[ExpressionSnapshot] = None,
+        screen_report=None,
+        screen_usage=None,
     ) -> PipelineResult:
         rejection = self._audit.record_stage_rejection(
             decision_id,
@@ -763,6 +775,8 @@ class SignalPipeline:
             proposal=proposal,
             usage=usage,
             expression=expression,
+            screen_report=screen_report,
+            screen_usage=screen_usage,
         )
         return PipelineResult(
             decision_id=decision_id,

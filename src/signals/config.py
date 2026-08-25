@@ -111,6 +111,14 @@ class SourceConfig(_Strict):
     #: bare_link — a headline with a link is not a thesis, and researching it
     #: is paying a frontier model to read a t.co URL. None = rule off.
     bare_link_min_chars: Optional[int] = None
+    #: Per-source research tier (cost architecture 2026-08-25): the model/effort
+    #: this source's VERIFICATION pass runs on, naming a tier from research.yaml
+    #: ("class_1"..."exit_review"). Unset falls back to the class default —
+    #: adversarial-prose sources (trump_posts, nolimitgains) stay on the Opus
+    #: flagship that way; structured-callout sources declare the Sonnet tier.
+    #: Validated against research.yaml at startup, not here (topology: signals
+    #: imports nothing first-party).
+    research_tier: Optional[str] = None
     #: For pay-per-use feeds (X): warn once the day's posts read passes this. A
     #: since_id regression re-reads the same posts every poll, and the bug should
     #: show in run.log before it shows on the bill.
