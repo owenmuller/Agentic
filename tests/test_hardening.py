@@ -625,3 +625,180 @@ def test_13f_round_one_watchlist_is_exactly_the_ruling(signals_config):
     ]
     # Duquesne deferred (theme-cluster mode pending); Scion deregistered.
     assert not any("Duquesne" in fund or "Scion" in fund for fund in funds)
+
+
+# ================================================================================
+# Day-one fixes (rulings 2026-08-26): cap unseal, staleness, lookback, CLASSIFY
+# ================================================================================
+
+
+def test_source_cap_rejections_do_not_seal_the_signal(tmp_path):
+    """The cap must never permanently discard signals it didn't pay to
+    evaluate: a source_cap rejection is excluded from dedup seeding, so the
+    signal re-emits at the next startup. Paid-for verdicts still seal."""
+    from audit.log import AuditLog
+
+    def with_external_id(external_id, content):
+        return Signal(
+            signal_id=f"sig-{external_id}",
+            source_id="congressional_disclosures",
+            signal_class=SignalClass.CLASS_2_MOMENTUM,
+            observed_at=NOW,
+            content=content,
+            raw_content=content,
+            priority=Priority.ROUTINE,
+            external_id=external_id,
+            metadata={},
+        )
+
+    audit = AuditLog(path=tmp_path / "audit.jsonl")
+    audit.record_stage_rejection(
+        "d1",
+        RejectedStage.PRE_FILTER,
+        "source_cap",
+        "capped",
+        with_external_id("capped-row", "Purchase NUE"),
+    )
+    audit.record_stage_rejection(
+        "d2",
+        RejectedStage.PRE_FILTER,
+        "pre_filter",
+        "stale",
+        with_external_id("stale-row", "Purchase AMD"),
+    )
+    audit.record_stage_rejection(
+        "d3",
+        RejectedStage.RESEARCH,
+        "no_position",
+        "priced in",
+        with_external_id("researched-row", "Purchase INTC"),
+    )
+
+    seen = audit.researched_external_ids()
+    assert ("congressional_disclosures", "capped-row") not in seen
+    assert ("congressional_disclosures", "stale-row") in seen
+    assert ("congressional_disclosures", "researched-row") in seen
+
+
+def test_stale_reported_disclosures_die_at_the_prefilter(prefilter):
+    """Disclosure->today staleness (max_report_age_days: 14), distinct from
+    the trade->disclosure lag rule. Fresh passes; missing date fails open."""
+    from datetime import datetime as dt, timezone as tz
+
+    now = dt(2026, 8, 26, 14, 0, tzinfo=tz.utc)
+
+    def disclosure(report_date):
+        metadata = {"amount_range": "$50,001 - $100,000"}
+        if report_date:
+            metadata["report_date"] = report_date
+        return signal(
+            "Purchase NUE $50,001 - $100,000",
+            source_id="congressional_disclosures",
+            metadata=metadata,
+        )
+
+    stale = prefilter.skip_reason(disclosure("2026-07-15"), now=now)  # 42d old
+    assert stale is not None
+    assert "report-staleness" in stale
+
+    assert prefilter.skip_reason(disclosure("2026-08-20"), now=now) is None  # 6d
+    assert prefilter.skip_reason(disclosure("2026-08-12"), now=now) is None  # 14d, boundary passes
+    assert prefilter.skip_reason(disclosure(None), now=now) is None  # fails open
+
+
+def test_the_lookback_is_the_session_gap_clamped():
+    from datetime import datetime as dt, timedelta, timezone as tz
+
+    from orchestrator.ops import first_poll_lookback_seconds
+
+    now = dt(2026, 8, 26, 13, 15, tzinfo=tz.utc)
+    # Fresh data directory: no earlier session to be continuous with -> cap.
+    assert first_poll_lookback_seconds(None, now) == 86400
+    # Mid-session bounce: floored at the old 15 minutes.
+    assert first_poll_lookback_seconds(now - timedelta(minutes=5), now) == 900
+    # Overnight: the actual gap.
+    assert (
+        first_poll_lookback_seconds(now - timedelta(hours=17, minutes=15), now)
+        == 62100
+    )
+    # Weekend: capped at 24h — X bills per post returned.
+    assert first_poll_lookback_seconds(now - timedelta(days=3), now) == 86400
+
+
+def test_classification_outcomes_reach_the_sink_and_other_leaves_a_trace(
+    signals_config,
+):
+    """One CLASSIFY line per source per poll, and an "other" post lands in the
+    credibility log — fetched-but-discarded is reconstructable after the fact."""
+    from fixture_posts import PURE_FORWARD_CALL, PURE_RETROSPECTIVE
+    from signals.records import SignalQueue
+    from signals.scanners import Class1RealtimeScanner, RawItem
+
+    posts = [
+        PURE_FORWARD_CALL,
+        PURE_RETROSPECTIVE,
+        "Good morning everyone. Coffee first, charts later.",
+    ]
+
+    def fetcher(source):
+        if source.id != "nolimitgains":
+            return []
+        return [
+            RawItem(external_id=f"p-{index}", content=content, published_at=NOW)
+            for index, content in enumerate(posts)
+        ]
+
+    lines = []
+    scanner = Class1RealtimeScanner(
+        signals_config.klass("class_1"),
+        fetcher,
+        SignalQueue(),
+        None,
+        None,
+        lines.append,
+    )
+    emitted = scanner.poll(force=True)
+
+    assert len(emitted) == 1  # the forward call
+    assert lines == ["nolimitgains forward_call=1 other=1 retrospective=1"]
+    reasons = [entry.reason for entry in scanner.credibility_log.records]
+    assert any(reason.startswith("classified other") for reason in reasons)
+
+
+def test_the_credibility_log_persists_when_given_a_path(tmp_path):
+    import json as jsonlib
+    from datetime import datetime as dt, timezone as tz
+
+    from signals.records import CredibilityLog, CredibilityRecord
+
+    path = tmp_path / "credibility.jsonl"
+    log = CredibilityLog(path=path)
+    log.record(
+        CredibilityRecord(
+            source_id="unusual_whales",
+            observed_at=dt(2026, 8, 26, 14, 0, tzinfo=tz.utc),
+            content="a data callout",
+            external_id="post-1",
+            reason="classified other: no actionable or historical segments",
+        )
+    )
+    log.record(
+        CredibilityRecord(
+            source_id="nolimitgains",
+            observed_at=dt(2026, 8, 26, 14, 1, tzinfo=tz.utc),
+            content="brag",
+            external_id="post-2",
+            reason="past_tense",
+        )
+    )
+
+    rows = [jsonlib.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert [row["source_id"] for row in rows] == ["unusual_whales", "nolimitgains"]
+    assert rows[0]["content"] == "a data callout"
+    assert rows[0]["reason"].startswith("classified other")
+
+
+def test_the_staleness_threshold_ships_as_ruled(signals_config):
+    source = signals_config.source("class_2", "congressional_disclosures")
+    assert source.prefilter is not None
+    assert source.prefilter.max_report_age_days == 14

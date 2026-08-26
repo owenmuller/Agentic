@@ -276,6 +276,7 @@ def start(
     market_context: Optional[Callable] = None,
     cost_warn_sink: Optional[Callable[[str], None]] = None,
     error_sink: Optional[Callable[[str], None]] = None,
+    classify_sink: Optional[Callable[[str], None]] = None,
     options_chain=None,
     **preflight_kwargs: object,
 ) -> Startup:
@@ -311,9 +312,18 @@ def start(
     # signal. This is the layer that covers mirrored content, whose external ids are
     # normalised content keys rather than any fetcher's native ids.
     queue = SignalQueue(seen=checks.audit.researched_external_ids())
-    credibility_log = CredibilityLog()
+    # Persisted next to the audit log (ruling 2026-08-26): classification
+    # discards are part of the funnel's record, not process-lifetime trivia.
+    credibility_log = CredibilityLog(
+        path=checks.audit.path.parent / "credibility.jsonl"
+    )
     scanners = build_scanners(
-        checks.signals_config, fetcher, queue, checks.clock, credibility_log
+        checks.signals_config,
+        fetcher,
+        queue,
+        checks.clock,
+        credibility_log,
+        classify_sink,
     )
     client = llm_client or AnthropicResearchClient(checks.research_config)
     credibility = CredibilityTracker(credibility_log)

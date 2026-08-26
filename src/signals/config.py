@@ -53,6 +53,12 @@ class PrefilterConfig(_Strict):
     #: Class 2: skip disclosures observed more than this many days after the
     #: trade (ReportDate - TransactionDate). Strictly above.
     max_lag_days: Optional[int] = Field(default=None, gt=0)
+    #: Class 2: skip disclosures REPORTED more than this many days ago —
+    #: disclosure->today staleness, distinct from the trade->disclosure lag rule
+    #: above (ruling 2026-08-26). Steady-state hourly polling sees report ages
+    #: of 0-1 day, so this only bites restart/backfill floods, which must die
+    #: at the free prefilter instead of flooding the per-source daily cap.
+    max_report_age_days: Optional[int] = Field(default=None, gt=0)
     #: Class 2: skip sale disclosures in names the system does not hold — someone
     #: else's exit from a position we never entered is not an entry thesis.
     skip_unheld_sales: bool = False

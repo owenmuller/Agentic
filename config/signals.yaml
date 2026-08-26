@@ -272,6 +272,13 @@ classes:
         prefilter:
           min_amount_max: 15000
           max_lag_days: 75
+          # Disclosure->today staleness (ruling 2026-08-26), DISTINCT from the
+          # trade->disclosure lag rule above. Steady-state hourly polling sees
+          # report ages of 0-1 day, so this only bites restart/backfill floods
+          # — like 2026-08-26's 952-row full-roster first poll, which sent 268
+          # filter-survivors into a 5/day cap. Backfill dies here, free and
+          # recorded, instead of consuming cap slots.
+          max_report_age_days: 14
           skip_unheld_sales: true
         # FULL ROSTER (human ruling 2026-08-25): an empty watchlist means every
         # congressional filer. The deterministic pre-filters above do the triage;

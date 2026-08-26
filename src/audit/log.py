@@ -360,10 +360,32 @@ class AuditLog:
         """
         seen: set[tuple[str, str]] = set()
         for record in self.records():
+            if getattr(record, "code", None) == "source_cap":
+                # Ruling 2026-08-26: the cap must never permanently discard
+                # signals it didn't pay to evaluate. A source_cap rejection
+                # spent nothing (the same reasoning research_passes_by_source_on
+                # uses to exclude it from the cap count), so it does not seal
+                # the signal — it re-emits at the next startup and competes for
+                # that day's slots until researched, or until the staleness
+                # prefilter retires it for free. Origin: the 2026-08-26
+                # full-roster backfill capped 268 filter-survivors, sealing a
+                # $1M-5M Pelosi disclosure reported five days earlier.
+                continue
             signal = getattr(record, "signal", None)
             if signal is not None and signal.external_id:
                 seen.add((signal.source_id, signal.external_id))
         return seen
+
+    def last_record_at(self) -> Optional[datetime]:
+        """Newest ``recorded_at`` in the log — when the system was last alive.
+        Sizes the X fetchers' session-gap first-poll lookback (ruling
+        2026-08-26), so overnight posts are fetched instead of lost."""
+        latest: Optional[datetime] = None
+        for record in self.records():
+            recorded = getattr(record, "recorded_at", None)
+            if recorded is not None and (latest is None or recorded > latest):
+                latest = recorded
+        return latest
 
     def first_seen(self) -> dict[str, datetime]:
         """Earliest record time per decision id, in write order."""

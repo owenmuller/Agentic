@@ -1179,6 +1179,38 @@ Wiring: both new X sources route through the shared XRecentSearchFetcher
 orchestrator/__main__.py updated; probation set wired bootstrap → pipeline.
 Feed-cost expectations updated (class_1 $45, class_2 $35).
 
+## Day-one expansion fixes (2026-08-26 rulings)
+
+Origin: day-one review. The full-roster first poll flooded 952 rows; 268
+filter-survivors hit the 5/day cap and were permanently sealed by dedup
+seeding — including a $1M-5M Pelosi Bloom Energy purchase reported 08-21,
+the highest-conviction disclosure the system had seen. Separately, UW's 12
+fetched posts left zero persistent trace (all classified away in-memory),
+and the fixed 15-minute X lookback silently lost all overnight posts.
+
+1. **source_cap unseal:** `researched_external_ids()` now excludes
+   source_cap rejections — the cap must never permanently discard signals it
+   didn't pay to evaluate (same exclusion the cap count itself makes). Capped
+   signals re-emit at the next startup and compete for that day's slots.
+2. **Staleness prefilter:** class-2 `max_report_age_days: 14` —
+   disclosure->today staleness, distinct from the trade->disclosure lag rule.
+   Steady-state report ages are 0-1 day, so it only bites backfill floods,
+   which now die free at prefilter instead of consuming cap slots. Strictly
+   above 14, matching the sibling rules' documented convention; unparseable
+   dates fail open.
+3. **Session-gap X lookback:** first-poll lookback = gap since the newest
+   audit record, floor 15min, cap 24h (`first_poll_lookback_seconds` in
+   orchestrator/ops.py, LOOKBACK line in run.log). max_results raised to the
+   API's 100 so a gap-sized first poll doesn't truncate the backlog to 25.
+4. **Classification visibility:** per-poll CLASSIFY counts in run.log
+   (e.g. `CLASSIFY unusual_whales forward_call=0 other=3`), "other" posts now
+   land in the credibility log with markers, and the credibility log persists
+   to `data/credibility.jsonl` — fetched-but-discarded is reconstructable, so
+   a misclassifying rule and an organically quiet account no longer look
+   identical.
+5. The 08-25 18:54 restart with no STOPPED marker was the human's bounce —
+   confirmed, no investigation.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

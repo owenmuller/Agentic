@@ -57,6 +57,7 @@ from orchestrator.bootstrap import preflight, start
 from orchestrator.ops import (
     InstanceLock,
     RunLog,
+    first_poll_lookback_seconds,
     health_report,
     is_trading_weekday,
     mirror_silence,
@@ -215,7 +216,20 @@ def run() -> int:
 
         edgar = Form13FFetcher(seen=seen_for("form_13f"))
         quiver = QuiverCongressFetcher(seen=seen_for("congressional_disclosures"))
+        # Session-gap first-poll lookback (ruling 2026-08-26): the old fixed
+        # 15-minute window lost every post made between sessions. Floor 15min
+        # (a mid-session bounce re-reads almost nothing), cap 24h (X bills per
+        # post returned; the cap bounds what a long-idle restart may buy).
+        lookback = first_poll_lookback_seconds(
+            checks.audit.last_record_at(), datetime.now(timezone.utc)
+        )
+        run_log.note("LOOKBACK", f"X first-poll lookback={lookback}s")
         x_search = XRecentSearchFetcher(
+            first_poll_lookback_seconds=lookback,
+            # API max. A gap-sized first poll must not truncate the overnight
+            # backlog to the newest 25; billing is per post returned either
+            # way, and since_id keeps steady-state polls tiny.
+            max_results=100,
             # Post ids are globally unique on X, so one seen-set serves every
             # account the fetcher polls (2026-08-25: + unusual_whales,
             # optionshawk, citrini).
@@ -292,6 +306,7 @@ def run() -> int:
             market_context=context_builder.context_for,
             cost_warn_sink=lambda message: run_log.note("COST", message),
             error_sink=lambda message: run_log.note("ERROR", message),
+            classify_sink=lambda message: run_log.note("CLASSIFY", message),
             options_chain=options_chain,
         )
         loop = startup.loop

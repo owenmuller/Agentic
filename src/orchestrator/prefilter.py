@@ -243,6 +243,20 @@ class ResearchPreFilter:
                     f"prefilter.max_lag_days) — the move is long priced in"
                 )
 
+        if rules.max_report_age_days is not None:
+            report_date = _parse_date(meta.get("report_date", ""))
+            if report_date is not None:
+                moment = now or datetime.now(timezone.utc)
+                age_days = (moment.date() - report_date).days
+                if age_days > rules.max_report_age_days:
+                    return (
+                        f"reported {report_date.isoformat()}, {age_days} days "
+                        f"ago, beyond the {rules.max_report_age_days}-day "
+                        f"report-staleness cutoff (signals.yaml "
+                        f"prefilter.max_report_age_days) — a backfill row, not "
+                        f"news; the daily cap must not be spent on it"
+                    )
+
         if rules.skip_unheld_sales:
             transaction = meta.get("transaction", "").lower()
             ticker = meta.get("ticker", "").upper().strip()

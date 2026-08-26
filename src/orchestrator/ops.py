@@ -140,6 +140,28 @@ class InstanceLock:
 # ================================================================================
 
 
+def first_poll_lookback_seconds(
+    last_alive: Optional[datetime],
+    now: datetime,
+    floor_seconds: int = 900,
+    ceiling_seconds: int = 86400,
+) -> int:
+    """Session-gap-sized X first-poll lookback (ruling 2026-08-26).
+
+    The fixed 15-minute window silently lost every post made between sessions
+    (~17.5h overnight). The gap since the system was last alive (the newest
+    audit record) is the honest window, floored at 15 minutes so a mid-session
+    bounce re-reads almost nothing, and capped at 24h because X bills per post
+    returned — the cap is the ruled bound on what a long-idle restart may buy.
+    A fresh data directory (no records) gets the ceiling: there is no earlier
+    session to be continuous with.
+    """
+    if last_alive is None:
+        return ceiling_seconds
+    gap = (now - last_alive).total_seconds()
+    return int(min(max(gap, floor_seconds), ceiling_seconds))
+
+
 class RunLog:
     """Append-only operational event lines. Not the audit trail; never a substitute.
 

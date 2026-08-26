@@ -25,11 +25,13 @@ reading "thinking about TSLA here".
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 import unicodedata
 from datetime import datetime
 from enum import IntEnum, StrEnum
+from pathlib import Path
 from typing import Iterable, Mapping, Optional
 
 
@@ -227,13 +229,32 @@ class SignalQueue:
 
 
 class CredibilityLog:
-    """Append-only sink for discarded retrospectives."""
+    """Append-only sink for classification discards — retrospectives, and
+    (ruling 2026-08-26) posts classified ``other``, so the fetch->emit funnel
+    is reconstructable after the fact. With a ``path`` it also persists each
+    entry as a JSON line; without one it is in-memory only (tests)."""
 
-    def __init__(self) -> None:
+    def __init__(self, path: Optional[Path] = None) -> None:
         self._records: list[CredibilityRecord] = []
+        self._path = path
+        if path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
 
     def record(self, entry: CredibilityRecord) -> None:
         self._records.append(entry)
+        if self._path is not None:
+            line = json.dumps(
+                {
+                    "source_id": entry.source_id,
+                    "observed_at": entry.observed_at.isoformat(),
+                    "external_id": entry.external_id,
+                    "reason": entry.reason,
+                    "content": entry.content,
+                },
+                ensure_ascii=False,
+            )
+            with open(self._path, "a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
 
     @property
     def records(self) -> tuple[CredibilityRecord, ...]:

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta, timezone
 from typing import Callable, Iterable, Optional, Protocol, Sequence
@@ -96,6 +97,7 @@ class Scanner(ABC):
         queue: SignalQueue,
         clock: Optional[Callable[[], datetime]] = None,
         credibility_log: Optional[CredibilityLog] = None,
+        classify_sink: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._config = config
         self._fetcher = fetcher
@@ -109,6 +111,11 @@ class Scanner(ABC):
         self.credibility_log = (
             CredibilityLog() if credibility_log is None else credibility_log
         )
+        #: Classification visibility (ruling 2026-08-26): per-poll counts of
+        #: classification verdicts, flushed to the sink (run.log CLASSIFY) so
+        #: "12 fetched, 0 emitted" and organic quiet stop looking identical.
+        self._classify_sink = classify_sink
+        self._classify_tally: Counter = Counter()
 
     @property
     def interval(self) -> timedelta:
@@ -142,7 +149,22 @@ class Scanner(ABC):
         for source in self._config.sources:
             for item in self._fetcher(source):
                 emitted.extend(self._handle(source, item, now))
+        self._flush_classify_tally()
         return emitted
+
+    def _flush_classify_tally(self) -> None:
+        """One CLASSIFY line per source per poll: the funnel between fetched
+        and emitted, persisted where a human reads it (ruling 2026-08-26)."""
+        if self._classify_tally and self._classify_sink is not None:
+            by_source: dict[str, Counter] = defaultdict(Counter)
+            for (source_id, label), count in self._classify_tally.items():
+                by_source[source_id][label] += count
+            for source_id, labels in sorted(by_source.items()):
+                rendered = " ".join(
+                    f"{label}={count}" for label, count in sorted(labels.items())
+                )
+                self._classify_sink(f"{source_id} {rendered}")
+        self._classify_tally.clear()
 
     def _enqueue(self, signal: Signal) -> Optional[Signal]:
         return signal if self._queue.put(signal) else None
@@ -197,6 +219,26 @@ class Scanner(ABC):
     ) -> list[Signal]:
         """Classify, split mixed posts, discard retrospectives."""
         result = classify_post(item.content)
+        self._classify_tally[(source.id, str(result.label))] += 1
+
+        if result.label is Classification.OTHER:
+            # Ruling 2026-08-26: "other" must leave a trace too. Before this,
+            # a post classified other vanished with no persistent record — a
+            # misclassifying rule and an organically quiet account looked
+            # identical after the fact.
+            self.credibility_log.record(
+                CredibilityRecord(
+                    source_id=source.id,
+                    observed_at=now,
+                    content=item.content,
+                    external_id=item.external_id,
+                    reason="classified other: "
+                    + (
+                        ", ".join(result.markers)
+                        or "no actionable or historical segments"
+                    ),
+                )
+            )
 
         if result.retrospective_text:
             # Logged for credibility scoring whether or not the post also called
@@ -359,14 +401,17 @@ def build_scanners(
     queue: SignalQueue,
     clock: Optional[Callable[[], datetime]] = None,
     credibility_log: Optional[CredibilityLog] = None,
+    classify_sink: Optional[Callable[[str], None]] = None,
 ) -> tuple[Class1RealtimeScanner, Class2CongressionalScanner, Class3Form13FScanner]:
     """All three scanners, wired from ``signals.yaml``."""
     return (
         Class1RealtimeScanner(
-            config.klass("class_1"), fetcher, queue, clock, credibility_log
+            config.klass("class_1"), fetcher, queue, clock, credibility_log,
+            classify_sink,
         ),
         Class2CongressionalScanner(
-            config.klass("class_2"), fetcher, queue, clock, credibility_log
+            config.klass("class_2"), fetcher, queue, clock, credibility_log,
+            classify_sink,
         ),
         Class3Form13FScanner(config.klass("class_3"), fetcher, queue, clock),
     )
