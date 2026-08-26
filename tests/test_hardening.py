@@ -673,9 +673,19 @@ def test_source_cap_rejections_do_not_seal_the_signal(tmp_path):
         "priced in",
         with_external_id("researched-row", "Purchase INTC"),
     )
+    # A failed research CALL produced no verdict: it must not seal either
+    # (the elision-400 window sealed both Pelosi BE tranches this way).
+    audit.record_stage_rejection(
+        "d4",
+        RejectedStage.RESEARCH,
+        "upstream_error",
+        "research call failed: HTTP 400",
+        with_external_id("errored-row", "Purchase BE"),
+    )
 
     seen = audit.researched_external_ids()
     assert ("congressional_disclosures", "capped-row") not in seen
+    assert ("congressional_disclosures", "errored-row") not in seen
     assert ("congressional_disclosures", "stale-row") in seen
     assert ("congressional_disclosures", "researched-row") in seen
 

@@ -1192,6 +1192,15 @@ and the fixed 15-minute X lookback silently lost all overnight posts.
    source_cap rejections — the cap must never permanently discard signals it
    didn't pay to evaluate (same exclusion the cap count itself makes). Capped
    signals re-emit at the next startup and compete for that day's slots.
+   **Disclosed deviation (pending veto): the exclusion also covers
+   `upstream_error`.** Post-deploy verification found the Pelosi Bloom Energy
+   tranches were never among the capped 268 — both died 2026-08-24 to the
+   elision-400 bug and were sealed by their upstream_error records, so the
+   ruled fix alone could not deliver the demanded research pass. A failed
+   research call produced no verdict — the same "nothing was spent" principle
+   the ruling stated. Total collateral unsealed: 7 records (4 Pelosi
+   disclosures incl. both BE tranches, 3 stale Trump posts that die free at
+   the theme prefilter or cheap at triage).
 2. **Staleness prefilter:** class-2 `max_report_age_days: 14` —
    disclosure->today staleness, distinct from the trade->disclosure lag rule.
    Steady-state report ages are 0-1 day, so it only bites backfill floods,

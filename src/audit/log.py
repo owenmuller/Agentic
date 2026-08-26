@@ -360,16 +360,21 @@ class AuditLog:
         """
         seen: set[tuple[str, str]] = set()
         for record in self.records():
-            if getattr(record, "code", None) == "source_cap":
-                # Ruling 2026-08-26: the cap must never permanently discard
-                # signals it didn't pay to evaluate. A source_cap rejection
-                # spent nothing (the same reasoning research_passes_by_source_on
-                # uses to exclude it from the cap count), so it does not seal
-                # the signal — it re-emits at the next startup and competes for
-                # that day's slots until researched, or until the staleness
-                # prefilter retires it for free. Origin: the 2026-08-26
-                # full-roster backfill capped 268 filter-survivors, sealing a
-                # $1M-5M Pelosi disclosure reported five days earlier.
+            if getattr(record, "code", None) in ("source_cap", "upstream_error"):
+                # Ruling 2026-08-26: never permanently discard a signal the
+                # system didn't pay to evaluate. Two codes qualify:
+                #   source_cap      the per-source daily cap declined to spend
+                #                   a pass (same exclusion
+                #                   research_passes_by_source_on makes).
+                #   upstream_error  the research CALL failed — an outage or a
+                #                   broken request shape produced no verdict.
+                #                   Origin: the elision-400 window sealed both
+                #                   Pelosi Bloom Energy tranches on 2026-08-24,
+                #                   hours before that fix shipped.
+                # Both re-emit at the next startup and compete for that day's
+                # slots until a verdict exists or the staleness prefilter
+                # retires them for free. Self-limiting: a successful research
+                # pass writes a sealing record.
                 continue
             signal = getattr(record, "signal", None)
             if signal is not None and signal.external_id:
