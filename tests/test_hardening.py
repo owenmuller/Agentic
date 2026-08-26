@@ -812,3 +812,214 @@ def test_the_staleness_threshold_ships_as_ruled(signals_config):
     source = signals_config.source("class_2", "congressional_disclosures")
     assert source.prefilter is not None
     assert source.prefilter.max_report_age_days == 14
+
+
+# ================================================================================
+# Dispatch weight + aged_out_capped (rulings 2026-08-26)
+# ================================================================================
+
+
+def disclosure_item(external_id, ticker, amount, report_date, lag_days="10"):
+    from signals.scanners import RawItem
+
+    return RawItem(
+        external_id=external_id,
+        content=f"disclosure {ticker} {amount} reported {report_date}",
+        published_at=NOW,
+        fields={
+            "credibility_key": "congressional_disclosures/Test Member",
+            "representative": "Test Member",
+            "chamber": "house",
+            "ticker": ticker,
+            "transaction": "Purchase",
+            "amount_range": amount,
+            "transaction_date": "2026-08-01",
+            "report_date": report_date,
+            "disclosure_lag_days": lag_days,
+        },
+    )
+
+
+def congressional_feed(*items):
+    def fetcher(source):
+        return list(items) if source.id == "congressional_disclosures" else []
+
+    return fetcher
+
+
+def test_dispatch_weights_order_as_ruled():
+    """The ruling, verbatim: a $1M-5M disclosure from 5 days ago outranks a
+    $1-15K one from today; same size -> fresher wins; same day -> larger wins."""
+    from signals.scanners import dispatch_weight_for
+
+    now = datetime(2026, 8, 26, 14, 0, tzinfo=timezone.utc)
+    big_old = dispatch_weight_for("$1,000,001 - $5,000,000", "2026-08-21", now)
+    small_fresh = dispatch_weight_for("$1,001 - $15,000", "2026-08-26", now)
+    assert big_old > small_fresh
+
+    same_size_fresher = dispatch_weight_for("$50,001 - $100,000", "2026-08-25", now)
+    same_size_staler = dispatch_weight_for("$50,001 - $100,000", "2026-08-20", now)
+    assert same_size_fresher > same_size_staler
+
+    same_day_larger = dispatch_weight_for("$500,001 - $1,000,000", "2026-08-26", now)
+    same_day_smaller = dispatch_weight_for("$15,001 - $50,000", "2026-08-26", now)
+    assert same_day_larger > same_day_smaller
+
+
+def test_dispatch_weight_fail_safes_err_toward_dispatch():
+    import math
+
+    from signals.scanners import dispatch_weight_for
+
+    now = datetime(2026, 8, 26, 14, 0, tzinfo=timezone.utc)
+    # Unparseable amount scores at the $15K prefilter floor.
+    assert dispatch_weight_for("not stated", "2026-08-26", now) == pytest.approx(
+        math.log10(15_000)
+    )
+    # A missing report date counts as age zero (the freshest).
+    assert dispatch_weight_for("$1,001 - $15,000", "", now) == pytest.approx(
+        math.log10(15_000)
+    )
+    # Everything that is not a disclosure carries weight zero by default.
+    assert signal("Tariffs are working!").dispatch_weight == 0.0
+
+
+def test_the_big_old_disclosure_dispatches_before_the_small_fresh_one(
+    tmp_path, signals_config
+):
+    """Loop-level, arrival order inverted: the $1-15K reported today arrives
+    FIRST, the $1M-5M reported five days ago arrives second — and the weight
+    dispatches the big one first anyway."""
+    from research.config import ResearchConfig
+    from risk_gate import RiskLimits
+
+    from test_orchestrator import REPORT, structured
+
+    started = build(
+        tmp_path,
+        RiskLimits.load(),
+        signals_config,
+        ResearchConfig.load(),
+        # Confidence 40: both stop at sizing (below_floor), no gate involved —
+        # this test is about ORDER, and processed order shows dispatch order.
+        llm=FakeLLM(
+            structured(
+                {**REPORT, "confidence": 40, "priced_in_analysis": "checked"}
+            )
+        ),
+        fetcher=congressional_feed(
+            disclosure_item("small-fresh", "TOST", "$1,001 - $15,000", "2026-08-17"),
+            disclosure_item(
+                "big-old", "BE", "$1,000,001 - $5,000,000", "2026-08-12"
+            ),
+        ),
+        prices=prices_of(NUE="140.00"),
+        broker=FakeBroker(),
+    )
+    report = started.loop.tick()
+    order = [result.rejection.signal.external_id for result in report.processed]
+    assert order == ["big-old", "small-fresh"]
+
+
+def test_the_weight_is_ordering_only(tmp_path, signals_config):
+    """The ordering-only invariant, explicitly: two signals identical except
+    for dispatch_weight produce byte-identical sizing and both trade — the
+    weight never reaches sizing, caps, budget, or the gate."""
+    from research.config import ResearchConfig
+    from risk_gate import RiskLimits
+
+    def run(subdir, weight):
+        started = build(
+            tmp_path / subdir,
+            RiskLimits.load(),
+            signals_config,
+            ResearchConfig.load(),
+            llm=FakeLLM(),
+            fetcher=feed(),  # nothing polls; we drive the pipeline directly
+            prices=prices_of(NUE="140.00"),
+            broker=FakeBroker(),
+        )
+        sig = Signal(
+            signal_id=f"sig-weight-{weight}",
+            source_id="nolimitgains",
+            signal_class=SignalClass.CLASS_1_REALTIME,
+            observed_at=NOW,
+            content="Loading $NUE here. Setup is live, entry: 140.20.",
+            raw_content="raw",
+            priority=Priority.ELEVATED,
+            classification=Classification.FORWARD_CALL,
+            metadata={"tickers": "NUE"},
+            dispatch_weight=weight,
+        )
+        return started.loop.pipeline.process(sig)
+
+    unweighted = run("a", 0.0)
+    heavy = run("b", 999.0)
+    assert unweighted.traded is True
+    assert heavy.traded is True
+    assert heavy.decision.sizing == unweighted.decision.sizing
+    assert heavy.decision.research.confidence == unweighted.decision.research.confidence
+
+
+def test_aged_out_capped_fires_only_after_a_prior_cap(tmp_path, signals_config):
+    """A signal that lost a slot to the cap and then ages past the staleness
+    cutoff gets aged_out_capped — the cap cost an evaluation. A never-capped
+    stale row stays plain pre_filter."""
+    from datetime import timedelta
+
+    from research.config import ResearchConfig
+    from risk_gate import RiskLimits
+
+    from test_orchestrator import REPORT, FakeClock, structured
+
+    fresh = "2026-08-15"  # 2 days old at NOW; 17 days old after the restart
+    day_one = [
+        disclosure_item(f"row-{n}", f"TK{n}", "$50,001 - $100,000", fresh)
+        for n in range(5)
+    ] + [disclosure_item("capped-me", "BE", "$50,001 - $100,000", fresh)]
+
+    llm = FakeLLM(
+        structured({**REPORT, "confidence": 40, "priced_in_analysis": "checked"})
+    )
+    first = build(
+        tmp_path,
+        RiskLimits.load(),
+        signals_config,
+        ResearchConfig.load(),
+        llm=llm,
+        fetcher=congressional_feed(*day_one),
+        prices=prices_of(NUE="140.00"),
+        broker=FakeBroker(),
+    )
+    report = first.loop.tick()
+    assert len(report.processed) == 5  # the daily cap
+    capped = [r for r in first.audit.stage_rejections() if r.code == "source_cap"]
+    assert [r.signal.external_id for r in capped] == ["capped-me"]
+
+    # Restart 15 days later: the capped row re-emits (unsealed) but is now
+    # stale; a brand-new row that is JUST as stale arrives alongside it.
+    second = build(
+        tmp_path,
+        RiskLimits.load(),
+        signals_config,
+        ResearchConfig.load(),
+        llm=llm,
+        fetcher=congressional_feed(
+            *day_one,
+            disclosure_item("stale-new", "XOM", "$50,001 - $100,000", fresh),
+        ),
+        prices=prices_of(NUE="140.00"),
+        broker=FakeBroker(),
+        clock=FakeClock(NOW + timedelta(days=15)),
+    )
+    second.loop.tick()
+
+    rejections = {
+        r.signal.external_id: r.code
+        for r in second.audit.stage_rejections()
+        if r.recorded_at >= NOW + timedelta(days=15)
+    }
+    assert rejections["capped-me"] == "aged_out_capped"
+    assert rejections["stale-new"] == "pre_filter"
+    # The five sealed by real verdicts did not re-enter at all.
+    assert set(rejections) == {"capped-me", "stale-new"}

@@ -185,14 +185,27 @@ class ResearchPreFilter:
         ``held`` is the set of currently held symbols (for the unheld-sale rule);
         ``now`` anchors the staleness rule and defaults to the wall clock.
         """
+        verdict = self.skip_verdict(signal, held=held, now=now)
+        return verdict[0] if verdict is not None else None
+
+    def skip_verdict(
+        self,
+        signal: Signal,
+        *,
+        held: Collection[str] = (),
+        now: Optional[datetime] = None,
+    ) -> Optional[tuple[str, str]]:
+        """``(reason, rule)`` or None — like ``skip_reason``, but naming which
+        rule family fired, so the loop can give a staleness kill of a
+        previously capped signal its own code (aged_out_capped, 2026-08-26)."""
         theme_reason = self._theme_reason(signal)
         if theme_reason is not None:
-            return theme_reason
+            return theme_reason, "theme"
 
         rules = self._rules.get(signal.source_id)
         if rules is None:
             return None
-        return self._rule_reason(signal, rules, held, now)
+        return self._rule_verdict(signal, rules, held, now)
 
     # -- rule families -------------------------------------------------------------
 
@@ -216,13 +229,13 @@ class ResearchPreFilter:
             f"(research_prefilter_themes)"
         )
 
-    def _rule_reason(
+    def _rule_verdict(
         self,
         signal: Signal,
         rules: PrefilterConfig,
         held: Collection[str],
         now: Optional[datetime],
-    ) -> Optional[str]:
+    ) -> Optional[tuple[str, str]]:
         meta = signal.metadata
 
         if rules.min_amount_max is not None:
@@ -232,7 +245,7 @@ class ResearchPreFilter:
                     f"amount range tops out at ${amount_max:,}, below the "
                     f"${rules.min_amount_max:,} floor (signals.yaml "
                     f"prefilter.min_amount_max) — too small to signal conviction"
-                )
+                ), "amount"
 
         if rules.max_lag_days is not None:
             lag = _parse_int(meta.get("disclosure_lag_days", ""))
@@ -241,7 +254,7 @@ class ResearchPreFilter:
                     f"disclosure lag of {lag} days exceeds the "
                     f"{rules.max_lag_days}-day cutoff (signals.yaml "
                     f"prefilter.max_lag_days) — the move is long priced in"
-                )
+                ), "lag"
 
         if rules.max_report_age_days is not None:
             report_date = _parse_date(meta.get("report_date", ""))
@@ -255,7 +268,7 @@ class ResearchPreFilter:
                         f"report-staleness cutoff (signals.yaml "
                         f"prefilter.max_report_age_days) — a backfill row, not "
                         f"news; the daily cap must not be spent on it"
-                    )
+                    ), "report_staleness"
 
         if rules.skip_unheld_sales:
             transaction = meta.get("transaction", "").lower()
@@ -267,7 +280,7 @@ class ResearchPreFilter:
                     f"hold (signals.yaml prefilter.skip_unheld_sales) — someone "
                     f"else's exit from a position we never entered is not an "
                     f"entry thesis"
-                )
+                ), "unheld_sale"
 
         if rules.max_period_age_days is not None:
             period = _parse_date(meta.get("period_of_report", ""))
@@ -280,6 +293,6 @@ class ResearchPreFilter:
                         f"days old, beyond the {rules.max_period_age_days}-day "
                         f"staleness cutoff (signals.yaml "
                         f"prefilter.max_period_age_days)"
-                    )
+                    ), "period_staleness"
 
         return None

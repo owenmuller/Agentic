@@ -99,6 +99,7 @@ class TradingLoop:
         source_caps: Optional[dict[str, int]] = None,
         source_passes: Optional[dict[str, int]] = None,
         source_pass_day: Optional[date] = None,
+        previously_capped: Optional[set[tuple[str, str]]] = None,
         budget: ResearchBudget,
         session: SessionState,
         gate: RiskGate,
@@ -120,6 +121,12 @@ class TradingLoop:
         self._source_caps = dict(source_caps or {})
         self._source_passes = dict(source_passes or {})
         self._source_pass_day = source_pass_day
+        #: Signals that lost a research slot (capped, or budget-deferred this
+        #: process). Seeded from the audit log so a restart remembers. When
+        #: the staleness rule later kills one of these, the rejection carries
+        #: code aged_out_capped instead of pre_filter: the cap cost an
+        #: evaluation, and that is a tuning signal, not routine staleness.
+        self._slot_losers: set[tuple[str, str]] = set(previously_capped or ())
         self._budget = budget
         self._session = session
         self._gate = gate
@@ -168,9 +175,19 @@ class TradingLoop:
 
         pending = self._deferred + self._queue.drain()
         self._deferred = []
-        # Class 1 first, then oldest first. Both come from the scanner, never from the
-        # content of a post.
-        pending.sort(key=lambda signal: (-int(signal.priority), signal.observed_at))
+        # Class 1 first; within a class, the dispatch weight (ruling
+        # 2026-08-26: log10(amount) - age/7, scanner-computed from structured
+        # feed fields, 0 everywhere but congressional) decides who spends
+        # limited slots first; then oldest first; ties keep arrival order
+        # (stable sort). Every key comes from the scanner or the feed's
+        # structured fields, never from the content of a post.
+        pending.sort(
+            key=lambda signal: (
+                -int(signal.priority),
+                -signal.dispatch_weight,
+                signal.observed_at,
+            )
+        )
 
         held = self._exits.held_symbols()
         dispatch_now = self._clock()
@@ -192,11 +209,29 @@ class TradingLoop:
                     self._pipeline.record_prefiltered(signal, bare, code="bare_link")
                     report.prefiltered += 1
                     continue
-                reason = self._prefilter.skip_reason(
+                verdict = self._prefilter.skip_verdict(
                     signal, held=held, now=dispatch_now
                 )
-                if reason is not None:
-                    self._pipeline.record_prefiltered(signal, reason)
+                if verdict is not None:
+                    reason, rule = verdict
+                    code = "pre_filter"
+                    if (
+                        rule == "report_staleness"
+                        and signal.external_id
+                        and (signal.source_id, signal.external_id)
+                        in self._slot_losers
+                    ):
+                        # The guillotine fell on a signal the cap (or a budget
+                        # deferral) had already turned away: the cap cost an
+                        # evaluation. Distinct code so the human tunes on it
+                        # instead of inferring it (ruling 2026-08-26).
+                        code = "aged_out_capped"
+                        reason += (
+                            " — and this signal previously lost a research "
+                            "slot to the daily cap or a budget deferral: it "
+                            "aged out unevaluated"
+                        )
+                    self._pipeline.record_prefiltered(signal, reason, code=code)
                     report.prefiltered += 1
                     continue
             # Per-source daily cap (2026-08-25): after the content rules so the
@@ -214,6 +249,10 @@ class TradingLoop:
                         f"recorded, not researched",
                         code="source_cap",
                     )
+                    if signal.external_id:
+                        self._slot_losers.add(
+                            (signal.source_id, signal.external_id)
+                        )
                     report.prefiltered += 1
                     continue
             # The triage gate: dollars (metered) but never a budget pass. A no
@@ -229,6 +268,11 @@ class TradingLoop:
             if not self._budget.try_spend():
                 # Deferred, not dropped: these are the first thing researched tomorrow.
                 self._deferred = pending[index:]
+                for waiting in self._deferred:
+                    if waiting.external_id:
+                        self._slot_losers.add(
+                            (waiting.source_id, waiting.external_id)
+                        )
                 report.deferred = len(self._deferred)
                 break
             self._source_passes[signal.source_id] = (

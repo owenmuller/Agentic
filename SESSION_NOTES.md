@@ -1220,6 +1220,37 @@ and the fixed 15-minute X lookback silently lost all overnight posts.
 5. The 08-25 18:54 restart with no STOPPED marker was the human's bounce —
    confirmed, no investigation.
 
+## Dispatch weight for cap-constrained ordering (ruling 2026-08-26)
+
+Origin: BE "re-capped at today's open" — actually the human's mid-session
+bounce re-emitting the backlog into an already-spent daily cap (the capped
+order matched the simulation exactly, BE first). The review surfaced the real
+structural gap: within a poll batch, dispatch order was feed order
+(newest-report-first), so re-emitted older signals lost to every newer
+arrival, and the 14-day guillotine could kill a starved signal unevaluated.
+
+- **`dispatch_weight = log10(amount_range_max) − report_age_days / 7`** —
+  one order of magnitude of disclosed size is worth one week of report age,
+  so a $1M-5M disclosure from 5 days ago outranks a $1-15K one from today;
+  same size → fresher wins; same day → larger wins. Computed by the class-2
+  scanner from structured feed fields (amount range, report date), NEVER
+  content; 0.0 for every other source (simple global version, per ruling).
+- Sort key: (class priority, −dispatch_weight, observed_at, arrival order).
+- **Ordering-only invariant, tested explicitly:** the weight is read exactly
+  once (the loop's dispatch sort) and cannot touch caps, sizing, budget, or
+  the gate — two signals identical except weight produce identical sizing.
+- Fail-safes err toward dispatch: unparseable amount scores at the $15K
+  prefilter floor; missing report date counts as age 0.
+- No aging boost, per ruling: the staleness guillotine bounds waiting, and
+  old small signals should lose.
+- **`aged_out_capped`:** a signal killed by the report-staleness rule that
+  previously lost a slot (source_cap, or budget-deferred this process) gets
+  its own rejection code instead of plain pre_filter — that record means the
+  cap actually cost an evaluation, a tuning signal the human reads directly.
+  Prior caps seed from the audit log across restarts (capped_external_ids);
+  prior budget-defers are known within a process only (deferrals write no
+  records, by design).
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

@@ -150,6 +150,13 @@ class Signal:
     classification: Optional[Classification] = None
     #: Structured, scanner-derived facts. Never anything parsed as a directive.
     metadata: Mapping[str, str] = field(default_factory=dict)
+    #: Cap-constrained dispatch weight (ruling 2026-08-26). ORDERING ONLY: the
+    #: loop's dispatch sort reads it exactly once to decide which admitted
+    #: signals spend limited research slots first — it can never touch caps,
+    #: sizing, the budget, or the risk gate (tested explicitly). Computed by
+    #: the scanner from structured feed fields, never from content; 0.0
+    #: everywhere except congressional disclosures.
+    dispatch_weight: float = 0.0
     #: True when construction stripped invisible codepoints from ``content``.
     sanitized: bool = False
     #: How many invisible codepoints were stripped. Recorded, not discarded:

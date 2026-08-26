@@ -381,6 +381,20 @@ class AuditLog:
                 seen.add((signal.source_id, signal.external_id))
         return seen
 
+    def capped_external_ids(self) -> set[tuple[str, str]]:
+        """(source_id, external_id) of every source_cap rejection — seeds the
+        loop's memory of signals that lost a slot, so a later staleness kill
+        can carry code aged_out_capped: the cap cost an evaluation, a tuning
+        signal the human wants visible rather than inferred (2026-08-26)."""
+        capped: set[tuple[str, str]] = set()
+        for record in self.records():
+            if getattr(record, "code", None) != "source_cap":
+                continue
+            signal = getattr(record, "signal", None)
+            if signal is not None and signal.external_id:
+                capped.add((signal.source_id, signal.external_id))
+        return capped
+
     def last_record_at(self) -> Optional[datetime]:
         """Newest ``recorded_at`` in the log — when the system was last alive.
         Sizes the X fetchers' session-gap first-poll lookback (ruling

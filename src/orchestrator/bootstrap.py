@@ -437,6 +437,7 @@ def start(
         },
         source_passes=checks.audit.research_passes_by_source_on(now.date()),
         source_pass_day=now.date(),
+        previously_capped=checks.audit.capped_external_ids(),
         budget=checks.budget,
         session=checks.session,
         gate=checks.gate,

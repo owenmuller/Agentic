@@ -24,11 +24,12 @@ interface the real ones will use.
 
 from __future__ import annotations
 
+import math
 import re
 from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Callable, Iterable, Optional, Protocol, Sequence
 from zoneinfo import ZoneInfo
 
@@ -47,6 +48,37 @@ from signals.records import (
 )
 
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
+
+_AMOUNT_NUMBERS = re.compile(r"[\d,]+")
+#: The prefilter's minimum-amount floor: what an unparseable amount scores as.
+_WEIGHT_FLOOR_DOLLARS = 15_000
+
+
+def dispatch_weight_for(amount_range: str, report_date_raw: str, now: datetime) -> float:
+    """Cap-constrained dispatch weight (ruling 2026-08-26).
+
+    ``log10(amount_range_max) - report_age_days / 7``: one order of magnitude
+    of disclosed size is worth one week of report age, so a $1M-5M disclosure
+    from five days ago outranks a $1-15K one from today, same-size signals
+    dispatch fresher-first, and same-day signals dispatch larger-first.
+
+    ORDERING ONLY — read exactly once, by the loop's dispatch sort. Computed
+    from structured feed fields (amount range, report date), never content.
+    Fail-safes err toward dispatch, matching the prefilters' fail-open
+    convention: an unparseable amount scores at the $15K prefilter floor and
+    a missing report date counts as age zero.
+    """
+    figures = [
+        int(match.replace(",", ""))
+        for match in _AMOUNT_NUMBERS.findall(str(amount_range or ""))
+    ]
+    amount_max = max(max(figures) if figures else _WEIGHT_FLOOR_DOLLARS, 1)
+    try:
+        report_date = date.fromisoformat(str(report_date_raw)[:10])
+        age_days = max((now.date() - report_date).days, 0)
+    except (TypeError, ValueError):
+        age_days = 0
+    return math.log10(amount_max) - age_days / 7
 MARKET_OPEN = time(9, 30)
 MARKET_CLOSE = time(16, 0)
 
@@ -177,6 +209,7 @@ class Scanner(ABC):
         observed_at: datetime,
         classification: Optional[Classification] = None,
         metadata: Optional[dict[str, str]] = None,
+        dispatch_weight: float = 0.0,
     ) -> Signal:
         meta = dict(item.fields) if metadata is None else dict(metadata)
         attributed = source.id
@@ -212,6 +245,7 @@ class Scanner(ABC):
             external_id=external,
             classification=classification,
             metadata=meta,
+            dispatch_weight=dispatch_weight,
         )
 
     def _handle_trade_call(
@@ -365,7 +399,18 @@ class Class2CongressionalScanner(Scanner):
             "disclosure_lag_note": "STOCK Act permits up to 45 days; evaluate from the "
             "trade date, not the disclosure date",
         }
-        signal = self._build(source, item, item.content, now, metadata=metadata)
+        signal = self._build(
+            source,
+            item,
+            item.content,
+            now,
+            metadata=metadata,
+            dispatch_weight=dispatch_weight_for(
+                item.fields.get("amount_range", ""),
+                item.fields.get("report_date", ""),
+                now,
+            ),
+        )
         enqueued = self._enqueue(signal)
         return [enqueued] if enqueued else []
 
