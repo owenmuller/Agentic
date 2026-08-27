@@ -22,6 +22,7 @@ want to be able to read during an incident.
 
 from __future__ import annotations
 
+import logging
 import uuid
 import warnings
 from datetime import datetime
@@ -53,6 +54,8 @@ from risk_gate.schema import (
     OptionBuyToOpenOrder,
     OptionSellToCloseOrder,
 )
+
+logger = logging.getLogger("execution.alpaca")
 
 PAPER_BASE_URL = "https://paper-api.alpaca.markets"
 LIVE_BASE_URL = "https://api.alpaca.markets"
@@ -153,9 +156,11 @@ class AlpacaAdapter(BrokerAdapter):
 
     # -- interface ---------------------------------------------------------------
 
-    def submit_order(self, approved: ApprovedOrder) -> OrderReceipt:
+    def submit_order(
+        self, approved: ApprovedOrder, client_reference: Optional[str] = None
+    ) -> OrderReceipt:
         approved = self._require_approved(approved)
-        payload = self.build_payload(approved)
+        payload = self.build_payload(approved, client_reference)
         data = self._request("POST", "/v2/orders", json=payload)
         return OrderReceipt(
             broker_order_id=str(data["id"]),
@@ -224,6 +229,37 @@ class AlpacaAdapter(BrokerAdapter):
         data = self._request("GET", "/v2/orders", params={"status": "open"})
         return [str(row["id"]) for row in data or []]
 
+    def get_order_by_client_reference(
+        self, client_reference: str
+    ) -> Optional[OrderStatus]:
+        """Look an order up by the client id we stamped it with. None when
+        Alpaca has no such order, or when the lookup itself failed — "cannot
+        tell" must never be recorded as "did not fill"."""
+        try:
+            data = self._request(
+                "GET",
+                "/v2/orders:by_client_order_id",
+                params={"client_order_id": _client_order_id(client_reference)},
+            )
+        except BrokerError as error:
+            logger.warning(
+                "order lookup by client reference %s failed: %s",
+                client_reference,
+                error,
+            )
+            return None
+        if not isinstance(data, dict):
+            return None
+        raw_price = data.get("filled_avg_price")
+        return OrderStatus(
+            broker_order_id=str(data.get("id", "")),
+            status=str(data.get("status", "unknown")),
+            filled_quantity=Decimal(str(data.get("filled_qty", "0"))),
+            filled_avg_price=(
+                Decimal(str(raw_price)) if raw_price not in (None, "") else None
+            ),
+        )
+
     def get_order(self, broker_order_id: str) -> OrderStatus:
         data = self._request("GET", f"/v2/orders/{broker_order_id}")
         raw_price = data.get("filled_avg_price")
@@ -241,7 +277,9 @@ class AlpacaAdapter(BrokerAdapter):
 
     # -- translation ---------------------------------------------------------------
 
-    def build_payload(self, approved: ApprovedOrder) -> dict[str, Any]:
+    def build_payload(
+        self, approved: ApprovedOrder, client_reference: Optional[str] = None
+    ) -> dict[str, Any]:
         """Turn a gate-approved order into an Alpaca order payload.
 
         Public because the payload is worth asserting on in tests and worth logging
@@ -289,7 +327,16 @@ class AlpacaAdapter(BrokerAdapter):
             "type": "limit",
             "time_in_force": self.time_in_force,
             "limit_price": str(limit_price),
-            "client_order_id": f"agentic-{self._launch_token}-{approved.sequence}",
+            # With a client_reference (the decision id, for entries) the id is
+            # DERIVABLE FROM THE AUDIT LOG, which is what lets the next process
+            # ask the broker what happened to an order this one never settled.
+            # Without one (exits, which record their broker id at submission)
+            # the launch token keeps ids unique across restarts.
+            "client_order_id": (
+                _client_order_id(client_reference)
+                if client_reference
+                else f"agentic-{self._launch_token}-{approved.sequence}"
+            ),
         }
 
     # -- plumbing ------------------------------------------------------------------
@@ -322,6 +369,12 @@ class AlpacaAdapter(BrokerAdapter):
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+
+def _client_order_id(client_reference: str) -> str:
+    """The venue-visible id for a durable reference. One function, so the
+    stamp and the lookup can never drift apart."""
+    return f"agentic-{client_reference}"
 
 
 def _quantity_str(quantity: object) -> str:

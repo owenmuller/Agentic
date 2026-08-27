@@ -419,6 +419,30 @@ class CostMeter:
                 )
 
 
+def _pending_settlement_items(checks):
+    from orchestrator.recovery import pending_settlement
+
+    return pending_settlement(checks.audit)
+
+
+def _pending_lines(checks) -> list[str]:
+    """Pending settlement is not unmanaged exposure (2026-08-27). An order
+    approved (or submitted) whose fill is not yet recorded is a transient — a
+    snapshot taken mid-flight, or a broker that could not be asked at startup.
+    A line that KEEPS appearing is the actionable one: recovery could not
+    resolve it, and a human should look at the venue."""
+    pending = _pending_settlement_items(checks)
+    if not pending:
+        return []
+    lines = [
+        f"pending settlement: {len(pending)} order(s) approved with no fill "
+        f"recorded — transient mid-flight; persistent means recovery could not "
+        f"reach the venue",
+    ]
+    lines.extend(f"  - {item.describe()}" for item in pending[:10])
+    return lines
+
+
 def _mechanical_line(checks, state) -> str:
     """The mechanical sleeve's daily line (ruling 2026-08-27): open slots,
     exposure, and — the part that must reach a human — the circuit breaker."""
@@ -490,12 +514,24 @@ def health_report(
         tracked, key=lambda item: item.decision_id
     ))
 
-    unmanaged = unmanaged_exposure(checks.gate, tracked)
+    # Pending settlement is computed first and EXCLUDED from unmanaged: a
+    # position whose fill simply has not been recorded yet has an audit trail,
+    # and calling it "no audit trail — needs a human" is a false alarm
+    # (2026-08-27). What is left in unmanaged is the real thing: exposure
+    # nothing in the log accounts for at all.
+    pending = _pending_lines(checks)
+    pending_symbols = {
+        item.symbol for item in _pending_settlement_items(checks)
+    }
+    unmanaged = unmanaged_exposure(
+        checks.gate, tracked, pending_symbols=pending_symbols
+    )
     for symbol, quantity in sorted(unmanaged.items()):
         lines.append(
             f"  UNMANAGED  {symbol:<6} {quantity:>6} units held at the broker with "
             f"no audit trail — NO STOPS ARMED; needs a human"
         )
+    lines.extend(pending)
 
     last_poll = run_log.last("POLL")
     last_start = run_log.last("STARTED")

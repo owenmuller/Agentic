@@ -1332,6 +1332,52 @@ sleeve-level circuit breaker).
 - Suite green throughout; judged-sleeve tests recalibrated to the 75% sleeve
   (13 shares where 17 were, 1,875 where 2,500 was, etc.).
 
+## Day-one mechanical incident + the three fixes (2026-08-27)
+
+**The reported defect was not one.** Health showed 4 unmanaged positions,
+"0 positions / ledger unseeded", and deployed-today $3,333 — all from a
+snapshot taken in the ~30s window between the broker filling four mechanical
+orders (17:53:23) and the loop's settle tick (17:53:53). Records were complete
+throughout (4 DecisionRecords + 4 FillRecords, $3,287.05 matching the cash
+delta); a fresh process attributes all four to the mechanical sleeve with the
+ledger correct. The apparent contradiction is the fingerprint:
+`mechanical_deployed_today` replays from APPROVALS, positions/ledger from
+FILLS. Steady state agrees; mid-flight does not.
+
+**The real latent bug it revealed:** a process dying inside that window leaves
+an approved decision with no fill — so every fill-keyed replay skips it (no
+stop, no time exit, ledger blind) while the broker holds the shares. Small
+window, permanent consequence. Three fixes shipped:
+
+1. **Startup settlement recovery** (`orchestrator/recovery.py`, runs in
+   preflight before state is seeded, both sleeves). Entry orders now carry a
+   durable `client_reference` = their decision id (the old client_order_id
+   embedded a per-process launch token — unreconstructable after a crash);
+   exits already log their broker order id. At startup every unfinished order
+   is asked about: terminal+filled → write the missing FillRecord (+ partial
+   note); terminal+unfilled → write the release; still working → left to the
+   existing orphan sweep; **no answer → left untouched, loudly** — "cannot
+   tell" is never recorded as "did not fill". The gate is NOT re-settled: it
+   seeds from broker cash/positions, which already include the fill.
+   `MechanicalEngine.replay` reconstructs an unseeded ledger as
+   allocation-minus-spent for the crash case.
+2. **Pending settlement vs unmanaged** (health): an approved order with no
+   recorded fill now renders under its own heading and is EXCLUDED from
+   unmanaged exposure — a mid-flight snapshot reads as transient, and a line
+   that persists across startups is the actionable alarm (recovery could not
+   reach the venue).
+3. **`entries_enabled` switches** for both arms (`equity_sleeve` and
+   `mechanical_sleeve` in risk_limits.yaml). False stops new opening orders at
+   dispatch — judged signals are recorded (`entries_disabled`) with NO research
+   bought, mechanical qualifiers are recorded (`mechanical_disabled`) — while
+   exits and time exits keep firing. Neither code seals a signal, so backlogs
+   return when the switch goes back on. This exists because halting an arm
+   previously meant editing allocation weights or racing a running process's
+   session_state.json writes.
+
+Also fixed: `logger` was used but never defined in execution/alpaca.py — a
+latent NameError on the `tradeable_equity` failure paths.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

@@ -138,6 +138,8 @@ class FakeBroker(BrokerAdapter):
         self.submit_error = submit_error
         self.fill = fill
         self.submitted: list[OrderReceipt] = []
+        #: client_reference -> broker order id, for settlement recovery.
+        self.by_client_reference: dict[str, str] = {}
         self.payloads: list[dict] = []
         self.cancelled: list[str] = []
         self._statuses: dict[str, OrderStatus] = {}
@@ -148,7 +150,7 @@ class FakeBroker(BrokerAdapter):
             margin_multiplier=Decimal("1"),
         )
 
-    def submit_order(self, approved) -> OrderReceipt:
+    def submit_order(self, approved, client_reference=None) -> OrderReceipt:
         approved = self._require_approved(approved)
         if self.submit_error is not None:
             raise self.submit_error
@@ -164,8 +166,14 @@ class FakeBroker(BrokerAdapter):
             symbol=order.symbol,
             quantity=Decimal(quantity),
             limit_price=price,
-            client_order_id=f"agentic-{approved.sequence}",
+            client_order_id=(
+                f"agentic-{client_reference}"
+                if client_reference
+                else f"agentic-{approved.sequence}"
+            ),
         )
+        if client_reference:
+            self.by_client_reference[client_reference] = order_id
         self.submitted.append(receipt)
         self.payloads.append(
             {"symbol": order.symbol, "qty": quantity, "limit_price": price}
@@ -196,6 +204,10 @@ class FakeBroker(BrokerAdapter):
 
     def get_order(self, broker_order_id: str) -> OrderStatus:
         return self._statuses[broker_order_id]
+
+    def get_order_by_client_reference(self, client_reference: str):
+        order_id = self.by_client_reference.get(client_reference)
+        return self._statuses.get(order_id) if order_id else None
 
     def cancel_order(self, broker_order_id: str) -> None:
         self.cancelled.append(broker_order_id)

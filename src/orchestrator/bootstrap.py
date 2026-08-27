@@ -54,6 +54,7 @@ from orchestrator.loop import TradingLoop
 from orchestrator.mechanical import MechanicalEngine
 from orchestrator.pipeline import PriceSource, SignalPipeline
 from orchestrator.prefilter import ResearchPreFilter
+from orchestrator.recovery import recover_unsettled_orders
 from orchestrator.state import (
     SessionState,
     replay_deployed_today,
@@ -144,6 +145,8 @@ class Startup:
     #: layer's outcomes, and the audit log (hit-rate resolution).
     credibility: CredibilityTracker
     preflight: Preflight
+    #: The mechanical arm, or None when its sleeve weight is zero.
+    mechanical: object = None
 
     @property
     def gate(self) -> RiskGate:
@@ -232,6 +235,13 @@ def preflight(
         path=directory / "audit.jsonl", clock=now_fn, id_factory=id_factory
     )
     session = SessionState.load(directory / "session_state.json")
+
+    # 4a. Settlement recovery (2026-08-27), BEFORE anything reads the log for
+    # state: an order that filled while the previous process died is a position
+    # the account holds and the log does not know about, and every replay below
+    # keys on fills. Asking the broker is the only way to close that window.
+    for line in recover_unsettled_orders(audit, adapter):
+        logger.warning("SETTLEMENT RECOVERY: %s", line)
 
     decisions = audit.decisions()
     account = seed_account_state(
@@ -488,5 +498,10 @@ def start(
         sleeper=sleeper,
     )
     return Startup(
-        loop=loop, queue=queue, exits=exits, credibility=credibility, preflight=checks
+        loop=loop,
+        queue=queue,
+        exits=exits,
+        credibility=credibility,
+        mechanical=mechanical,
+        preflight=checks,
     )

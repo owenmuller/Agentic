@@ -51,7 +51,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
-from typing import Iterable, Optional
+from typing import Collection, Iterable, Optional
 
 from audit.log import AuditLog
 from audit.records import AuditTrail, ExitReason, ReviewOutcome
@@ -774,7 +774,9 @@ class ExitEngine:
 
 
 def unmanaged_exposure(
-    gate: RiskGate, tracked: "Iterable[TrackedPosition]"
+    gate: RiskGate,
+    tracked: "Iterable[TrackedPosition]",
+    pending_symbols: "Collection[str]" = (),
 ) -> dict[str, int]:
     """Equity units the gate holds that no tracked position accounts for.
 
@@ -783,6 +785,10 @@ def unmanaged_exposure(
     account. The exit engine will not invent a thesis for it, so it is surfaced for a
     human instead: close it manually, or accept that it is unprotected.
     """
+    # Symbols with an approved order whose fill is not yet recorded are
+    # PENDING, not unmanaged (2026-08-27): they have a trail, it just has not
+    # caught up. Health reports them under their own heading.
+    pending = {symbol.upper() for symbol in pending_symbols}
     covered: dict[str, int] = {}
     for position in tracked:
         covered[position.symbol] = covered.get(position.symbol, 0) + position.quantity
@@ -794,6 +800,8 @@ def unmanaged_exposure(
         if key[0] not in ("equity", "option") or held.quantity <= 0:
             continue
         symbol = key[1]
+        if symbol.upper() in pending:
+            continue
         excess = held.quantity - covered.get(symbol, 0)
         if excess > 0:
             unmanaged[symbol] = excess

@@ -252,6 +252,20 @@ class TradingLoop:
                     self._pipeline.record_prefiltered(signal, reason, code=code)
                     report.prefiltered += 1
                     continue
+            # The judged arm's off switch (2026-08-27). Before triage and the
+            # budget: an arm that cannot open a position must not spend a
+            # dollar deciding what it would have opened. Recorded, never
+            # sealed — the backlog re-emits when it is switched back on.
+            if not self._gate.limits.equity_sleeve.entries_enabled:
+                self._pipeline.record_prefiltered(
+                    signal,
+                    "judged entries are switched off in risk_limits.yaml "
+                    "(equity_sleeve.entries_enabled); recorded, not researched, "
+                    "and exits keep running",
+                    code="entries_disabled",
+                )
+                report.prefiltered += 1
+                continue
             # Per-source daily cap (2026-08-25): after the content rules so the
             # rejection code stays precise, before triage so a capped source
             # spends nothing further today.

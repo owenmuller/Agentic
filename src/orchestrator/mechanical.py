@@ -204,6 +204,16 @@ class MechanicalEngine:
                 )
                 continue
             mechanical = decision.mechanical
+            if self._virtual_cash is None:
+                # The ledger anchors at the sleeve allocation on the first
+                # settled entry. If the process that filled this one died
+                # before settling it, that anchor never happened and startup
+                # recovery wrote the fill instead — so reconstruct what the
+                # ledger would have held: the allocation, less what was spent.
+                self._virtual_cash = self._gate.sleeve_nav(Sleeve.MECHANICAL)
+                self._reconstructed_ledger = True
+            if getattr(self, "_reconstructed_ledger", False):
+                self._virtual_cash -= sum((f.filled_value for f in buys), ZERO)
             self._tracked[decision.decision_id] = MechanicalPosition(
                 decision_id=decision.decision_id,
                 symbol=symbol,
@@ -281,6 +291,13 @@ class MechanicalEngine:
         return False
 
     def _capacity_block(self, signal: Signal) -> Optional[tuple[str, str]]:
+        if not self._caps.entries_enabled:
+            return (
+                "mechanical_disabled",
+                "mechanical entries are switched off in risk_limits.yaml "
+                "(mechanical_sleeve.entries_enabled); held positions ride and "
+                "time exits still fire",
+            )
         if self._halted:
             return (
                 "mechanical_halted",
@@ -384,7 +401,9 @@ class MechanicalEngine:
             return 0
 
         try:
-            receipt = self._adapter.submit_order(decision)
+            receipt = self._adapter.submit_order(
+                decision, client_reference=record.decision_id
+            )
         except BrokerError as error:
             self._gate.cancel(decision)
             self._audit.record_stage_rejection(

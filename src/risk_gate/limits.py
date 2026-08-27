@@ -67,6 +67,12 @@ class AccountLimits(_Strict):
 
 
 class EquitySleeveLimits(_Strict):
+    #: Operational off switch for the JUDGED arm (2026-08-27): false stops new
+    #: opening orders at dispatch — signals are still fetched and recorded, no
+    #: research is bought, and exits keep running. Config-level, so halting an
+    #: arm never means editing allocation weights or timing a file write
+    #: against a running process.
+    entries_enabled: bool = True
     max_single_position: Fraction
     max_daily_deployment: Fraction
     max_options_premium_at_risk: Fraction
@@ -113,6 +119,11 @@ class MechanicalSleeveLimits(_Strict):
     #: Stamped on every mechanical entry record so attribution can partition
     #: history across rule changes.
     ruleset_version: str
+    #: Operational off switch for the MECHANICAL arm (2026-08-27): false stops
+    #: new entries with code ``mechanical_disabled`` while time exits keep
+    #: firing and held positions ride. Distinct from the breaker, which is the
+    #: sleeve's own drawdown halt.
+    entries_enabled: bool = True
 
 
 class KillSwitchLimits(_Strict):

@@ -191,8 +191,16 @@ class BrokerAdapter(ABC):
         return True
 
     @abstractmethod
-    def submit_order(self, approved: ApprovedOrder) -> OrderReceipt:
-        """Send a gate-approved order. Only an ``ApprovedOrder`` is accepted."""
+    def submit_order(
+        self, approved: ApprovedOrder, client_reference: Optional[str] = None
+    ) -> OrderReceipt:
+        """Send a gate-approved order. Only an ``ApprovedOrder`` is accepted.
+
+        ``client_reference`` (2026-08-27) is a durable id the caller can later
+        use to ask what happened to this order — entries pass their decision
+        id, which is in the audit log, so a crash between fill and settle is
+        recoverable at the next startup.
+        """
 
     @abstractmethod
     def get_positions(self) -> list[BrokerPosition]:
@@ -229,6 +237,21 @@ class BrokerAdapter(ABC):
     @abstractmethod
     def cancel_order(self, broker_order_id: str) -> None:
         """Cancel a working order. Idempotent from the caller's point of view."""
+
+    def get_order_by_client_reference(
+        self, client_reference: str
+    ) -> Optional[OrderStatus]:
+        """The order this process (or a previous one) submitted under
+        ``client_reference``, or None when the venue has no such order — or
+        cannot be asked (2026-08-27).
+
+        This is what makes startup settlement recovery possible: an entry order
+        is stamped with its decision id, which lives in the audit log, so a
+        process that died between a broker fill and its own settle tick can be
+        reconstructed by the NEXT process. Default None = unsupported, and
+        recovery then does nothing rather than guessing.
+        """
+        return None
 
     @staticmethod
     def _require_approved(candidate: object) -> ApprovedOrder:

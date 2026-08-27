@@ -167,7 +167,8 @@ class AuditLog:
         stage: RejectedStage,
         code: str,
         message: str,
-        signal: Signal,
+        signal: Optional[Signal] = None,
+        signal_snapshot: Optional[SignalSnapshot] = None,
         report: Optional[ResearchReport] = None,
         proposal: Optional[SizedProposal] = None,
         usage: Optional[ResearchUsage] = None,
@@ -187,7 +188,14 @@ class AuditLog:
             stage=stage,
             code=code,
             message=message,
-            signal=SignalSnapshot.of(signal),
+            # A snapshot may be supplied directly (startup recovery replays a
+            # record whose Signal object is long gone); rebuilding one from a
+            # reconstructed Signal would silently drop fields.
+            signal=(
+                signal_snapshot
+                if signal_snapshot is not None
+                else SignalSnapshot.of(signal)  # type: ignore[arg-type]
+            ),
             research=ResearchSnapshot.of(report) if report is not None else None,
             sizing=SizingSnapshot.of(proposal) if proposal is not None else None,
             expression=expression,
@@ -419,6 +427,8 @@ class AuditLog:
                 "upstream_error",
                 "mechanical_capacity",
                 "mechanical_halted",
+                "mechanical_disabled",
+                "entries_disabled",
             ):
                 # Ruling 2026-08-26: never permanently discard a signal the
                 # system didn't pay to evaluate. Two codes qualify:

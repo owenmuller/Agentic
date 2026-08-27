@@ -32,6 +32,11 @@ portfolio:
   rebalance: weekly_at_next_session_open
 
 equity_sleeve:
+  # Operational off switch (2026-08-27): false stops NEW judged entries at
+  # dispatch — signals still arrive and are recorded, no research is bought,
+  # exits keep running. Halting an arm must never require editing allocation
+  # weights or writing to session_state.json while the process is up.
+  entries_enabled: true
   max_single_position: 0.05 # of sleeve NAV
   max_daily_deployment: 0.15 # of sleeve NAV, per trading day
   max_options_premium_at_risk: 0.20 # aggregate open premium, of equity sleeve
@@ -91,6 +96,9 @@ mechanical_sleeve:
   hold_days: 365 # time exit only — no price stop; the stop IS the slice size
   drawdown_halt_fraction: 0.25 # sleeve circuit breaker vs its OWN high-water mark
   ruleset_version: "2026-08-27.1"
+  # Operational off switch: false stops new mechanical entries
+  # (code mechanical_disabled) while time exits still fire.
+  entries_enabled: true
 
 prediction_sleeve:
   arbitrage:

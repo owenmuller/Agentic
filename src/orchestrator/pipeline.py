@@ -419,7 +419,9 @@ class SignalPipeline:
         # 5. The broker.
         approved: ApprovedOrder = decision
         try:
-            receipt = self._adapter.submit_order(approved)
+            receipt = self._adapter.submit_order(
+                approved, client_reference=decision_id
+            )
         except BrokerError as error:
             # Release what the approval reserved. Without this the cash stays committed
             # to an order that does not exist anywhere.
