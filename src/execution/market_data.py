@@ -270,10 +270,11 @@ class MarketContextBuilder:
     """Deterministic market context for research prompts. Zero LLM cost.
 
     Pure arithmetic over daily bars: recent price change, distance from the
-    52-week high, current volume against its 20-day average, and — when a
-    provider is configured — days until the next earnings date. Missing data
-    degrades to a sentence saying so; the pass always proceeds, and nothing is
-    ever fabricated to fill a gap.
+    52-week high, distance from the 200-day moving average with the
+    consecutive-sessions-below streak (2026-08-26), current volume against its
+    20-day average, and — when a provider is configured — days until the next
+    earnings date. Missing data degrades to a sentence saying so; the pass
+    always proceeds, and nothing is ever fabricated to fill a gap.
     """
 
     #: At most this many tickers get context — a many-ticker signal gets the
@@ -352,6 +353,38 @@ class MarketContextBuilder:
         high = max(closes)
         from_high = ((last / high - 1) * 100).quantize(Decimal("0.01"))
         lines.append(f"- vs 52-week high ({high}): {from_high:+.2f}%")
+
+        # 200-day moving average (2026-08-26): distance, and how long the
+        # price has sat below it — one number for how far, one for how
+        # persistent. Same discipline as every other line: pure arithmetic
+        # over the bars already fetched, "unavailable" when history is short.
+        if len(closes) >= 200:
+
+            def average_at(index: int) -> Decimal:
+                return sum(closes[index - 199 : index + 1], ZERO) / Decimal(200)
+
+            dma = average_at(len(closes) - 1)
+            from_dma = ((last / dma - 1) * 100).quantize(Decimal("0.01"))
+            lines.append(
+                f"- vs 200-day moving average ({dma.quantize(Decimal('0.01'))}): "
+                f"{from_dma:+.2f}%"
+            )
+            below = 0
+            index = len(closes) - 1
+            while index >= 199 and closes[index] < average_at(index):
+                below += 1
+                index -= 1
+            streak = str(below)
+            if below > 0 and index < 199:
+                # Every computable window was below: the true streak extends
+                # past the fetched history, and the line must not understate
+                # that as an exact count.
+                streak = f"{below}+ (fetched-history limit)"
+            lines.append(f"- consecutive sessions below the 200-DMA: {streak}")
+        else:
+            lines.append(
+                "- vs 200-day moving average: unavailable (insufficient history)"
+            )
 
         if len(volumes) >= 21:
             window = volumes[-21:-1]

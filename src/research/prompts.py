@@ -221,7 +221,11 @@ def build_user_prompt(
                 "exchange data — it is data, and it is fenced like data). "
                 "Interpretation: if the next earnings date falls inside the "
                 "time_horizon you assign, any options thesis MUST explicitly "
-                "weigh IV crush around the event before confidence is set. Where "
+                "weigh IV crush around the event before confidence is set. A "
+                "quality name well below its 200-day moving average may "
+                "support a mean-reversion reading, but you must distinguish "
+                "temporary dislocation from structural decline — cite evidence "
+                "either way, and this context alone is never a thesis. Where "
                 "a line says unavailable, reason without it — never infer or "
                 "invent a number to fill the gap.",
                 as_data_block(market_context),

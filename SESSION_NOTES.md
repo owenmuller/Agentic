@@ -1251,6 +1251,18 @@ arrival, and the 14-day guillotine could kill a starved signal unevaluated.
   prior budget-defers are known within a process only (deferrals write no
   records, by design).
 
+## Market context: 200-DMA distance + below-streak (2026-08-26)
+
+Two new lines in the deterministic market-context block, pure arithmetic over
+the daily bars already fetched (zero LLM cost, data-fenced as always):
+distance from the 200-day moving average (%) and consecutive sessions below
+it. A streak that runs past fetched history renders as "N+ (fetched-history
+limit)", never an understated exact count; under 200 sessions of history
+renders "unavailable". Prompt guidance added beside the IV-crush note: a
+quality name well below its 200-DMA may support a mean-reversion reading,
+but the model must distinguish temporary dislocation from structural decline
+— cite evidence either way, and this context alone is never a thesis.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

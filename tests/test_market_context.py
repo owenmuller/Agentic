@@ -214,3 +214,70 @@ def test_the_pass_threads_the_context_into_the_prompt():
     )
     research.run(context_signal())
     assert "CTX-SENTINEL" in llm.calls[0]["user"]
+
+
+# ================================================================================
+# 200-day moving average: distance and the below-it streak (2026-08-26)
+# ================================================================================
+
+
+def test_the_200dma_distance_is_exact_arithmetic():
+    """rich_history: last 200 closes sum to 20,382 -> 200-DMA 101.91; the last
+    close 132 sits +29.53% above it, so the below-streak is zero."""
+    builder = MarketContextBuilder(
+        AlpacaDailyBars(client=bars_client({"NUE": daily(rich_history())})),
+        clock=lambda: NOW,
+    )
+    block = builder.context_for(context_signal())
+    assert "vs 200-day moving average (101.91): +29.53%" in block
+    assert "consecutive sessions below the 200-DMA: 0" in block
+
+
+def test_the_below_streak_counts_and_stops_at_the_first_close_at_or_above():
+    """200 flat sessions at 100, then three at 80: the three closes are below
+    their contemporaneous 200-DMAs; the fourth-back closed exactly AT its
+    average, which is not below, so the streak is exactly 3."""
+    closes = [100.0] * 200 + [80.0] * 3
+    builder = MarketContextBuilder(
+        AlpacaDailyBars(client=bars_client({"NUE": daily(closes)})),
+        clock=lambda: NOW,
+    )
+    block = builder.context_for(context_signal())
+    assert "vs 200-day moving average (99.70): -19.76%" in block
+    assert "consecutive sessions below the 200-DMA: 3" in block
+    assert "3+" not in block  # an exact count, not a history-limited one
+
+
+def test_a_streak_running_past_fetched_history_says_so():
+    """A strictly declining series is below its average at every computable
+    window — the line must say at-least, never an understated exact count."""
+    closes = [200.0 - index * 0.1 for index in range(210)]
+    builder = MarketContextBuilder(
+        AlpacaDailyBars(client=bars_client({"NUE": daily(closes)})),
+        clock=lambda: NOW,
+    )
+    block = builder.context_for(context_signal())
+    # 210 closes give 11 computable 200-session windows, all below.
+    assert "consecutive sessions below the 200-DMA: 11+ (fetched-history limit)" in block
+
+
+def test_short_history_renders_the_200dma_unavailable():
+    builder = MarketContextBuilder(
+        AlpacaDailyBars(client=bars_client({"NUE": daily([100.0] * 150)})),
+        clock=lambda: NOW,
+    )
+    block = builder.context_for(context_signal())
+    assert "vs 200-day moving average: unavailable (insufficient history)" in block
+    assert "consecutive sessions below" not in block
+
+
+def test_the_prompt_carries_the_mean_reversion_guidance_with_context_only():
+    prompt = build_user_prompt(
+        context_signal(), market_context="NUE: last close 132"
+    )
+    assert "mean-reversion" in prompt
+    assert "temporary dislocation from structural decline" in prompt
+    assert "this context alone is never a thesis" in prompt
+
+    without = build_user_prompt(context_signal())
+    assert "mean-reversion" not in without
