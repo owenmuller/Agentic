@@ -185,6 +185,31 @@ def test_the_prompt_tells_lagged_classes_the_field_is_mandatory():
     assert "congressional" not in call_prompt
 
 
+def test_lag_framing_requires_measurement_not_suspicion():
+    """Reframe ruling 2026-08-27: lag alone is never disqualifying — a lagged
+    signal is declined for DEMONSTRATED priced-in movement, and the question
+    is whether entry at the CURRENT price retains the expected value."""
+    from research.prompts import SYSTEM_PROMPT
+
+    assert "not for elapsed time per se" in SYSTEM_PROMPT
+    assert "a move that has NOT happened may still be one" in SYSTEM_PROMPT
+
+    disclosure = build_user_prompt(
+        signal(signal_class=SignalClass.CLASS_2_MOMENTUM, classification=None)
+    )
+    assert "Lag alone is not disqualifying" in disclosure
+    assert "entry at the CURRENT price retains the thesis's expected value" in disclosure
+    assert "DEMONSTRATED priced-in movement" in disclosure
+    assert "measurement, not suspicion" in disclosure
+
+    filing = build_user_prompt(signal(signal_class=SignalClass.CLASS_3_THESIS))
+    assert "Staleness alone is not disqualifying" in filing
+    assert "measurement, not suspicion" in filing
+
+    call = build_user_prompt(signal(signal_class=SignalClass.CLASS_2_MOMENTUM))
+    assert "the delay alone is not disqualifying" in call
+
+
 # ================================================================================
 # Malformed output — rejected once, never retried
 # ================================================================================

@@ -64,9 +64,12 @@ assign confidence on the strength of your own analysis. If a claim cannot be che
 that is itself evidence about how much weight it deserves.
 
 For signals carrying disclosure lag — congressional trades disclosed up to 45 days \
-after execution, 13F filings reporting quarter-end positions 45 days later — reason \
-about what has already been priced in since the underlying EVENT, not since it was \
-published. A move that has already happened is not an opportunity.
+after execution, 13F filings reporting quarter-end positions 45 days later — MEASURE \
+what has already been priced in since the underlying EVENT, not since it was \
+published. A move that has already happened is not an opportunity; a move that has \
+NOT happened may still be one. Lag is a fact to measure, never a verdict by itself: \
+a lagged signal is declined for demonstrated priced-in movement, not for elapsed \
+time per se.
 
 Be calibrated rather than agreeable. Most signals do not justify a trade, and a low \
 confidence score is a useful, correct answer. Confidence below 55 results in no \
@@ -93,15 +96,25 @@ _CLASS_GUIDANCE = {
     ),
     SignalClass.CLASS_2_MOMENTUM: (
         "This is a congressional disclosure. The STOCK Act permits up to 45 days "
-        "between the trade and its disclosure. priced_in_analysis is MANDATORY: state "
-        "what has moved since the trade date. A report without it is discarded."
+        "between the trade and its disclosure, and the market context includes the "
+        "measured price change since the trade date — assess that number, do not "
+        "re-derive it. priced_in_analysis is MANDATORY, and it must demonstrate "
+        "measurement, not suspicion: the question is whether entry at the CURRENT "
+        "price retains the thesis's expected value. Lag alone is not disqualifying — "
+        "a name that has not moved materially since the insider's trade may retain "
+        "full edge regardless of elapsed days. Decline for DEMONSTRATED priced-in "
+        "movement, never for elapsed time per se. A report without the analysis is "
+        "discarded."
     ),
     SignalClass.CLASS_3_THESIS: (
         "This is a 13F filing: quarterly, reported ~45 days after quarter end, longs "
         "only, with no visibility into exits since. Use it for directional conviction "
-        "and sector weighting, never for timing. priced_in_analysis is MANDATORY: "
-        "state what has moved since the reporting period. A report without it is "
-        "discarded."
+        "and sector weighting, never for timing. priced_in_analysis is MANDATORY, "
+        "and it must demonstrate measurement, not suspicion: assess what has "
+        "actually moved since the reporting period and whether entry at the CURRENT "
+        "price retains the thesis's expected value. Staleness alone is not "
+        "disqualifying; demonstrated priced-in movement is. A report without the "
+        "analysis is discarded."
     ),
 }
 
@@ -175,9 +188,11 @@ def build_user_prompt(
         guidance = (
             "This is a trade call from an X account polled hourly — medium "
             "latency, not real time. The call may be hours old by the time you "
-            "read it. priced_in_analysis is MANDATORY: state what has moved in "
-            "the named instrument since the post was published. A report "
-            "without it is discarded."
+            "read it. priced_in_analysis is MANDATORY: measure what has moved "
+            "in the named instrument since the post was published, and assess "
+            "whether entry at the CURRENT price retains the setup's expected "
+            "value — the delay alone is not disqualifying; demonstrated "
+            "priced-in movement is. A report without it is discarded."
         )
     lines.extend(["", guidance])
 
