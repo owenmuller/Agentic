@@ -153,6 +153,56 @@ def build_verification_prompt(user_prompt: str, screen_report) -> str:
     return user_prompt + "\n\n" + "\n".join(draft_lines)
 
 
+def _disclosed_instrument_lines(signal: Signal) -> list[str]:
+    """The instrument a disclosure names, and how to weigh it (2026-08-27).
+
+    Only normalised extractions cross the fence — a word, a number, a date. The
+    filing's own prose stays inside the content block with everything else the
+    filer wrote.
+
+    The guidance exists because "Purchase" hid a distinction that changes the
+    reading entirely, and because the obvious inference from it is wrong: an
+    expiry looks like a deadline the filer has committed to, but a deadline is
+    not an event, and the long-dated deep-ITM calls that dominate these filings
+    are the least timing-like instrument on the chain.
+    """
+    if signal.metadata.get("instrument") != "option":
+        return []
+    unstated = "not stated by the filing"
+    strike = signal.metadata.get("option_strike")
+    return [
+        "",
+        "DISCLOSED INSTRUMENT (extracted by the system from the filing's "
+        "structured fields; the filer's own wording is in the content block "
+        "below):",
+        "- instrument: option",
+        f"- side: {signal.metadata.get('option_side') or unstated}",
+        f"- strike: {'$' + strike if strike else unstated}",
+        f"- expiry: {signal.metadata.get('option_expiry') or unstated}",
+        f"- contracts: {signal.metadata.get('option_contracts') or unstated}",
+        "HOW TO WEIGH IT. The instrument is evidence about the filer's "
+        "conviction and their own view of timing. It is not a recommendation, "
+        "and it is not a catalyst. A SHORT-DATED option is a timing claim you "
+        "may weigh — while noting it is also the claim most likely to have "
+        "decayed, or expired outright, in the weeks between the trade and its "
+        "disclosure. A LONG-DATED, DEEP-IN-THE-MONEY call is the opposite of a "
+        "timing claim: it is stock replacement — a high-delta, low-extrinsic "
+        "way to hold the underlying with less capital — and it expresses "
+        "CONVICTION AND SIZE, not a view about when. Read it as a larger bet "
+        "on the same thesis, not a faster one.",
+        "Do NOT treat an expiry as a catalyst. An expiry is a deadline; a "
+        "catalyst is an event. catalyst_within_horizon still requires a "
+        "specific, dated-or-datable event you can name yourself, and the "
+        "filer's contract choice does not supply one (human ruling "
+        "2026-08-27).",
+        "The disclosed amount range for an options trade is the PREMIUM paid, "
+        "not the notional value of the underlying those contracts control — so "
+        "it is not directly comparable to the amount range on a stock "
+        "purchase. Where a term reads \"" + unstated + "\", the filing did not "
+        "disclose it: reason without it, and never infer a strike or an expiry.",
+    ]
+
+
 def build_user_prompt(
     signal: Signal,
     credibility_context: Optional[str] = None,
@@ -195,6 +245,7 @@ def build_user_prompt(
             "priced-in movement is. A report without it is discarded."
         )
     lines.extend(["", guidance])
+    lines.extend(_disclosed_instrument_lines(signal))
 
     delivered_by = signal.metadata.get("delivered_by")
     if delivered_by:

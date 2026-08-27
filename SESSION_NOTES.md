@@ -1378,6 +1378,94 @@ window, permanent consequence. Three fixes shipped:
 Also fixed: `logger` was used but never defined in execution/alpaca.py — a
 latent NameError on the `tradeable_equity` failure paths.
 
+## Congressional feed: instrument type, and the catalyst-bypass ruling (2026-08-27)
+
+**The defect.** Quiver has always carried `TickerType` (`OP` / `Stock Option`)
+and `Description` (free text: side, strike, expiry, contract count). We
+consumed neither. Every congressional disclosure this system has ever
+researched rendered as bare `transaction: Purchase` — 963 distinct signal
+contents in the production log, **zero** mentioning options — including
+decision `5362628673f34e84`, the Pelosi BE tranche, which is in fact 100 call
+options struck at $100 expiring 2027-06-17.
+
+Live feed at the time of the fix (1000 rows, 2026-03-04 → 2026-08-25):
+`TickerType` Stock 499 / ST 488 / OP 12 / Stock Option 1; `Description`
+non-null on **50 rows (5%)**; 14 option rows (7 purchases, 7 sales); 3 in the
+14-day window the report-staleness prefilter admits, all Pelosi calls.
+
+- **Detection is the OR of type and text.** A BAC row of 2026-07-19 reads
+  "CALL OPTION CONTRACTS." under `TickerType: ST` — the type alone hides an
+  option. The text detector is the word `option`, not a loose call/put match,
+  so "SHARES PUT INTO TRUST" stays stock. An unknown type with no description
+  renders `instrument: not stated by the filing` — **never** inferred as
+  equity.
+- **Terms are extracted, never invented.** Three description formats parse
+  (Pelosi's prose, Gottheimer's semicolons, the Senate form's labels);
+  anything else degrades per-field to "not stated by the filing". Measured
+  coverage over the 14: side 14/14, strike 10/14, expiry 10/14, contracts
+  5/14. Two-digit years are this century.
+- **Prompt guidance** (outside the fence, normalised values only — the filer's
+  prose stays inside the content block): the instrument is evidence about
+  conviction and the filer's own view of timing, not a recommendation. A
+  short-dated option is a timing claim, and the one most likely to have
+  decayed in the disclosure lag. **A long-dated deep-ITM call is stock
+  replacement — conviction and size, not a view about when.** The disclosed
+  amount range on an options trade is PREMIUM, not notional, so it is not
+  comparable to a stock purchase's range.
+
+**Dedup identity now includes the description — conditionally.** Without it,
+36 identities in the current feed collide and **42 rows are silently dropped**,
+including Pelosi's 10,000 BE shares vs her 100 BE calls (same filer, same day,
+same amount band, indistinguishable in the log — we cannot now tell which of
+the two we researched). Appending it *unconditionally* would change the digest
+of every undescribed row and re-emit the entire feed; appending it only when
+present leaves the 95% byte-identical. Pinned in a test against the
+pre-2026-08-27 digest.
+
+Consequence, accepted: the ~50 described rows re-emit and are re-researched
+(human ruling: one-time authorized re-evaluation). Recent purchase rows among
+them are also visible to the mechanical arm, which may open slices on them —
+per the ruling below, that arm is unchanged and buys stock.
+
+### Catalyst bypass for disclosed option purchases — DECLINED (human ruling)
+
+The proposal: an option purchase supplies timing specificity by itself (the
+expiry is the deadline), so it should permit options expression without
+`catalyst_within_horizon`. Declined on the data, recorded here so it is not
+relitigated from intuition:
+
+1. **An expiry is a deadline, not an event.** It says when the filer's thesis
+   must resolve, never why it will. The catalyst gate wants a nameable event.
+2. **The argument inverts on our own filings.** DTE at disclosure: Pelosi BE
+   ×2 + INTC 300 days, INTC + UBER 269 days, Gottheimer MSFT 15 days. Five of
+   seven purchases are 9–10-month LEAPS. With BE at $217.83 against a $100
+   strike (INTC $91.42 against $50), those are ~0.9-delta stock replacement —
+   she bought *away* timing pressure. The "expiry ≥ disclosed expiry" clause
+   would have put us in 300-DTE vega.
+3. **It would import the filer's judgment as a substitute for ours.** Class 2
+   is defined as a thesis input, not a copy-trade trigger (CLAUDE.md), and
+   Constraint #5 makes signals data, not commands. Constraint #6 points the
+   same way: a gate bypass is the more-risk reading.
+4. **The IV gate would not have covered it.** `max_iv_percentile: 0.90` ranks
+   the pick inside its own chain, not against history — a disclosure that
+   lifts the whole surface passes unremarked (limitation accepted 2026-08-24;
+   IV-rank-vs-history remains the queued lever). The delta band (0.45 floor,
+   0.65 cap) and liquidity gates (OI ≥ 500, spread ≤ 10% of mid) do the real
+   work — and would have given us a near-ATM contract, a materially different
+   position from the filer's deep-ITM one.
+
+The gate was never the broken part; the input was. With the instrument
+visible, a research pass can now reach `present=true` on a named event of its
+own reasoning — same outcome, via judgment rather than override.
+
+### Mechanical sleeve unchanged (human ruling)
+
+Equity-only, no instrument-type rule, shared prefilter untouched. An options
+purchase disclosure remains a stock-slice candidate for that arm. The
+identical-funnel constraint is the reason: an instrument filter would have to
+live in the shared prefilter and change both arms, and the experiment must
+vary only judgment and exits.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in
