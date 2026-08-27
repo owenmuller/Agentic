@@ -23,11 +23,13 @@ class _Strict(BaseModel):
 
 class SleeveWeights(_Strict):
     equity: Fraction
+    #: The mechanical disclosure follower (human ruling 2026-08-27).
+    mechanical: Fraction
     prediction: Fraction
 
     @model_validator(mode="after")
     def _weights_sum_to_one(self) -> "SleeveWeights":
-        total = self.equity + self.prediction
+        total = self.equity + self.mechanical + self.prediction
         if total != Decimal("1"):
             raise ValueError(f"sleeve weights must sum to 1, got {total}")
         return self
@@ -77,6 +79,40 @@ class EquitySleeveLimits(_Strict):
     #: are risk-reducing and must never be trapped by a floor, and the prediction
     #: sleeve's arb strategy is explicitly micro-unit.
     min_order_notional_usd: Annotated[Decimal, Field(ge=Decimal("0"))]
+
+
+class MechanicalSleeveLimits(_Strict):
+    """The mechanical disclosure follower's cap table (human ruling 2026-08-27).
+
+    A controlled experiment: deterministic diversified copying of congressional
+    purchase disclosures, no LLM in the path, long holds. The slot caps and the
+    hold rule are the strategy; the fractions are the gate's backstops."""
+
+    #: Gate backstop, of mechanical sleeve NAV (slices are ~1/max_positions).
+    max_single_position: Fraction
+    #: Of mechanical sleeve NAV, per trading day — its own budget, isolated
+    #: from the judged sleeve's daily deployment cap.
+    max_daily_deployment: Fraction
+    #: Gate backstop, of mechanical sleeve NAV; the slot cap is the primary
+    #: sector control. Same membership table (config/sectors.yaml), same
+    #: unmapped-name-is-a-singleton convention.
+    max_sector_exposure: Fraction
+    #: Equal-weight slots: slice = sleeve NAV / max_positions.
+    max_positions: Annotated[int, Field(gt=0)]
+    max_per_filer: Annotated[int, Field(gt=0)]
+    #: Slots per MAPPED sector; unmapped names are unconstrained singletons.
+    max_per_sector_slots: Annotated[int, Field(gt=0)]
+    #: Time exit: close each position this many days after fill. No price
+    #: stop — the stop IS the slice size, and tight stops would amputate the
+    #: winners the strategy exists to hold.
+    hold_days: Annotated[int, Field(gt=0)]
+    #: Sleeve circuit breaker: drawdown from the sleeve's OWN high-water mark
+    #: beyond this halts new mechanical entries until a human resets
+    #: (strictly greater; same discipline as the global kill switch).
+    drawdown_halt_fraction: Fraction
+    #: Stamped on every mechanical entry record so attribution can partition
+    #: history across rule changes.
+    ruleset_version: str
 
 
 class KillSwitchLimits(_Strict):
@@ -259,6 +295,7 @@ class RiskLimits(_Strict):
     kill_switch: KillSwitchLimits
     pdt: PdtLimits
     sizing: SizingLimits
+    mechanical_sleeve: MechanicalSleeveLimits
     prediction_sleeve: PredictionSleeveLimits
     options_selection: OptionsSelectionLimits
     execution: ExecutionLimits

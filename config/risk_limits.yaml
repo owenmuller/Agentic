@@ -20,8 +20,13 @@ portfolio:
   # rebalance logic, and prediction-sleeve caps below all stay: restoring 90/10 when
   # a venue ships is a config flip — and itself a human ruling (CLAUDE.md
   # § Requires Explicit Human Approval).
+  # Amendment (human ruling 2026-08-27): 75/25/0 — the mechanical disclosure
+  # follower runs as its own sleeve, a controlled experiment alongside the
+  # judged system. Restoring the prediction sleeve when a venue ships remains
+  # its own human ruling and will re-cut these weights.
   sleeves:
-    equity: 1.00 # equities & long options (design target: 0.90)
+    equity: 0.75 # the JUDGED sleeve: equities & long options
+    mechanical: 0.25 # deterministic disclosure follower — no LLM in the path
     prediction: 0.00 # event contracts — INACTIVE, no venue (design target: 0.10)
   drift_tolerance: 0.03 # +/-3% from target triggers rebalance
   rebalance: weekly_at_next_session_open
@@ -71,6 +76,21 @@ sizing:
   options:
     basis: premium_at_risk
     multiplier: 0.5 # table size halved: options already carry embedded leverage
+
+# The mechanical disclosure follower (human ruling 2026-08-27). Qualification
+# is DELIBERATELY identical to the judged prefilter (same signals.yaml rules,
+# same code path) — the experiment varies only judgment and exits, and the
+# funnels must never diverge. These are the sleeve's own caps.
+mechanical_sleeve:
+  max_single_position: 0.05 # of mechanical sleeve NAV — gate backstop
+  max_daily_deployment: 0.15 # of mechanical sleeve NAV, its own daily budget
+  max_sector_exposure: 0.30 # gate backstop; the slot cap below is primary
+  max_positions: 30 # equal-weight slots; slice = sleeve NAV / 30
+  max_per_filer: 6 # one member's filing spree is not a portfolio
+  max_per_sector_slots: 8 # of 30, mapped sectors; unmapped names = singletons
+  hold_days: 365 # time exit only — no price stop; the stop IS the slice size
+  drawdown_halt_fraction: 0.25 # sleeve circuit breaker vs its OWN high-water mark
+  ruleset_version: "2026-08-27.1"
 
 prediction_sleeve:
   arbitrage:

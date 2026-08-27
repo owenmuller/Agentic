@@ -443,6 +443,7 @@ def health_report(
         f"cash {state.cash}  |  NAV {state.nav}  |  "
         f"drawdown {state.drawdown():.2%} (high-water {state.high_water_mark})",
         f"sleeves: equity {_sleeve_label(checks.gate.limits.portfolio.sleeves.equity)}, "
+        f"mechanical {_sleeve_label(checks.gate.limits.portfolio.sleeves.mechanical)}, "
         f"prediction {_sleeve_label(checks.gate.limits.portfolio.sleeves.prediction)}",
         f"deployed today: {state.deployed_today}  |  research budget: "
         f"{checks.budget.spent} of {checks.budget.max_per_day} spent for "

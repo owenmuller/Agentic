@@ -44,9 +44,13 @@ ZERO = Decimal("0")
 
 
 class Sleeve(StrEnum):
-    """CLAUDE.md § Portfolio Structure: 90% equity (incl. long options) / 10% events."""
+    """CLAUDE.md § Portfolio Structure. EQUITY is the judged sleeve;
+    MECHANICAL is the no-LLM disclosure follower (human ruling 2026-08-27),
+    isolated by the same per-sleeve allocation machinery; PREDICTION is the
+    event-contract sleeve (inactive until a venue ships)."""
 
     EQUITY = "equity"
+    MECHANICAL = "mechanical"
     PREDICTION = "prediction"
 
 
@@ -64,6 +68,10 @@ PositionKey = tuple[str, ...]
 def sleeve_of(order: Order) -> Sleeve:
     if isinstance(order, (EventContractBuyOrder, EventContractSellToCloseOrder)):
         return Sleeve.PREDICTION
+    if isinstance(order, (EquityBuyOrder, EquitySellToCloseOrder)):
+        # The order's own sleeve tag: "equity" (judged, the default) or
+        # "mechanical". Options are always the judged sleeve.
+        return Sleeve(order.sleeve)
     return Sleeve.EQUITY
 
 
@@ -73,7 +81,11 @@ def is_option(order: Order) -> bool:
 
 def position_key(order: Order) -> PositionKey:
     if isinstance(order, (EquityBuyOrder, EquitySellToCloseOrder)):
-        return ("equity", order.symbol)
+        # Keyed by sleeve, so the judged and mechanical sleeves can hold the
+        # same symbol as SEPARATE positions (overlap is allowed and measured,
+        # ruling 2026-08-27) and a judged exit can never touch mechanical
+        # shares. Judged keys stay ("equity", symbol) — unchanged.
+        return (order.sleeve, order.symbol)
     if isinstance(order, (OptionBuyToOpenOrder, OptionSellToCloseOrder)):
         return ("option", order.symbol)
     if isinstance(order, (EventContractBuyOrder, EventContractSellToCloseOrder)):
@@ -151,6 +163,9 @@ class AccountState:
     reserved_cash: Decimal = ZERO
     #: Worst-case capital deployed in the equity sleeve on ``deployment_date``.
     deployed_today: Decimal = ZERO
+    #: Same, for the mechanical sleeve — its own daily budget, so mechanical
+    #: entries can never consume the judged sleeve's deployment headroom.
+    mechanical_deployed_today: Decimal = ZERO
     deployment_date: date | None = None
     #: Dates on which a day trade completed (open and close on the same day).
     day_trades: list[date] = field(default_factory=list)
@@ -218,6 +233,7 @@ class AccountState:
         if self.deployment_date != today:
             self.deployment_date = today
             self.deployed_today = ZERO
+            self.mechanical_deployed_today = ZERO
 
     def refresh_high_water_mark(self) -> None:
         current = self.nav

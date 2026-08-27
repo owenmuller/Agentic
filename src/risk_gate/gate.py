@@ -171,11 +171,12 @@ class RiskGate:
         value, so an empty sleeve still has a well-defined cap. The separate 90/10
         drift check is what constrains actual deployment.
         """
-        weight = (
-            self._limits.portfolio.sleeves.equity
-            if sleeve is Sleeve.EQUITY
-            else self._limits.portfolio.sleeves.prediction
-        )
+        weights = self._limits.portfolio.sleeves
+        weight = {
+            Sleeve.EQUITY: weights.equity,
+            Sleeve.MECHANICAL: weights.mechanical,
+            Sleeve.PREDICTION: weights.prediction,
+        }[sleeve]
         return self._state.nav * weight
 
     # -- the gate ---------------------------------------------------------------
@@ -308,7 +309,7 @@ class RiskGate:
         # whole contracts, and the prediction sleeve's arb strategy is micro-unit
         # by design. "Below the floor" is the explicit rule, so exactly at the
         # floor passes.
-        if sleeve is Sleeve.EQUITY and not is_option(order):
+        if sleeve is not Sleeve.PREDICTION and not is_option(order):
             floor = limits.equity_sleeve.min_order_notional_usd
             if cost < floor:
                 return Rejection(
@@ -327,11 +328,12 @@ class RiskGate:
         position = state.position(key)
         current_exposure = position.exposure if position is not None else ZERO
         resulting = current_exposure + cost
-        single_cap_fraction = (
-            limits.equity_sleeve.max_single_position
-            if sleeve is Sleeve.EQUITY
-            else self._prediction_cap_fraction(order)
-        )
+        if sleeve is Sleeve.EQUITY:
+            single_cap_fraction = limits.equity_sleeve.max_single_position
+        elif sleeve is Sleeve.MECHANICAL:
+            single_cap_fraction = limits.mechanical_sleeve.max_single_position
+        else:
+            single_cap_fraction = self._prediction_cap_fraction(order)
         single_cap = sleeve_nav * single_cap_fraction
         if resulting > single_cap:
             return Rejection(
@@ -349,33 +351,41 @@ class RiskGate:
         # would smuggle parsing into the gate. Membership is the static table in
         # config/sectors.yaml; an unmapped name is its own singleton sector, so
         # this check can only ever be TIGHTER for unknown tickers, never looser.
-        if sleeve is Sleeve.EQUITY and not is_option(order):
+        if sleeve is not Sleeve.PREDICTION and not is_option(order):
+            sector_fraction = (
+                limits.equity_sleeve.max_sector_exposure
+                if sleeve is Sleeve.EQUITY
+                else limits.mechanical_sleeve.max_sector_exposure
+            )
             sector = self._sectors.sector_of(key[1])
+            # Scoped per sleeve: judged and mechanical each get their own
+            # sector budget, so neither can consume the other's headroom.
             sector_exposure = cost + sum(
                 (
                     p.exposure
                     for p in state.positions.values()
-                    if p.sleeve is Sleeve.EQUITY
+                    if p.sleeve is sleeve
                     and not p.is_option
                     and self._sectors.sector_of(p.key[1]) == sector
                 ),
                 ZERO,
             )
-            sector_cap = sleeve_nav * limits.equity_sleeve.max_sector_exposure
+            sector_cap = sleeve_nav * sector_fraction
             if sector_exposure > sector_cap:
                 return Rejection(
                     code=RejectionCode.SECTOR_CONCENTRATION,
                     message=(
-                        f"equity exposure in sector {sector!r} would reach "
+                        f"{sleeve} exposure in sector {sector!r} would reach "
                         f"{sector_exposure}, above the "
-                        f"{limits.equity_sleeve.max_sector_exposure} cap on "
-                        f"equity sleeve NAV (membership: config/sectors.yaml)"
+                        f"{sector_fraction} cap on "
+                        f"{sleeve} sleeve NAV (membership: config/sectors.yaml)"
                     ),
                     limit=sector_cap,
                     observed=sector_exposure,
                 )
 
-        # Daily deployment — an equity-sleeve cap in CLAUDE.md § Position Caps.
+        # Daily deployment — per sleeve, each with its own counter and cap,
+        # so mechanical entries can never spend the judged sleeve's headroom.
         if sleeve is Sleeve.EQUITY:
             deployed = state.deployed_today + cost
             daily_cap = sleeve_nav * limits.equity_sleeve.max_daily_deployment
@@ -385,6 +395,19 @@ class RiskGate:
                     message=(
                         f"deploying {cost} would put today's total at {deployed}, "
                         f"above the daily cap"
+                    ),
+                    limit=daily_cap,
+                    observed=deployed,
+                )
+        elif sleeve is Sleeve.MECHANICAL:
+            deployed = state.mechanical_deployed_today + cost
+            daily_cap = sleeve_nav * limits.mechanical_sleeve.max_daily_deployment
+            if deployed > daily_cap:
+                return Rejection(
+                    code=RejectionCode.MAX_DAILY_DEPLOYMENT_EXCEEDED,
+                    message=(
+                        f"deploying {cost} would put the mechanical sleeve's "
+                        f"daily total at {deployed}, above its own cap"
                     ),
                     limit=daily_cap,
                     observed=deployed,
@@ -412,11 +435,11 @@ class RiskGate:
         # not a risk breach, so it does not block an order.
         nav = state.nav
         if nav > ZERO:
-            target = (
-                limits.portfolio.sleeves.equity
-                if sleeve is Sleeve.EQUITY
-                else limits.portfolio.sleeves.prediction
-            )
+            target = {
+                Sleeve.EQUITY: limits.portfolio.sleeves.equity,
+                Sleeve.MECHANICAL: limits.portfolio.sleeves.mechanical,
+                Sleeve.PREDICTION: limits.portfolio.sleeves.prediction,
+            }[sleeve]
             ceiling_fraction = target + limits.portfolio.drift_tolerance
             resulting_fraction = (state.sleeve_exposure(sleeve) + cost) / nav
             if resulting_fraction > ceiling_fraction:
@@ -441,6 +464,8 @@ class RiskGate:
         target_position.last_open_date = today
         if sleeve is Sleeve.EQUITY:
             state.deployed_today += cost
+        elif sleeve is Sleeve.MECHANICAL:
+            state.mechanical_deployed_today += cost
         return self._approve(order, cost, now)
 
     def _prediction_cap_fraction(self, order: Order) -> Decimal:
@@ -561,9 +586,14 @@ class RiskGate:
             # counter resets at the day boundary, so crediting a stale approval back
             # would hand tomorrow extra headroom.
             same_day = self._state.deployment_date == approved.approved_at.date()
-            if sleeve_of(order) is Sleeve.EQUITY and same_day:
+            sleeve = sleeve_of(order)
+            if sleeve is Sleeve.EQUITY and same_day:
                 self._state.deployed_today = max(
                     ZERO, self._state.deployed_today - approved.max_loss
+                )
+            elif sleeve is Sleeve.MECHANICAL and same_day:
+                self._state.mechanical_deployed_today = max(
+                    ZERO, self._state.mechanical_deployed_today - approved.max_loss
                 )
         else:
             position.reserved_close -= units_of(order)

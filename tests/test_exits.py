@@ -211,14 +211,14 @@ def test_a_guardrail_breach_closes_the_position_end_to_end(
     assert trail.exits[0].gate.approved is True
     assert trail.exits[0].submitted is True
     assert trail.outcome is not None
-    assert trail.outcome.realised_pnl == Decimal("-357.00")  # 17 x (119 - 140)
+    assert trail.outcome.realised_pnl == Decimal("-273.00")  # 13 x (119 - 140)
     assert not trail.outcome.won
     assert trail.is_complete
 
     # The gate settled the close: the position is gone and the proceeds are cash.
     assert started.gate.state.position(("equity", "NUE")) is None
-    assert started.gate.state.cash == Decimal("100000") - Decimal("2380") + Decimal(
-        "2023"
+    assert started.gate.state.cash == Decimal("100000") - Decimal("1820") + Decimal(
+        "1547"
     )
 
     # And the loss resolved back to the source that called it. Hit rates are real now.
@@ -516,13 +516,21 @@ def test_exits_execute_while_the_kill_switch_is_tripped(
     tmp_path, limits, signals_config, research_config
 ):
     """A halt stops exposure growing; it must not trap the account in its positions."""
-    broker = kill_switch_broker(marked_down=False)
+    # A holding small enough that the NUE entry clears the judged sleeve's
+    # 78% allocation ceiling (75/25/0, ruling 2026-08-27), big enough that a
+    # markdown still breaches 12%.
+    broker = FakeBroker(
+        cash=Decimal("30000"),
+        positions=[
+            BrokerPosition("AAPL", Decimal("700"), Decimal("70000"), Decimal("70000"))
+        ],
+    )
     started, prices, _ = enter_position(
         tmp_path, limits, signals_config, research_config, broker=broker
     )
 
-    # NAV 100k -> 86.5k: past the 12% threshold. Sticky from here on.
-    started.gate.mark_to_market({("equity", "AAPL"): Decimal("85")})
+    # NAV 100k -> 87.4k: past the 12% threshold. Sticky from here on.
+    started.gate.mark_to_market({("equity", "AAPL"): Decimal("82")})
     assert started.gate.kill_switch_tripped
 
     prices.set("NUE", "110.00")
@@ -567,7 +575,7 @@ def test_open_positions_are_replayed_from_the_log_with_stops_armed(
     broker = FakeBroker(
         cash=Decimal("97760"),
         positions=[
-            BrokerPosition("NUE", Decimal("16"), Decimal("2240"), Decimal("2240"))
+            BrokerPosition("NUE", Decimal("12"), Decimal("1680"), Decimal("1680"))
         ],
     )
     restarted = start(
@@ -582,7 +590,7 @@ def test_open_positions_are_replayed_from_the_log_with_stops_armed(
     assert len(restarted.exits.tracked) == 1
     position = restarted.exits.tracked[0]
     assert position.decision_id == "dec-1"
-    assert position.quantity == 16
+    assert position.quantity == 12
     assert position.entry_price == QUOTE
     assert position.stop_price == STOP
     assert position.thesis == REPORT["thesis"]
@@ -629,7 +637,7 @@ def test_a_close_verdict_survives_a_restart(
         llm_client=RoutingLLM(),
         adapter=FakeBroker(
             positions=[
-                BrokerPosition("NUE", Decimal("16"), Decimal("2240"), Decimal("2240"))
+                BrokerPosition("NUE", Decimal("12"), Decimal("1680"), Decimal("1680"))
             ]
         ),
         id_factory=counter("b"),
@@ -712,7 +720,7 @@ def test_review_spends_are_replayed_from_the_log(
     restarted = preflight(
         adapter=FakeBroker(
             positions=[
-                BrokerPosition("NUE", Decimal("16"), Decimal("2240"), Decimal("2240"))
+                BrokerPosition("NUE", Decimal("12"), Decimal("1680"), Decimal("1680"))
             ]
         ),
         id_factory=counter("b"),
@@ -754,22 +762,22 @@ def test_a_partially_filled_exit_keeps_the_remainder_stopped(
     started.loop.tick()
     exit_id = started.exits.working_exits[0]
 
-    # It fills 6 of 17 and is then cancelled. The breach is still standing, so the
-    # same tick that settles the partial re-fires an exit for the remaining 11 —
+    # It fills 6 of 13 and is then cancelled. The breach is still standing, so the
+    # same tick that settles the partial re-fires an exit for the remaining 7 —
     # which, with the broker filling again, completes on the next tick.
     broker.set_status(exit_id, OrderStatus(exit_id, "canceled", Decimal("6"), STOP))
     broker.fill = "filled"
     report = started.loop.tick()
     assert report.positions_closed == 0
     assert report.exits_started == 1
-    assert started.exits.tracked[0].quantity == 11
+    assert started.exits.tracked[0].quantity == 7
 
     report = started.loop.tick()
     assert report.positions_closed == 1
 
     trail = started.audit.trail("dec-1")
     assert [f.side for f in trail.fills] == ["buy", "sell", "sell"]
-    assert trail.outcome.realised_pnl == Decimal("-357.00")  # 17 x (119 - 140), across two fills
+    assert trail.outcome.realised_pnl == Decimal("-273.00")  # 13 x (119 - 140), across two fills
     assert len(trail.exits) == 2  # two attempts, both recorded
 
 
@@ -807,7 +815,7 @@ def test_shutdown_cancels_a_working_exit_and_releases_its_reservation(
     prices.set("NUE", "119.00")
     broker.fill = "new"
     started.loop.tick()
-    assert started.gate.state.position(("equity", "NUE")).reserved_close == 17
+    assert started.gate.state.position(("equity", "NUE")).reserved_close == 13
 
     started.loop.shutdown()
 

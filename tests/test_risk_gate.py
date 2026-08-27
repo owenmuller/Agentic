@@ -75,30 +75,40 @@ def make_gate(
     return RiskGate(limits, state, clock=clock or FakeClock(), sectors=sectors)
 
 
-def design_limits(equity: str = "0.90", prediction: str = "0.10") -> RiskLimits:
-    """The DESIGN allocation, for tests exercising prediction-sleeve mechanics.
-
-    The live config is 100/0 (2026-08-21 ruling: no prediction venue exists), which
-    makes every prediction-sleeve cap zero. The mechanisms stay in the codebase and
-    stay tested — against the weights they were designed for."""
+def design_limits(
+    equity: str = "0.90", prediction: str = "0.10", mechanical: str = "0.00"
+) -> RiskLimits:
+    """A chosen allocation, for tests exercising sleeve mechanics the live
+    weights would degenerate (live is 75/25/0, ruling 2026-08-27; a zero
+    prediction weight makes every prediction cap zero)."""
     raw = RiskLimits.load().model_dump()
-    raw["portfolio"]["sleeves"] = {"equity": equity, "prediction": prediction}
+    raw["portfolio"]["sleeves"] = {
+        "equity": equity,
+        "mechanical": mechanical,
+        "prediction": prediction,
+    }
     return RiskLimits.model_validate(raw)
 
 
-def equity_buy(symbol: str = "AAPL", qty: int = 1, price: str = "100.00"):
+def equity_buy(
+    symbol: str = "AAPL", qty: int = 1, price: str = "100.00", sleeve: str = "equity"
+):
     return EquityBuyOrder(
         symbol=symbol,
         quantity=qty,
         execution=LimitExecution(limit_price=Decimal(price)),
+        sleeve=sleeve,
     )
 
 
-def equity_sell(symbol: str = "AAPL", qty: int = 1, price: str = "100.00"):
+def equity_sell(
+    symbol: str = "AAPL", qty: int = 1, price: str = "100.00", sleeve: str = "equity"
+):
     return EquitySellToCloseOrder(
         symbol=symbol,
         quantity=qty,
         execution=LimitExecution(limit_price=Decimal(price)),
+        sleeve=sleeve,
     )
 
 
@@ -476,22 +486,26 @@ def test_day_trade_window_rolls_off_after_five_business_days(limits):
 # ================================================================================
 
 
-CRASH_SYMBOLS = ["AAA", "BBB", "CCC"]
+CRASH_SYMBOLS = ["AAA", "BBB", "CCC", "DDD", "EEE"]
 
 
-def deploy_for_crash(gate: RiskGate) -> list:
+def deploy_for_crash(gate: RiskGate, clock: FakeClock) -> list:
     """Fill enough equity exposure that marking it to near-zero breaches 12%.
 
-    A single position cannot do it: the 5% single-position cap means one holding going
-    to zero is a 4.5% drawdown at worst. Reaching the kill switch takes several
-    positions, which is the cap working as intended.
+    A single position cannot do it: the caps mean one holding going to zero is
+    a ~3.75% drawdown at worst (75/25/0, ruling 2026-08-27). Reaching the kill
+    switch takes several positions across two days — the judged sleeve's daily
+    deployment cap (15% of a 75% sleeve = 11.25% of NAV) means one day's worth
+    of positions cannot trip a 12% halt on its own, which is the cap working.
     """
     keys = []
     per_order = int(
         gate.sleeve_nav(Sleeve.EQUITY) * gate.limits.equity_sleeve.max_single_position
         / Decimal("100")
     )
-    for symbol in CRASH_SYMBOLS:
+    for index, symbol in enumerate(CRASH_SYMBOLS):
+        if index == 3:
+            clock.advance_days(1)  # the daily cap binds at three positions
         order = equity_buy(symbol=symbol, qty=per_order, price="100.00")
         approved = approve(gate, order)
         gate.record_fill(approved, Decimal("100.00"))
@@ -504,8 +518,9 @@ def crash(gate: RiskGate, keys, price: str = "0.01") -> None:
 
 
 def test_kill_switch_trips_at_the_configured_drawdown(limits):
-    gate = make_gate(limits)
-    keys = deploy_for_crash(gate)
+    clock = FakeClock()
+    gate = make_gate(limits, clock=clock)
+    keys = deploy_for_crash(gate, clock)
     assert gate.kill_switch_tripped is False
 
     crash(gate, keys)
@@ -516,7 +531,7 @@ def test_kill_switch_trips_at_the_configured_drawdown(limits):
 def test_a_single_capped_position_cannot_trip_the_kill_switch(limits):
     """The single-position cap bounds one holding's blast radius below the halt."""
     gate = make_gate(limits)
-    order = equity_buy(qty=45, price="100.00")
+    order = equity_buy(qty=Decimal("37.5"), price="100.00")  # exactly the 5% cap
     approved = approve(gate, order)
     gate.record_fill(approved, Decimal("100.00"))
     gate.mark_to_market({position_key(order): Decimal("0.01")})
@@ -524,8 +539,9 @@ def test_a_single_capped_position_cannot_trip_the_kill_switch(limits):
 
 
 def test_tripped_kill_switch_rejects_every_opening_order(limits):
-    gate = make_gate(limits)
-    keys = deploy_for_crash(gate)
+    clock = FakeClock()
+    gate = make_gate(limits, clock=clock)
+    keys = deploy_for_crash(gate, clock)
     crash(gate, keys)
     assert gate.kill_switch_tripped is True
 
@@ -535,8 +551,9 @@ def test_tripped_kill_switch_rejects_every_opening_order(limits):
 
 
 def test_tripped_kill_switch_still_allows_risk_reducing_closes(limits):
-    gate = make_gate(limits)
-    keys = deploy_for_crash(gate)
+    clock = FakeClock()
+    gate = make_gate(limits, clock=clock)
+    keys = deploy_for_crash(gate, clock)
     crash(gate, keys)
     assert gate.kill_switch_tripped is True
 
@@ -547,8 +564,9 @@ def test_tripped_kill_switch_still_allows_risk_reducing_closes(limits):
 
 def test_a_halt_cannot_be_used_to_open_a_short(limits):
     """Closes stay fully validated while halted — the exemption is not a bypass."""
-    gate = make_gate(limits)
-    keys = deploy_for_crash(gate)
+    clock = FakeClock()
+    gate = make_gate(limits, clock=clock)
+    keys = deploy_for_crash(gate, clock)
     crash(gate, keys)
 
     held = gate.state.position(keys[0]).quantity
@@ -561,8 +579,9 @@ def test_a_halt_cannot_be_used_to_open_a_short(limits):
 
 
 def test_kill_switch_does_not_untrip_when_the_market_recovers(limits):
-    gate = make_gate(limits)
-    keys = deploy_for_crash(gate)
+    clock = FakeClock()
+    gate = make_gate(limits, clock=clock)
+    keys = deploy_for_crash(gate, clock)
     crash(gate, keys)
     assert gate.kill_switch_tripped is True
     crash(gate, keys, price="500.00")
@@ -572,7 +591,7 @@ def test_kill_switch_does_not_untrip_when_the_market_recovers(limits):
 def test_only_a_manual_reset_resumes_trading(limits):
     clock = FakeClock()
     gate = make_gate(limits, clock=clock)
-    keys = deploy_for_crash(gate)
+    keys = deploy_for_crash(gate, clock)
     crash(gate, keys)
 
     with pytest.raises(ValueError):
@@ -589,8 +608,9 @@ def test_only_a_manual_reset_resumes_trading(limits):
 
 def test_reset_rebaselines_the_high_water_mark(limits):
     """Otherwise the next mark re-trips instantly and a reset could never resume."""
-    gate = make_gate(limits)
-    keys = deploy_for_crash(gate)
+    clock = FakeClock()
+    gate = make_gate(limits, clock=clock)
+    keys = deploy_for_crash(gate, clock)
     crash(gate, keys)
     gate.reset_kill_switch("owen")
     crash(gate, keys)
@@ -654,9 +674,11 @@ class GateStateMachine(RuleBasedStateMachine):
 
     def __init__(self) -> None:
         super().__init__()
-        # Design weights, not the live 100/0: a zero prediction sleeve would turn
-        # every buy_event rule into the same degenerate rejection.
-        self.limits = design_limits()
+        # Weights with every sleeve non-zero, so no rule degenerates into
+        # the same rejection: judged, mechanical, and prediction all live.
+        self.limits = design_limits(
+            equity="0.65", mechanical="0.25", prediction="0.10"
+        )
         self.clock = FakeClock()
         self.gate = RiskGate(
             self.limits,
@@ -703,6 +725,35 @@ class GateStateMachine(RuleBasedStateMachine):
     )
     def buy_equity(self, symbol, qty, price):
         self._submit(equity_buy(symbol=symbol, qty=qty, price=price))
+
+    @rule(
+        symbol=st.sampled_from(SYMBOLS),
+        qty=st.one_of(
+            st.integers(min_value=1, max_value=200),
+            st.decimals(
+                min_value=Decimal("0.001"), max_value=Decimal("200"), places=3
+            ),
+        ),
+        price=st.sampled_from(["1.00", "10.00", "100.00"]),
+    )
+    def buy_mechanical(self, symbol, qty, price):
+        # Same symbols as buy_equity on purpose: sleeve overlap is a real,
+        # allowed state and the invariants must hold through it.
+        self._submit(
+            equity_buy(symbol=symbol, qty=qty, price=price, sleeve="mechanical")
+        )
+
+    @rule(
+        symbol=st.sampled_from(SYMBOLS),
+        qty=st.one_of(
+            st.integers(min_value=1, max_value=300),
+            st.decimals(
+                min_value=Decimal("0.001"), max_value=Decimal("300"), places=3
+            ),
+        ),
+    )
+    def sell_mechanical(self, symbol, qty):
+        self._submit(equity_sell(symbol=symbol, qty=qty, sleeve="mechanical"))
 
     @rule(
         symbol=st.sampled_from(OPTION_SYMBOLS),
@@ -827,6 +878,22 @@ class GateStateMachine(RuleBasedStateMachine):
                 f"sector {sector} at {exposure} exceeds cap {cap} — "
                 f"an approval sequence breached the concentration guard"
             )
+        # The mechanical sleeve carries its own sector budget.
+        mech_cap = (
+            self.gate.sleeve_nav(Sleeve.MECHANICAL)
+            * self.limits.mechanical_sleeve.max_sector_exposure
+        )
+        mech_exposures: dict[str, Decimal] = {}
+        for position in self.gate.state.positions.values():
+            if position.sleeve is Sleeve.MECHANICAL:
+                sector = MACHINE_SECTORS.sector_of(position.key[1])
+                mech_exposures[sector] = (
+                    mech_exposures.get(sector, ZERO) + position.exposure
+                )
+        for sector, exposure in mech_exposures.items():
+            assert exposure <= mech_cap, (
+                f"mechanical sector {sector} at {exposure} exceeds {mech_cap}"
+            )
 
     @invariant()
     def caps_are_never_breached_by_approvals(self):
@@ -838,15 +905,20 @@ class GateStateMachine(RuleBasedStateMachine):
         assert gate.state.deployed_today <= (
             equity_nav * limits.equity_sleeve.max_daily_deployment
         )
+        assert gate.state.mechanical_deployed_today <= (
+            gate.sleeve_nav(Sleeve.MECHANICAL)
+            * limits.mechanical_sleeve.max_daily_deployment
+        )
         assert gate.state.options_premium_at_risk <= (
             equity_nav * limits.equity_sleeve.max_options_premium_at_risk
         )
         for key, position in gate.state.positions.items():
-            cap_fraction = (
-                limits.equity_sleeve.max_single_position
-                if position.sleeve is Sleeve.EQUITY
-                else limits.prediction_sleeve.directional.max_position
-            )
+            if position.sleeve is Sleeve.EQUITY:
+                cap_fraction = limits.equity_sleeve.max_single_position
+            elif position.sleeve is Sleeve.MECHANICAL:
+                cap_fraction = limits.mechanical_sleeve.max_single_position
+            else:
+                cap_fraction = limits.prediction_sleeve.directional.max_position
             cap = gate.sleeve_nav(position.sleeve) * cap_fraction
             assert position.exposure <= cap, f"{key} exposure {position.exposure} > {cap}"
 
@@ -854,6 +926,7 @@ class GateStateMachine(RuleBasedStateMachine):
         if nav > 0:
             for sleeve, target in (
                 (Sleeve.EQUITY, limits.portfolio.sleeves.equity),
+                (Sleeve.MECHANICAL, limits.portfolio.sleeves.mechanical),
                 (Sleeve.PREDICTION, limits.portfolio.sleeves.prediction),
             ):
                 ceiling = target + limits.portfolio.drift_tolerance
@@ -888,7 +961,7 @@ class GateStateMachine(RuleBasedStateMachine):
 
 def test_a_partial_fill_books_only_the_units_that_filled(limits):
     gate = make_gate(limits)
-    approved = approve(gate, equity_buy(qty=80, price="50.00"))
+    approved = approve(gate, equity_buy(qty=60, price="50.00"))
 
     gate.record_fill(approved, Decimal("50.00"), filled_units=30)
 
@@ -900,8 +973,8 @@ def test_a_partial_fill_books_only_the_units_that_filled(limits):
 def test_a_partial_fill_releases_the_whole_reservation(limits):
     """The order is terminal. Nothing else is coming, so nothing else needs securing."""
     gate = make_gate(limits)
-    approved = approve(gate, equity_buy(qty=80, price="50.00"))
-    assert gate.state.reserved_cash == Decimal("4000.00")
+    approved = approve(gate, equity_buy(qty=60, price="50.00"))
+    assert gate.state.reserved_cash == Decimal("3000.00")
 
     gate.record_fill(approved, Decimal("50.00"), filled_units=30)
 
@@ -915,7 +988,7 @@ def test_a_partial_fill_releases_the_whole_reservation(limits):
 def test_a_partial_fill_can_only_move_buying_power_the_safe_way(limits):
     """Released reservation is the worst case; cash taken is the part that printed."""
     gate = make_gate(limits)
-    approved = approve(gate, equity_buy(qty=80, price="50.00"))
+    approved = approve(gate, equity_buy(qty=60, price="50.00"))
     before = gate.buying_power
 
     gate.record_fill(approved, Decimal("50.00"), filled_units=30)
@@ -938,26 +1011,26 @@ def test_a_zero_fill_leaves_no_position_and_no_reservation(limits):
 def test_a_partial_close_releases_the_units_it_did_not_sell(limits):
     """The unsold shares stay held and stay closeable — not stranded under a reservation."""
     gate = make_gate(limits)
-    gate.record_fill(approve(gate, equity_buy(qty=80, price="50.00")), Decimal("50.00"))
-    approved = approve(gate, equity_sell(qty=80, price="60.00"))
+    gate.record_fill(approve(gate, equity_buy(qty=60, price="50.00")), Decimal("50.00"))
+    approved = approve(gate, equity_sell(qty=60, price="60.00"))
 
     gate.record_fill(approved, Decimal("60.00"), filled_units=40)
 
     position = gate.state.position(("equity", "AAPL"))
-    assert position.quantity == 40
+    assert position.quantity == 20
     assert position.reserved_close == 0
-    assert position.available_to_close == 40
+    assert position.available_to_close == 20
 
 
 def test_a_partial_fill_does_not_refund_the_daily_deployment_budget(limits):
     """Deliberate: the cap counts capital committed, not capital that happened to print."""
     gate = make_gate(limits)
-    approved = approve(gate, equity_buy(qty=80, price="50.00"))
-    assert gate.state.deployed_today == Decimal("4000.00")
+    approved = approve(gate, equity_buy(qty=60, price="50.00"))
+    assert gate.state.deployed_today == Decimal("3000.00")
 
     gate.record_fill(approved, Decimal("50.00"), filled_units=1)
 
-    assert gate.state.deployed_today == Decimal("4000.00")
+    assert gate.state.deployed_today == Decimal("3000.00")
 
 
 @pytest.mark.parametrize("filled", [-1, 11])
@@ -1042,16 +1115,16 @@ ALPHA_SECTOR = SectorMap(
 def test_three_same_sector_positions_within_the_cap_are_approved(limits):
     gate = make_gate(limits, sectors=ALPHA_SECTOR)
     for symbol in ("AL1", "AL2", "AL3"):
-        decision = gate.submit(equity_buy(symbol=symbol, qty=44, price="100.00"))
+        decision = gate.submit(equity_buy(symbol=symbol, qty=37, price="100.00"))
         assert decision.is_approved, decision
 
 
 def test_the_fourth_position_breaching_the_sector_cap_is_rejected(limits):
     gate = make_gate(limits, sectors=ALPHA_SECTOR)
     for symbol in ("AL1", "AL2", "AL3"):
-        assert gate.submit(equity_buy(symbol=symbol, qty=44, price="100.00")).is_approved
+        assert gate.submit(equity_buy(symbol=symbol, qty=37, price="100.00")).is_approved
 
-    fourth = gate.submit(equity_buy(symbol="AL4", qty=44, price="100.00"))
+    fourth = gate.submit(equity_buy(symbol="AL4", qty=37, price="100.00"))
     assert isinstance(fourth, Rejection)
     assert fourth.code is RejectionCode.SECTOR_CONCENTRATION
     assert "alpha" in fourth.message
@@ -1073,7 +1146,7 @@ def test_exactly_at_the_sector_cap_is_approved(limits):
         gate.sleeve_nav(Sleeve.EQUITY) * limits.equity_sleeve.max_single_position
     )
     per_position = min(single_cap, sector_cap / 3)
-    qty = int(per_position / Decimal("100.00"))
+    qty = per_position / Decimal("100.00")  # fractional shares make it exact
     for symbol in ("AL1", "AL2", "AL3"):
         decision = gate.submit(equity_buy(symbol=symbol, qty=qty, price="100.00"))
         assert decision.is_approved, decision
@@ -1088,7 +1161,7 @@ def test_unmapped_tickers_never_share_a_bucket(limits):
     if unknown tickers silently shared a sector, the third would breach it."""
     gate = make_gate(limits, sectors=SectorMap({}))
     for symbol in ("ZZ1", "ZZ2", "ZZ3"):
-        decision = gate.submit(equity_buy(symbol=symbol, qty=44, price="100.00"))
+        decision = gate.submit(equity_buy(symbol=symbol, qty=37, price="100.00"))
         assert decision.is_approved, decision
     assert SectorMap({}).sector_of("ZZ1") == "unmapped:ZZ1"
     assert SectorMap({}).sector_of("zz1") == "unmapped:ZZ1"  # case-insensitive
@@ -1234,13 +1307,102 @@ def test_a_zero_weight_sleeve_rejects_orders_with_a_typed_rejection(limits):
     assert gate.buying_power == START_CASH
 
 
-def test_the_equity_sleeve_now_spans_the_whole_nav(limits):
-    """100/0: the 5% single-position cap is 5% of full NAV, not of 90%."""
+def test_the_judged_sleeve_spans_three_quarters_of_nav(limits):
+    """75/25/0 (ruling 2026-08-27): the judged 5% cap is 5% of a 75% sleeve."""
     gate = make_gate(limits)
-    assert gate.sleeve_nav(Sleeve.EQUITY) == START_CASH
-    approve(gate, equity_buy(qty=50, price="100.00"))  # 5,000 == the new cap
-    rejection = reject(gate, equity_buy(symbol="MSFT", qty=51, price="100.00"))
+    assert gate.sleeve_nav(Sleeve.EQUITY) == START_CASH * Decimal("0.75")
+    assert gate.sleeve_nav(Sleeve.MECHANICAL) == START_CASH * Decimal("0.25")
+    approve(gate, equity_buy(qty=Decimal("37.5"), price="100.00"))  # == the cap
+    rejection = reject(gate, equity_buy(symbol="MSFT", qty=38, price="100.00"))
     assert rejection.code is RejectionCode.MAX_SINGLE_POSITION_EXCEEDED
+
+
+# ================================================================================
+# The mechanical sleeve at the gate (ruling 2026-08-27)
+# ================================================================================
+
+
+def test_the_sleeves_hold_the_same_symbol_as_separate_positions(limits):
+    """Overlap is allowed and measured: the judged and mechanical sleeves can
+    both hold NUE, as distinct positions, and a judged exit can never sell
+    mechanical shares."""
+    gate = make_gate(limits)
+    gate.record_fill(
+        approve(gate, equity_buy(symbol="NUE", qty=10, price="100.00")),
+        Decimal("100.00"),
+    )
+    gate.record_fill(
+        approve(
+            gate, equity_buy(symbol="NUE", qty=8, price="100.00", sleeve="mechanical")
+        ),
+        Decimal("100.00"),
+    )
+    assert gate.state.position(("equity", "NUE")).quantity == 10
+    assert gate.state.position(("mechanical", "NUE")).quantity == 8
+
+    # A judged close bigger than the judged holding is a synthetic short even
+    # though the account holds 18 NUE across sleeves.
+    rejection = reject(gate, equity_sell(symbol="NUE", qty=18))
+    assert rejection.code is RejectionCode.CLOSE_EXCEEDS_HELD_QUANTITY
+    # And the mechanical shares close only through a mechanical sell.
+    approve(gate, equity_sell(symbol="NUE", qty=8, sleeve="mechanical"))
+
+
+def test_the_mechanical_sleeve_has_its_own_daily_budget(limits):
+    """The judged sleeve at its daily cap does not block mechanical entries,
+    and mechanical entries never consume the judged sleeve's headroom."""
+    clock = FakeClock()
+    gate = make_gate(limits, clock=clock)
+    judged_cap = gate.sleeve_nav(Sleeve.EQUITY) * limits.equity_sleeve.max_daily_deployment
+    per = judged_cap / 3
+    for symbol in ("JA", "JB", "JC"):
+        approve(gate, equity_buy(symbol=symbol, qty=per / Decimal("100"), price="100.00"))
+    over = reject(gate, equity_buy(symbol="JD", qty=1, price="100.00"))
+    assert over.code is RejectionCode.MAX_DAILY_DEPLOYMENT_EXCEEDED
+
+    # The mechanical sleeve still opens — its budget is untouched.
+    approve(gate, equity_buy(symbol="MA", qty=8, price="100.00", sleeve="mechanical"))
+    assert gate.state.mechanical_deployed_today == Decimal("800.00")
+    assert gate.state.deployed_today == judged_cap  # unchanged by the mechanical entry
+
+
+def test_mechanical_allocation_cannot_exceed_its_target_plus_drift(limits):
+    """The isolation primitive: no sequence of mechanical entries can consume
+    beyond 25% + 3% of NAV, so judged capital is structurally out of reach."""
+    clock = FakeClock()
+    gate = make_gate(limits, clock=clock)
+    codes = []
+    for day in range(20):
+        clock.advance_days(1)
+        for n in range(4):
+            order = equity_buy(
+                symbol=f"M{day:02d}{n}", qty=9, price="100.00", sleeve="mechanical"
+            )
+            decision = gate.submit(order)
+            if decision.is_approved:
+                gate.record_fill(decision, Decimal("100.00"))
+            else:
+                codes.append(decision.code)
+    assert RejectionCode.SLEEVE_ALLOCATION_EXCEEDED in codes
+    ceiling = (
+        limits.portfolio.sleeves.mechanical + limits.portfolio.drift_tolerance
+    ) * gate.nav
+    assert gate.state.sleeve_exposure(Sleeve.MECHANICAL) <= ceiling
+
+
+def test_mechanical_orders_respect_the_dust_floor_and_the_kill_switch(limits):
+    gate = make_gate(limits)
+    dust = reject(
+        gate,
+        equity_buy(symbol="MA", qty=Decimal("0.01"), price="100.00", sleeve="mechanical"),
+    )
+    assert dust.code is RejectionCode.BELOW_MIN_NOTIONAL
+
+    gate.state.kill_switch_tripped = True
+    halted = reject(
+        gate, equity_buy(symbol="MB", qty=8, price="100.00", sleeve="mechanical")
+    )
+    assert halted.code is RejectionCode.KILL_SWITCH_ACTIVE
 
 
 def test_zero_weight_drift_math_never_divides_by_the_weight(limits):

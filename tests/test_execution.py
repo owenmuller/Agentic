@@ -248,7 +248,11 @@ def test_event_contracts_are_not_routed_to_alpaca():
     # Design weights: the live 100/0 config zeroes the prediction sleeve, and this
     # test needs an APPROVED event order to prove the adapter refuses the routing.
     raw = RiskLimits.load().model_dump()
-    raw["portfolio"]["sleeves"] = {"equity": "0.90", "prediction": "0.10"}
+    raw["portfolio"]["sleeves"] = {
+        "equity": "0.90",
+        "mechanical": "0.00",
+        "prediction": "0.10",
+    }
     gate = RiskGate(
         RiskLimits.model_validate(raw),
         AccountState(cash=START_CASH, high_water_mark=START_CASH),

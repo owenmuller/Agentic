@@ -111,6 +111,7 @@ class Preflight:
                 f"drawdown:          {state.drawdown():.2%}",
                 f"kill switch:       {halt}",
                 f"sleeves:           equity {_sleeve_label(sleeves.equity)}, "
+                f"mechanical {_sleeve_label(sleeves.mechanical)}, "
                 f"prediction {_sleeve_label(sleeves.prediction)}",
                 f"deployed today:    {state.deployed_today}",
                 f"research budget:   {self.budget.spent} of "
