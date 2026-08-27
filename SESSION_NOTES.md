@@ -1427,6 +1427,36 @@ Consequence, accepted: the ~50 described rows re-emit and are re-researched
 them are also visible to the mechanical arm, which may open slices on them —
 per the ruling below, that arm is unchanged and buys stock.
 
+### One-time authorized re-evaluation: both BE tranches, 2026-08-27 22:4x
+
+Human ruling: re-research authorized for the re-emitting described rows, BE
+specifically. Both Pelosi BE call tranches re-run through the **production**
+research path (the ResearchPass bootstrap builds, real prompt, real API, real
+search) — which is also the live end-to-end round trip CLAUDE.md § LLM
+Request-Path Changes requires for the prompt change. Execution deliberately
+not reached: verdicts and CorrectionRecords only, no orders. Audit log
+1411 → 1413 (exactly the two corrections); health clean afterwards.
+
+| tranche | verdict | conf | cost |
+|---|---|---|---|
+| $500,001–$1,000,000 (trade 07-28 @ $167.035) | `no_position` | 72 | $0.18 |
+| $1,000,001–$5,000,000 (trade 07-24 @ $185.17) | `no_position` | 72 | $0.15 |
+
+Both now reason from the instrument: "a classic stock-replacement structure
+expressing multi-month recovery conviction, not a timing bet", delta ~0.90,
+premium consistent with intrinsic-plus-minimal-time-value — and both state
+unprompted that "the option expiry (2027-06-17) is a deadline, not a
+catalyst". The decline is on measured priced-in movement (+30.41% and +17.64%
+since the respective trade dates; ~67% and ~38% of the intrinsic gain already
+realised), not on elapsed time. Confidence 82 → 72 against the 08-27
+market-context re-run: the same conclusion, now argued from the option's
+economics rather than from the stock's alone.
+
+The corrections do **not** seal the new identities, so both rows re-emit into
+the normal loop at the next session and get an ordinary pass with execution
+enabled. That is deliberate: this run was a validation and a record, and
+acting on a verdict is the loop's job, not a script's.
+
 ### Catalyst bypass for disclosed option purchases — DECLINED (human ruling)
 
 The proposal: an option purchase supplies timing specificity by itself (the
