@@ -1282,6 +1282,9 @@ def test_no_record_written_by_an_adversarial_run_is_anything_but_a_known_kind(
         "research",
         "sizing",
         "gate",
+        # Mechanical sleeve (2026-08-27): the disclosure facts and ruleset
+        # behind a mechanical entry; None on every judged decision.
+        "mechanical",
         # Expression routing (2026-08-24): how the thesis was expressed —
         # option contract chosen, or the typed fallback to equity.
         "expression",

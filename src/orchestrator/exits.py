@@ -264,6 +264,10 @@ class ExitEngine:
         restored = 0
         for trail in trails:
             decision = trail.decision
+            if decision.sizing.strategy == "mechanical":
+                # The mechanical engine replays its own positions: it has no
+                # stops to arm and a different exit regime entirely.
+                continue
             if not decision.was_approved or trail.outcome is not None:
                 continue
             buys = [f for f in trail.fills if f.side == "buy"]

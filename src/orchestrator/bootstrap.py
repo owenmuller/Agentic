@@ -51,9 +51,15 @@ from orchestrator.budget import ResearchBudget
 from orchestrator.config import OrchestratorConfig
 from orchestrator.exits import ExitEngine, unmanaged_exposure
 from orchestrator.loop import TradingLoop
+from orchestrator.mechanical import MechanicalEngine
 from orchestrator.pipeline import PriceSource, SignalPipeline
 from orchestrator.prefilter import ResearchPreFilter
-from orchestrator.state import SessionState, replay_deployed_today, seed_account_state
+from orchestrator.state import (
+    SessionState,
+    replay_deployed_today,
+    replay_mechanical_deployed_today,
+    seed_account_state,
+)
 
 logger = logging.getLogger("orchestrator.bootstrap")
 
@@ -227,11 +233,18 @@ def preflight(
     )
     session = SessionState.load(directory / "session_state.json")
 
+    decisions = audit.decisions()
     account = seed_account_state(
         cash=cash,
         positions=positions,
         session=session,
-        deployed_today=replay_deployed_today(audit.decisions(), today),
+        deployed_today=replay_deployed_today(decisions, today),
+        mechanical_deployed_today=replay_mechanical_deployed_today(
+            decisions, today
+        ),
+        # The audit log alone knows which sleeve owns what: split the broker's
+        # per-symbol holdings so the mechanical sleeve wakes up holding its own.
+        mechanical_open=audit.mechanical_open_positions(),
         today=today,
         account_type=orchestrator_config.account_type,
     )
@@ -278,6 +291,7 @@ def start(
     cost_warn_sink: Optional[Callable[[str], None]] = None,
     error_sink: Optional[Callable[[str], None]] = None,
     classify_sink: Optional[Callable[[str], None]] = None,
+    mechanical_sink: Optional[Callable[[str], None]] = None,
     options_chain=None,
     **preflight_kwargs: object,
 ) -> Startup:
@@ -422,12 +436,37 @@ def start(
             if source.probation
         },
     )
+    # ONE prefilter instance, shared by the judged loop and the mechanical
+    # engine — the funnels are identical by construction (ruling 2026-08-27:
+    # the experiment varies only judgment and exits).
+    research_prefilter = ResearchPreFilter.from_config(checks.signals_config)
+    # The mechanical arm exists only while its sleeve has weight: setting the
+    # weight to zero in risk_limits.yaml switches the whole experiment off.
+    mechanical = None
+    if checks.limits.portfolio.sleeves.mechanical > 0:
+        mechanical = MechanicalEngine(
+            gate=checks.gate,
+            adapter=checks.adapter,
+            audit=checks.audit,
+            prices=prices,
+            limits=checks.limits,
+            prefilter=research_prefilter,
+            clock=checks.clock,
+            note=mechanical_sink,
+            id_factory=id_factory,
+            virtual_cash=checks.session.mechanical_virtual_cash,
+            high_water_mark=checks.session.mechanical_high_water_mark,
+            halted=checks.session.mechanical_halted,
+        )
+        mechanical.replay(checks.audit.mechanical_trails())
+
     loop = TradingLoop(
         scanners=scanners,
         queue=queue,
         pipeline=pipeline,
         exits=exits,
-        prefilter=ResearchPreFilter.from_config(checks.signals_config),
+        prefilter=research_prefilter,
+        mechanical=mechanical,
         cost_meter=cost_meter,
         error_sink=error_sink,
         source_caps={

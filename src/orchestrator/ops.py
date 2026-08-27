@@ -419,6 +419,33 @@ class CostMeter:
                 )
 
 
+def _mechanical_line(checks, state) -> str:
+    """The mechanical sleeve's daily line (ruling 2026-08-27): open slots,
+    exposure, and — the part that must reach a human — the circuit breaker."""
+    session = checks.session
+    positions = [
+        p for key, p in state.positions.items() if key[0] == "mechanical"
+    ]
+    exposure = sum((p.exposure for p in positions), Decimal("0"))
+    if session.mechanical_halted:
+        breaker = (
+            "BREAKER TRIPPED - new entries halted, positions ride; human "
+            "review required (reset mechanical_halted in session_state.json)"
+        )
+    else:
+        breaker = "breaker clear"
+    value = session.mechanical_virtual_cash
+    ledger = (
+        f"ledger {value} + open {exposure}"
+        if value is not None
+        else "ledger unseeded (no entries yet)"
+    )
+    return (
+        f"mechanical: {len(positions)} positions, {ledger}, deployed today "
+        f"{state.mechanical_deployed_today}  |  {breaker}"
+    )
+
+
 def health_report(
     checks: Preflight,
     positions: Iterable[TrackedPosition],
@@ -445,6 +472,7 @@ def health_report(
         f"sleeves: equity {_sleeve_label(checks.gate.limits.portfolio.sleeves.equity)}, "
         f"mechanical {_sleeve_label(checks.gate.limits.portfolio.sleeves.mechanical)}, "
         f"prediction {_sleeve_label(checks.gate.limits.portfolio.sleeves.prediction)}",
+        _mechanical_line(checks, state),
         f"deployed today: {state.deployed_today}  |  research budget: "
         f"{checks.budget.spent} of {checks.budget.max_per_day} spent for "
         f"{checks.budget.day}",

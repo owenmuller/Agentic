@@ -26,6 +26,7 @@ from pydantic import TypeAdapter
 from audit.records import (
     ExpressionSnapshot,
     AuditRecord,
+    MechanicalSnapshot,
     AuditTrail,
     CorrectionRecord,
     DecisionRecord,
@@ -110,6 +111,52 @@ class AuditLog:
             est_input_tokens=usage.input_tokens if usage else None,
             est_output_tokens=usage.output_tokens if usage else None,
             est_cost_usd=usage.cost_usd if usage else None,
+        )
+        self._append(record)
+        return record
+
+    def record_mechanical_entry(
+        self,
+        signal: Signal,
+        gate_decision: object,
+        capital: Decimal,
+        sleeve_nav: Decimal,
+        ruleset_version: str,
+        max_positions: int,
+        decision_id: Optional[str] = None,
+    ) -> DecisionRecord:
+        """A mechanical sleeve entry (ruling 2026-08-27): a DecisionRecord with
+        no research snapshot — no LLM ran, and the record says so instead of
+        carrying a fabricated verdict. Fills, exits, and outcomes then ride the
+        ordinary per-decision machinery."""
+        fraction = (capital / sleeve_nav) if sleeve_nav > 0 else Decimal("0")
+        metadata = signal.metadata
+        record = DecisionRecord(
+            decision_id=decision_id or self._id_factory(),
+            recorded_at=self._clock(),
+            signal=SignalSnapshot.of(signal),
+            research=None,
+            sizing=SizingSnapshot(
+                instrument="equity",
+                sleeve="mechanical",
+                confidence=0,  # not applicable: no research ran, by design
+                sleeve_nav=sleeve_nav,
+                fraction_of_sleeve_nav=fraction.quantize(Decimal("0.0001")),
+                capital=capital,
+                rationale=(
+                    f"mechanical equal-weight slice (sleeve NAV / {max_positions}); "
+                    f"no LLM in the path, ruleset {ruleset_version}"
+                ),
+                strategy="mechanical",
+            ),
+            mechanical=MechanicalSnapshot(
+                ruleset_version=ruleset_version,
+                filer=metadata.get("representative") or None,
+                ticker=metadata.get("ticker") or None,
+                amount_range=metadata.get("amount_range") or None,
+                report_date=metadata.get("report_date") or None,
+            ),
+            gate=GateSnapshot.of(gate_decision),  # type: ignore[arg-type]
         )
         self._append(record)
         return record
@@ -360,7 +407,19 @@ class AuditLog:
         """
         seen: set[tuple[str, str]] = set()
         for record in self.records():
-            if getattr(record, "code", None) in ("source_cap", "upstream_error"):
+            sizing = getattr(record, "sizing", None)
+            if sizing is not None and sizing.strategy == "mechanical":
+                # Mechanical records never seal a signal for the JUDGED path
+                # (ruling 2026-08-27): the experiment's arms are independent,
+                # and a disclosure the mechanical sleeve bought must remain
+                # researchable by the judged system.
+                continue
+            if getattr(record, "code", None) in (
+                "source_cap",
+                "upstream_error",
+                "mechanical_capacity",
+                "mechanical_halted",
+            ):
                 # Ruling 2026-08-26: never permanently discard a signal the
                 # system didn't pay to evaluate. Two codes qualify:
                 #   source_cap      the per-source daily cap declined to spend
@@ -380,6 +439,42 @@ class AuditLog:
             if signal is not None and signal.external_id:
                 seen.add((signal.source_id, signal.external_id))
         return seen
+
+    def mechanical_trails(self) -> list[AuditTrail]:
+        """Per-decision trails of the mechanical sleeve alone."""
+        return [
+            self.trail(d.decision_id)
+            for d in self.decisions()
+            if d.sizing.strategy == "mechanical"
+        ]
+
+    def mechanical_open_positions(self) -> dict[str, tuple[Decimal, Decimal]]:
+        """symbol -> (net quantity, net cost) of open mechanical positions,
+        replayed from the log. Startup uses this to split the broker's single
+        per-symbol holding between the sleeves — the broker stays authoritative
+        on totals; the log alone knows which sleeve owns what."""
+        open_positions: dict[str, tuple[Decimal, Decimal]] = {}
+        for trail in self.mechanical_trails():
+            decision = trail.decision
+            if not decision.was_approved or trail.outcome is not None:
+                continue
+            order = decision.gate.order or {}
+            symbol = str(order.get("symbol", ""))
+            if not symbol:
+                continue
+            buys = [f for f in trail.fills if f.side == "buy"]
+            sells = [f for f in trail.fills if f.side == "sell"]
+            quantity = sum((f.filled_quantity for f in buys), Decimal("0")) - sum(
+                (f.filled_quantity for f in sells), Decimal("0")
+            )
+            if quantity <= 0:
+                continue
+            cost = sum((f.filled_value for f in buys), Decimal("0"))
+            held_quantity, held_cost = open_positions.get(
+                symbol, (Decimal("0"), Decimal("0"))
+            )
+            open_positions[symbol] = (held_quantity + quantity, held_cost + cost)
+        return open_positions
 
     def capped_external_ids(self) -> set[tuple[str, str]]:
         """(source_id, external_id) of every source_cap rejection — seeds the

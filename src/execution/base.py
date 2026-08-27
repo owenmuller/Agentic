@@ -182,6 +182,14 @@ class BrokerAdapter(ABC):
     #: unverified by the spike — its adapter must keep 1 until proven.)
     equity_quantity_step: Decimal = Decimal("1")
 
+    def tradeable_equity(self, symbol: str) -> bool:
+        """Whether ``symbol`` is an active, tradable (and, on fractional venues,
+        fractionable) equity here. Default True: venues that can answer
+        override it (Alpaca's assets endpoint); the gate and the broker's own
+        refusal remain the enforcement either way. Used by the mechanical
+        sleeve's qualification (ruling 2026-08-27)."""
+        return True
+
     @abstractmethod
     def submit_order(self, approved: ApprovedOrder) -> OrderReceipt:
         """Send a gate-approved order. Only an ``ApprovedOrder`` is accepted."""

@@ -307,6 +307,7 @@ def run() -> int:
             cost_warn_sink=lambda message: run_log.note("COST", message),
             error_sink=lambda message: run_log.note("ERROR", message),
             classify_sink=lambda message: run_log.note("CLASSIFY", message),
+            mechanical_sink=lambda message: run_log.note("MECH", message),
             options_chain=options_chain,
         )
         loop = startup.loop

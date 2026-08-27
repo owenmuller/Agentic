@@ -76,6 +76,9 @@ class TickReport:
     exits_started: int = 0
     #: Positions fully closed this tick — each wrote an OutcomeRecord.
     positions_closed: int = 0
+    #: Mechanical sleeve activity this tick (ruling 2026-08-27).
+    mechanical_entries: int = 0
+    mechanical_exits: int = 0
     halted: bool = False
 
     @property
@@ -100,6 +103,7 @@ class TradingLoop:
         source_passes: Optional[dict[str, int]] = None,
         source_pass_day: Optional[date] = None,
         previously_capped: Optional[set[tuple[str, str]]] = None,
+        mechanical: Optional[object] = None,
         budget: ResearchBudget,
         session: SessionState,
         gate: RiskGate,
@@ -127,6 +131,9 @@ class TradingLoop:
         #: code aged_out_capped instead of pre_filter: the cap cost an
         #: evaluation, and that is a tuning signal, not routine staleness.
         self._slot_losers: set[tuple[str, str]] = set(previously_capped or ())
+        #: The mechanical disclosure follower (ruling 2026-08-27). None when
+        #: the sleeve weight is zero — the whole arm switches off in config.
+        self._mechanical = mechanical
         self._budget = budget
         self._session = session
         self._gate = gate
@@ -145,6 +152,10 @@ class TradingLoop:
     @property
     def exits(self) -> ExitEngine:
         return self._exits
+
+    @property
+    def mechanical(self):
+        return self._mechanical
 
     @property
     def deferred(self) -> tuple[Signal, ...]:
@@ -191,6 +202,13 @@ class TradingLoop:
 
         held = self._exits.held_symbols()
         dispatch_now = self._clock()
+        # The mechanical arm OBSERVES the same drained signals before judged
+        # dispatch — it must never consume them: both arms see every signal,
+        # which is what makes the experiment's comparison valid.
+        if self._mechanical is not None:
+            report.mechanical_entries = self._mechanical.consider(
+                pending, dispatch_now
+            )
         for index, signal in enumerate(pending):
             # The pre-filter runs BEFORE the budget: a signal the deterministic
             # rules can already dismiss is written down, not paid for.
@@ -315,6 +333,12 @@ class TradingLoop:
         report.reviews_run = reviews_run
         report.exits_started = len(guardrail_exits) + review_exits
 
+        if self._mechanical is not None:
+            mechanical_report = self._mechanical.tick(now)
+            report.settled += mechanical_report.settled
+            report.mechanical_exits = mechanical_report.exits_started
+            self._session.capture_mechanical(self._mechanical, now)
+
         report.halted = self._gate.kill_switch_tripped
         self._session.persist(self._gate, now)
 
@@ -364,6 +388,9 @@ class TradingLoop:
         report.settled += len(self._pipeline.cancel_working())
         report.positions_closed = len(self._exits.reconcile())
         report.settled += len(self._exits.cancel_working())
+        if self._mechanical is not None:
+            report.settled += len(self._mechanical.cancel_working())
+            self._session.capture_mechanical(self._mechanical, self._clock())
         report.halted = self._gate.kill_switch_tripped
         self._session.persist(self._gate, self._clock())
         logger.info(

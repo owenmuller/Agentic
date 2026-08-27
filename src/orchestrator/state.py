@@ -64,12 +64,23 @@ _FILE_NOTE = (
 
 @dataclass(slots=True)
 class SessionState:
-    """The two figures no other system holds."""
+    """The figures no other system holds — the global high-water mark and kill
+    switch, plus the mechanical sleeve's own ledger and circuit breaker
+    (ruling 2026-08-27). The mechanical halt follows the kill switch's
+    discipline: sticky, and cleared only by a human editing this file
+    (set mechanical_halted to false)."""
 
     path: Path
     high_water_mark: Optional[Decimal] = None
     kill_switch_tripped: bool = False
     kill_switch_tripped_at: Optional[datetime] = None
+    #: The mechanical sleeve's virtual cash ledger: seeded at first entry from
+    #: the sleeve's target allocation, debited by entry fills, credited by
+    #: exits. sleeve value = this + open mechanical market value.
+    mechanical_virtual_cash: Optional[Decimal] = None
+    mechanical_high_water_mark: Optional[Decimal] = None
+    mechanical_halted: bool = False
+    mechanical_halted_at: Optional[datetime] = None
 
     @classmethod
     def load(cls, path: Path) -> "SessionState":
@@ -85,12 +96,25 @@ class SessionState:
         raw = json.loads(path.read_text(encoding="utf-8"))
         mark = raw.get("high_water_mark")
         tripped_at = raw.get("kill_switch_tripped_at")
+        virtual = raw.get("mechanical_virtual_cash")
+        mech_mark = raw.get("mechanical_high_water_mark")
+        mech_at = raw.get("mechanical_halted_at")
         return cls(
             path=path,
             high_water_mark=Decimal(str(mark)) if mark is not None else None,
             kill_switch_tripped=bool(raw.get("kill_switch_tripped", False)),
             kill_switch_tripped_at=(
                 datetime.fromisoformat(tripped_at) if tripped_at else None
+            ),
+            mechanical_virtual_cash=(
+                Decimal(str(virtual)) if virtual is not None else None
+            ),
+            mechanical_high_water_mark=(
+                Decimal(str(mech_mark)) if mech_mark is not None else None
+            ),
+            mechanical_halted=bool(raw.get("mechanical_halted", False)),
+            mechanical_halted_at=(
+                datetime.fromisoformat(mech_at) if mech_at else None
             ),
         )
 
@@ -104,6 +128,19 @@ class SessionState:
         elif not gate.kill_switch_tripped:
             self.kill_switch_tripped_at = None
 
+    def capture_mechanical(self, engine, now: Optional[datetime] = None) -> None:
+        """Take the mechanical engine's ledger and breaker state. Does not write.
+        The halt is captured faithfully in the tripped direction only — a human
+        clears it in the file, and this must not silently re-clear it."""
+        newly_halted = engine.halted and not self.mechanical_halted
+        self.mechanical_virtual_cash = engine.virtual_cash
+        self.mechanical_high_water_mark = engine.high_water_mark
+        self.mechanical_halted = engine.halted
+        if newly_halted:
+            self.mechanical_halted_at = now or datetime.now(timezone.utc)
+        elif not engine.halted:
+            self.mechanical_halted_at = None
+
     def save(self) -> None:
         """Write via a temporary file and replace, so a crash mid-write cannot truncate."""
         payload = {
@@ -115,6 +152,22 @@ class SessionState:
             "kill_switch_tripped_at": (
                 self.kill_switch_tripped_at.isoformat()
                 if self.kill_switch_tripped_at
+                else None
+            ),
+            "mechanical_virtual_cash": (
+                str(self.mechanical_virtual_cash)
+                if self.mechanical_virtual_cash is not None
+                else None
+            ),
+            "mechanical_high_water_mark": (
+                str(self.mechanical_high_water_mark)
+                if self.mechanical_high_water_mark is not None
+                else None
+            ),
+            "mechanical_halted": self.mechanical_halted,
+            "mechanical_halted_at": (
+                self.mechanical_halted_at.isoformat()
+                if self.mechanical_halted_at
                 else None
             ),
         }
@@ -157,6 +210,24 @@ def position_from_broker(
     )
 
 
+def replay_mechanical_deployed_today(
+    decisions: Iterable[DecisionRecord], today: date
+) -> Decimal:
+    """The mechanical sleeve's own daily-deployment counter, replayed the same
+    way as the judged one (ruling 2026-08-27): from approvals, per day."""
+    total = ZERO
+    for record in decisions:
+        gate_snapshot = record.gate
+        if not gate_snapshot.approved or gate_snapshot.approved_at is None:
+            continue
+        if gate_snapshot.approved_at.date() != today:
+            continue
+        order = parse_order(gate_snapshot.order)
+        if order.is_opening and sleeve_of(order) is Sleeve.MECHANICAL:
+            total += gate_snapshot.max_loss or ZERO
+    return total
+
+
 def replay_deployed_today(
     decisions: Iterable[DecisionRecord], today: date
 ) -> Decimal:
@@ -187,6 +258,8 @@ def seed_account_state(
     deployed_today: Decimal,
     today: date,
     account_type: AccountType = AccountType.CASH,
+    mechanical_deployed_today: Decimal = ZERO,
+    mechanical_open: Optional[dict[str, tuple[Decimal, Decimal]]] = None,
 ) -> AccountState:
     """Assemble the state a restarted gate should wake up holding.
 
@@ -202,7 +275,33 @@ def seed_account_state(
         if holding.quantity == 0:
             continue
         position = position_from_broker(holding, today)
-        held[position.key] = position
+        # Sleeve split (ruling 2026-08-27): the broker reports one holding per
+        # symbol; the audit log alone knows how much of it the mechanical
+        # sleeve owns. Clamped to what the broker actually holds — the broker
+        # stays authoritative on totals, and anything it holds beyond what
+        # either sleeve accounts for defaults to the judged sleeve, where the
+        # unmanaged-exposure warning already surfaces it to a human.
+        mechanical = (mechanical_open or {}).get(holding.symbol)
+        if mechanical is not None and not holding.is_option:
+            mech_quantity, mech_cost = mechanical
+            take = min(mech_quantity, position.quantity)
+            if take > 0:
+                fraction = take / position.quantity
+                mech_value = position.market_value * fraction
+                cost_share = min(mech_cost, position.cost_basis)
+                held[("mechanical", holding.symbol)] = Position(
+                    key=("mechanical", holding.symbol),
+                    sleeve=Sleeve.MECHANICAL,
+                    quantity=take,
+                    cost_basis=cost_share,
+                    market_value=mech_value,
+                    last_open_date=today,
+                )
+                position.quantity -= take
+                position.cost_basis -= cost_share
+                position.market_value -= mech_value
+        if position.quantity > 0:
+            held[position.key] = position
 
     state = AccountState(
         cash=cash,
@@ -210,6 +309,7 @@ def seed_account_state(
         account_type=account_type,
         positions=held,
         deployed_today=deployed_today,
+        mechanical_deployed_today=mechanical_deployed_today,
         deployment_date=today,
     )
     state.high_water_mark = (

@@ -140,6 +140,56 @@ class ClassAttribution:
 
 
 @dataclass(frozen=True, slots=True)
+class MechanicalAttribution:
+    """The mechanical sleeve's own bucket (ruling 2026-08-27) — never mixed
+    into a signal class, so the experiment's arms stay comparable."""
+
+    entries: int
+    approved: int
+    rejected: int
+    resolved: int
+    wins: int
+    realised_pnl: Decimal
+    deployed: Decimal
+    open_positions: int
+    #: Symbols both sleeves bought inside the window — overlap is allowed by
+    #: ruling, and this is where its cost is measured rather than assumed.
+    overlap_symbols: tuple[str, ...] = ()
+
+    @property
+    def hit_rate(self) -> Optional[float]:
+        if self.resolved <= 0:
+            return None
+        return self.wins / self.resolved
+
+    @property
+    def return_pct(self) -> Optional[Decimal]:
+        if self.deployed <= ZERO:
+            return None
+        return (self.realised_pnl / self.deployed * 100).quantize(CENTS)
+
+    def summary(self) -> str:
+        if self.resolved == 0:
+            verdict = f"no resolved outcomes yet; {self.open_positions} open"
+        else:
+            verdict = (
+                f"{self.hit_rate:.0%} hit rate over {self.resolved} closed; "
+                f"{self.return_pct:+.2f}% on {self.deployed:.2f} deployed; "
+                f"{self.open_positions} open"
+            )
+        overlap = (
+            f"; overlap with judged: {', '.join(self.overlap_symbols)}"
+            if self.overlap_symbols
+            else "; no judged overlap"
+        )
+        return (
+            f"mechanical: {self.realised_pnl:+.2f} realised, {verdict}; "
+            f"{self.approved} approved / {self.rejected} rejected of "
+            f"{self.entries}{overlap}"
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class AttributionReport:
     """The weekly report. Flags are advisory — a human decides what to remove."""
 
@@ -152,6 +202,8 @@ class AttributionReport:
     #: Estimated research spend this calendar month, across all classes — a
     #: shorter horizon than the window costs above, for bill anticipation.
     mtd_research_cost: Optional[Decimal] = None
+    #: The mechanical sleeve's bucket; None when the sleeve has no history.
+    mechanical: Optional[MechanicalAttribution] = None
 
     @property
     def total_pnl(self) -> Decimal:
@@ -223,6 +275,8 @@ class AttributionReport:
         lines.append("")
         for signal_class in sorted(self.by_class):
             lines.append(f"  {self.by_class[signal_class].summary()}")
+        if self.mechanical is not None:
+            lines.append(f"  {self.mechanical.summary()}")
 
         if self.flagged_classes:
             lines.extend(
@@ -264,6 +318,12 @@ def build_attribution(
         )
 
     window_start = generated_at - timedelta(days=window_days)
+    # The mechanical sleeve's trails are partitioned out first: they carry no
+    # research snapshot and belong to their own bucket, never a signal class.
+    mechanical_trails = [
+        t for t in trails if t.decision.sizing.strategy == "mechanical"
+    ]
+    trails = [t for t in trails if t.decision.sizing.strategy != "mechanical"]
     buckets: dict[SignalClass, dict[str, object]] = {}
 
     def empty_bucket() -> dict[str, object]:
@@ -298,7 +358,7 @@ def build_attribution(
             bucket["approved"] += 1  # type: ignore[operator]
         else:
             bucket["rejected"] += 1  # type: ignore[operator]
-        if trail.decision.research.flagged_manipulation:
+        if trail.decision.research is not None and trail.decision.research.flagged_manipulation:
             bucket["flags"] += 1  # type: ignore[operator]
         if trail.outcome is not None:
             bucket["resolved"] += 1  # type: ignore[operator]
@@ -315,6 +375,56 @@ def build_attribution(
             return ZERO
         cost = monthly * Decimal(window_days) / Decimal(PRORATION_MONTH_DAYS)
         return cost.quantize(CENTS)
+
+    mechanical = None
+    windowed = [
+        t for t in mechanical_trails if t.decision.recorded_at >= window_start
+    ]
+    if windowed or mechanical_trails:
+        judged_bought = {
+            str((t.decision.gate.order or {}).get("symbol", ""))
+            for t in trails
+            if t.decision.recorded_at >= window_start and t.decision.was_approved
+        }
+        mech_bought = {
+            str((t.decision.gate.order or {}).get("symbol", ""))
+            for t in windowed
+            if t.decision.was_approved
+        }
+        open_now = sum(
+            1
+            for t in mechanical_trails
+            if t.decision.was_approved
+            and t.outcome is None
+            and any(f.side == "buy" for f in t.fills)
+        )
+        mechanical = MechanicalAttribution(
+            entries=len(windowed),
+            approved=sum(1 for t in windowed if t.decision.was_approved),
+            rejected=sum(1 for t in windowed if not t.decision.was_approved),
+            resolved=sum(1 for t in windowed if t.outcome is not None),
+            wins=sum(
+                1 for t in windowed if t.outcome is not None and t.outcome.won
+            ),
+            realised_pnl=sum(
+                (t.outcome.realised_pnl for t in windowed if t.outcome is not None),
+                ZERO,
+            ),
+            deployed=sum(
+                (
+                    f.filled_value
+                    for t in windowed
+                    if t.outcome is not None
+                    for f in t.fills
+                    if f.side == "buy"
+                ),
+                ZERO,
+            ),
+            open_positions=open_now,
+            overlap_symbols=tuple(
+                sorted((judged_bought & mech_bought) - {""})
+            ),
+        )
 
     by_class = {
         signal_class: ClassAttribution(
@@ -341,4 +451,5 @@ def build_attribution(
         by_class=by_class,
         benchmark_return_pct=benchmark_return_pct,
         mtd_research_cost=mtd_research_cost,
+        mechanical=mechanical,
     )

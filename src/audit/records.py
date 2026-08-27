@@ -275,8 +275,14 @@ class DecisionRecord(_Record):
     decision_id: str
     recorded_at: datetime
     signal: SignalSnapshot
-    research: ResearchSnapshot
+    #: None for MECHANICAL entries (ruling 2026-08-27): the mechanical sleeve
+    #: has no LLM in its path, and fabricating a research snapshot would put a
+    #: verdict in the record nobody produced. ``sizing.strategy`` says
+    #: "mechanical" on those records; every judged decision carries research.
+    research: Optional[ResearchSnapshot]
     sizing: SizingSnapshot
+    #: The mechanical entry's own facts; None on judged decisions.
+    mechanical: Optional["MechanicalSnapshot"] = None
     #: How the thesis was expressed (options vs equity), when routing ran.
     expression: Optional[ExpressionSnapshot] = None
     #: Two-stage research (2026-08-25): the stage-one screen draft behind a
@@ -329,6 +335,19 @@ class OutcomeRecord(_Record):
     def won(self) -> bool:
         """A flat close is not a win. Ties go against the source (Constraint #6)."""
         return self.realised_pnl > 0
+
+
+class MechanicalSnapshot(_Record):
+    """What qualified a mechanical entry (ruling 2026-08-27): the disclosure's
+    structured facts and the rule set that admitted it, so attribution can
+    compare mechanical vs judged on identical signals and partition history
+    across rule changes."""
+
+    ruleset_version: str
+    filer: Optional[str] = None
+    ticker: Optional[str] = None
+    amount_range: Optional[str] = None
+    report_date: Optional[str] = None
 
 
 class CorrectionRecord(_Record):
@@ -433,6 +452,9 @@ class ExitReason(StrEnum):
     #: Long option inside the configured pre-expiry window. Closed regardless of
     #: thesis state: theta endgame is not a place this system holds (2026-08-24).
     EXPIRY_CLOSE = "expiry_close"
+    #: The mechanical sleeve's only exit (ruling 2026-08-27): hold_days after
+    #: fill, no price stop — the stop is the slice size.
+    MECHANICAL_TIME_EXIT = "mechanical_time_exit"
 
 
 class ReviewOutcome(StrEnum):

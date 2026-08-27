@@ -1286,6 +1286,52 @@ full roster. 13F remains context-less by design (no single extracted ticker).
   superseded originals. Execution deliberately disabled on the re-run —
   the verdict is the deliverable; any trade is a separate human decision.
 
+## Mechanical disclosure follower (human ruling 2026-08-27)
+
+The controlled experiment: deterministic diversified copying of congressional
+purchase disclosures, NO LLM in the path, alongside the judged system so
+attribution says which shape produces alpha. All five design recommendations
+approved + two amendments (sector slot cap via the existing sectors.yaml;
+sleeve-level circuit breaker).
+
+- **Allocation 75/25/0** (CLAUDE.md § Portfolio Structure amended). The
+  mechanical sleeve is its own `Sleeve.MECHANICAL`: equity orders carry a
+  sleeve tag (schema still cannot express writes/shorts/margin), positions
+  key by (sleeve, symbol) — overlap is separate positions, a judged exit can
+  never sell mechanical shares. Gate enforces the mechanical cap table
+  (risk_limits.yaml `mechanical_sleeve`): 5% single-position backstop, own
+  daily deployment budget (15% of sleeve), own sector budget (30% backstop),
+  25%+drift allocation ceiling. Weight 0 switches the whole arm off.
+- **Funnel identity (the ruling's hold-the-line):** the engine qualifies with
+  the SAME ResearchPreFilter INSTANCE the judged loop dispatches with —
+  identical by construction, tested by object identity. On top: purchase-only,
+  parseable ticker, tradeable-equity check (Alpaca /v2/assets:
+  active+tradable+fractionable, fails CLOSED).
+- **Slots:** 30 equal-weight slices (sleeve NAV/30), 6/filer, 8/mapped-sector
+  (unmapped names are singletons, the sectors.yaml convention), one slice per
+  name. Qualified-but-no-slot writes `mechanical_capacity`; a tripped breaker
+  writes `mechanical_halted` — both excluded from dedup sealing, like
+  source_cap.
+- **Exits: time only, 365 days, no price stop** — the stop is the slice size.
+  ExitReason.MECHANICAL_TIME_EXIT. Kill switch halts mechanical entries
+  globally; closes still pass.
+- **Circuit breaker:** sleeve value (virtual cash ledger anchored at first
+  entry + open mechanical market value) down >25% from its OWN high-water
+  mark halts new entries; positions ride. Sticky, persisted in
+  session_state.json (mechanical_halted — human reset only), surfaced in
+  health's mechanical line.
+- **Audit:** entries are DecisionRecords with research=None (no fabricated
+  verdicts), sizing.strategy="mechanical", a MechanicalSnapshot (filer,
+  ticker, amount, report date, ruleset_version 2026-08-27.1). Mechanical
+  records NEVER seal signals for the judged arm — independence is what makes
+  the comparison valid. Restart: broker positions split between sleeves from
+  the audit log (broker authoritative on totals); ledger/HWM/halt persist in
+  session state; own deployed-today replay.
+- **Attribution:** its own bucket (never a signal class) + measured overlap
+  symbols in the weekly report.
+- Suite green throughout; judged-sleeve tests recalibrated to the 75% sleeve
+  (13 shares where 17 were, 1,875 where 2,500 was, etc.).
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

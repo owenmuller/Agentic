@@ -75,6 +75,36 @@ class AlpacaAdapter(BrokerAdapter):
     #: broker-side, which the audit trail records like any other rejection).
     equity_quantity_step = Decimal("0.000000001")
 
+    def tradeable_equity(self, symbol: str) -> bool:
+        """Alpaca's asset record: active, tradable, and — because this venue
+        trades fractional slices — fractionable. Used by the mechanical
+        sleeve's qualification (ruling 2026-08-27). Fails CLOSED on any error
+        (Constraint #6: the doubtful direction is the fewer trades), with the
+        reason logged; the signal is not sealed and re-emits at a restart."""
+        try:
+            response = self._client.get(f"/v2/assets/{symbol}")
+        except Exception as error:  # noqa: BLE001 - an outage is "not tradeable now"
+            logger.warning("asset lookup for %s failed: %s", symbol, error)
+            return False
+        if response.status_code == 404:
+            return False
+        if response.status_code >= 400:
+            logger.warning(
+                "asset lookup for %s returned HTTP %d", symbol, response.status_code
+            )
+            return False
+        try:
+            asset = response.json()
+        except ValueError:
+            return False
+        if not isinstance(asset, dict):
+            return False
+        return (
+            asset.get("status") == "active"
+            and bool(asset.get("tradable"))
+            and bool(asset.get("fractionable"))
+        )
+
     def __init__(
         self,
         client: Optional[httpx.Client] = None,
