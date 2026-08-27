@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Optional
 from urllib.parse import quote
@@ -266,6 +266,16 @@ class AlpacaDailyBars:
         self._client.close()
 
 
+def _date_or_none(raw: object) -> Optional[date]:
+    """A calendar date from an ISO string (bare or timestamped), or None."""
+    if not isinstance(raw, str) or len(raw) < 10:
+        return None
+    try:
+        return date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+
+
 class MarketContextBuilder:
     """Deterministic market context for research prompts. Zero LLM cost.
 
@@ -300,10 +310,16 @@ class MarketContextBuilder:
                 "No instrument was extracted from this signal; no market "
                 "context is available. Proceed on the signal content alone."
             )
+        # Lagged signals (congressional disclosures) carry the trade date as
+        # structured metadata; the priced-in analysis's whole question is
+        # "what has happened since the trade", so that change is computed
+        # directly (2026-08-27) instead of being left to inference from
+        # fixed 5d/20d windows.
+        since = _date_or_none(signal.metadata.get("transaction_date"))
         sections = []
         for ticker in tickers[: self.MAX_TICKERS]:
             try:
-                sections.append(self._section_for(ticker))
+                sections.append(self._section_for(ticker, since=since))
             except Exception as error:  # noqa: BLE001 - context must never block
                 logger.warning("market context for %s failed: %s", ticker, error)
                 sections.append(
@@ -312,11 +328,12 @@ class MarketContextBuilder:
                 )
         return "\n\n".join(sections)
 
-    def _section_for(self, ticker: str) -> str:
+    def _section_for(self, ticker: str, since: Optional["date"] = None) -> str:
         now = self._clock()
         bars = self._bars.bars(ticker, now - timedelta(days=380), now)
         closes: list[Decimal] = []
         volumes: list[Decimal] = []
+        dates: list[Optional["date"]] = []
         for bar in bars:
             try:
                 close = Decimal(str(bar.get("c")))
@@ -326,6 +343,7 @@ class MarketContextBuilder:
             if close > ZERO:
                 closes.append(close)
                 volumes.append(volume)
+                dates.append(_date_or_none(bar.get("t")))
         if len(closes) < 2:
             return (
                 f"{ticker}: market context unavailable (no usable price history). "
@@ -349,6 +367,29 @@ class MarketContextBuilder:
                 f"- {label} change: "
                 + (f"{change:+.2f}%" if change is not None else "unavailable")
             )
+
+        # Trade-date-anchored change (2026-08-27): the number the priced-in
+        # analysis is actually about, stated instead of inferred. Only lagged
+        # signals carry a transaction_date; the anchor is the first session
+        # on or after it.
+        if since is not None:
+            base = base_date = None
+            for bar_date, close in zip(dates, closes):
+                if bar_date is not None and bar_date >= since:
+                    base, base_date = close, bar_date
+                    break
+            if base is None or base <= ZERO:
+                lines.append(
+                    f"- change since the disclosed trade date "
+                    f"({since.isoformat()}): unavailable"
+                )
+            else:
+                since_change = ((last / base - 1) * 100).quantize(Decimal("0.01"))
+                lines.append(
+                    f"- change since the disclosed trade date "
+                    f"({since.isoformat()}, first session "
+                    f"{base_date.isoformat()} at {base}): {since_change:+.2f}%"
+                )
 
         high = max(closes)
         from_high = ((last / high - 1) * 100).quantize(Decimal("0.01"))

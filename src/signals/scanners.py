@@ -394,6 +394,13 @@ class Class2CongressionalScanner(Scanner):
             return self._handle_trade_call(source, item, now)
         metadata = {
             **item.fields,
+            # The uniform instrument key (defect fix 2026-08-27): Quiver's
+            # structured field is "ticker", singular, but every consumer —
+            # the market-context builder, the prompt's extracted-tickers
+            # line — reads "tickers". The mismatch starved every
+            # congressional research pass of market context; the BE verdicts
+            # of 08-27 reasoned structurally because of it.
+            "tickers": item.fields.get("ticker", ""),
             "priced_in_analysis_required": "true",
             "copy_trade": "false",
             "disclosure_lag_note": "STOCK Act permits up to 45 days; evaluate from the "

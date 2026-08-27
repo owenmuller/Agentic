@@ -1263,6 +1263,29 @@ quality name well below its 200-DMA may support a mean-reversion reading,
 but the model must distinguish temporary dislocation from structural decline
 — cite evidence either way, and this context alone is never a thesis.
 
+## Defect fix: congressional passes ran without market context (2026-08-27)
+
+Root cause of the BE record defect (decision 5362628673f34e84): a metadata
+key mismatch — Quiver's structured field is `ticker`, singular; the context
+builder and the prompt's extracted-tickers line read `tickers`, plural. So
+EVERY congressional research pass since market context shipped (08-19) ran
+context-less, and the model reasoned structurally ("price data unavailable").
+Unnoticed until now because congressional volume was near zero before the
+full roster. 13F remains context-less by design (no single extracted ticker).
+
+- Fix at the producer: the class-2 scanner now stamps `tickers` from the
+  Quiver `ticker` field — one uniform consumer contract, no fallback keys.
+- New context line for lagged signals: **change since the disclosed trade
+  date** (anchor = first session on/after `transaction_date`) — the number
+  the priced-in analysis is actually about, stated instead of inferred.
+  Missing/future anchor renders unavailable; signals without a trade date
+  get no line.
+- One-time human-authorized re-evaluation of both BE tranches (they were
+  sealed by the defective verdicts): run through the production research
+  path with context, recorded normally, with CorrectionRecords naming the
+  superseded originals. Execution deliberately disabled on the re-run —
+  the verdict is the deliverable; any trade is a separate human decision.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

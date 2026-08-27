@@ -91,9 +91,12 @@ def test_window_return_is_none_on_any_gap():
 # ================================================================================
 
 
-def context_signal(tickers: str = "NUE"):
+def context_signal(tickers: str = "NUE", transaction_date: str | None = None):
     signal = make_signal(content=f"Buying ${tickers} here.")
-    object.__setattr__(signal, "metadata", {"tickers": tickers})
+    metadata = {"tickers": tickers}
+    if transaction_date is not None:
+        metadata["transaction_date"] = transaction_date
+    object.__setattr__(signal, "metadata", metadata)
     return signal
 
 
@@ -281,3 +284,93 @@ def test_the_prompt_carries_the_mean_reversion_guidance_with_context_only():
 
     without = build_user_prompt(context_signal())
     assert "mean-reversion" not in without
+
+
+# ================================================================================
+# Trade-date-anchored change + class-2 context end to end (defect fix 2026-08-27)
+# ================================================================================
+
+
+def test_change_since_the_trade_date_is_anchored_arithmetic():
+    """The anchor is the first session on or after the disclosed trade date:
+    30 bars ending at NOW, trade date landing on the 110.0 plateau, last close
+    132 -> +20.00% since the trade."""
+    closes = [100.0] * 20 + [110.0] * 9 + [132.0]
+    builder = MarketContextBuilder(
+        AlpacaDailyBars(client=bars_client({"NUE": daily(closes)})),
+        clock=lambda: NOW,
+    )
+    block = builder.context_for(
+        context_signal(transaction_date="2026-08-09")
+    )
+    assert (
+        "- change since the disclosed trade date (2026-08-09, "
+        "first session 2026-08-09 at 110.0): +20.00%" in block
+    )
+
+
+def test_a_trade_date_with_no_session_yet_is_honestly_unavailable():
+    closes = [100.0] * 30
+    builder = MarketContextBuilder(
+        AlpacaDailyBars(client=bars_client({"NUE": daily(closes)})),
+        clock=lambda: NOW,
+    )
+    block = builder.context_for(
+        context_signal(transaction_date="2026-09-15")  # after every bar
+    )
+    assert "change since the disclosed trade date (2026-09-15): unavailable" in block
+
+
+def test_signals_without_a_trade_date_get_no_anchored_line():
+    builder = MarketContextBuilder(
+        AlpacaDailyBars(client=bars_client({"NUE": daily(rich_history())})),
+        clock=lambda: NOW,
+    )
+    block = builder.context_for(context_signal())
+    assert "change since the disclosed trade date" not in block
+
+
+def test_class_2_signals_carry_market_context_end_to_end(tmp_path):
+    """The defect (2026-08-27): Quiver stamps 'ticker', every consumer reads
+    'tickers', so congressional passes ran context-less and the BE verdicts
+    reasoned structurally. End to end now: a disclosure flows scanner ->
+    prompt with the context block, the extracted ticker, and the
+    trade-date-anchored change."""
+    from orchestrator.bootstrap import start
+    from research.config import ResearchConfig
+    from risk_gate import RiskLimits
+    from signals import SignalsConfig
+
+    from test_hardening import congressional_feed, disclosure_item
+    from test_orchestrator import FakeBroker, FakeClock, orchestrator_config, prices_of
+
+    llm = FakeLLM(
+        structured({**REPORT, "confidence": 40, "priced_in_analysis": "checked"})
+    )
+    started = start(
+        fetcher=congressional_feed(
+            disclosure_item("be-row", "BE", "$500,001 - $1,000,000", "2026-08-17")
+        ),
+        prices=prices_of(NUE="140.00"),
+        llm_client=llm,
+        adapter=FakeBroker(),
+        clock=FakeClock(),
+        data_dir=tmp_path,
+        limits=RiskLimits.load(),
+        signals_config=SignalsConfig.load(),
+        research_config=ResearchConfig.load(),
+        orchestrator_config=orchestrator_config(),
+        market_context=MarketContextBuilder(
+            AlpacaDailyBars(client=bars_client({"BE": daily([20.0] * 29 + [25.0])})),
+            clock=lambda: NOW,
+        ).context_for,
+    )
+    report = started.loop.tick()
+    assert len(report.processed) == 1  # researched, not prefiltered
+
+    prompt = llm.calls[0]["user"]
+    assert "MARKET CONTEXT" in prompt
+    assert "BE: last close 25" in prompt
+    assert "tickers extracted by the scanner: BE" in prompt
+    # disclosure_item discloses a 2026-08-01 trade; the anchored line rides in.
+    assert "change since the disclosed trade date (2026-08-01" in prompt
