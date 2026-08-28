@@ -37,7 +37,11 @@ equity_sleeve:
   # exits keep running. Halting an arm must never require editing allocation
   # weights or writing to session_state.json while the process is up.
   entries_enabled: true
-  max_single_position: 0.05 # of sleeve NAV
+  # Risk-on calibration (human ruling 2026-08-28): raised 0.05 -> 0.07 in step
+  # with the sizing table's top band. The two must move together — a 7% band
+  # under a 5% gate cap does not produce a 5% position, it produces a rejected
+  # order on the highest-conviction signals the system finds.
+  max_single_position: 0.07 # of sleeve NAV
   max_daily_deployment: 0.15 # of sleeve NAV, per trading day
   max_options_premium_at_risk: 0.20 # aggregate open premium, of equity sleeve
   # Concentration guard (2026-08-19): aggregate equity exposure per sector, of
@@ -62,22 +66,28 @@ pdt:
 sizing:
   # Research confidence (0-100) -> position size as a fraction of sleeve NAV.
   #
-  # BOUNDARY RULE: CLAUDE.md lists the bands as "55-70 / 70-85 / 85+", which overlaps
+  # RISK-ON CALIBRATION (human ruling 2026-08-28): floor 55 -> 50, top band
+  # 5% -> 7%. The 50-70 band sizes at 1% — small shots on modestly-edged theses
+  # rather than none. Everything structural is unchanged: never-negative, no
+  # margin, long-options-only, the 12% kill switch, sector and deployment caps.
+  # Dated so attribution can partition before/after.
+  #
+  # BOUNDARY RULE: CLAUDE.md lists the bands as "50-70 / 70-85 / 85+", which overlaps
   # at 70 and at 85. Resolved per Inviolable Constraint #6 (ambiguity resolves toward
   # less risk): bands are (lower, upper], so a confidence landing exactly on a boundary
   # takes the SMALLER size. Exactly 70 -> 1.0%, exactly 85 -> 2.5%.
   #
-  # The one exception is the floor: "< 55 | No trade" is explicit, not ambiguous, so
-  # 55 itself trades at 1.0% and the first band alone is lower-inclusive. Constraint #6
+  # The one exception is the floor: "< 50 | No trade" is explicit, not ambiguous, so
+  # 50 itself trades at 1.0% and the first band alone is lower-inclusive. Constraint #6
   # resolves genuine overlaps; it does not override a rule that already says what it
   # means.
-  no_trade_below: 55
+  no_trade_below: 50
   bounds: lower_exclusive_upper_inclusive
   bands:
-    - { min: 55, max: 70, size: 0.010, lower_inclusive: true }
+    - { min: 50, max: 70, size: 0.010, lower_inclusive: true }
     - { min: 70, max: 85, size: 0.025 }
-    - { min: 85, max: 100, size: 0.050 }
-  hard_cap: 0.05 # confidence 100 is still 5% max
+    - { min: 85, max: 100, size: 0.070 }
+  hard_cap: 0.07 # confidence 100 is still 7% max
   options:
     basis: premium_at_risk
     multiplier: 0.5 # table size halved: options already carry embedded leverage

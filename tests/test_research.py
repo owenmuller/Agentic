@@ -305,7 +305,7 @@ def test_instruction_like_prose_is_parsed_as_an_ordinary_field(limits):
     assert isinstance(outcome, ResearchReport)
     # The text is data in a field, and the only thing that reaches sizing is the int.
     assert outcome.confidence == 100
-    assert limits.sizing.size_for(outcome.confidence) == Decimal("0.050")
+    assert limits.sizing.size_for(outcome.confidence) == Decimal("0.070")
     assert limits.sizing.size_for(outcome.confidence) <= limits.sizing.hard_cap
 
 

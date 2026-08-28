@@ -30,6 +30,9 @@ classes:
         # question (Truth API vs X) is decided by a human first.
         handle: "@realDonaldTrump"
         monthly_cost: 0 # delivery rides the mirror sources below on the same X meter
+        # Feed cost is billed from here, not from the window start
+        # (ruling 2026-08-28): the date this source was wired.
+        start_date: 2026-08-17
         # RESEARCH PRE-FILTER (human-approved 2026-08-18). Trump can out-post the
         # 40/day research budget by himself, and most Truths are not about markets:
         # a post is researched only if it names an instrument (cashtag / extracted
@@ -96,6 +99,9 @@ classes:
         silence_warning_trading_days: 2
         daily_read_warning: 200
         monthly_cost: 0 # rides the Class 1 X pay-per-use budget above
+        # Feed cost is billed from here, not from the window start
+        # (ruling 2026-08-28): the date this source was wired.
+        start_date: 2026-08-18
 
       - id: trump_mirror_tdp
         platforms: [x]
@@ -118,6 +124,9 @@ classes:
         silence_warning_trading_days: 2
         daily_read_warning: 200
         monthly_cost: 0
+        # Feed cost is billed from here, not from the window start
+        # (ruling 2026-08-28): the date this source was wired.
+        start_date: 2026-08-18
         extraction:
           tickers: true
           sectors: true
@@ -137,6 +146,9 @@ classes:
         # High-volume account: reads cost ~$0.005/post on the X API. The read
         # warning is set above organic volume; the cap above bounds research.
         monthly_cost: 25
+        # Feed cost is billed from here, not from the window start
+        # (ruling 2026-08-28): the date this source was wired.
+        start_date: 2026-08-25
         daily_read_warning: 300
         handle: "@unusual_whales"
         treatment: thesis_input_only
@@ -169,6 +181,9 @@ classes:
         daily_research_cap: 3
         platforms: [x]
         monthly_cost: 10
+        # Feed cost is billed from here, not from the window start
+        # (ruling 2026-08-28): the date this source was wired.
+        start_date: 2026-08-25
         daily_read_warning: 300
         handle: "@OptionsHawk"
         treatment: thesis_input_only
@@ -192,6 +207,9 @@ classes:
         # quiet minute at zero. $10/month is the conservative budget figure the
         # attribution report charges this class.
         monthly_cost: 10
+        # Feed cost is billed from here, not from the window start
+        # (ruling 2026-08-28): the date this source was wired.
+        start_date: 2026-08-17
         # Warn in run.log once this many posts have been read in a UTC day — organic
         # volume is a fraction of this, so crossing it means a since_id bug, and the
         # bug should surface in the logs before it surfaces on the bill.
@@ -258,6 +276,9 @@ classes:
         # Feed cost, prorated against this class's P&L in the weekly attribution
         # report. Class 2 must out-earn its own subscription.
         monthly_cost: 30
+        # Feed cost is billed from here, not from the window start
+        # (ruling 2026-08-28): the date this source was wired.
+        start_date: 2026-08-17
         # RESEARCH PRE-FILTER (cost pass, 2026-08-19): free deterministic checks
         # before the LLM spends a pass. A disclosure is skipped (recorded as a
         # pre_filter stage rejection, never silently dropped) when:
@@ -304,6 +325,9 @@ classes:
         daily_research_cap: 3
         platforms: [x]
         monthly_cost: 5
+        # Feed cost is billed from here, not from the window start
+        # (ruling 2026-08-28): the date this source was wired.
+        start_date: 2026-08-25
         daily_read_warning: 200
         handle: "@Citrini7"
         treatment: thesis_input_only
@@ -332,6 +356,9 @@ classes:
       - id: form_13f
         provider: sec_edgar_full_text_search
         monthly_cost: 0 # EDGAR is free
+        # Feed cost is billed from here, not from the window start
+        # (ruling 2026-08-28): the date this source was wired.
+        start_date: 2026-08-17
         # SEC-required contact header. EDGAR asks every automated client to identify
         # a way to reach its operator; anonymous scrapers get IP-blocked.
         user_agent: "Agentic trading research omuller@brasacap.com"

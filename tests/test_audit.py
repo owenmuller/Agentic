@@ -6,7 +6,7 @@ and attribution over fixture history flags a losing signal class.
 """
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -649,11 +649,11 @@ def test_feed_costs_are_prorated_into_the_window(tmp_path, limits):
         log.trails(),
         generated_at=clock.now,
         window_days=90,
-        feed_costs={SignalClass.CLASS_2_MOMENTUM: Decimal("30")},
+        feed_costs_for_window={SignalClass.CLASS_2_MOMENTUM: Decimal("90.00")},
     )
     class_2 = report.by_class[SignalClass.CLASS_2_MOMENTUM]
 
-    assert class_2.feed_cost == Decimal("90.00")  # 30/mo x 90d / 30
+    assert class_2.feed_cost == Decimal("90.00")  # 30/mo x 90d, billed by config
     assert class_2.net_pnl == class_2.realised_pnl - Decimal("90.00")
     # Free classes are untouched: gross == net.
     class_1 = report.by_class[SignalClass.CLASS_1_REALTIME]
@@ -680,7 +680,7 @@ def test_gross_positive_but_net_negative_fires_the_flag(tmp_path, limits):
         log.trails(),
         generated_at=clock.now,
         window_days=90,
-        feed_costs={SignalClass.CLASS_2_MOMENTUM: Decimal("30")},
+        feed_costs_for_window={SignalClass.CLASS_2_MOMENTUM: Decimal("90.00")},
     )
     class_2 = report.by_class[SignalClass.CLASS_2_MOMENTUM]
 
@@ -709,7 +709,7 @@ def test_a_class_that_out_earns_its_feed_is_not_flagged(tmp_path, limits):
         log.trails(),
         generated_at=clock.now,
         window_days=90,
-        feed_costs={SignalClass.CLASS_2_MOMENTUM: Decimal("30")},
+        feed_costs_for_window={SignalClass.CLASS_2_MOMENTUM: Decimal("90.00")},
     )
     class_2 = report.by_class[SignalClass.CLASS_2_MOMENTUM]
     assert class_2.net_pnl == Decimal("410.00")
@@ -725,12 +725,12 @@ def test_a_paid_but_silent_class_still_shows_its_bleed(tmp_path, limits):
         [],
         generated_at=NOW,
         window_days=60,
-        feed_costs={SignalClass.CLASS_2_MOMENTUM: Decimal("30")},
+        feed_costs_for_window={SignalClass.CLASS_2_MOMENTUM: Decimal("60.00")},
     )
     class_2 = report.by_class[SignalClass.CLASS_2_MOMENTUM]
 
     assert class_2.decisions == 0
-    assert class_2.feed_cost == Decimal("60.00")  # 30/mo x 60d / 30
+    assert class_2.feed_cost == Decimal("60.00")  # 30/mo x 60d, billed by config
     assert class_2.net_pnl == Decimal("-60.00")
     assert not class_2.is_negative  # resolved-gated, unchanged
     assert report.flagged_classes == ()
@@ -755,7 +755,7 @@ def test_the_config_supplies_the_costs_the_report_consumes():
     """The wiring: signals.yaml owns the numbers, keyed by class."""
     from signals import SignalsConfig
 
-    costs = SignalsConfig.load().monthly_feed_costs()
+    costs = SignalsConfig.load().monthly_feed_costs()  # the standing rate
     # Quiver $30 + citrini X reads $5 (breadth round 2, 2026-08-25).
     assert costs["class_2"] == Decimal("35")
     # X pay-per-use budgets: nolimitgains $10 + unusual_whales $25 +
@@ -997,3 +997,125 @@ def test_attribution_with_zero_deployment_renders_without_a_return():
     assert empty.excess_return_pct is None
     assert "no resolved outcomes yet" in empty.summary()
     assert "vs SPY" not in empty.summary()
+
+
+# ================================================================================
+# Feed costs are billed from each source's start date (human ruling 2026-08-28)
+# ================================================================================
+
+
+def config_with(*sources):
+    """A SignalsConfig carrying just the sources a cost test cares about."""
+    from signals.config import ClassConfig, SignalsConfig as Config, SourceConfig
+
+    return Config(
+        version=1,
+        classes={
+            "class_2": ClassConfig(
+                name="test",
+                poll_interval_seconds=3600,
+                sources=tuple(SourceConfig(**source) for source in sources),
+            )
+        },
+    )
+
+
+WINDOW_END = datetime(2026, 8, 28, tzinfo=timezone.utc)
+WINDOW_START = WINDOW_END - timedelta(days=90)
+
+
+def test_a_feed_younger_than_the_window_is_billed_only_for_the_days_it_ran():
+    """The defect: a $30/mo feed wired 11 days ago was being charged $90 for a
+    90-day window, and the keep-or-cut flag fired on months it never ran."""
+    config = config_with(
+        {"id": "quiver", "monthly_cost": Decimal("30"), "start_date": date(2026, 8, 17)}
+    )
+    assert config.feed_cost_for_window(WINDOW_START, WINDOW_END) == {
+        "class_2": Decimal("11.00")  # 30/mo x 11d / 30
+    }
+    # The standing monthly rate is unchanged — the two numbers answer different
+    # questions, and only one of them belongs in a window.
+    assert config.monthly_feed_costs() == {"class_2": Decimal("30")}
+
+
+def test_a_feed_older_than_the_window_is_billed_for_the_whole_window():
+    config = config_with(
+        {"id": "quiver", "monthly_cost": Decimal("30"), "start_date": date(2020, 1, 1)}
+    )
+    assert config.feed_cost_for_window(WINDOW_START, WINDOW_END) == {
+        "class_2": Decimal("90.00")
+    }
+
+
+def test_a_source_without_a_start_date_is_billed_for_the_whole_window():
+    """The conservative default, and what every source did before start dates:
+    doubt goes against the feed, not for it."""
+    config = config_with({"id": "quiver", "monthly_cost": Decimal("30")})
+    assert config.feed_cost_for_window(WINDOW_START, WINDOW_END) == {
+        "class_2": Decimal("90.00")
+    }
+
+
+def test_a_feed_wired_today_has_not_cost_anything_yet():
+    config = config_with(
+        {"id": "quiver", "monthly_cost": Decimal("30"), "start_date": date(2026, 8, 28)}
+    )
+    assert config.feed_cost_for_window(WINDOW_START, WINDOW_END) == {
+        "class_2": Decimal("0")
+    }
+
+
+def test_free_feeds_never_appear_in_the_breakdown():
+    config = config_with(
+        {"id": "edgar", "monthly_cost": Decimal("0"), "start_date": date(2026, 8, 17)},
+        {"id": "quiver", "monthly_cost": Decimal("30"), "start_date": date(2026, 8, 17)},
+    )
+    rows = config.feed_cost_breakdown(WINDOW_START, WINDOW_END)
+    assert [row.source_id for row in rows] == ["quiver"]
+    assert rows[0].billable_days == 11
+    assert rows[0].billed_from == date(2026, 8, 17)
+
+
+def test_sources_in_one_class_bill_from_their_own_start_dates():
+    """Class 2 is Quiver (wired 08-17) plus citrini (wired 08-25) — one bill,
+    two clocks."""
+    config = config_with(
+        {"id": "quiver", "monthly_cost": Decimal("30"), "start_date": date(2026, 8, 17)},
+        {"id": "citrini", "monthly_cost": Decimal("5"), "start_date": date(2026, 8, 25)},
+    )
+    assert config.feed_cost_for_window(WINDOW_START, WINDOW_END) == {
+        "class_2": Decimal("11.50")  # 11.00 + 0.50
+    }
+
+
+def test_the_shipped_config_bills_the_experiment_it_actually_ran():
+    """End to end against the real signals.yaml: the 90-day window that used to
+    charge $240 charges what two weeks of feeds cost."""
+    from signals import SignalsConfig
+
+    config = SignalsConfig.load()
+    billed = config.feed_cost_for_window(WINDOW_START, WINDOW_END)
+
+    assert billed["class_1"] == Decimal("7.17")  # was 45/mo x 3 = 135.00
+    assert billed["class_2"] == Decimal("11.50")  # was 35/mo x 3 = 105.00
+    assert billed["class_3"] == Decimal("0")  # EDGAR is free, dates or not
+    # Every paid source declares when its bill started.
+    for klass in config.classes.values():
+        for source in klass.sources:
+            assert source.start_date is not None, source.id
+
+
+def test_the_report_shows_the_arithmetic_behind_the_feed_total():
+    """The number has to be auditable: a small bill on a big window is exactly
+    what a mis-prorated one looks like from the outside."""
+    report = build_attribution(
+        [],
+        generated_at=WINDOW_END,
+        window_days=90,
+        feed_costs_for_window={SignalClass.CLASS_2_MOMENTUM: Decimal("11.00")},
+        feed_cost_detail=("quiver (class_2): $30/mo from 2026-08-17 = 11d, $11.00",),
+    )
+    rendered = report.render()
+    assert "billed from each source's start date" in rendered
+    assert "quiver (class_2): $30/mo from 2026-08-17 = 11d, $11.00" in rendered
+    assert report.total_feed_cost == Decimal("11.00")

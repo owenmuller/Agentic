@@ -22,7 +22,7 @@ Claude Code reads this file every session. These rules govern all code written i
 - **Superseded: 100% equities / 0% prediction (human ruling, 2026-08-21).** The prediction sleeve has no execution path yet (Robinhood event contracts are roadmap-only; Kalshi is Plan B behind the paper gate), and NAV reserved for an unexecutable sleeve is dead capital. This is a config value (`config/risk_limits.yaml` sleeves), not a design removal — the 90/10 target, rebalance logic, and prediction-sleeve caps below all remain in the codebase and remain tested.
 - **Design allocation — restores when a prediction-market venue ships (see the Plan A/B venue queue item): 90% equities & long options / 10% prediction markets (event contracts).** Enforced at portfolio level, rebalanced weekly. Drift beyond ±3% triggers rebalance at next session open. Flipping the config back to 90/10 is itself a human ruling under § Requires Explicit Human Approval, like the change that set it to 100/0.
 - **Position caps (judged equity sleeve):**
-  - Max single position: 5% of sleeve NAV
+  - Max single position: 7% of sleeve NAV (raised from 5% with the sizing table, human ruling 2026-08-28 — the gate cap and the top confidence band must move together or the band is unreachable)
   - Max daily capital deployment: 15% of sleeve NAV
   - Max aggregate long-options premium at risk: 20% of equity sleeve
 - **Kill switch:** 12% drawdown from high-water mark halts all **opening** orders — no new or increased exposure of any kind. **Risk-reducing sell-to-close orders remain permitted** while halted, validated normally: never beyond held quantity, so a halt can never be used to open a short. Resume of opening orders requires manual human reset.
@@ -73,13 +73,14 @@ Investment size is weighted by research confidence. Deterministic mapping, appli
 
 | Confidence | Action |
 |---|---|
-| < 55 | No trade. Do not take token positions on weak signals. |
-| 55–70 | 1% of sleeve NAV |
+| < 50 | No trade. Do not take token positions on weak signals. |
+| 50–70 | 1% of sleeve NAV |
 | 70–85 | 2.5% of sleeve NAV |
-| 85+ | 5% of sleeve NAV (hard cap) |
+| 85+ | 7% of sleeve NAV (hard cap) |
 
+- **Risk-on calibration, human ruling 2026-08-28:** the floor moved 55 → 50 and the top band 5% → 7%. The 50–55 band takes small shots on modestly-edged theses rather than none. Nothing structural moved with it — never-negative, no margin, long-options-only, the 12% kill switch, sector and deployment caps, the catalyst gate and the verification rules are all unchanged. The date is recorded so attribution can partition results before and after the change.
 - Options positions use the same table applied to **premium at risk**, then halved (options carry embedded leverage — the confidence table must not double it).
-- Sizing NEVER exceeds risk-gate caps regardless of confidence. Confidence 100 is still 5% max.
+- Sizing NEVER exceeds risk-gate caps regardless of confidence. Confidence 100 is still 7% max.
 
 ## Prediction Markets Sleeve (10%)
 

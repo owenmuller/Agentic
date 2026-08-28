@@ -493,22 +493,32 @@ def deploy_for_crash(gate: RiskGate, clock: FakeClock) -> list:
     """Fill enough equity exposure that marking it to near-zero breaches 12%.
 
     A single position cannot do it: the caps mean one holding going to zero is
-    a ~3.75% drawdown at worst (75/25/0, ruling 2026-08-27). Reaching the kill
-    switch takes several positions across two days — the judged sleeve's daily
-    deployment cap (15% of a 75% sleeve = 11.25% of NAV) means one day's worth
-    of positions cannot trip a 12% halt on its own, which is the cap working.
+    a ~5.25% drawdown at worst (7% of a 75% sleeve, ruling 2026-08-28). Reaching
+    the kill switch takes several positions across more than one day — the judged
+    sleeve's daily deployment cap (15% of a 75% sleeve = 11.25% of NAV) means one
+    day's worth of positions cannot trip a 12% halt on its own, which is the cap
+    working. The day rolls whenever the next order would breach the daily cap, so
+    this helper survives a change to either cap.
     """
     keys = []
     per_order = int(
         gate.sleeve_nav(Sleeve.EQUITY) * gate.limits.equity_sleeve.max_single_position
         / Decimal("100")
     )
-    for index, symbol in enumerate(CRASH_SYMBOLS):
-        if index == 3:
-            clock.advance_days(1)  # the daily cap binds at three positions
+    daily_cap = (
+        gate.sleeve_nav(Sleeve.EQUITY)
+        * gate.limits.equity_sleeve.max_daily_deployment
+    )
+    deployed_today = Decimal("0")
+    for symbol in CRASH_SYMBOLS:
+        value = Decimal(per_order) * Decimal("100.00")
+        if deployed_today + value > daily_cap:
+            clock.advance_days(1)
+            deployed_today = Decimal("0")
         order = equity_buy(symbol=symbol, qty=per_order, price="100.00")
         approved = approve(gate, order)
         gate.record_fill(approved, Decimal("100.00"))
+        deployed_today += value
         keys.append(position_key(order))
     return keys
 
@@ -625,13 +635,14 @@ def test_reset_rebaselines_the_high_water_mark(limits):
 def test_confidence_bands_resolve_boundaries_toward_less_risk(limits):
     """Constraint #6: exactly-70 takes 1%, exactly-85 takes 2.5%."""
     sizing = limits.sizing
-    assert sizing.size_for(54) == Decimal("0")
-    assert sizing.size_for(55) == Decimal("0.010")
+    assert sizing.size_for(49) == Decimal("0")  # floor 55 -> 50 (2026-08-28)
+    assert sizing.size_for(50) == Decimal("0.010")
+    assert sizing.size_for(54) == Decimal("0.010")  # the band the ruling opened
     assert sizing.size_for(70) == Decimal("0.010")
     assert sizing.size_for(71) == Decimal("0.025")
     assert sizing.size_for(85) == Decimal("0.025")
-    assert sizing.size_for(86) == Decimal("0.050")
-    assert sizing.size_for(100) == Decimal("0.050")
+    assert sizing.size_for(86) == Decimal("0.070")  # top band 5% -> 7%
+    assert sizing.size_for(100) == Decimal("0.070")
 
 
 def test_no_confidence_score_exceeds_the_hard_cap(limits):
@@ -1308,12 +1319,13 @@ def test_a_zero_weight_sleeve_rejects_orders_with_a_typed_rejection(limits):
 
 
 def test_the_judged_sleeve_spans_three_quarters_of_nav(limits):
-    """75/25/0 (ruling 2026-08-27): the judged 5% cap is 5% of a 75% sleeve."""
+    """75/25/0 (2026-08-27): the judged 7% cap (2026-08-28) is 7% of a 75%
+    sleeve — 5.25% of account NAV, not 7%."""
     gate = make_gate(limits)
     assert gate.sleeve_nav(Sleeve.EQUITY) == START_CASH * Decimal("0.75")
     assert gate.sleeve_nav(Sleeve.MECHANICAL) == START_CASH * Decimal("0.25")
-    approve(gate, equity_buy(qty=Decimal("37.5"), price="100.00"))  # == the cap
-    rejection = reject(gate, equity_buy(symbol="MSFT", qty=38, price="100.00"))
+    approve(gate, equity_buy(qty=Decimal("52.5"), price="100.00"))  # == the cap
+    rejection = reject(gate, equity_buy(symbol="MSFT", qty=53, price="100.00"))
     assert rejection.code is RejectionCode.MAX_SINGLE_POSITION_EXCEEDED
 
 

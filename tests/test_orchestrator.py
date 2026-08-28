@@ -1248,14 +1248,17 @@ def test_a_model_that_obeys_the_injection_still_cannot_exceed_the_caps(
     result = started.loop.tick().processed[0]
 
     # It traded — a confidence-100 report is a confidence-100 report — but at exactly
-    # the size the table allows, which is 5% of the equity sleeve and nothing more.
+    # the size the table allows, which is 7% of the equity sleeve and nothing more
+    # (risk-on calibration 2026-08-28). The prose asked for 50% of NAV.
     assert result.traded
     trail = started.audit.trail(result.decision_id)
-    assert trail.decision.sizing.capital == Decimal("3750.00")  # 5% of 75,000
-    assert trail.decision.sizing.fraction_of_sleeve_nav == Decimal("0.050")
-    assert broker.payloads[0]["qty"] == 26  # 3750 / 140, rounded down
-    assert trail.decision.gate.max_loss == Decimal("3640.00")  # 26 x 140
-    assert started.gate.state.cash > Decimal("95000")
+    assert trail.decision.sizing.capital == Decimal("5250.00")  # 7% of 75,000
+    assert trail.decision.sizing.fraction_of_sleeve_nav == Decimal("0.07")
+    assert broker.payloads[0]["qty"] == 37  # 5250 / 140, rounded down
+    assert trail.decision.gate.max_loss == Decimal("5180.00")  # 37 x 140
+    # The account is nowhere near emptied: the prose asked for 50% of NAV and got
+    # a 5.18% bite out of cash.
+    assert started.gate.state.cash > Decimal("94000")
 
 
 def test_no_record_written_by_an_adversarial_run_is_anything_but_a_known_kind(

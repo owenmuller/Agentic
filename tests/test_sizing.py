@@ -56,14 +56,15 @@ def report(confidence: int) -> ResearchReport:
     "confidence,expected",
     [
         (0, "0"),
-        (54, "0"),  # below the floor
-        (55, "0.010"),  # floor is inclusive: "< 55 | No trade" is explicit
+        (49, "0"),  # below the floor (risk-on calibration 2026-08-28: 55 -> 50)
+        (50, "0.010"),  # floor is inclusive: "< 50 | No trade" is explicit
+        (54, "0.010"),  # the band the calibration opened: small shot, not none
         (56, "0.010"),
         (70, "0.010"),  # boundary -> smaller band (Constraint #6)
         (71, "0.025"),
         (85, "0.025"),  # boundary -> smaller band
-        (86, "0.050"),
-        (100, "0.050"),
+        (86, "0.070"),  # top band 5% -> 7%
+        (100, "0.070"),
     ],
 )
 def test_every_band_boundary(engine, confidence, expected):
@@ -73,10 +74,10 @@ def test_every_band_boundary(engine, confidence, expected):
 
 def test_below_the_floor_is_no_trade_not_a_token_position(engine):
     """CLAUDE.md: "Do not take token positions on weak signals.\""""
-    proposal = engine.propose_equity(report(54), EQUITY_SLEEVE_NAV)
+    proposal = engine.propose_equity(report(49), EQUITY_SLEEVE_NAV)
     assert proposal.capital == 0
     assert proposal.is_tradeable is False
-    assert "below the 55 floor" in proposal.rationale
+    assert "below the 50 floor" in proposal.rationale
 
 
 def test_capital_is_the_fraction_of_the_nav_it_was_given(engine):
@@ -98,7 +99,7 @@ def test_rounding_never_increases_exposure(engine):
 # ================================================================================
 
 
-@pytest.mark.parametrize("confidence", [55, 70, 71, 85, 86, 100])
+@pytest.mark.parametrize("confidence", [50, 55, 70, 71, 85, 86, 100])
 def test_option_sizing_is_exactly_half_the_equity_size(engine, confidence):
     equity = engine.propose_equity(report(confidence), EQUITY_SLEEVE_NAV)
     option = engine.propose_option(report(confidence), EQUITY_SLEEVE_NAV)
@@ -106,21 +107,23 @@ def test_option_sizing_is_exactly_half_the_equity_size(engine, confidence):
     assert option.capital == equity.capital / 2
 
 
-def test_option_at_maximum_confidence_is_capped_at_two_and_a_half_percent(engine):
+def test_option_at_maximum_confidence_is_capped_at_half_the_top_band(engine):
+    """7% top band, halved: options carry embedded leverage and the table must
+    not double it (risk-on calibration 2026-08-28)."""
     option = engine.propose_option(report(100), EQUITY_SLEEVE_NAV)
-    assert option.fraction_of_sleeve_nav == Decimal("0.025")
-    assert option.capital == Decimal("2250.00")
+    assert option.fraction_of_sleeve_nav == Decimal("0.035")
+    assert option.capital == Decimal("3150.00")
     assert "halved for embedded option leverage" in option.rationale
 
 
 def test_a_weak_signal_buys_no_options_either(engine):
-    assert engine.propose_option(report(54), EQUITY_SLEEVE_NAV).capital == 0
+    assert engine.propose_option(report(49), EQUITY_SLEEVE_NAV).capital == 0
 
 
 def test_option_capital_is_premium_at_risk(engine):
     """The figure is premium, not notional — the whole point of halving it."""
     option = engine.propose_option(report(86), EQUITY_SLEEVE_NAV)
-    assert option.capital == Decimal("2250.00")
+    assert option.capital == Decimal("3150.00")
     assert option.instrument is InstrumentKind.OPTION
     assert option.sleeve is Sleeve.EQUITY
 
@@ -164,7 +167,7 @@ def test_the_same_confidence_sizes_differently_by_strategy_tag(engine):
 def test_confidence_still_gates_event_contracts(engine):
     """The strategy cap is a ceiling, not a floor — a weak signal still trades nothing."""
     proposal = engine.propose_event_contract(
-        report(54), PREDICTION_SLEEVE_NAV, EventStrategy.ARB
+        report(49), PREDICTION_SLEEVE_NAV, EventStrategy.ARB
     )
     assert proposal.capital == 0
 
@@ -315,10 +318,10 @@ def test_no_position_sizes_to_zero_at_every_confidence(engine, confidence):
     assert not proposal.is_tradeable
 
 
-def test_no_position_at_ninety_five_is_not_a_five_percent_position(engine):
+def test_no_position_at_ninety_five_is_not_a_top_band_position(engine):
     """Stated against the concrete alternative, because that is the failure mode."""
     directional = engine.propose_equity(report(95), EQUITY_SLEEVE_NAV)
-    assert directional.capital == Decimal("4500.00")  # 5% of 90k, the top band
+    assert directional.capital == Decimal("6300.00")  # 7% of 90k, the top band
 
     abstaining = engine.propose_equity(no_trade_report(95), EQUITY_SLEEVE_NAV)
     assert abstaining.capital == Decimal("0")

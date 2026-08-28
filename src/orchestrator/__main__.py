@@ -130,12 +130,26 @@ def attribution() -> int:
         print(f"ATTRIBUTION FAILED: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
 
-    costs = {
-        SignalClass(key): monthly
-        for key, monthly in checks.signals_config.monthly_feed_costs().items()
-    }
     generated_at = checks.clock()
     window_start = generated_at - timedelta(days=DEFAULT_WINDOW_DAYS)
+
+    # Feed costs are billed from each source's start date (ruling 2026-08-28):
+    # a 90-day window over a two-week-old feed charges two weeks. Prorating the
+    # full window instead fires the keep-or-cut flag on months the experiment
+    # was never running.
+    costs = {
+        SignalClass(key): billed
+        for key, billed in checks.signals_config.feed_cost_for_window(
+            window_start, generated_at
+        ).items()
+    }
+    breakdown = tuple(
+        f"{row.source_id} ({row.class_key}): ${row.monthly_cost}/mo from "
+        f"{row.billed_from} = {row.billable_days}d, ${row.cost:.2f}"
+        for row in checks.signals_config.feed_cost_breakdown(
+            window_start, generated_at
+        )
+    )
 
     # SPY over the same window: a bull market must not flatter a signal class.
     # Unavailable degrades to None — the report says so instead of guessing.
@@ -153,10 +167,11 @@ def attribution() -> int:
     report = build_attribution(
         checks.audit.trails(),
         generated_at=generated_at,
-        feed_costs=costs,
+        feed_costs_for_window=costs,
         research_costs=checks.audit.research_costs_by_class(window_start),
         benchmark_return_pct=benchmark,
         mtd_research_cost=checks.audit.research_cost_between(month_start),
+        feed_cost_detail=breakdown,
     )
     print(report.render())
     return 0

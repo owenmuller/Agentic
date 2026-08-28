@@ -1496,6 +1496,63 @@ identical-funnel constraint is the reason: an instrument filter would have to
 live in the shared prefilter and change both arms, and the experiment must
 vary only judgment and exits.
 
+## Feed costs bill from each source's start date (human ruling 2026-08-28)
+
+The first attribution render charged $240 of feed cost over a 90-day window
+(class_1 $135, class_2 $105) against feeds that had existed for about two
+weeks — proration was `monthly_cost × window_days / 30`, with no notion of
+when a subscription began. The keep-or-cut flag therefore fired on months the
+experiment was never running.
+
+- `SourceConfig.start_date` (per source, in signals.yaml); every source now
+  declares one, taken from the commit that wired it (`git log -S "id: <src>"`).
+  Unset still means "bill the whole window" — the conservative default, and
+  what every source did before.
+- Proration moved to `SignalsConfig.feed_cost_for_window` /
+  `feed_cost_breakdown`, because it needs dates the audit package does not
+  have. `build_attribution`'s parameter is renamed `feed_costs_for_window` and
+  now takes **dollars already computed for the window**, so a stale caller
+  passing a monthly rate fails loudly instead of undercharging silently.
+- Days are elapsed days from the later of start_date and window start: a
+  source wired today costs nothing yet. The 30-day proration month keeps the
+  existing conservative lean.
+- The report renders the arithmetic per source (rate, start, days, dollars) —
+  a small bill on a big window looks exactly like a mis-prorated one from the
+  outside, so the number has to be auditable.
+
+Same 90-day window, recomputed: **class_1 $135.00 → $7.17, class_2 $105.00 →
+$11.50** (quiver $30/mo × 11d = $11.00, nolimitgains $10/mo × 11d = $3.67,
+unusual_whales $25/mo × 3d = $2.50, optionshawk $10/mo × 3d = $1.00, citrini
+$5/mo × 3d = $0.50).
+
+## Risk-on calibration, judged sleeve (human ruling 2026-08-28)
+
+Posture change, dated so attribution can partition before/after. **Nothing
+structural moved**: never-negative, no margin, long-options-only, the 12% kill
+switch, sector caps, deployment caps, the catalyst gate and the verification
+rules are all unchanged.
+
+| Confidence | was | now |
+|---|---|---|
+| floor | < 55 no trade | **< 50 no trade** |
+| first band | 55–70 → 1% | **50–70 → 1%** |
+| 70–85 | 2.5% | 2.5% |
+| 85+ | 5% | **7%** |
+
+- `sizing.hard_cap` 0.05 → 0.07; options still halved on premium at risk, so
+  the top option position is 3.5% of sleeve NAV.
+- **`equity_sleeve.max_single_position` 0.05 → 0.07 as well.** This is the one
+  inference the ruling required: sizing clamps against `sizing.hard_cap`, not
+  against the gate, so a 7% band under a 5% gate cap does not produce a 5%
+  position — it produces `max_single_position_exceeded` on exactly the
+  highest-conviction signals. The two numbers have to move together.
+  CLAUDE.md § Portfolio Structure updated to match.
+- In account terms the top position is 7% of a 75% sleeve = **5.25% of NAV**
+  (was 3.75%). Worst single-name loss is still far inside the 12% kill switch.
+- Boundary rules unchanged: bands stay `(lower, upper]` so exactly-70 takes 1%
+  and exactly-85 takes 2.5% (Constraint #6); the floor alone is
+  lower-inclusive, because "< 50 | No trade" is explicit rather than ambiguous.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

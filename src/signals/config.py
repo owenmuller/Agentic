@@ -8,6 +8,8 @@ that is not in the file is a source that does not get scanned.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
@@ -15,9 +17,31 @@ from typing import Optional
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+ZERO = Decimal("0")
+CENTS = Decimal("0.01")
+
+#: Days a monthly feed price is spread over when prorating into a window. A
+#: 30-day month slightly overstates a real month, which errs toward flagging —
+#: the doubtful direction goes against the feed, not for it.
+PRORATION_MONTH_DAYS = 30
+
 
 class _Strict(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
+
+
+@dataclass(frozen=True, slots=True)
+class FeedCostRow:
+    """One source's share of a window's feed bill, and the arithmetic behind it."""
+
+    class_key: str
+    source_id: str
+    monthly_cost: Decimal
+    #: When this feed started costing money — its start_date, or the window's
+    #: start when the source predates the window.
+    billed_from: date
+    billable_days: int
+    cost: Decimal
 
 
 class PollWindow(_Strict):
@@ -143,6 +167,12 @@ class SourceConfig(_Strict):
     #: class's P&L: a signal class must out-earn its own feed, and the weekly report
     #: is where that verdict lives. Zero for free feeds and for sources not yet built.
     monthly_cost: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
+    #: When this source started costing money — normally the day it was wired
+    #: (human ruling 2026-08-28). Attribution bills a feed only from this date,
+    #: so a 90-day window over a two-week-old experiment charges two weeks, not
+    #: three months. Unset means "bill the whole window": the conservative
+    #: reading, and what every source did before start dates existed.
+    start_date: Optional[date] = None
 
     @property
     def classifies_posts(self) -> bool:
@@ -177,11 +207,67 @@ class SignalsConfig(_Strict):
             ) from exc
 
     def monthly_feed_costs(self) -> dict[str, Decimal]:
-        """Total feed cost per class key ("class_1"...), from the sources' own fields."""
+        """Standing monthly rate per class key ("class_1"...), ignoring start dates.
+
+        What the class costs in a full month once every source is running. For what
+        a REPORTING WINDOW actually cost, use ``feed_cost_for_window`` — the two
+        differ for any source younger than the window.
+        """
         return {
             key: sum((source.monthly_cost for source in klass.sources), Decimal("0"))
             for key, klass in self.classes.items()
         }
+
+    def feed_cost_breakdown(
+        self, window_start: datetime, window_end: datetime
+    ) -> tuple[FeedCostRow, ...]:
+        """Per-source feed cost over a window, billed from each source's start date.
+
+        The defect this fixes (human ruling 2026-08-28): prorating a monthly
+        subscription across a full 90-day window charges an experiment for months
+        it was not running, and the keep-or-cut flag then fires on a bill that was
+        never paid. A source is billed from the later of its ``start_date`` and the
+        window start; days are elapsed days, so a source wired today costs nothing
+        yet, and a source with no start_date is billed for the whole window.
+        """
+        first = window_start.date()
+        last = window_end.date()
+        rows: list[FeedCostRow] = []
+        for key, klass in self.classes.items():
+            for source in klass.sources:
+                if source.monthly_cost <= ZERO:
+                    continue
+                billed_from = max(source.start_date or first, first)
+                days = max(0, (last - billed_from).days)
+                cost = (
+                    source.monthly_cost
+                    * Decimal(days)
+                    / Decimal(PRORATION_MONTH_DAYS)
+                ).quantize(CENTS)
+                rows.append(
+                    FeedCostRow(
+                        class_key=key,
+                        source_id=source.id,
+                        monthly_cost=source.monthly_cost,
+                        billed_from=billed_from,
+                        billable_days=days,
+                        cost=cost,
+                    )
+                )
+        return tuple(rows)
+
+    def feed_cost_for_window(
+        self, window_start: datetime, window_end: datetime
+    ) -> dict[str, Decimal]:
+        """What each class's feeds actually cost over the window, in dollars.
+
+        Already prorated — the attribution report consumes this directly rather
+        than re-deriving it from a monthly rate it cannot date.
+        """
+        totals = {key: ZERO for key in self.classes}
+        for row in self.feed_cost_breakdown(window_start, window_end):
+            totals[row.class_key] += row.cost
+        return totals
 
     def source(self, class_key: str, source_id: str) -> SourceConfig:
         for source in self.klass(class_key).sources:

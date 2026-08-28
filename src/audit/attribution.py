@@ -16,10 +16,14 @@ telling you something even if the ones that got through made money.
 
 Feed costs are part of the verdict. A paid data feed is a position the class holds
 permanently, and it loses every month the class does not out-earn it - so the report
-carries each class's prorated feed cost, states P&L both gross and net, and the
-human-review flag fires on NET. Proration is monthly_cost x window_days / 30; a
-30-day month slightly overstates the cost, which errs toward flagging (Constraint #6
-flavour: the doubtful direction goes against the feed, not for it).
+carries each class's feed cost for the window, states P&L both gross and net, and the
+human-review flag fires on NET.
+
+The proration itself belongs to ``signals.config`` (2026-08-28), because it needs
+each source's start date: a subscription that has existed for two weeks must not be
+charged for a 90-day window, or the keep-or-cut flag fires on months the experiment
+was never running. This module takes dollars already computed for the window and
+never re-derives them from a monthly rate it cannot date.
 """
 
 from __future__ import annotations
@@ -34,9 +38,6 @@ from signals import SignalClass
 
 ZERO = Decimal("0")
 CENTS = Decimal("0.01")
-
-#: Days a monthly feed price is spread over when prorating into a window.
-PRORATION_MONTH_DAYS = 30
 
 #: CLAUDE.md gives a 60-90 day range. The wider end is the default: a shorter window
 #: flags a class on less evidence, and "possible removal" deserves the fuller sample.
@@ -56,7 +57,8 @@ class ClassAttribution:
     #: Gross: realised trading P&L alone, before the feed bill.
     realised_pnl: Decimal
     manipulation_flags: int
-    #: This class's data-feed cost, prorated to the window.
+    #: This class's data-feed cost over the window, billed from each source's
+    #: start date (signals.config.feed_cost_for_window).
     feed_cost: Decimal = ZERO
     #: Estimated LLM research spend attributed to this class over the window —
     #: entry passes and thesis reviews, from the audit records' cost estimates.
@@ -204,6 +206,10 @@ class AttributionReport:
     mtd_research_cost: Optional[Decimal] = None
     #: The mechanical sleeve's bucket; None when the sleeve has no history.
     mechanical: Optional[MechanicalAttribution] = None
+    #: One line per paid source: what it costs monthly, when its bill started,
+    #: and how many days of it this window actually bought. Rendered so the feed
+    #: total is auditable rather than asserted (2026-08-28).
+    feed_cost_detail: tuple[str, ...] = ()
 
     @property
     def total_pnl(self) -> Decimal:
@@ -256,6 +262,15 @@ class AttributionReport:
                 f"Research cost month-to-date: ${self.mtd_research_cost:.2f} "
                 f"(estimates; console bill is truth)"
             )
+        if self.feed_cost_detail:
+            lines.extend(
+                [
+                    "",
+                    "Feed costs, billed from each source's start date (a source "
+                    "younger than the window is charged only for the days it ran):",
+                    *(f"  {detail}" for detail in self.feed_cost_detail),
+                ]
+            )
         if self.benchmark_return_pct is not None:
             benchmark_line = (
                 f"Benchmark: SPY {self.benchmark_return_pct:+.2f}% over the window"
@@ -301,10 +316,11 @@ def build_attribution(
     trails: list[AuditTrail],
     generated_at: datetime,
     window_days: int = DEFAULT_WINDOW_DAYS,
-    feed_costs: Optional[Mapping[SignalClass, Decimal]] = None,
+    feed_costs_for_window: Optional[Mapping[SignalClass, Decimal]] = None,
     research_costs: Optional[Mapping[SignalClass, Decimal]] = None,
     benchmark_return_pct: Optional[Decimal] = None,
     mtd_research_cost: Optional[Decimal] = None,
+    feed_cost_detail: tuple[str, ...] = (),
 ) -> AttributionReport:
     """Compute attribution from audit trails.
 
@@ -340,8 +356,8 @@ def build_attribution(
 
     # A paid class appears even when it made no decisions: the bill does not wait
     # for the signals, and a silent month of feed cost belongs in the report.
-    for signal_class, monthly in (feed_costs or {}).items():
-        if monthly > ZERO:
+    for signal_class, billed in (feed_costs_for_window or {}).items():
+        if billed > ZERO:
             buckets.setdefault(signal_class, empty_bucket())
     # Likewise research spend: a class whose every pass was rejected pre-gate has
     # no trails, but its LLM bill is real and belongs in its column.
@@ -368,13 +384,6 @@ def build_attribution(
             bucket["deployed"] += sum(  # type: ignore[operator]
                 (f.filled_value for f in trail.fills if f.side == "buy"), ZERO
             )
-
-    def prorated_cost(signal_class: SignalClass) -> Decimal:
-        monthly = (feed_costs or {}).get(signal_class, ZERO)
-        if monthly <= ZERO:
-            return ZERO
-        cost = monthly * Decimal(window_days) / Decimal(PRORATION_MONTH_DAYS)
-        return cost.quantize(CENTS)
 
     mechanical = None
     windowed = [
@@ -436,7 +445,7 @@ def build_attribution(
             wins=int(values["wins"]),  # type: ignore[arg-type]
             realised_pnl=values["pnl"],  # type: ignore[arg-type]
             manipulation_flags=int(values["flags"]),  # type: ignore[arg-type]
-            feed_cost=prorated_cost(signal_class),
+            feed_cost=(feed_costs_for_window or {}).get(signal_class, ZERO),
             research_cost=(research_costs or {}).get(signal_class, ZERO),
             deployed=values["deployed"],  # type: ignore[arg-type]
             benchmark_return_pct=benchmark_return_pct,
@@ -452,4 +461,5 @@ def build_attribution(
         benchmark_return_pct=benchmark_return_pct,
         mtd_research_cost=mtd_research_cost,
         mechanical=mechanical,
+        feed_cost_detail=feed_cost_detail,
     )
