@@ -1553,6 +1553,74 @@ rules are all unchanged.
   and exactly-85 takes 2.5% (Constraint #6); the floor alone is
   lower-inclusive, because "< 50 | No trade" is explicit rather than ambiguous.
 
+## Adaptive exits: the review layer owns the clock (human ruling 2026-08-31)
+
+Before: the leash was set at entry from a three-value horizon bucket, the review
+could only say hold/close, nothing responded to price, and the stop never moved.
+The INTC position made it concrete — a thesis resolving mid-2027 leashed to 120
+days, against a mechanical arm holding the same disclosure for 365.
+
+- **`expected_resolution_date` on the ENTRY report** is now the primary leash
+  source. Clamped per horizon: days 3/21, weeks 14/90, months 60/365. **Bounds
+  are measured FROM ENTRY**, never from the review asking — a ceiling measured
+  from "now" lets thirty modest extensions walk the leash out forever. The
+  months ceiling matches the mechanical arm's 365 days deliberately, so the
+  leash stops being a confound. No date → the horizon fallback, which must now
+  sit inside its own bounds or the config refuses to load.
+- **Widened verdict**: validity (intact/invalidated/**displaced**), progress
+  (ahead/on_track/stalled), resolution (unresolved/partial/substantial),
+  revised_resolution_date, continuation_thesis. Three contradiction rules
+  resolve a hold toward the exit — invalidated, displaced, and substantially
+  resolved with no continuation written down (holding a played-out thesis is a
+  NEW bet and has to be stated). **All derived properties, never schema
+  validation**: a validation failure becomes a rejection and a rejection means
+  HOLD, so enforcing them in pydantic would invert their intent.
+- **Extension gated** on validity == intact AND progress != stalled.
+  Shortening always free.
+- **Triggered reviews**: +15% / −10% from the LAST REVIEW's price (debounce —
+  a position parked above the threshold must not re-trigger every cycle), cap
+  5/day replayed from the log, jumping the review queue, prompt stating which
+  move woke it. The trigger sets a flag and nothing else; it never closes.
+  **25% of the daily research budget is reserved for reviews** so entries
+  cannot starve the exit layer.
+- **Ratchet**: arms at +20% unrealised, trails 10% from the high-water mark,
+  monotonic, own `ExitReason.TRAILING_STOP` so attribution can separate "the
+  thesis played out" from "a reversal was caught between reviews". The
+  per-position high-water mark is persisted in session_state.json — a mark
+  resetting to entry on restart silently loosens an armed stop.
+- **Attribution**: P&L by exit reason, counterfactual hold-to-365-days per
+  judged exit (partial comparisons labelled as such), overlap set as its own
+  section.
+- **Mechanical arm untouched.** No LLM in its path stands.
+
+### The live round trip earned its keep (2026-08-31)
+
+The CLAUDE.md-required round trip found a production bug on the first real review
+this system has ever attempted. `AnthropicResearchClient._request_report`
+hardcoded `REPORT_TOOL_NAME` in three places — the phase-2 `tool_choice`, the
+nudge prose, and the `tool_use` block `_to_result` reads back. Entry passes and
+exit reviews share that method, so every review reaching phase 2 sent:
+
+```
+400 invalid_request_error: Tool 'submit_research' not found in provided tools
+```
+
+A failed review is a HOLD, so this would have presented as an exit layer that
+ran, cost money, and silently never closed anything. Nothing was lost — zero
+`thesis_review` records exist and the first judged position opened 08-31 — but it
+would have failed at the next session. Phase 2 now forces, names and reads back
+whatever tool it was handed, tested against a recording stand-in for the SDK that
+asserts what goes on the wire. **The faked-client tests could not see this**,
+which is exactly the case the 2026-08-24 ruling was written for.
+
+Validation, both paths, production objects, real API, nothing written:
+entry pass returned `expected_resolution_date: 2027-06-17` (the API accepts the
+`format: date` property); review of the live INTC position returned
+`hold / intact / on_track / unresolved`, `may_extend=True`. Audit log 1593 →
+1593. Note the INTC position keeps its 120-day leash for now: its decision record
+predates the field, so replay uses the horizon fallback — the next review can
+carry it to 365.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in
