@@ -1593,7 +1593,12 @@ days, against a mechanical arm holding the same disclosure for 365.
   section.
 - **Mechanical arm untouched.** No LLM in its path stands.
 
-### The live round trip earned its keep (2026-08-31)
+### The live round trip earned its keep — twice now (2026-08-31)
+
+**Second time the CLAUDE.md round-trip rule has caught a silent failure.** The
+first was the 2026-08-24 elision incident: doc-verified, unit-tested, and 400ing
+on every production research pass for three sessions. This one is the same shape
+— a change that every offline test passed, broken on the one path nobody had run.
 
 The CLAUDE.md-required round trip found a production bug on the first real review
 this system has ever attempted. `AnthropicResearchClient._request_report`
@@ -1620,6 +1625,89 @@ entry pass returned `expected_resolution_date: 2027-06-17` (the API accepts the
 1593. Note the INTC position keeps its 120-day leash for now: its decision record
 predates the field, so replay uses the horizon fallback — the next review can
 carry it to 365.
+
+## @DiligentPlane evaluated and NOT wired (human ruling 2026-08-31)
+
+Verified before wiring, per the ruling's own condition. **90 posts pulled over 4
+days (08-28 → 08-31), ~22/day.** Recorded here with the numbers so the question
+is not relitigated from a screenshot later.
+
+| | count | share |
+|---|---|---|
+| Names any instrument | 12 | **13%** |
+| Instrument **and** direction | 8 | **9%** |
+| Of those, carrying entry / stop / target / strike | **0** | **0%** |
+| Replies to other accounts | 46 | 51% |
+
+`require_instrument` would discard **78 of 90 posts after we had paid to read
+them**. Tickers across the whole window: NVDA 15, RVII 4, MU 4, RVI 2 — one idea.
+The eight "calls" are five variants of *"Bought more $NVDA"*, two MU trims inside
+replies, and one commentary post.
+
+Three reasons this is a do-not-wire rather than a close call:
+
+1. **Our own classifier would discard most of them anyway.** They are past tense
+   — *"I bought A LOT of $NVDA Friday"*, *"Bought 2.6M in $NVDA today"*. Under the
+   Class 1 rules already in force those are `retrospective`, and ambiguous posts
+   default to retrospective. Realistic yield: one or two passes a week, on a
+   mega-cap researchable from anywhere.
+2. **Zero setup detail.** Not one names an entry, stop or target. These are
+   position disclosures, not calls.
+3. **The mechanism is forbidden, not merely un-replicable.** Asked directly, he
+   confirms *"Yes I use margin"* — Constraint #1. He also states *"I don't buy
+   options — everything I do is through buying stocks."*
+
+Also noted: the reported figure has moved. His post of 08-31 reads *"1% away from
+500% returns YTD"*, not the 426% the proposal cited. Nothing was wired, no config
+changed, no credibility record created.
+
+## Earnings shadow logger — observation only (human ruling 2026-08-31)
+
+The Class 4 trading path is NOT built and waits on two things: this logger's data
+over two earnings seasons, AND the paper period's verdict. What shipped is the
+measurement.
+
+**The claim under test:** does the realised post-earnings move systematically
+exceed the implied move the ATM straddle was charging, on screened names? If not,
+the strategy dies having cost nothing but read fees.
+
+- **`src/earnings/`, isolated by construction.** The topology map grants it
+  `execution.environment`, `execution.market_data` and `execution.options_data` —
+  market data and the .env loader — and nothing else first-party. No gate, no
+  adapter, no order schema, no LLM. Nothing imports it either; it is a leaf, run
+  from its own entry point (`python -m earnings pass`) rather than from the loop.
+  "It places nothing" is a disconnection, not a discipline, and a test reads the
+  source to keep it that way.
+- **Implied move** = `(call_mid + put_mid) / spot` at the strike nearest spot on
+  the first expiry outliving the print, from the chain the options selector
+  already fetches. Deliberately the naive estimator: the point is to compare the
+  market's price against what happened, not two models against each other.
+- **Settle marks the SAME two OCC symbols** the session after the print, so the
+  straddle P&L is a real mark rather than a payoff model.
+- **Daily ATM IV snapshot per tracked name** — and this is the piece worth most.
+  `options_selection.max_iv_percentile` ranks a contract inside its own chain,
+  which by construction cannot see a whole surface lifted together (the
+  limitation accepted 2026-08-24). An IV rank against history needs stored
+  history; nobody sells us ours cheaply; this is where it starts accumulating.
+  Note the correction to my earlier framing: the realised-move series is a
+  *realised-volatility* reference, which is a different and weaker thing. The IV
+  rank foundation is the snapshot, not the realised series.
+- **Snapshots run even when the calendar does not.** They need no Finnhub key, so
+  a missing key costs the prints, not the series.
+
+**Finnhub, verified 2026-08-31:** free tier is **60 calls/min** and includes the
+US earnings calendar, but over a **short forward window (~1 month), not deep
+history** — hence building the history forward rather than backfilling it, which
+is the right shape for a shadow logger anyway. The free tier is documented as
+personal/non-commercial; fine for a personal paper account, worth re-reading
+before live money. **`FINNHUB_API_KEY` is not set**, and a missing key raises
+rather than returning an empty list: "we cannot see the calendar" and "no
+earnings this fortnight" are different facts, and conflating them is the one
+failure this exercise cannot afford — an incomplete series looks exactly like a
+real one. A human adding a free key (no card) starts the earnings half.
+
+First live pass, no key: **15 IV snapshots written**, e.g. AAPL spot 317.14, ATM
+IV 0.24845, implied move 1.47%; AMD 470.66, IV 0.4908, 2.90%.
 
 ## Standing reminders
 

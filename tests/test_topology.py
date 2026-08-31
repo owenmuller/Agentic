@@ -111,6 +111,24 @@ TOPOLOGY: dict[str, Rules] = {
         ),
         because="describes every stage; observes, never participates",
     ),
+    # OBSERVATION ONLY (ruling 2026-08-31). The earnings shadow logger watches
+    # scheduled catalysts and records what the options market charged against what
+    # actually happened. "It places nothing" is structural here, not a promise: it
+    # may reach market data and the .env loader by the narrow form, and there is no
+    # edge from it to risk_gate, sizing, execution.base or the orchestrator, so
+    # there is no module in it through which an order could be built or sent. It
+    # cannot reach research either — every number it writes is arithmetic.
+    "earnings": Rules(
+        may_import=frozenset(
+            {
+                "execution.environment",
+                "execution.market_data",
+                "execution.options_data",
+            }
+        ),
+        may_reach_network=True,
+        because="observes scheduled catalysts; has no order path and no LLM",
+    ),
     # The one package permitted to touch more than its neighbours. Its whole job is the
     # seam between the others, and it is the only importer of audit anywhere.
     "orchestrator": Rules(
@@ -258,15 +276,42 @@ def test_only_the_orchestrator_imports_audit():
     assert importers == {"orchestrator"}
 
 
-def test_the_orchestrator_is_the_only_package_that_spans_the_others():
+#: The packages the loop wires together. ``earnings`` is deliberately not among
+#: them: it observes, it is scheduled separately, and nothing in the trading path
+#: reaches it or is reached by it (ruling 2026-08-31).
+TRADING_PACKAGES = frozenset(
+    {"audit", "execution", "research", "risk_gate", "signals", "sizing"}
+)
+
+
+def test_the_orchestrator_is_the_only_package_that_spans_the_trading_path():
     """"Permitted to touch more than its neighbours" is a privilege held exactly once."""
-    others = set(TOPOLOGY) - {"orchestrator"}
     spanning = {
         package
         for package, rules in TOPOLOGY.items()
-        if others - {package} <= {entry.split(".")[0] for entry in rules.may_import}
+        if TRADING_PACKAGES - {package}
+        <= {entry.split(".")[0] for entry in rules.may_import}
     }
     assert spanning == {"orchestrator"}
+
+
+def test_the_earnings_logger_is_isolated_from_the_trading_path():
+    """The shadow logger cannot place an order, and this is why.
+
+    It reaches market data and the .env loader and nothing else; no package
+    reaches it. So there is no path from an observation to an order — not a
+    discipline, a disconnection."""
+    rules = TOPOLOGY["earnings"]
+    reachable = {entry.split(".")[0] for entry in rules.may_import}
+    assert reachable == {"execution"}
+    # ...and only the market-data corner of it: nothing that can submit anything.
+    assert rules.may_import == frozenset(
+        {"execution.environment", "execution.market_data", "execution.options_data"}
+    )
+    for package, other in TOPOLOGY.items():
+        assert "earnings" not in {
+            entry.split(".")[0] for entry in other.may_import
+        }, f"{package} may import earnings; the logger must stay a leaf"
 
 
 def test_nothing_imports_the_orchestrator():

@@ -1,0 +1,67 @@
+# Earnings shadow logger (human ruling 2026-08-31).
+#
+# OBSERVATION ONLY. There is no trading path in src/earnings/, no order type, no
+# risk gate, no broker adapter, and the import topology forbids reaching them.
+# This file configures what is WATCHED and RECORDED, and nothing it says can
+# produce a trade.
+#
+# The claim under test, over two earnings seasons: does the realised
+# post-earnings move systematically exceed the implied move the ATM straddle was
+# charging, on the names a screen would select? If it does not, the Class 4
+# strategy dies having cost nothing but read fees.
+#
+# The trading path additionally waits on the paper period's verdict, per the
+# ruling. Data first.
+
+version: 1
+
+# The off switch. False means a pass does nothing and says so.
+enabled: true
+
+# WHAT IS WATCHED. Human-owned: the logger never adds to this list, and an empty
+# universe watches nothing rather than everything. Chosen for liquid options and
+# quarterly prints — an illiquid straddle prices nothing, and recording its
+# "implied move" would poison the very series this exercise exists to build.
+universe:
+  - NVDA
+  - AMD
+  - INTC
+  - MU
+  - AVGO
+  - AAPL
+  - MSFT
+  - AMZN
+  - GOOGL
+  - META
+  - TSLA
+  - NFLX
+  - CRM
+  - ORCL
+  - PLTR
+
+# How far ahead the calendar is scanned each pass. Finnhub's free tier serves a
+# short forward window (about a month) and no deep history, so this stays well
+# inside it — and the historical series is built FORWARD from the day the logger
+# starts rather than backfilled.
+calendar_window_days: 14
+
+# A print is armed at this many days out or nearer: far enough ahead that the
+# straddle is liquid, near enough that it is priced for the event rather than for
+# the month.
+arm_within_days: 3
+
+# The expiry window, in days after the print. The straddle must outlive the event
+# it is pricing (min), and must not be pricing a whole quarter (max).
+min_days_after_print: 1
+max_days_after_print: 21
+
+# Liquidity floors for the straddle. Lower than the trading selector's (OI 500,
+# spread 10%) on purpose: this is a measurement, and excluding a name entirely
+# loses a data point, where the selector excluding a contract only loses a trade.
+# Still high enough that a quote nobody would fill is not recorded as a price.
+min_open_interest: 100
+max_spread_pct_of_mid: 0.20
+
+# Sessions after the print at which the result is marked. One session is where
+# the earnings move lands for both bmo and amc reports.
+settle_after_days: 1
