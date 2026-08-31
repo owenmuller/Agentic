@@ -13,7 +13,15 @@ detectable state rather than a parsing gamble. But a forced tool choice leaves n
 to search first. So when web search is enabled the call runs in two phases:
 
   1. Research: web search available, tool choice free. The model gathers evidence.
-  2. Report: the phase-1 transcript replayed, ``submit_research`` forced.
+  2. Report: the phase-1 transcript replayed, THE CALLER'S tool forced.
+
+Phase 2 forces whatever tool it was handed, never a hardcoded name. The entry pass
+and the exit review are both structured-output passes through this one method, and
+a phase 2 that forced ``submit_research`` on a review request sent the API a
+tool_choice naming a tool that was not in the tools list — a 400 on every review
+that reached it. Found by the live round trip of 2026-08-31, before any review had
+ever run in production; the unit tests could not see it because they fake the
+client, which is exactly why CLAUDE.md requires the real round trip.
 
 Phase 2 runs exactly once. If it comes back malformed, that is a rejection — there is
 no re-roll (see ``reports`` module docstring).
@@ -274,12 +282,13 @@ class AnthropicResearchClient:
         usage: dict[str, int],
     ) -> LLMResult:
         """Phase 2: force the report tool. One attempt."""
+        tool_name = tool["name"]
         if messages and messages[-1].get("role") == "assistant":
             messages = messages + [
                 {
                     "role": "user",
                     "content": (
-                        "Submit your verdict now by calling the submit_research tool."
+                        f"Submit your verdict now by calling the {tool_name} tool."
                     ),
                 }
             ]
@@ -291,11 +300,12 @@ class AnthropicResearchClient:
             messages=messages,
             output_config={"effort": resolved.effort},
             tools=[tool],
-            tool_choice={"type": "tool", "name": REPORT_TOOL_NAME},
+            tool_choice={"type": "tool", "name": tool_name},
         )
         self._track_usage(response, usage)
         return self._to_result(
             response,
+            expected_tool=tool_name,
             usage=usage,
             est_cost_usd=self._estimate(resolved.model, usage),
         )
@@ -303,6 +313,7 @@ class AnthropicResearchClient:
     @staticmethod
     def _to_result(
         response: Any,
+        expected_tool: str = REPORT_TOOL_NAME,
         usage: Optional[dict[str, int]] = None,
         est_cost_usd: Optional[Decimal] = None,
     ) -> LLMResult:
@@ -310,9 +321,10 @@ class AnthropicResearchClient:
         texts: list[str] = []
         for block in getattr(response, "content", []) or []:
             block_type = getattr(block, "type", None)
-            if block_type == "tool_use" and getattr(block, "name", "") == (
-                REPORT_TOOL_NAME
-            ):
+            # The tool the CALLER forced, not a fixed name: a review answers through
+            # submit_exit_review, and reading only submit_research here would drop a
+            # perfectly good verdict on the floor as "returned prose".
+            if block_type == "tool_use" and getattr(block, "name", "") == expected_tool:
                 structured = getattr(block, "input", None)
             elif block_type == "text":
                 texts.append(getattr(block, "text", ""))

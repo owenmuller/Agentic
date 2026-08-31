@@ -679,3 +679,111 @@ def test_replayed_notes_cannot_grow_the_prompt_without_bound():
     ceiling = CredibilityTracker.NOTE_HISTORY * CredibilityTracker.NOTE_CHARS
     assert sum(len(n) for n in tracker.summary_for("nolimitgains").recent_manipulation_notes) <= ceiling
     assert len(context) < ceiling + 1000
+
+
+# ================================================================================
+# The client forces the tool it was GIVEN (live-round-trip finding, 2026-08-31)
+# ================================================================================
+
+
+class RecordingAnthropic:
+    """The narrowest possible stand-in for the SDK client: captures each request
+    and replays canned responses. Exists to test the ONE thing the FakeLLM harness
+    structurally cannot — what this system actually puts on the wire."""
+
+    def __init__(self, *responses):
+        self.requests: list[dict] = []
+        self._responses = list(responses)
+        self.messages = self
+
+    def create(self, **kwargs):
+        self.requests.append(kwargs)
+        return self._responses[min(len(self.requests) - 1, len(self._responses) - 1)]
+
+
+class Block:
+    def __init__(self, type_, name=None, input_=None, text=""):
+        self.type = type_
+        self.name = name
+        self.input = input_
+        self.text = text
+
+
+class Response:
+    def __init__(self, *content, stop_reason="tool_use"):
+        self.content = list(content)
+        self.stop_reason = stop_reason
+        self.model = "claude-test"
+        self.usage = None
+
+
+def client_with(*responses):
+    from research.client import AnthropicResearchClient
+    from research.config import ResearchConfig
+
+    return AnthropicResearchClient(
+        ResearchConfig.load(), client=RecordingAnthropic(*responses)
+    )
+
+
+def test_the_report_phase_forces_the_callers_tool_not_a_hardcoded_one():
+    """The bug the live round trip found: phase 2 forced submit_research on every
+    structured pass, so an exit review sent a tool_choice naming a tool that was not
+    in its own tools list — a 400 on every review that reached it. No review had run
+    in production yet, and the faked-client tests could not see it."""
+    from research.exit_review import EXIT_REVIEW_TOOL_NAME, exit_review_tool_definition
+
+    verdict = {"assessment": "still live", "invalidation_triggered": False,
+               "action": "hold"}
+    client = client_with(
+        Response(Block("text", text="searching"), stop_reason="end_turn"),
+        Response(Block("tool_use", name=EXIT_REVIEW_TOOL_NAME, input_=verdict)),
+    )
+    result = client.research(
+        system="s", user="u", tool=exit_review_tool_definition(), tier="exit_review"
+    )
+
+    report_request = client._client.requests[-1]
+    assert report_request["tool_choice"] == {
+        "type": "tool",
+        "name": EXIT_REVIEW_TOOL_NAME,
+    }
+    assert [t["name"] for t in report_request["tools"]] == [EXIT_REVIEW_TOOL_NAME]
+    # And the verdict is READ back: matching on a fixed tool name here would drop a
+    # good review as "returned prose".
+    assert result.structured == verdict
+
+
+def test_the_entry_pass_still_forces_its_own_tool():
+    from research.reports import REPORT_TOOL_NAME, report_tool_definition
+
+    client = client_with(
+        Response(Block("text", text="searching"), stop_reason="end_turn"),
+        Response(Block("tool_use", name=REPORT_TOOL_NAME, input_=VALID_REPORT)),
+    )
+    result = client.research(
+        system="s", user="u", tool=report_tool_definition(), tier="class_1"
+    )
+    assert client._client.requests[-1]["tool_choice"] == {
+        "type": "tool",
+        "name": REPORT_TOOL_NAME,
+    }
+    assert result.structured == VALID_REPORT
+
+
+def test_the_nudge_names_the_tool_the_model_must_call():
+    """The phase-2 nudge is prose the model reads. Naming the wrong tool in it is a
+    quieter version of the same bug."""
+    from research.exit_review import EXIT_REVIEW_TOOL_NAME, exit_review_tool_definition
+
+    client = client_with(
+        Response(Block("text", text="thinking"), stop_reason="end_turn"),
+        Response(Block("tool_use", name=EXIT_REVIEW_TOOL_NAME, input_={})),
+    )
+    client.research(
+        system="s", user="u", tool=exit_review_tool_definition(), tier="exit_review"
+    )
+    nudge = client._client.requests[-1]["messages"][-1]
+    assert nudge["role"] == "user"
+    assert EXIT_REVIEW_TOOL_NAME in nudge["content"]
+    assert "submit_research" not in nudge["content"]
