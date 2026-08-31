@@ -264,6 +264,7 @@ def preflight(
         clock=now_fn,
         spent=audit.research_passes_on(today),
         day=today,
+        review_reserve_fraction=orchestrator_config.review_budget_reserve_fraction,
     )
 
     if gate.kill_switch_tripped:
@@ -409,6 +410,10 @@ def start(
     )
     # Positions opened by earlier runs, rebuilt from the log with stops re-armed. Part
     # of the replay step in spirit, but it needs the wired engine, so it runs here.
+    # Marks first, replay second: the ratchet re-arms from the persisted
+    # high-water mark during replay, and a position that was riding a trailing
+    # stop must not come back on its original one.
+    exits.seed_marks(checks.session.position_marks)
     exits.replay(checks.audit.trails())
     for symbol, quantity in sorted(unmanaged_exposure(checks.gate, exits.tracked).items()):
         logger.warning(

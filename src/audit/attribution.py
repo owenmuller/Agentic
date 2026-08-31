@@ -33,7 +33,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Mapping, Optional
 
-from audit.records import AuditTrail
+from audit.records import AuditTrail, ExitReason
 from signals import SignalClass
 
 ZERO = Decimal("0")
@@ -192,6 +192,78 @@ class MechanicalAttribution:
 
 
 @dataclass(frozen=True, slots=True)
+class ExitReasonAttribution:
+    """P&L of the judged sleeve grouped by WHY each position closed (2026-08-31).
+
+    The adaptive exit layer made the exit a decision rather than a clock, so the
+    experiment has to be able to ask whether that decision paid. If review-driven
+    exits underperform the time stop, this is where it shows.
+    """
+
+    reason: str
+    closed: int
+    wins: int
+    realised_pnl: Decimal
+    deployed: Decimal
+
+    @property
+    def hit_rate(self) -> Optional[float]:
+        return self.wins / self.closed if self.closed else None
+
+    @property
+    def return_pct(self) -> Optional[Decimal]:
+        if self.deployed <= ZERO:
+            return None
+        return (self.realised_pnl / self.deployed * 100).quantize(CENTS)
+
+    def summary(self) -> str:
+        verdict = (
+            f"{self.hit_rate:.0%} of {self.closed}" if self.closed else "none closed"
+        )
+        ret = f", {self.return_pct:+.2f}% on {self.deployed:.2f}" if self.return_pct is not None else ""
+        return f"{self.reason}: {self.realised_pnl:+.2f} over {verdict}{ret}"
+
+
+@dataclass(frozen=True, slots=True)
+class CounterfactualHold:
+    """What one judged exit would have returned held to the mechanical arm's clock.
+
+    The two-arm experiment varies judgement and exits. This isolates the second
+    half: for every judged position that closed, what the same entry would have
+    made held 365 days, the way the mechanical sleeve holds. ``partial`` marks the
+    ones whose 365th day has not arrived — those compare against today's price and
+    are a progress report, not a verdict.
+    """
+
+    decision_id: str
+    symbol: str
+    exit_reason: str
+    realised_return_pct: Optional[Decimal]
+    held_return_pct: Optional[Decimal]
+    partial: bool
+
+    @property
+    def difference_pct(self) -> Optional[Decimal]:
+        """Judged exit minus hold-to-365. Positive means the exit added value."""
+        if self.realised_return_pct is None or self.held_return_pct is None:
+            return None
+        return (self.realised_return_pct - self.held_return_pct).quantize(CENTS)
+
+    def summary(self) -> str:
+        if self.difference_pct is None:
+            return (
+                f"{self.symbol} ({self.exit_reason}): comparison unavailable "
+                f"(no price history for the counterfactual)"
+            )
+        marker = " [partial: 365 days not yet elapsed]" if self.partial else ""
+        return (
+            f"{self.symbol} ({self.exit_reason}): exited {self.realised_return_pct:+.2f}%, "
+            f"holding would have made {self.held_return_pct:+.2f}%, "
+            f"exit {self.difference_pct:+.2f}%{marker}"
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class AttributionReport:
     """The weekly report. Flags are advisory — a human decides what to remove."""
 
@@ -206,6 +278,10 @@ class AttributionReport:
     mtd_research_cost: Optional[Decimal] = None
     #: The mechanical sleeve's bucket; None when the sleeve has no history.
     mechanical: Optional[MechanicalAttribution] = None
+    #: Judged-sleeve P&L grouped by exit reason (2026-08-31).
+    by_exit_reason: tuple["ExitReasonAttribution", ...] = ()
+    #: Per judged exit: realised vs held-to-365-days, the mechanical arm's clock.
+    counterfactuals: tuple["CounterfactualHold", ...] = ()
     #: One line per paid source: what it costs monthly, when its bill started,
     #: and how many days of it this window actually bought. Rendered so the feed
     #: total is auditable rather than asserted (2026-08-28).
@@ -262,6 +338,44 @@ class AttributionReport:
                 f"Research cost month-to-date: ${self.mtd_research_cost:.2f} "
                 f"(estimates; console bill is truth)"
             )
+        if self.by_exit_reason:
+            lines.extend(
+                [
+                    "",
+                    "Judged exits by reason (did the exit decision pay?):",
+                    *(f"  {row.summary()}" for row in self.by_exit_reason),
+                ]
+            )
+        if self.counterfactuals:
+            lines.extend(
+                [
+                    "",
+                    "Counterfactual: each judged exit vs holding 365 days (the "
+                    "mechanical arm's clock):",
+                    *(f"  {row.summary()}" for row in self.counterfactuals),
+                ]
+            )
+            comparable = [
+                row.difference_pct
+                for row in self.counterfactuals
+                if row.difference_pct is not None
+            ]
+            if comparable:
+                total = sum(comparable, ZERO) / Decimal(len(comparable))
+                verdict = "added" if total > ZERO else "cost"
+                lines.append(
+                    f"  mean: exiting {verdict} {abs(total):.2f} percentage points "
+                    f"per position over {len(comparable)} comparisons"
+                )
+        if self.mechanical is not None and self.mechanical.overlap_symbols:
+            lines.extend(
+                [
+                    "",
+                    "Sleeve overlap (both arms hold these; allowed by ruling and "
+                    "measured here rather than assumed):",
+                    f"  {', '.join(self.mechanical.overlap_symbols)}",
+                ]
+            )
         if self.feed_cost_detail:
             lines.extend(
                 [
@@ -312,6 +426,100 @@ class AttributionReport:
         return "\n".join(lines)
 
 
+#: The mechanical sleeve's holding period, and the counterfactual's horizon.
+MECHANICAL_HOLD_DAYS = 365
+
+
+def _closing_reason(trail: AuditTrail) -> str:
+    """Why this position actually closed.
+
+    The LAST exit attempt that the broker took is the one that closed it; earlier
+    records are retries and refusals, which are part of the story but not the
+    answer. A trail with no submitted exit closed some other way (a manual close,
+    or a fill reconciliation) and says so rather than guessing.
+    """
+    for exit_record in reversed(trail.exits):
+        if exit_record.submitted:
+            return str(exit_record.reason)
+    if trail.exits:
+        return str(trail.exits[-1].reason)
+    return "unrecorded"
+
+
+def _by_exit_reason(trails: list[AuditTrail]) -> tuple[ExitReasonAttribution, ...]:
+    buckets: dict[str, dict[str, object]] = {}
+    for trail in trails:
+        reason = _closing_reason(trail)
+        bucket = buckets.setdefault(
+            reason, {"closed": 0, "wins": 0, "pnl": ZERO, "deployed": ZERO}
+        )
+        bucket["closed"] += 1  # type: ignore[operator]
+        if trail.outcome is not None:
+            bucket["pnl"] += trail.outcome.realised_pnl  # type: ignore[operator]
+            if trail.outcome.won:
+                bucket["wins"] += 1  # type: ignore[operator]
+        bucket["deployed"] += sum(  # type: ignore[operator]
+            (f.filled_value for f in trail.fills if f.side == "buy"), ZERO
+        )
+    return tuple(
+        ExitReasonAttribution(
+            reason=reason,
+            closed=int(values["closed"]),  # type: ignore[arg-type]
+            wins=int(values["wins"]),  # type: ignore[arg-type]
+            realised_pnl=values["pnl"],  # type: ignore[arg-type]
+            deployed=values["deployed"],  # type: ignore[arg-type]
+        )
+        for reason, values in sorted(buckets.items())
+    )
+
+
+def _counterfactuals(
+    trails: list[AuditTrail], generated_at: datetime, price_on
+) -> tuple[CounterfactualHold, ...]:
+    """What each judged exit would have made held to the mechanical arm's clock.
+
+    ``price_on(symbol, when)`` returns a close on or near a date, or None. Without
+    it — no market data wired, or an outage — every comparison is simply absent.
+    An absent comparison is reported as absent; none of this is worth a guessed
+    price.
+    """
+    if price_on is None:
+        return ()
+    out: list[CounterfactualHold] = []
+    for trail in trails:
+        buys = [f for f in trail.fills if f.side == "buy"]
+        if not buys or trail.outcome is None:
+            continue
+        symbol = str((trail.decision.gate.order or {}).get("symbol") or "")
+        if not symbol:
+            continue
+        opened = buys[0].recorded_at
+        cost = sum((f.filled_value for f in buys), ZERO)
+        realised = (
+            (trail.outcome.realised_pnl / cost * 100).quantize(CENTS)
+            if cost > ZERO
+            else None
+        )
+        target = opened + timedelta(days=MECHANICAL_HOLD_DAYS)
+        partial = target > generated_at
+        entry_price = price_on(symbol, opened)
+        later_price = price_on(symbol, min(target, generated_at))
+        held = None
+        if entry_price and later_price and entry_price > ZERO:
+            held = ((later_price / entry_price - 1) * 100).quantize(CENTS)
+        out.append(
+            CounterfactualHold(
+                decision_id=trail.decision.decision_id,
+                symbol=symbol,
+                exit_reason=_closing_reason(trail),
+                realised_return_pct=realised,
+                held_return_pct=held,
+                partial=partial,
+            )
+        )
+    return tuple(out)
+
+
 def build_attribution(
     trails: list[AuditTrail],
     generated_at: datetime,
@@ -321,6 +529,7 @@ def build_attribution(
     benchmark_return_pct: Optional[Decimal] = None,
     mtd_research_cost: Optional[Decimal] = None,
     feed_cost_detail: tuple[str, ...] = (),
+    price_on=None,
 ) -> AttributionReport:
     """Compute attribution from audit trails.
 
@@ -453,7 +662,14 @@ def build_attribution(
         for signal_class, values in buckets.items()
     }
 
+    judged_closed = [
+        t
+        for t in trails
+        if t.outcome is not None and t.decision.recorded_at >= window_start
+    ]
     return AttributionReport(
+        by_exit_reason=_by_exit_reason(judged_closed),
+        counterfactuals=_counterfactuals(judged_closed, generated_at, price_on),
         generated_at=generated_at,
         window_days=window_days,
         window_start=window_start,

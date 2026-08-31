@@ -473,7 +473,11 @@ def enter_option_position(tmp_path, limits, signals_config, research_config, **k
         exits={
             "max_loss_fraction": "0.50",
             "time_stop_days": {"days": 200, "weeks": 200, "months": 200},
-            "thesis_review_interval_hours": 24,
+            "leash_bounds": {
+                "days": {"floor": 3, "ceiling": 400},
+                "weeks": {"floor": 14, "ceiling": 400},
+                "months": {"floor": 60, "ceiling": 400},
+            },
         }
     )
     chain = kw.pop("chain", None) or FakeChain(good_chain())

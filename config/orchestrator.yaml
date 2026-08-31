@@ -16,6 +16,12 @@ version: 1
 # second time. See audit.log.AuditLog.research_passes_on.
 max_research_passes_per_day: 40
 
+# RESERVE FOR THE EXIT LAYER (ruling 2026-08-31). Entries may spend at most
+# (1 - this) of the day's passes, so reviews of open positions can never be starved
+# by a noisy entry feed. Reviews may use the whole remainder, including the entry
+# share nobody claimed — the reserve is a floor under reviews, not a cap on them.
+review_budget_reserve_fraction: 0.25
+
 # COST TRIPWIRE. Same pattern as the X reads counter: when a day's cumulative
 # estimated research spend (entry passes + exit reviews, rejected passes included
 # because they were paid for) crosses this many dollars, ONE COST warning line is
@@ -50,18 +56,47 @@ exits:
   # at entry. 0.15 on a 5%-of-sleeve position bounds the loss at 0.75% of the sleeve.
   max_loss_fraction: 0.15
 
-  # Maximum holding period, chosen by the research report's time_horizon at entry.
-  # A thesis that has not worked within its own stated horizon is a thesis that was
-  # wrong about something, whichever direction price went.
+  # FALLBACK maximum holding period, by the research report's time_horizon. The
+  # PRIMARY leash source is the report's own expected_resolution_date (ruling
+  # 2026-08-31); this is what a report that states no date gets. A thesis that has
+  # not worked within its own stated horizon was wrong about something, whichever
+  # direction price went.
   time_stop_days:
     days: 7
     weeks: 45
     months: 120
 
+  # Bounds every leash is clamped into, whatever its source — the entry report's
+  # date, a review's revision, or the fallback above. MEASURED FROM ENTRY, never
+  # from the review asking: a ceiling measured from "now" is not a ceiling.
+  # The months ceiling matches the mechanical arm's 365-day hold deliberately, so
+  # the leash stops being a confound in the two-arm comparison.
+  leash_bounds:
+    days: { floor: 3, ceiling: 21 }
+    weeks: { floor: 14, ceiling: 90 }
+    months: { floor: 60, ceiling: 365 }
+
   # How often each open position gets a thesis review. Reviews spend the daily
-  # research budget; entries are processed first each tick, so a tight budget starves
-  # reviews before it starves entries.
+  # research budget, but 25% of it is reserved for them (see
+  # review_budget_reserve_fraction) so entries cannot starve the exit layer.
   thesis_review_interval_hours: 24
+
+  # A price move that forces a review out of cadence. The trigger sets a flag and
+  # nothing else — it never closes a position. Asymmetric on purpose: a downside
+  # trigger at the 15% stop distance would fire in the same cycle the stop closes
+  # the position, so it sits tighter and asks "is the thesis dead?" while there is
+  # still a decision to make. Debounced from the last review's price.
+  review_trigger:
+    up_fraction: 0.15
+    down_fraction: 0.10
+    max_per_day: 5
+
+  # The trailing backstop beneath the review layer. Arms only after a gain that has
+  # already happened, then follows the position's high-water mark and never falls.
+  # Not a profit target: it cannot fire on a position that has not first run.
+  ratchet:
+    arm_at_gain: 0.20
+    trail_fraction: 0.10
 
 # MARKET DATA. Settings for the production PriceSource (execution.market_data.
 # AlpacaPriceSource) — the operator passes these when wiring orchestrator.start().

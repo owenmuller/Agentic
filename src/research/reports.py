@@ -26,7 +26,7 @@ money on it.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Literal, Optional
@@ -121,6 +121,13 @@ class ResearchReport(BaseModel):
     priced_in_analysis: Optional[str]
     confidence: int
     invalidation_condition: str
+    #: When this thesis is expected to have resolved, one way or the other — the
+    #: PRIMARY source of the position's time leash (ruling 2026-08-31). Nullable,
+    #: like the other judgement fields, so the model must decline explicitly rather
+    #: than invent a date; a null falls back to the horizon bucket's default. It is
+    #: always clamped into config-owned per-horizon bounds, so this shortens freely
+    #: and lengthens only as far as a human has allowed.
+    expected_resolution_date: Optional[date] = None
     #: A specific, dated-or-datable event inside the time horizon — policy action,
     #: earnings, ruling — or the explicit statement that there is none. Nullable
     #: (like priced_in_analysis) so the model must say "not applicable" rather than
@@ -305,6 +312,10 @@ def report_tool_definition() -> dict[str, Any]:
     """
     schema = strip_unsupported_schema_keywords(ResearchReport.model_json_schema())
     schema["additionalProperties"] = False
+    # Every field is required of the MODEL even where python has a default: a
+    # nullable field the model may omit is a field it will omit, and "declined to
+    # date this thesis" has to be an answer rather than a silence (2026-08-31).
+    schema["required"] = list(schema["properties"])
     return {
         "name": REPORT_TOOL_NAME,
         "description": (
@@ -322,7 +333,15 @@ def report_tool_definition() -> dict[str, Any]:
             "conviction. Report present=true with a one-line description of the "
             "event, present=false for a directional-but-patient thesis, and null "
             "only when the concept does not apply to this signal at all. Do not "
-            "stretch: a thesis without a nameable event is present=false."
+            "stretch: a thesis without a nameable event is present=false. For "
+            "expected_resolution_date: the date by which you expect this thesis to "
+            "have resolved one way or the other, as YYYY-MM-DD. It is not a price "
+            "target and not a promise — it is when the question should have an "
+            "answer, and it sets how long the position is given before a "
+            "deterministic time stop closes it. State it whenever your thesis has "
+            "a timeline you can defend, and null when it genuinely does not. The "
+            "date is clamped into limits this system owns; naming a distant one "
+            "does not extend anything past them."
         ),
         "strict": True,
         "input_schema": schema,

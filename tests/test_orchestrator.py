@@ -296,11 +296,27 @@ def orchestrator_config(**overrides) -> OrchestratorConfig:
         "exits": {
             "max_loss_fraction": "0.15",
             "time_stop_days": {"days": 7, "weeks": 45, "months": 120},
+            "leash_bounds": {
+                "days": {"floor": 3, "ceiling": 21},
+                "weeks": {"floor": 14, "ceiling": 90},
+                "months": {"floor": 60, "ceiling": 365},
+            },
             "thesis_review_interval_hours": 24,
+            "review_trigger": {
+                "up_fraction": "0.15",
+                "down_fraction": "0.10",
+                "max_per_day": 5,
+            },
+            "ratchet": {"arm_at_gain": "0.20", "trail_fraction": "0.10"},
         },
         "market_data": {"feed": "iex", "max_quote_age_seconds": 300},
     }
-    return OrchestratorConfig.model_validate({**base, **overrides})
+    # Deep-merge the exits block so a caller can change one knob without
+    # restating the rest of it — the block gained leash bounds, triggers and the
+    # ratchet, and a test that only wants a shorter review cadence should not have
+    # to know that.
+    exits = {**base["exits"], **overrides.pop("exits", {})}
+    return OrchestratorConfig.model_validate({**base, **overrides, "exits": exits})
 
 
 def counter(prefix: str = "dec"):

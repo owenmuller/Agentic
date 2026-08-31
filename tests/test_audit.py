@@ -27,6 +27,7 @@ from research import CredibilityTracker, ResearchReport
 from risk_gate import (
     AccountState,
     EquityBuyOrder,
+    EquitySellToCloseOrder,
     LimitExecution,
     RiskGate,
     RiskLimits,
@@ -1119,3 +1120,119 @@ def test_the_report_shows_the_arithmetic_behind_the_feed_total():
     assert "billed from each source's start date" in rendered
     assert "quiver (class_2): $30/mo from 2026-08-17 = 11d, $11.00" in rendered
     assert report.total_feed_cost == Decimal("11.00")
+
+
+# ================================================================================
+# Exit-reason attribution and the counterfactual hold (ruling 2026-08-31)
+# ================================================================================
+
+
+def closed_position(log, limits, gate, clock, reason, pnl, symbol="NUE"):
+    """One judged position opened, closed for a named reason, and resolved."""
+    from audit.records import ExitReason
+
+    signal = make_signal(
+        signal_id=f"sig-{symbol}-{reason}", signal_class=SignalClass.CLASS_2_MOMENTUM
+    )
+    record, _ = full_decision(
+        log, limits, gate=gate, signal=signal,
+        order=equity_order(symbol=symbol, qty=10, price="100.00"),
+    )
+    log.record_fill(record.decision_id, "brk-1", Decimal("10"), Decimal("100"))
+    sell = gate.submit(
+        EquitySellToCloseOrder(
+            symbol=symbol,
+            quantity=Decimal("10"),
+            execution=LimitExecution(limit_price=Decimal("100.00")),
+        )
+    )
+    log.record_exit(
+        record.decision_id,
+        reason,
+        "closing",
+        sell,
+        submitted=True,
+        broker_order_id="brk-x",
+    )
+    log.record_outcome(record.decision_id, Decimal(pnl))
+    return record.decision_id
+
+
+def test_judged_pnl_is_grouped_by_why_the_position_closed(tmp_path, limits):
+    """The exit became a decision, so attribution has to be able to ask whether the
+    decision paid."""
+    from audit.records import ExitReason
+
+    clock = FakeClock()
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+    gate = gate_for(limits)
+    closed_position(log, limits, gate, clock, ExitReason.THESIS_INVALIDATED, "150")
+    closed_position(log, limits, gate, clock, ExitReason.TRAILING_STOP, "80", "MSFT")
+    closed_position(log, limits, gate, clock, ExitReason.TRAILING_STOP, "-20", "AAPL")
+
+    report = build_attribution(log.trails(), generated_at=clock.now)
+    rows = {row.reason: row for row in report.by_exit_reason}
+
+    assert rows["thesis_invalidated"].closed == 1
+    assert rows["thesis_invalidated"].realised_pnl == Decimal("150")
+    assert rows["trailing_stop"].closed == 2
+    assert rows["trailing_stop"].realised_pnl == Decimal("60")
+    assert rows["trailing_stop"].wins == 1
+    rendered = report.render()
+    assert "Judged exits by reason" in rendered
+    assert "trailing_stop" in rendered
+
+
+def test_the_counterfactual_compares_each_exit_against_holding_a_year(tmp_path, limits):
+    """The two-arm experiment varies judgement and exits. This isolates the exits:
+    what would the same entry have made on the mechanical arm's 365-day clock?"""
+    from audit.records import ExitReason
+
+    clock = FakeClock()
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+    gate = gate_for(limits)
+    closed_position(log, limits, gate, clock, ExitReason.TRAILING_STOP, "100")
+    entry_day = clock.now.date()
+    clock.advance(days=30)  # the exit is behind us; the 365th day is not here yet
+
+    # Entry at 100/share, 150 since: the position kept running after we sold.
+    def price_on(symbol, when):
+        return Decimal("100") if when.date() == entry_day else Decimal("150")
+
+    report = build_attribution(
+        log.trails(), generated_at=clock.now, price_on=price_on
+    )
+    row = report.counterfactuals[0]
+    assert row.symbol == "NUE"
+    assert row.exit_reason == "trailing_stop"
+    assert row.realised_return_pct == Decimal("10.00")  # 100 on 1000 deployed
+    assert row.held_return_pct == Decimal("50.00")
+    assert row.difference_pct == Decimal("-40.00")  # exiting cost 40 points
+    assert row.partial is True  # the 365th day has not arrived
+    rendered = report.render()
+    assert "Counterfactual" in rendered
+    assert "365 days not yet elapsed" in rendered
+
+
+def test_a_counterfactual_with_no_price_history_is_absent_not_guessed(tmp_path, limits):
+    from audit.records import ExitReason
+
+    clock = FakeClock()
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+    gate = gate_for(limits)
+    closed_position(log, limits, gate, clock, ExitReason.TIME_STOP, "0")
+
+    report = build_attribution(
+        log.trails(), generated_at=clock.now, price_on=lambda symbol, when: None
+    )
+    row = report.counterfactuals[0]
+    assert row.held_return_pct is None
+    assert row.difference_pct is None
+    assert "comparison unavailable" in row.summary()
+
+
+def test_without_a_price_source_no_counterfactuals_are_claimed(tmp_path, limits):
+    clock = FakeClock()
+    log = AuditLog(path=tmp_path / "a.jsonl", clock=clock, id_factory=_counter())
+    report = build_attribution(log.trails(), generated_at=clock.now)
+    assert report.counterfactuals == ()

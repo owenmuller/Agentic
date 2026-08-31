@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -81,6 +81,13 @@ class SessionState:
     mechanical_high_water_mark: Optional[Decimal] = None
     mechanical_halted: bool = False
     mechanical_halted_at: Optional[datetime] = None
+    #: Per-position marks the exit layer cannot rebuild from the audit log
+    #: (ruling 2026-08-31): the ratchet's high-water mark and the price at the last
+    #: review, keyed by decision id. The log records decisions, fills and reviews —
+    #: it does not record every tick's mark, so a ratchet armed at +40% would come
+    #: back from a restart with its stop reset to 15% below entry. That is the
+    #: wrong direction to fail in, so these live here with the kill switch.
+    position_marks: dict[str, dict[str, Decimal]] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Path) -> "SessionState":
@@ -116,6 +123,14 @@ class SessionState:
             mechanical_halted_at=(
                 datetime.fromisoformat(mech_at) if mech_at else None
             ),
+            position_marks={
+                decision_id: {
+                    name: Decimal(str(value))
+                    for name, value in marks.items()
+                    if value is not None
+                }
+                for decision_id, marks in (raw.get("position_marks") or {}).items()
+            },
         )
 
     def capture(self, gate: RiskGate, now: Optional[datetime] = None) -> None:
@@ -170,11 +185,23 @@ class SessionState:
                 if self.mechanical_halted_at
                 else None
             ),
+            "position_marks": {
+                decision_id: {name: str(value) for name, value in marks.items()}
+                for decision_id, marks in self.position_marks.items()
+            },
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
         temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         os.replace(temporary, self.path)
+
+    def capture_exits(self, engine) -> None:
+        """Take the exit engine's per-position marks. Does not write.
+
+        Replaces rather than merges: the engine prunes to positions still open, and
+        a mark for a position that closed is a mark nothing will ever read again.
+        """
+        self.position_marks = engine.marks_to_persist()
 
     def persist(self, gate: RiskGate, now: Optional[datetime] = None) -> None:
         self.capture(gate, now)

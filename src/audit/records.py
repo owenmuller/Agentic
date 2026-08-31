@@ -47,7 +47,7 @@ answers, so a signal that dies at stage one is still followable end to end.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Optional, Union
@@ -138,6 +138,11 @@ class ResearchSnapshot(_Record):
     #: the field existed parseable — an absent catalyst reads as none reported.
     catalyst_present: Optional[bool] = None
     catalyst_description: Optional[str] = None
+    #: When the entry pass expected this thesis to resolve (2026-08-31). The
+    #: primary source of the position's leash, so replay must be able to read it
+    #: back — a leash rebuilt from the horizon bucket alone would silently revert
+    #: a dated position to the fallback after a restart.
+    expected_resolution_date: Optional[date] = None
 
     @classmethod
     def of(cls, report: ResearchReport) -> "ResearchSnapshot":
@@ -161,6 +166,7 @@ class ResearchSnapshot(_Record):
                 if report.catalyst_within_horizon is not None
                 else None
             ),
+            expected_resolution_date=report.expected_resolution_date,
         )
 
 
@@ -452,6 +458,12 @@ class ExitReason(StrEnum):
     #: Long option inside the configured pre-expiry window. Closed regardless of
     #: thesis state: theta endgame is not a place this system holds (2026-08-24).
     EXPIRY_CLOSE = "expiry_close"
+    #: Deterministic backstop (2026-08-31): the position ran far enough to arm a
+    #: trailing stop and then gave back the trail distance from its high-water
+    #: mark. Its own reason, not MAX_LOSS_STOP, because attribution must be able to
+    #: separate "the thesis played out" from "a reversal was caught between
+    #: reviews" — they are different claims about where the P&L came from.
+    TRAILING_STOP = "trailing_stop"
     #: The mechanical sleeve's only exit (ruling 2026-08-27): hold_days after
     #: fill, no price stop — the stop is the slice size.
     MECHANICAL_TIME_EXIT = "mechanical_time_exit"
@@ -482,6 +494,23 @@ class ThesisReviewRecord(_Record):
     #: The model's prose, verbatim. Absent when the review failed.
     assessment: Optional[str] = None
     invalidation_triggered: Optional[bool] = None
+    #: The widened verdict (ruling 2026-08-31). All absent on a failed review.
+    validity: Optional[str] = None
+    progress: Optional[str] = None
+    resolution: Optional[str] = None
+    revised_resolution_date: Optional[date] = None
+    continuation_thesis: Optional[str] = None
+    #: Which contradiction rule overrode a hold, when one did. Recorded rather
+    #: than inferred: "the model said hold and the position closed" is exactly the
+    #: kind of thing a reader should never have to reconstruct.
+    close_contradiction: Optional[str] = None
+    #: Why this review ran out of cadence, when it did — the price move that
+    #: forced it. None on an ordinary cadence review.
+    trigger_reason: Optional[str] = None
+    #: The position's leash after this review, in days from entry. Present when
+    #: the review moved it; the clamp means this is what was actually applied,
+    #: not what was asked for.
+    leash_days_after: Optional[int] = None
     #: Failure code when the outcome is REVIEW_FAILED.
     code: Optional[str] = None
     message: str = ""

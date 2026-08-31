@@ -319,7 +319,9 @@ def test_confidence_100_sizes_exactly_like_any_other_top_band_score(limits):
     assert limits.sizing.size_for(a.confidence) == limits.sizing.size_for(b.confidence)
 
 
-def test_report_fields_are_exactly_the_nine_the_spec_names():
+def test_report_fields_are_exactly_the_ones_the_spec_names():
+    """CLAUDE.md's seven, plus the catalyst assessment (2026-08-24) and the
+    expected resolution date that now sets the position's leash (2026-08-31)."""
     assert set(ResearchReport.model_fields) == {
         "thesis",
         "tickers",
@@ -330,6 +332,7 @@ def test_report_fields_are_exactly_the_nine_the_spec_names():
         "invalidation_condition",
         "manipulation_assessment",
         "catalyst_within_horizon",
+        "expected_resolution_date",
     }
 
 

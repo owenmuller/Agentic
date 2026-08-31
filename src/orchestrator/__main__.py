@@ -38,6 +38,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from decimal import Decimal, InvalidOperation
 import time
 from datetime import datetime, timezone, timedelta
 
@@ -154,10 +155,26 @@ def attribution() -> int:
     # SPY over the same window: a bull market must not flatter a signal class.
     # Unavailable degrades to None — the report says so instead of guessing.
     benchmark = None
+    bars = None
+    price_on = None
     try:
         bars = AlpacaDailyBars()
         benchmark = bars.window_return_pct("SPY", window_start, generated_at)
-        bars.close()
+
+        def price_on(symbol, when):
+            """A close on or shortly after a date, or None. Used by the
+            counterfactual-hold comparison; a missing bar is missing, never zero."""
+            window = bars.bars(symbol, when, when + timedelta(days=7))
+            for bar in window:
+                raw = bar.get("c")
+                try:
+                    close = Decimal(str(raw))
+                except (InvalidOperation, ValueError, TypeError):
+                    continue
+                if close > 0:
+                    return close
+            return None
+
     except Exception as error:  # noqa: BLE001 - a report without alpha beats no report
         print(f"benchmark fetch failed: {error}", file=sys.stderr)
 
@@ -172,8 +189,11 @@ def attribution() -> int:
         benchmark_return_pct=benchmark,
         mtd_research_cost=checks.audit.research_cost_between(month_start),
         feed_cost_detail=breakdown,
+        price_on=price_on,
     )
     print(report.render())
+    if bars is not None:
+        bars.close()
     return 0
 
 

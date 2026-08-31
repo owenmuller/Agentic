@@ -2,13 +2,39 @@
 
 Two layers, deliberately unequal
 --------------------------------
-Layer 1 is deterministic Python — a max-loss stop and a time stop, both frozen per
-position at entry from ``config/orchestrator.yaml``, checked against live prices every
-loop cycle. No LLM anywhere in it.
+Layer 1 is deterministic Python — a max-loss stop, a time stop, and a trailing
+ratchet beneath both, checked against live prices every loop cycle. No LLM anywhere
+in it.
 
-Layer 2 is the thesis review: a periodic LLM re-research of each open position
-(``research.exit_review``), which receives the original thesis, the invalidation
-condition, and current context, and returns hold or close through a closed schema.
+Layer 2 is the thesis review: an LLM re-research of each open position
+(``research.exit_review``) which receives the original thesis, the invalidation
+condition, the expected resolution date and current context, and returns a structured
+verdict — validity, progress, resolution, a revised resolution date, hold or close.
+
+Who owns the clock (ruling 2026-08-31)
+--------------------------------------
+The leash used to come from a three-value horizon bucket, which meant "months" had to
+carry everything from two months to two years. It now comes from the research report's
+own ``expected_resolution_date``, and a review may revise it. Both are clamped into
+per-horizon bounds from ``config/orchestrator.yaml``, and both clamps are measured
+FROM ENTRY — never from the review asking, because a ceiling measured from "now" is
+not a ceiling. Shortening is free; lengthening needs a verdict that reports the thesis
+intact and not stalled. A report that states no date falls back to the horizon bucket.
+
+Two things force a review out of cadence, and neither of them decides anything: a
+favourable move past ``review_trigger.up_fraction`` or an adverse move past
+``down_fraction``, both measured from the LAST REVIEW'S price rather than from entry so
+a position parked above the threshold does not re-trigger every cycle. The trigger's
+job is to put the question — has this resolved, is it accelerating, or has the name
+re-rated for reasons the thesis never claimed — in front of the review layer. Only the
+review answers it.
+
+The ratchet is the backstop under all of that: once a position has gained
+``ratchet.arm_at_gain``, its stop follows the high-water mark at ``trail_fraction``
+and never falls again. It is not a profit target — it cannot fire on a position that
+has not first run — and it exists only because reviews are periodic and prices are
+not. Its high-water mark is persisted in session state: a mark that reset to entry on
+restart would silently loosen the stop, which is the wrong direction to fail in.
 
 The asymmetry is the design. The review layer decides *well*; the guardrail layer
 decides *always*. A failed or malformed review is a hold — closing on bad data is
@@ -107,9 +133,25 @@ class TrackedPosition:
     invalidation_condition: str
     time_horizon: str
     confidence: int
-    #: Layer-1 stops, frozen when tracking starts.
+    #: Layer-1 stops. The stop begins at entry x (1 - max_loss_fraction) and only
+    #: ever rises, via the ratchet; the leash is days-from-entry, from the report's
+    #: expected resolution date where it stated one.
     stop_price: Decimal
     leash_days: int
+    #: What the entry pass (or the latest review) expects. None = no date stated,
+    #: leash came from the horizon fallback.
+    resolution_date: Optional[date] = None
+    #: Highest mark seen while holding — the ratchet's anchor. Persisted across
+    #: restarts; a reset to entry would loosen an armed stop back down.
+    high_water_price: Optional[Decimal] = None
+    #: True once the ratchet has taken over the stop, so an exit can name the
+    #: right reason.
+    stop_is_trailing: bool = False
+    #: The mark at the last review. Triggers debounce from here, not from entry,
+    #: so a position sitting above the threshold does not re-trigger every cycle.
+    last_review_price: Optional[Decimal] = None
+    #: Non-empty when a price move has forced a review that has not run yet.
+    review_due_reason: str = ""
     #: Accumulated proceeds from closing fills.
     proceeds: Decimal = ZERO
     last_review_at: Optional[datetime] = None
@@ -190,6 +232,31 @@ class ExitEngine:
         self._close_before_expiry_days = close_before_expiry_days
         self._tracked: dict[str, TrackedPosition] = {}
         self._working: dict[str, _WorkingExit] = {}
+        #: Per-position marks restored from session state before replay: the
+        #: ratchet's high-water mark and the last review's price. Seeded by
+        #: bootstrap; empty means every position starts from its entry price.
+        self._persisted_marks: dict[str, dict[str, Decimal]] = {}
+
+    def seed_marks(self, marks: dict[str, dict[str, Decimal]]) -> None:
+        """Hand the engine the persisted per-position marks. Call before replay."""
+        self._persisted_marks = dict(marks)
+
+    def marks_to_persist(self) -> dict[str, dict[str, Decimal]]:
+        """The marks worth carrying across a restart, for the positions still open.
+
+        Pruned to tracked positions on the way out, so the file does not accumulate
+        a mark for every position the system has ever held.
+        """
+        out: dict[str, dict[str, Decimal]] = {}
+        for position in self._tracked.values():
+            entry: dict[str, Decimal] = {}
+            if position.high_water_price is not None:
+                entry["high_water_price"] = position.high_water_price
+            if position.last_review_price is not None:
+                entry["last_review_price"] = position.last_review_price
+            if entry:
+                out[position.decision_id] = entry
+        return out
 
     @property
     def tracked(self) -> tuple[TrackedPosition, ...]:
@@ -243,9 +310,13 @@ class ExitEngine:
             time_horizon=str(report.time_horizon),
             confidence=report.confidence,
             stop_price=self._stop_for(price),
-            leash_days=self._config.time_stop_days.for_horizon(
-                str(report.time_horizon)
+            resolution_date=report.expected_resolution_date,
+            leash_days=self._leash_for(
+                str(report.time_horizon),
+                self._clock(),
+                report.expected_resolution_date,
             ),
+            high_water_price=price,
             instrument_kind="option" if is_option else "equity",
             expiration=order.expiration if is_option else None,
             multiplier=multiplier,
@@ -312,6 +383,18 @@ class ExitEngine:
             close_verdict = (
                 last_review is not None and last_review.outcome is ReviewOutcome.CLOSE
             )
+            # The clock survives the restart, including any revision a review made
+            # to it: the latest review that named a date wins, otherwise the entry
+            # pass's date, otherwise the horizon fallback. Rebuilding from the
+            # bucket alone would quietly demote a dated position back to the
+            # default the moment the process bounced.
+            resolution_date = research.expected_resolution_date
+            for review in trail.reviews:
+                if review.revised_resolution_date is not None:
+                    resolution_date = review.revised_resolution_date
+            marks = self._persisted_marks.get(decision.decision_id, {})
+            high_water = marks.get("high_water_price")
+            last_review_price = marks.get("last_review_price")
 
             self._tracked[decision.decision_id] = TrackedPosition(
                 decision_id=decision.decision_id,
@@ -329,9 +412,14 @@ class ExitEngine:
                 time_horizon=research.time_horizon,
                 confidence=research.confidence,
                 stop_price=self._stop_for(entry_price),
-                leash_days=self._config.time_stop_days.for_horizon(
-                    research.time_horizon
+                resolution_date=resolution_date,
+                leash_days=self._leash_for(
+                    research.time_horizon, buys[0].recorded_at, resolution_date
                 ),
+                high_water_price=(
+                    high_water if high_water is not None else entry_price
+                ),
+                last_review_price=last_review_price,
                 proceeds=sum((f.filled_value for f in sells), ZERO),
                 instrument_kind=kind,
                 expiration=(
@@ -345,6 +433,14 @@ class ExitEngine:
                     (last_review.assessment or "")[:200] if close_verdict else ""
                 ),
             )
+            # Re-arm the ratchet from the restored mark before the first tick: a
+            # position that was riding a trailing stop must not spend a cycle back
+            # on its original one.
+            restored_position = self._tracked[decision.decision_id]
+            trailing = self._ratchet_stop_for(restored_position)
+            if trailing is not None and trailing > restored_position.stop_price:
+                restored_position.stop_price = trailing
+                restored_position.stop_is_trailing = True
             restored += 1
         if restored:
             logger.info("restored %d open positions from the audit log", restored)
@@ -352,6 +448,56 @@ class ExitEngine:
 
     def _stop_for(self, entry_price: Decimal) -> Decimal:
         return entry_price * (Decimal("1") - self._config.max_loss_fraction)
+
+    def _leash_for(
+        self,
+        horizon: str,
+        opened_at: datetime,
+        resolution_date: Optional[date],
+    ) -> int:
+        """Days from entry this position may be held.
+
+        The report's own date where it stated one, the horizon fallback where it did
+        not, and always clamped into the configured bounds for that horizon. The
+        clamp is what makes the date safe to accept: a model naming 2031 gets the
+        ceiling, not 2031.
+        """
+        bounds = self._config.leash_bounds.for_horizon(horizon)
+        if resolution_date is None:
+            return bounds.clamp(self._config.time_stop_days.for_horizon(horizon))
+        return bounds.clamp((resolution_date - opened_at.date()).days)
+
+    def _ratchet_stop_for(self, position: TrackedPosition) -> Optional[Decimal]:
+        """The trailing stop this position's high-water mark implies, or None when
+        the ratchet has not armed. Never compared against anything but the current
+        stop, and only ever applied upward."""
+        high = position.high_water_price
+        if high is None or position.entry_price <= ZERO:
+            return None
+        ratchet = self._config.ratchet
+        if high < position.entry_price * (Decimal("1") + ratchet.arm_at_gain):
+            return None
+        return high * (Decimal("1") - ratchet.trail_fraction)
+
+    def _trigger_reason_for(
+        self, position: TrackedPosition, price: Decimal
+    ) -> Optional[str]:
+        """Whether this mark forces a review, and in what words.
+
+        Measured from the last review's price so the threshold has to be crossed
+        AGAIN to fire again — a position resting at +16% is not news every cycle.
+        """
+        reference = position.last_review_price or position.entry_price
+        if reference <= ZERO:
+            return None
+        move = (price - reference) / reference
+        trigger = self._config.review_trigger
+        anchor = "the last review" if position.last_review_price else "entry"
+        if move >= trigger.up_fraction:
+            return f"{move:+.1%} since {anchor} ({reference} to {price})"
+        if move <= -trigger.down_fraction:
+            return f"{move:+.1%} since {anchor} ({reference} to {price})"
+        return None
 
     # -- layer 1: deterministic guardrails ---------------------------------------------
 
@@ -370,8 +516,37 @@ class ExitEngine:
         marks: dict[tuple[str, ...], Decimal] = {}
         for position in self._tracked.values():
             price = self._mark_for(position)
-            if price is not None:
-                marks[position.key] = price
+            if price is None:
+                continue
+            marks[position.key] = price
+            # High-water first: the ratchet follows the best mark this position has
+            # seen, and it only ever moves the stop up.
+            if position.high_water_price is None or price > position.high_water_price:
+                position.high_water_price = price
+            trailing = self._ratchet_stop_for(position)
+            if trailing is not None and trailing > position.stop_price:
+                position.stop_price = trailing
+                if not position.stop_is_trailing:
+                    logger.info(
+                        "ratchet armed on %s: gain past %s, stop follows the "
+                        "high-water mark %s at %s",
+                        position.symbol,
+                        f"{self._config.ratchet.arm_at_gain:%}",
+                        position.high_water_price,
+                        trailing,
+                    )
+                position.stop_is_trailing = True
+            # A big move forces a review; it never decides one. The flag is read by
+            # review_theses, which jumps this position to the front of the queue.
+            if not position.review_due_reason:
+                reason = self._trigger_reason_for(position, price)
+                if reason is not None:
+                    position.review_due_reason = reason
+                    logger.info(
+                        "review triggered on %s by a price move: %s",
+                        position.symbol,
+                        reason,
+                    )
         if marks:
             # Live marks keep NAV, drawdown, and therefore the kill switch honest.
             self._gate.mark_to_market(marks)
@@ -383,13 +558,24 @@ class ExitEngine:
             price = marks.get(position.key)
 
             if price is not None and price <= position.stop_price:
-                reason: Optional[ExitReason] = ExitReason.MAX_LOSS_STOP
-                detail = (
-                    f"{position.symbol} at {price} is at or below the "
-                    f"{position.stop_price} stop set at entry "
-                    f"({self._config.max_loss_fraction:%} below entry "
-                    f"{position.entry_price})"
-                )
+                if position.stop_is_trailing:
+                    reason: Optional[ExitReason] = ExitReason.TRAILING_STOP
+                    detail = (
+                        f"{position.symbol} at {price} is at or below the "
+                        f"{position.stop_price} trailing stop — "
+                        f"{self._config.ratchet.trail_fraction:%} below the "
+                        f"{position.high_water_price} high-water mark, armed after a "
+                        f"{self._config.ratchet.arm_at_gain:%} gain over entry "
+                        f"{position.entry_price}"
+                    )
+                else:
+                    reason = ExitReason.MAX_LOSS_STOP
+                    detail = (
+                        f"{position.symbol} at {price} is at or below the "
+                        f"{position.stop_price} stop set at entry "
+                        f"({self._config.max_loss_fraction:%} below entry "
+                        f"{position.entry_price})"
+                    )
             elif (
                 position.expiration is not None
                 and self._close_before_expiry_days is not None
@@ -423,28 +609,109 @@ class ExitEngine:
 
     # -- layer 2: thesis review ---------------------------------------------------------
 
+    def _triggered_reviews_today(self, moment: datetime) -> int:
+        """Out-of-cadence reviews already run today, replayed from the log.
+
+        From the log rather than a counter, for the same reason the research budget
+        is: a restart with a fresh counter would hand the day a second allowance.
+        """
+        return self._audit.triggered_reviews_on(moment.date())
+
+    def _apply_revision(
+        self, position: TrackedPosition, verdict: ExitReview
+    ) -> Optional[int]:
+        """Move the position's leash to match a revised resolution date.
+
+        Shortening always applies. Lengthening applies only when the verdict may
+        extend — thesis intact, not stalled, not invalidated — and never past the
+        configured ceiling, which is measured from entry so repeated small
+        extensions cannot walk it out. Returns the leash actually in force when it
+        changed, None when it did not.
+        """
+        revised = verdict.revised_resolution_date
+        if revised is None:
+            return None
+        proposed = self._leash_for(position.time_horizon, position.opened_at, revised)
+        if proposed == position.leash_days:
+            return None
+        if proposed > position.leash_days and not verdict.may_extend:
+            logger.info(
+                "review of %s asked to extend the leash to day %d; refused — the "
+                "verdict reports validity=%s progress=%s",
+                position.symbol,
+                proposed,
+                verdict.validity,
+                verdict.progress,
+            )
+            return None
+        logger.info(
+            "leash on %s moves from day %d to day %d (resolution now expected %s)",
+            position.symbol,
+            position.leash_days,
+            proposed,
+            revised.isoformat(),
+        )
+        position.leash_days = proposed
+        position.resolution_date = revised
+        return proposed
+
+    def _review_queue(
+        self, moment: datetime, interval: timedelta
+    ) -> list[TrackedPosition]:
+        """Positions due a review, triggered ones first.
+
+        Ordering is the point. A position whose price just moved 20% is the most
+        informative review in the book, and under a tight budget it must not lose
+        its slot to whichever cadence review the dict happened to yield first.
+        """
+        triggered: list[TrackedPosition] = []
+        cadence: list[TrackedPosition] = []
+        for position in self._tracked.values():
+            if position.pending_exit is not None or position.close_verdict:
+                continue
+            if position.review_due_reason:
+                triggered.append(position)
+                continue
+            since = position.last_review_at or position.opened_at
+            if moment - since >= interval:
+                cadence.append(position)
+        return triggered + cadence
+
     def review_theses(self, now: Optional[datetime] = None) -> tuple[int, int]:
-        """Re-research open positions on the configured cadence.
+        """Re-research open positions on cadence, or sooner when price forces it.
 
         Returns ``(reviews_run, closes_initiated)``. Each review spends one pass from
-        the shared daily research budget; when the budget is exhausted, reviews wait —
-        the guardrails do not.
+        the daily research budget, drawn against the share reserved for reviews so a
+        noisy entry feed cannot starve the exit layer. When the budget really is
+        exhausted, reviews wait — the guardrails do not.
         """
         moment = now or self._clock()
         interval = timedelta(hours=self._config.thesis_review_interval_hours)
         reviews_run = 0
         closes = 0
+        triggered_today = self._triggered_reviews_today(moment)
 
-        for position in list(self._tracked.values()):
-            if position.pending_exit is not None or position.close_verdict:
-                continue
-            since = position.last_review_at or position.opened_at
-            if moment - since < interval:
-                continue
-            if not self._budget.try_spend():
+        for position in self._review_queue(moment, interval):
+            trigger_reason = position.review_due_reason or None
+            if trigger_reason is not None:
+                if triggered_today >= self._config.review_trigger.max_per_day:
+                    # The day's out-of-cadence allowance is spent. The flag STAYS
+                    # set: this position is still owed a review, it just waits for
+                    # tomorrow's allowance or its ordinary cadence slot, whichever
+                    # arrives first. Dropping the flag would lose the question.
+                    logger.warning(
+                        "triggered review of %s deferred: %d out-of-cadence reviews "
+                        "already run today (cap %d)",
+                        position.symbol,
+                        triggered_today,
+                        self._config.review_trigger.max_per_day,
+                    )
+                    continue
+            if not self._budget.try_spend(for_review=True):
                 break
 
             price = self._mark_for(position)
+            bounds = self._config.leash_bounds.for_horizon(position.time_horizon)
             outcome = self._reviews.run(
                 PositionUnderReview(
                     symbol=position.symbol,
@@ -458,9 +725,21 @@ class ExitEngine:
                     thesis=position.thesis,
                     invalidation_condition=position.invalidation_condition,
                     original_content=position.content,
+                    expected_resolution_date=position.resolution_date,
+                    leash_days=position.leash_days,
+                    leash_ceiling_days=bounds.ceiling,
+                    trigger_reason=trigger_reason,
                 )
             )
             position.last_review_at = moment
+            # Debounce from here whether or not the verdict parsed: the review was
+            # bought and the question was asked, so the next trigger must be a NEW
+            # move rather than the same one still standing.
+            if price is not None:
+                position.last_review_price = price
+            position.review_due_reason = ""
+            if trigger_reason is not None:
+                triggered_today += 1
             reviews_run += 1
 
             if not isinstance(outcome, ExitReview):
@@ -473,6 +752,7 @@ class ExitEngine:
                     code=str(outcome.code),
                     message=outcome.message,
                     usage=usage,
+                    trigger_reason=trigger_reason,
                 )
                 if self._cost_sink is not None:
                     self._cost_sink(usage.cost_usd if usage else None)
@@ -485,12 +765,21 @@ class ExitEngine:
                 continue
 
             usage = self._reviews.last_usage
+            leash_after = self._apply_revision(position, outcome)
             self._audit.record_thesis_review(
                 position.decision_id,
                 ReviewOutcome.CLOSE if outcome.should_close else ReviewOutcome.HOLD,
                 assessment=outcome.assessment,
                 invalidation_triggered=outcome.invalidation_triggered,
                 usage=usage,
+                validity=str(outcome.validity),
+                progress=str(outcome.progress),
+                resolution=str(outcome.resolution),
+                revised_resolution_date=outcome.revised_resolution_date,
+                continuation_thesis=outcome.continuation_thesis,
+                close_contradiction=outcome.close_contradiction,
+                trigger_reason=trigger_reason,
+                leash_days_after=leash_after,
             )
             if self._cost_sink is not None:
                 self._cost_sink(usage.cost_usd if usage else None)

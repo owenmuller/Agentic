@@ -243,18 +243,21 @@ def test_a_price_above_the_stop_does_not_exit(
     assert started.audit.trail("dec-1").exits == ()
 
 
-def test_the_stop_is_frozen_at_entry_not_recomputed_from_the_market(
+def test_a_rally_below_the_ratchet_arm_leaves_the_entry_stop_alone(
     tmp_path, limits, signals_config, research_config
 ):
-    """A rally must not drag the stop up: it is 15% below ENTRY, not below the high."""
+    """The stop is 15% below ENTRY until the ratchet arms, and the ratchet needs a
+    20% gain first. A 10% rally is not a gain the backstop may price off."""
     started, prices, _ = enter_position(
         tmp_path, limits, signals_config, research_config
     )
-    prices.set("NUE", "200.00")
+    prices.set("NUE", "154.00")  # +10%: short of the 20% arm
     started.loop.tick()
-    assert started.exits.tracked[0].stop_price == STOP
+    position = started.exits.tracked[0]
+    assert position.stop_price == STOP
+    assert position.stop_is_trailing is False
 
-    prices.set("NUE", "125.00")  # a 37% fall from the high, still above the entry stop
+    prices.set("NUE", "125.00")  # back below the high, still above the entry stop
     report = started.loop.tick()
     assert report.exits_started == 0
 
@@ -312,11 +315,7 @@ def test_a_days_horizon_gets_the_short_leash(
 def review_config(**top_level):
     """The standard config with a 1-hour review cadence; top-level overrides pass through."""
     return orchestrator_config(
-        exits={
-            "max_loss_fraction": "0.15",
-            "time_stop_days": {"days": 7, "weeks": 45, "months": 120},
-            "thesis_review_interval_hours": 1,
-        },
+        exits={"thesis_review_interval_hours": 1},
         **top_level,
     )
 
@@ -828,16 +827,31 @@ def test_shutdown_cancels_a_working_exit_and_releases_its_reservation(
 # ================================================================================
 
 
-def test_the_review_tool_offers_exactly_three_fields_and_two_actions():
+def test_the_review_tool_offers_exactly_these_fields_and_two_actions():
+    """The schema widened (ruling 2026-08-31) but stayed CLOSED: still no field for
+    resizing, adding, reopening or moving a stop. The clock is the only new lever,
+    and it is clamped downstream."""
     schema = exit_review_tool_definition()["input_schema"]
     assert set(schema["properties"]) == {
         "assessment",
         "invalidation_triggered",
         "action",
+        "validity",
+        "progress",
+        "resolution",
+        "revised_resolution_date",
+        "continuation_thesis",
     }
     assert schema["additionalProperties"] is False
+    # Every field is asked of the model, including the ones python defaults.
+    assert set(schema["required"]) == set(schema["properties"])
     definitions = schema.get("$defs", schema.get("definitions", {}))
     assert set(definitions["ExitAction"]["enum"]) == {"hold", "close"}
+    assert set(definitions["ThesisValidity"]["enum"]) == {
+        "intact",
+        "invalidated",
+        "displaced",
+    }
 
 
 @pytest.mark.parametrize(
@@ -939,3 +953,496 @@ def test_fill_records_written_before_sides_existed_still_parse_as_buys():
     }
     record = FillRecord.model_validate(json.loads(json.dumps(line)))
     assert record.side == "buy"
+
+
+# ================================================================================
+# The clock: the report's own date sets the leash, clamped (ruling 2026-08-31)
+# ================================================================================
+
+
+def dated_report(resolution: str, horizon: str = "months"):
+    return structured(
+        {**REPORT, "time_horizon": horizon, "expected_resolution_date": resolution}
+    )
+
+
+def enter_with_resolution(
+    tmp_path, limits, signals_config, research_config, resolution, horizon="months",
+    **kwargs
+):
+    """A position whose entry report dates itself. A caller passing its own llm is
+    routing review verdicts, so the dated entry report is merged into it."""
+    routed = kwargs.pop("llm", None)
+    by_tool = dict(getattr(routed, "_by_tool", {}))
+    by_tool[REPORT_TOOL_NAME] = dated_report(resolution, horizon)
+    return enter_position(
+        tmp_path,
+        limits,
+        signals_config,
+        research_config,
+        llm=RoutingLLM(**by_tool),
+        **kwargs,
+    )
+
+
+def test_the_reports_own_resolution_date_sets_the_leash(
+    tmp_path, limits, signals_config, research_config
+):
+    """The defect this fixes: a months-horizon thesis resolving in mid-2027 used to
+    be cut at a 120-day bucket average. NOW is 2026-08-17; a 2027-06-17 resolution
+    is 303 days out and that is the leash."""
+    started, _, _ = enter_with_resolution(
+        tmp_path, limits, signals_config, research_config, "2027-06-17"
+    )
+    position = started.exits.tracked[0]
+    assert position.leash_days == 304
+    assert position.resolution_date.isoformat() == "2027-06-17"
+
+
+def test_a_report_with_no_date_falls_back_to_its_horizon_bucket(
+    tmp_path, limits, signals_config, research_config
+):
+    """Unchanged behaviour for a report that declines to date itself."""
+    started, _, _ = enter_position(
+        tmp_path, limits, signals_config, research_config
+    )
+    assert started.exits.tracked[0].leash_days == 45  # REPORT says weeks
+    assert started.exits.tracked[0].resolution_date is None
+
+
+def test_a_distant_date_is_clamped_to_the_ceiling_not_honoured(
+    tmp_path, limits, signals_config, research_config
+):
+    """The clamp is what makes accepting a model-supplied date safe: naming 2031
+    buys the ceiling, not 2031."""
+    started, _, _ = enter_with_resolution(
+        tmp_path, limits, signals_config, research_config, "2031-01-01"
+    )
+    assert started.exits.tracked[0].leash_days == 365  # the months ceiling
+
+
+def test_a_date_already_past_is_clamped_up_to_the_floor(
+    tmp_path, limits, signals_config, research_config
+):
+    """Symmetrically bounded: a resolution date in the past would otherwise mean a
+    position that exits the cycle it opened."""
+    started, _, _ = enter_with_resolution(
+        tmp_path, limits, signals_config, research_config, "2026-01-01"
+    )
+    assert started.exits.tracked[0].leash_days == 60  # the months floor
+
+
+def test_the_leash_from_a_date_actually_fires_the_time_stop(
+    tmp_path, limits, signals_config, research_config
+):
+    started, _, clock = enter_with_resolution(
+        tmp_path, limits, signals_config, research_config, "2026-11-15"
+    )
+    assert started.exits.tracked[0].leash_days == 90
+
+    clock.advance(days=89)
+    assert started.loop.tick().exits_started == 0
+    clock.advance(days=1)
+    assert started.loop.tick().exits_started == 1
+    assert started.audit.trail("dec-1").exits[0].reason is ExitReason.TIME_STOP
+
+
+def test_the_resolution_date_survives_a_restart(
+    tmp_path, limits, signals_config, research_config
+):
+    """Replay must rebuild the leash from the recorded date. Rebuilding it from the
+    horizon bucket would silently demote a dated position to the fallback."""
+    clock = FakeClock()
+    started, _, _ = enter_with_resolution(
+        tmp_path, limits, signals_config, research_config, "2027-06-17", clock=clock
+    )
+    assert started.exits.tracked[0].leash_days == 304
+    started.loop.shutdown()
+
+    restarted = build(
+        tmp_path, limits, signals_config, research_config,
+        broker=FakeBroker(
+            cash=Decimal("98180"),
+            positions=[BrokerPosition("NUE", Decimal("13"), Decimal("1820"), Decimal("1820"))],
+        ),
+        clock=clock,
+        fetcher=feed(),
+    )
+    assert restarted.exits.tracked[0].leash_days == 304
+    assert restarted.exits.tracked[0].resolution_date.isoformat() == "2027-06-17"
+
+
+# ================================================================================
+# The widened verdict, and the three contradiction rules
+# ================================================================================
+
+
+def verdict(**fields):
+    return {**HOLD_REVIEW, **fields}
+
+
+def review_llm(**fields):
+    """A harness LLM whose REVIEW answers carry the fields under test. Entry
+    reports still come from the default, so a position exists to review."""
+    return RoutingLLM(**{EXIT_REVIEW_TOOL_NAME: structured(verdict(**fields))})
+
+
+def test_a_review_can_shorten_the_leash_freely(
+    tmp_path, limits, signals_config, research_config
+):
+    started, _, clock = enter_with_resolution(
+        tmp_path, limits, signals_config, research_config, "2027-06-17",
+        config=review_config(),
+        llm=review_llm(progress="stalled", revised_resolution_date="2026-12-01"),
+    )
+    assert started.exits.tracked[0].leash_days == 304
+
+    clock.advance(hours=2)
+    started.loop.tick()
+
+    # Shortening needs no permission — not even from a stalled thesis.
+    assert started.exits.tracked[0].leash_days == 106
+    review = started.audit.trail("dec-1").reviews[-1]
+    assert review.leash_days_after == 106
+    assert review.progress == "stalled"
+
+
+def test_a_stalled_thesis_cannot_buy_itself_more_time(
+    tmp_path, limits, signals_config, research_config
+):
+    """The one thing progress gates. A thesis going nowhere extending its own
+    deadline is precisely what the leash exists to stop."""
+    started, _, clock = enter_position(
+        tmp_path, limits, signals_config, research_config, config=review_config(),
+        llm=review_llm(progress="stalled", revised_resolution_date="2026-11-01"),
+    )
+    assert started.exits.tracked[0].leash_days == 45
+
+    clock.advance(hours=2)
+    started.loop.tick()
+
+    assert started.exits.tracked[0].leash_days == 45  # refused, not applied
+    assert started.audit.trail("dec-1").reviews[-1].leash_days_after is None
+
+
+def test_an_intact_progressing_thesis_may_extend_within_the_ceiling(
+    tmp_path, limits, signals_config, research_config
+):
+    started, _, clock = enter_position(
+        tmp_path, limits, signals_config, research_config, config=review_config(),
+        llm=review_llm(
+            validity="intact", progress="on_track",
+            revised_resolution_date="2026-11-01",
+        ),
+    )
+    clock.advance(hours=2)
+    started.loop.tick()
+    assert started.exits.tracked[0].leash_days == 76  # 2026-08-17 -> 2026-11-01
+
+
+def test_an_extension_past_the_ceiling_is_clamped_from_entry_not_from_now(
+    tmp_path, limits, signals_config, research_config
+):
+    """The ratchet-proofing: the ceiling is days from ENTRY, so repeated small
+    extensions cannot walk the leash out indefinitely."""
+    started, _, clock = enter_position(
+        tmp_path, limits, signals_config, research_config, config=review_config(),
+        llm=review_llm(revised_resolution_date="2030-01-01"),
+    )
+    for _ in range(3):
+        clock.advance(hours=2)
+        started.loop.tick()
+    # weeks ceiling, three times over, still the ceiling.
+    assert started.exits.tracked[0].leash_days == 90
+
+
+@pytest.mark.parametrize(
+    "fields,fragment",
+    [
+        ({"invalidation_triggered": True}, "invalidation_triggered"),
+        ({"validity": "invalidated"}, "validity=invalidated"),
+        ({"validity": "displaced"}, "validity=displaced"),
+        ({"resolution": "substantial"}, "resolution=substantial"),
+    ],
+)
+def test_every_contradiction_rule_resolves_a_hold_toward_the_exit(
+    tmp_path, limits, signals_config, research_config, fields, fragment
+):
+    started, _, clock = enter_position(
+        tmp_path, limits, signals_config, research_config, config=review_config(),
+        llm=review_llm(**fields),
+    )
+    clock.advance(hours=2)
+    report = started.loop.tick()
+
+    assert report.exits_started == 1
+    review = started.audit.trail("dec-1").reviews[-1]
+    assert review.outcome is ReviewOutcome.CLOSE
+    assert fragment in review.close_contradiction
+
+
+def test_a_resolved_position_may_be_held_when_the_new_bet_is_written_down(
+    tmp_path, limits, signals_config, research_config
+):
+    """Holding a thesis that has played out is a NEW bet. It is allowed — but only
+    stated, so attribution can audit it later."""
+    started, _, clock = enter_position(
+        tmp_path, limits, signals_config, research_config, config=review_config(),
+        llm=review_llm(
+            resolution="substantial",
+            continuation_thesis="Second leg: the Q4 contract cycle is not in the "
+            "price yet.",
+        ),
+    )
+    clock.advance(hours=2)
+    report = started.loop.tick()
+
+    assert report.exits_started == 0
+    review = started.audit.trail("dec-1").reviews[-1]
+    assert review.outcome is ReviewOutcome.HOLD
+    assert review.close_contradiction is None
+    assert "Second leg" in review.continuation_thesis
+
+
+def test_the_contradiction_rules_are_derived_never_schema_validation():
+    """The trap this design turns on: a schema failure becomes a REJECTION, and a
+    rejection means HOLD. Enforcing "resolved needs a continuation" in pydantic
+    would produce exactly the outcome the rule exists to prevent."""
+    resolved = ExitReview.model_validate(
+        {**HOLD_REVIEW, "resolution": "substantial"}
+    )
+    assert resolved.should_close  # parses cleanly, closes on the derived rule
+    assert resolved.close_contradiction is not None
+
+
+# ================================================================================
+# Outcome-triggered reviews: force the question, never answer it
+# ================================================================================
+
+
+def test_a_large_move_forces_a_review_out_of_cadence(
+    tmp_path, limits, signals_config, research_config
+):
+    started, prices, clock = enter_position(
+        tmp_path, limits, signals_config, research_config
+    )
+    # 24h cadence, and no time has passed: without the trigger there is no review.
+    prices.set("NUE", str(QUOTE * Decimal("1.20")))
+    report = started.loop.tick()
+
+    assert report.reviews_run == 1
+    review = started.audit.trail("dec-1").reviews[-1]
+    assert "+20.0%" in review.trigger_reason
+    assert review.outcome is ReviewOutcome.HOLD  # the trigger decided nothing
+
+
+def test_the_trigger_tells_the_model_why_it_was_woken():
+    position = PositionUnderReview(
+        symbol="NUE", entry_price=Decimal("140"), current_price=Decimal("168"),
+        opened_at=NOW, days_held=3, time_horizon="weeks", confidence_at_entry=80,
+        source_id="trump_posts", thesis="t", invalidation_condition="i",
+        original_content="c", trigger_reason="+20.0% since entry",
+    )
+    prompt = build_review_prompt(position)
+    assert "WHY YOU ARE SEEING THIS NOW" in prompt
+    assert "+20.0% since entry" in prompt
+    assert "has the thesis resolved" in prompt
+    assert "not by itself a verdict" in prompt
+
+
+def test_an_adverse_move_triggers_before_the_stop_does(
+    tmp_path, limits, signals_config, research_config
+):
+    """The asymmetry earns its keep: at -10% there is still a decision to make; at
+    -15% the stop has already closed the position."""
+    started, prices, _ = enter_position(
+        tmp_path, limits, signals_config, research_config
+    )
+    prices.set("NUE", str(QUOTE * Decimal("0.89")))  # -11%: past the trigger, above the stop
+    report = started.loop.tick()
+
+    assert report.exits_started == 0
+    assert report.reviews_run == 1
+    assert "-11" in started.audit.trail("dec-1").reviews[-1].trigger_reason
+
+
+def test_a_position_parked_above_the_threshold_does_not_retrigger(
+    tmp_path, limits, signals_config, research_config
+):
+    """Debounce from the LAST REVIEW's price. Without it a position resting at
+    +20% buys a review every cycle, forever."""
+    started, prices, _ = enter_position(
+        tmp_path, limits, signals_config, research_config
+    )
+    prices.set("NUE", str(QUOTE * Decimal("1.20")))
+    assert started.loop.tick().reviews_run == 1
+    assert started.loop.tick().reviews_run == 0
+    assert started.loop.tick().reviews_run == 0
+
+    # A FURTHER 15% from there is new news, and fires again.
+    prices.set("NUE", str(QUOTE * Decimal("1.20") * Decimal("1.16")))
+    assert started.loop.tick().reviews_run == 1
+
+
+def test_triggered_reviews_are_capped_per_day_without_losing_the_question(
+    tmp_path, limits, signals_config, research_config
+):
+    """The cap bounds cost; it must not silently drop the review that was owed."""
+    started, prices, clock = enter_position(
+        tmp_path,
+        limits,
+        signals_config,
+        research_config,
+        config=orchestrator_config(
+            exits={"review_trigger": {"up_fraction": "0.15", "down_fraction": "0.10",
+                                      "max_per_day": 1}}
+        ),
+    )
+    prices.set("NUE", str(QUOTE * Decimal("1.20")))
+    assert started.loop.tick().reviews_run == 1
+
+    prices.set("NUE", str(QUOTE * Decimal("1.45")))
+    assert started.loop.tick().reviews_run == 0  # cap reached
+    assert started.exits.tracked[0].review_due_reason  # still owed, not forgotten
+
+    clock.advance(days=1)
+    assert started.loop.tick().reviews_run == 1
+
+
+def test_the_trigger_never_closes_a_position_by_itself(
+    tmp_path, limits, signals_config, research_config
+):
+    """A +40% move with a review that fails entirely: no exit. The trigger asks."""
+    started, prices, clock = enter_position(
+        tmp_path,
+        limits,
+        signals_config,
+        research_config,
+        llm=RoutingLLM(**{EXIT_REVIEW_TOOL_NAME: prose("I have opinions.")}),
+    )
+    prices.set("NUE", str(QUOTE * Decimal("1.40")))
+    report = started.loop.tick()
+
+    assert report.reviews_run == 1
+    assert report.exits_started == 0
+    assert len(started.exits.tracked) == 1
+    assert started.audit.trail("dec-1").reviews[-1].outcome is ReviewOutcome.REVIEW_FAILED
+
+
+# ================================================================================
+# The ratchet: a backstop, never a profit target
+# ================================================================================
+
+
+def test_the_ratchet_arms_after_the_configured_gain_and_never_falls(
+    tmp_path, limits, signals_config, research_config
+):
+    started, prices, _ = enter_position(
+        tmp_path, limits, signals_config, research_config
+    )
+    position = started.exits.tracked[0]
+    assert position.stop_price == STOP
+
+    prices.set("NUE", "175.00")  # +25%: arms the ratchet
+    started.loop.tick()
+    assert position.stop_is_trailing
+    assert position.stop_price == Decimal("157.500")  # 10% below the high
+
+    prices.set("NUE", "160.00")  # a pullback: the stop must NOT follow it down
+    started.loop.tick()
+    assert position.stop_price == Decimal("157.500")
+
+    prices.set("NUE", "200.00")  # a new high: the stop rises
+    started.loop.tick()
+    assert position.stop_price == Decimal("180.000")
+
+
+def test_the_ratchet_closes_a_round_trip_with_its_own_reason(
+    tmp_path, limits, signals_config, research_config
+):
+    """The reason matters as much as the exit: attribution must be able to separate
+    "the thesis played out" from "a reversal was caught between reviews"."""
+    started, prices, _ = enter_position(
+        tmp_path, limits, signals_config, research_config
+    )
+    prices.set("NUE", "200.00")
+    started.loop.tick()
+    prices.set("NUE", "180.00")  # exactly the trailing stop: the boundary triggers
+    assert started.loop.tick().exits_started == 1
+
+    trail = started.audit.trail("dec-1")
+    assert trail.exits[0].reason is ExitReason.TRAILING_STOP
+    assert "high-water" in trail.exits[0].detail
+    assert trail.exits[0].reason is not ExitReason.MAX_LOSS_STOP
+
+
+def test_the_ratchet_cannot_fire_on_a_position_that_never_ran(
+    tmp_path, limits, signals_config, research_config
+):
+    """Not a profit target and not a tighter stop: below the arm threshold the
+    original entry stop is the only stop there is."""
+    started, prices, _ = enter_position(
+        tmp_path, limits, signals_config, research_config
+    )
+    for price in ("150.00", "145.00", "130.00", "120.00"):
+        prices.set("NUE", price)
+        assert started.loop.tick().exits_started == 0
+    assert started.exits.tracked[0].stop_is_trailing is False
+    assert started.exits.tracked[0].stop_price == STOP
+
+
+def test_the_high_water_mark_survives_a_restart(
+    tmp_path, limits, signals_config, research_config
+):
+    """The trap: a mark that resets to entry on restart silently loosens an armed
+    stop back to 15% below entry. That is the wrong direction to fail in."""
+    clock = FakeClock()
+    started, prices, _ = enter_position(
+        tmp_path, limits, signals_config, research_config, clock=clock
+    )
+    prices.set("NUE", "200.00")
+    started.loop.tick()
+    assert started.exits.tracked[0].stop_price == Decimal("180.000")
+    started.loop.shutdown()
+
+    restarted = build(
+        tmp_path, limits, signals_config, research_config,
+        broker=FakeBroker(
+            cash=Decimal("98180"),
+            positions=[BrokerPosition("NUE", Decimal("13"), Decimal("2600"), Decimal("2600"))],
+        ),
+        prices=MutablePrices(NUE="185.00"),
+        clock=clock,
+        fetcher=feed(),
+    )
+    position = restarted.exits.tracked[0]
+    assert position.high_water_price == Decimal("200.00")
+    assert position.stop_is_trailing
+    assert position.stop_price == Decimal("180.000")
+
+
+# ================================================================================
+# Budget: the exit layer cannot be starved by entries
+# ================================================================================
+
+
+def test_entries_stop_at_the_reserve_and_reviews_keep_running():
+    from orchestrator.budget import ResearchBudget
+
+    budget = ResearchBudget(4, review_reserve_fraction=Decimal("0.25"))
+    assert budget.review_reserve == 1
+    assert budget.entry_ceiling == 3
+
+    assert [budget.try_spend() for _ in range(3)] == [True, True, True]
+    assert budget.try_spend() is False  # entries are done for the day
+    assert budget.try_spend(for_review=True) is True  # the reserve is still there
+    assert budget.try_spend(for_review=True) is False  # and now it is not
+
+
+def test_a_review_may_spend_the_entry_share_nobody_claimed():
+    """The reserve is a floor under reviews, not a cap on them."""
+    from orchestrator.budget import ResearchBudget
+
+    budget = ResearchBudget(4, review_reserve_fraction=Decimal("0.25"))
+    assert [budget.try_spend(for_review=True) for _ in range(4)] == [True] * 4
+    assert budget.try_spend(for_review=True) is False

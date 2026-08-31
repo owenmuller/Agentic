@@ -221,6 +221,14 @@ class AuditLog:
         code: Optional[str] = None,
         message: str = "",
         usage: Optional[ResearchUsage] = None,
+        validity: Optional[str] = None,
+        progress: Optional[str] = None,
+        resolution: Optional[str] = None,
+        revised_resolution_date=None,
+        continuation_thesis: Optional[str] = None,
+        close_contradiction: Optional[str] = None,
+        trigger_reason: Optional[str] = None,
+        leash_days_after: Optional[int] = None,
     ) -> ThesisReviewRecord:
         """Record one thesis review of an open position.
 
@@ -238,6 +246,14 @@ class AuditLog:
             outcome=outcome,
             assessment=assessment,
             invalidation_triggered=invalidation_triggered,
+            validity=validity,
+            progress=progress,
+            resolution=resolution,
+            revised_resolution_date=revised_resolution_date,
+            continuation_thesis=continuation_thesis,
+            close_contradiction=close_contradiction,
+            trigger_reason=trigger_reason,
+            leash_days_after=leash_days_after,
             code=code,
             message=message,
             est_input_tokens=usage.input_tokens if usage else None,
@@ -353,6 +369,20 @@ class AuditLog:
                 won=record.won,
             )
         return record
+
+    def triggered_reviews_on(self, day) -> int:
+        """Out-of-cadence reviews recorded on a UTC day (ruling 2026-08-31).
+
+        Replayed from the log, like the research budget, so a restart cannot hand
+        the day a second allowance of triggered reviews.
+        """
+        return sum(
+            1
+            for record in self.records()
+            if isinstance(record, ThesisReviewRecord)
+            and record.trigger_reason
+            and record.recorded_at.date() == day
+        )
 
     def record_correction(
         self, decision_id: str, supersedes_sequence: int, reason: str, **fields: object

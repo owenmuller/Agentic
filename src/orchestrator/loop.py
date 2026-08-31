@@ -354,6 +354,7 @@ class TradingLoop:
             self._session.capture_mechanical(self._mechanical, now)
 
         report.halted = self._gate.kill_switch_tripped
+        self._session.capture_exits(self._exits)
         self._session.persist(self._gate, now)
 
         if report.halted:
@@ -406,6 +407,7 @@ class TradingLoop:
             report.settled += len(self._mechanical.cancel_working())
             self._session.capture_mechanical(self._mechanical, self._clock())
         report.halted = self._gate.kill_switch_tripped
+        self._session.capture_exits(self._exits)
         self._session.persist(self._gate, self._clock())
         logger.info(
             "shutdown complete: %d orders settled or released, %d positions still "
