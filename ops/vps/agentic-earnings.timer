@@ -1,0 +1,33 @@
+# Weekdays 16:30 ET — half an hour after the close.
+#
+# Why after the close rather than during the session:
+#
+#   * The settle phase needs the session that carries the earnings move to have
+#     CLOSED. An amc print on Monday resolves against Tuesday's close, and a
+#     trigger at 16:30 ET on Tuesday has it; a mid-session trigger does not.
+#   * The arm phase wants a settled closing price too. The logger falls back to
+#     the last daily close when no live quote is available, so a post-close run
+#     records a real close rather than a mid-session mark.
+#   * It keeps the logger's HTTP calls off the same window the trading loop uses,
+#     which matters for the Alpaca options endpoints both of them read.
+#
+# Weekdays only: US companies do not report on weekends, and an IV snapshot on a
+# Saturday is Friday's close recorded twice.
+#
+# Persistent=true replays a missed trigger after a reboot. That is safe here in a
+# way it is not for a trading unit: both phases replay from the shadow log and
+# are idempotent, so a catch-up run writes only what the missed run would have.
+#
+# Safe to enable unattended — this unit places no orders. Register with:
+#   sudo cp ops/vps/agentic-earnings.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now agentic-earnings.timer
+[Unit]
+Description=Agentic earnings shadow logger trigger (weekdays 16:30 ET)
+
+[Timer]
+OnCalendar=Mon..Fri 16:30 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

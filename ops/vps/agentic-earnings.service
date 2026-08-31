@@ -1,0 +1,28 @@
+# Agentic earnings shadow logger — OBSERVATION ONLY (ruling 2026-08-31).
+#
+# This unit cannot trade. src/earnings/ has no risk gate, no broker adapter, no
+# order schema and no LLM in it, and the import topology forbids reaching any of
+# them (tests/test_topology.py). It reads market data and an earnings calendar,
+# and it appends to data/earnings_shadow.jsonl. That is the whole of it.
+#
+# Unlike agentic-paper.service this is safe to enable unattended: enabling a
+# schedule that trades is the human's trigger to pull, and this one does not
+# trade. It still runs as the agentic user with no secrets in the unit — .env is
+# loaded by the process via python-dotenv, as everywhere else.
+[Unit]
+Description=Agentic earnings shadow logger (observation only; places no orders)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=agentic
+WorkingDirectory=/home/agentic/Agentic
+Environment=PYTHONPATH=/home/agentic/Agentic/src
+Environment=PYTHONIOENCODING=utf-8
+ExecStart=/home/agentic/Agentic/.venv/bin/python -m earnings pass
+# A pass is a handful of HTTP calls; anything longer is a hung request, and a
+# logger that hangs must not sit on the box until the next trigger.
+TimeoutStartSec=15m
+# No Restart=: a missed pass costs one day of snapshots, and the next trigger
+# picks the work up anyway — both phases replay from the log and are idempotent.
