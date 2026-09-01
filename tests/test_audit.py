@@ -305,6 +305,74 @@ def test_an_approved_but_unresolved_trail_is_not_complete(log, limits):
     assert log.trail(record.decision_id).is_complete is False
 
 
+def test_a_filer_event_joins_the_trail_and_survives_a_reopen(tmp_path, limits):
+    """The filer-event record (ruling 2026-09-01): threaded into the position's
+    trail like reviews and exits, and readable back from the file."""
+    log = AuditLog(path=tmp_path / "audit.jsonl", clock=FakeClock(), id_factory=_counter())
+    record, _ = full_decision(log, limits)
+    event = log.record_filer_event(
+        record.decision_id,
+        arm="judged",
+        filer="Test Member",
+        symbol="NUE",
+        transaction="Sale (Full)",
+        disclosure_source_id="congressional_disclosures",
+        disclosure_external_id="row-sale",
+        transaction_date="2026-08-20",
+        report_date="2026-09-01",
+        amount_range="$1,000,001 - $5,000,000",
+        detail="Test Member disclosed a Sale (Full) of NUE",
+    )
+
+    replayed = AuditLog(path=log.path)
+    trail = replayed.trail(record.decision_id)
+    assert trail.filer_events == (event,)
+    assert replayed.filer_event_keys() == {(record.decision_id, "row-sale")}
+    # An event seals nothing: the disclosure signal itself is still researchable.
+    assert replayed.researched_external_ids() == {
+        (record.signal.source_id, record.signal.external_id)
+    }
+
+
+def test_a_filer_event_against_a_rejected_decision_is_refused(log, limits):
+    """An event against a decision that never held a position is a phantom."""
+    gate = gate_for(limits)
+    decision = gate.submit(equity_order(qty=1000))
+    proposal = SizingEngine(limits).propose_equity(make_report(), Decimal("90000"))
+    record = log.record_decision(make_signal(), make_report(), proposal, decision)
+
+    with pytest.raises(AuditLogError, match="never held a position"):
+        log.record_filer_event(
+            record.decision_id,
+            arm="judged",
+            filer="Test Member",
+            symbol="NUE",
+            transaction="Sale",
+            disclosure_source_id="congressional_disclosures",
+        )
+
+
+def test_the_signal_snapshot_carries_the_filer(log, limits):
+    """Structured on the snapshot so replay can match a later disclosure by the
+    same filer without parsing it back out of rendered content."""
+    disclosure = Signal(
+        signal_id="sig-d",
+        source_id="congressional_disclosures",
+        signal_class=SignalClass.CLASS_2_MOMENTUM,
+        observed_at=NOW,
+        content="disclosure NUE",
+        raw_content="disclosure NUE",
+        priority=Priority.ROUTINE,
+        external_id="row-d",
+        metadata={"representative": "Test Member", "ticker": "NUE"},
+    )
+    record, _ = full_decision(log, limits, signal=disclosure)
+    assert record.signal.filer == "Test Member"
+    # And absent where the source has no filer — a post is not a filing.
+    plain, _ = full_decision(log, limits)
+    assert plain.signal.filer is None
+
+
 def test_the_log_survives_a_reopen(tmp_path, limits):
     path = tmp_path / "audit.jsonl"
     first = AuditLog(path=path, clock=FakeClock(), id_factory=_counter())

@@ -242,9 +242,15 @@ class PositionUnderReview:
     expected_resolution_date: Optional[date] = None
     leash_days: Optional[int] = None
     leash_ceiling_days: Optional[int] = None
-    #: Set when this review was forced by a price move rather than by cadence.
-    #: Stated in the prompt so the model addresses the move it was woken for.
+    #: Set when this review was forced out of cadence rather than scheduled.
+    #: Stated in the prompt so the model addresses the event it was woken for.
     trigger_reason: Optional[str] = None
+    #: What kind of event forced it: "price" (a move past the configured
+    #: threshold) or "filer_event" (the filer whose disclosure originated this
+    #: position filed a new disclosure in the name, ruling 2026-09-01). The
+    #: prompt's framing differs — a move asks "has this resolved"; a filing asks
+    #: "what does the filer's own action say about the thesis".
+    trigger_kind: Optional[str] = None
 
 
 #: Name of the tool the model must call to deliver a review.
@@ -381,7 +387,27 @@ def build_review_prompt(position: PositionUnderReview) -> str:
         move_line = f"- move since entry: {move:+.1f}%"
 
     lines = ["Review the following open position and submit an exit verdict."]
-    if position.trigger_reason:
+    if position.trigger_reason and position.trigger_kind == "filer_event":
+        lines.extend(
+            [
+                "",
+                "WHY YOU ARE SEEING THIS NOW: this review was forced out of its "
+                "normal cadence because the filer whose disclosure originated this "
+                f"position has filed a NEW disclosure in this name — "
+                f"{position.trigger_reason}. That filing is the question you were "
+                "woken for, so address it directly. A filer's sale is strong "
+                "evidence for an exit but it is not automatic: they may be taking "
+                "profit on a position entered earlier and at a different price "
+                "than this system's, the sale may be scheduled diversification or "
+                "a partial trim, or it may mean the information this thesis was "
+                "riding has played out. An additional purchase cuts the other "
+                "way. Note the disclosure lag: the filer acted on the transaction "
+                "date, which may be weeks before today. Weigh what the filing "
+                "actually says against the thesis; the event is the question, "
+                "not the answer.",
+            ]
+        )
+    elif position.trigger_reason:
         lines.extend(
             [
                 "",

@@ -79,6 +79,9 @@ class TickReport:
     #: Mechanical sleeve activity this tick (ruling 2026-08-27).
     mechanical_entries: int = 0
     mechanical_exits: int = 0
+    #: Filer events recorded this tick, both arms (ruling 2026-09-01): new
+    #: disclosures by originating filers in held names.
+    filer_events: int = 0
     halted: bool = False
 
     @property
@@ -202,6 +205,13 @@ class TradingLoop:
 
         held = self._exits.held_symbols()
         dispatch_now = self._clock()
+        # Filer events first (ruling 2026-09-01), on the raw drained queue: a new
+        # disclosure by an originating filer in a held name must reach that
+        # position's review — and the mechanical audit trail — regardless of
+        # what the entry funnel decides about the same signal below.
+        report.filer_events = self._exits.note_disclosures(pending)
+        if self._mechanical is not None:
+            report.filer_events += self._mechanical.note_disclosures(pending)
         # The mechanical arm OBSERVES the same drained signals before judged
         # dispatch — it must never consume them: both arms see every signal,
         # which is what makes the experiment's comparison valid.

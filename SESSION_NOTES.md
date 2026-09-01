@@ -1709,6 +1709,55 @@ real one. A human adding a free key (no card) starts the earnings half.
 First live pass, no key: **15 IV snapshots written**, e.g. AAPL spot 317.14, ATM
 IV 0.24845, implied move 1.47%; AMD 470.66, IV 0.4908, 2.90%.
 
+## Filer-event triggered reviews (human ruling 2026-09-01)
+
+The gap the ruling named: a disclosure event on a HELD name never reached that
+position's review — Pelosi selling INTC 20 days after the disclosure we bought on
+would arrive as a new-position question while the position it bears on rode its
+cadence untouched.
+
+**Judged arm:** when a Class 2/3 signal arrives whose filer matches a tracked
+position's ORIGINATING filer in the same name — sale or additional purchase,
+anything the filer discloses in it — the position is flagged for a triggered
+review through the SAME mechanism as the price triggers: queue-jumping, the 25%
+review budget reserve, the shared 5/day cap. The prompt states what happened and
+frames it as evidence, not a verdict ("they may be taking profit on a position
+entered earlier and at a different price... the event is the question, not the
+answer"). The trigger decides nothing; the review does.
+
+**Mechanical arm: recorded, never acted on.** The strategy under test is
+hold-a-year regardless, and filer-exit logic would be judgment in the control
+arm. Every match still writes the same record, so attribution can later price
+"what did ignoring the filer's exit cost the mechanical arm" — the genuinely
+interesting number the ruling asked to keep measurable.
+
+Mechanics worth remembering:
+
+- **`FilerEventRecord`**, keyed by the held position's entry decision_id,
+  threaded into `AuditTrail.filer_events` — carries filer, transaction, both
+  dates, amount, the disclosure's identity, and `arm`. Seals nothing.
+- **One filing = one event.** Unresearched disclosures re-emit at startup by
+  design; engines dedup on `(decision_id, disclosure_external_id)` seeded from
+  `AuditLog.filer_event_keys()`.
+- **The flag survives a restart.** A price trigger is rediscovered from marks
+  every cycle; a filing arrives exactly once, so replay restores
+  `review_due_reason` from any filer event recorded after the last review.
+- **A filing outranks a pending price flag** (never re-arrives beats
+  rediscoverable), and an option position matches on its UNDERLYING, not the OCC
+  symbol.
+- `SignalSnapshot` gained a structured `filer`; old records fall back to parsing
+  the per-member `credibility_key`.
+- Loop wiring runs on the raw drained queue BEFORE the prefilter: the sale may be
+  prefiltered as an entry signal and must still reach the held position's review.
+
+**Live round trip ran 2026-09-01** (CLAUDE.md § LLM Request-Path Changes): the
+production `ExitReviewPass` + `AnthropicResearchClient`, exit_review tier, a
+filer_event-triggered `PositionUnderReview`. Clean structured verdict; the model
+addressed the filing directly (noticed the hypothetical sale predated our entry
+and reasoned from the invalidation condition). ~47K in / 2.6K out, $0.098.
+
+Suite: 919 passed, 3 skipped.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

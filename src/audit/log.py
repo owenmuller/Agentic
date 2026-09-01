@@ -32,6 +32,7 @@ from audit.records import (
     DecisionRecord,
     ExitReason,
     ExitRecord,
+    FilerEventRecord,
     FillRecord,
     GateSnapshot,
     OutcomeRecord,
@@ -370,6 +371,60 @@ class AuditLog:
             )
         return record
 
+    def record_filer_event(
+        self,
+        decision_id: str,
+        *,
+        arm: str,
+        filer: str,
+        symbol: str,
+        transaction: str,
+        disclosure_source_id: str,
+        disclosure_external_id: Optional[str] = None,
+        transaction_date: Optional[str] = None,
+        report_date: Optional[str] = None,
+        amount_range: Optional[str] = None,
+        detail: str = "",
+    ) -> FilerEventRecord:
+        """Record a new disclosure by the filer who originated a held position
+        (ruling 2026-09-01). Validated like a review: an event against a decision
+        that never held a position is an event against a phantom."""
+        decision = self._decision(decision_id)
+        if not decision.was_approved:
+            raise AuditLogError(
+                f"{decision_id} was rejected and never held a position for a "
+                f"filer event to land on"
+            )
+        record = FilerEventRecord(
+            decision_id=decision_id,
+            recorded_at=self._clock(),
+            arm=arm,
+            filer=filer,
+            symbol=symbol,
+            transaction=transaction,
+            disclosure_source_id=disclosure_source_id,
+            disclosure_external_id=disclosure_external_id,
+            transaction_date=transaction_date,
+            report_date=report_date,
+            amount_range=amount_range,
+            detail=detail,
+        )
+        self._append(record)
+        return record
+
+    def filer_event_keys(self) -> set[tuple[str, str]]:
+        """(decision_id, disclosure_external_id) of every filer event written.
+
+        Unresearched disclosures re-emit at startup (that is the dedup design),
+        so the engines seed from this set: one disclosure writes one event per
+        position, ever, no matter how many times the signal is drained.
+        """
+        keys: set[tuple[str, str]] = set()
+        for record in self.records():
+            if isinstance(record, FilerEventRecord) and record.disclosure_external_id:
+                keys.add((record.decision_id, record.disclosure_external_id))
+        return keys
+
     def triggered_reviews_on(self, day) -> int:
         """Out-of-cadence reviews recorded on a UTC day (ruling 2026-08-31).
 
@@ -635,6 +690,7 @@ class AuditLog:
         rejections: list[StageRejectionRecord] = []
         reviews: list[ThesisReviewRecord] = []
         exits: list[ExitRecord] = []
+        filer_events: list[FilerEventRecord] = []
 
         for record in self.records():
             if getattr(record, "decision_id", None) != decision_id:
@@ -653,6 +709,8 @@ class AuditLog:
                 reviews.append(record)
             elif isinstance(record, ExitRecord):
                 exits.append(record)
+            elif isinstance(record, FilerEventRecord):
+                filer_events.append(record)
 
         if decision is None:
             raise AuditLogError(f"no decision recorded for {decision_id}")
@@ -664,6 +722,7 @@ class AuditLog:
             stage_rejections=tuple(rejections),
             reviews=tuple(reviews),
             exits=tuple(exits),
+            filer_events=tuple(filer_events),
         )
 
     def research_costs_by_class(

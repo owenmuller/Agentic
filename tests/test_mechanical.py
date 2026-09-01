@@ -294,6 +294,61 @@ def test_the_total_slot_cap_binds_at_max_positions(tmp_path, signals_config):
 
 
 # ================================================================================
+# Filer events: recorded only, never acted on (ruling 2026-09-01)
+# ================================================================================
+
+
+def test_a_filer_event_on_a_mechanical_position_is_recorded_and_changes_nothing(
+    tmp_path, signals_config
+):
+    """The control arm stays the control arm: the filer's exit is written down
+    for attribution — what did ignoring it cost? — and the position rides to its
+    time exit exactly as if nothing happened."""
+    started = build_mechanical(
+        tmp_path,
+        signals_config,
+        items=[disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")],
+    )
+    started.loop.tick()
+    engine = started.loop.mechanical
+    position = engine.tracked[0]
+    quantity_before = position.quantity
+
+    sale = mech_signal("row-sale", "NUE")
+    sale.metadata["transaction"] = "Sale (Full)"
+    assert engine.note_disclosures([sale]) == 1
+
+    trail = started.audit.trail(position.decision_id)
+    assert trail.filer_events[-1].arm == "mechanical"
+    assert trail.filer_events[-1].transaction == "Sale (Full)"
+    assert "by design" in trail.filer_events[-1].detail
+
+    # Nothing moved: no exit, no breaker, same slice.
+    report = started.loop.tick()
+    assert report.mechanical_exits == 0
+    assert engine.tracked[0].quantity == quantity_before
+    assert not engine.halted
+
+    # One filing is one record, however many drains re-emit it.
+    assert engine.note_disclosures([sale]) == 0
+    assert len(started.audit.trail(position.decision_id).filer_events) == 1
+
+
+def test_a_mechanical_filer_event_requires_the_same_filer(
+    tmp_path, signals_config
+):
+    started = build_mechanical(
+        tmp_path,
+        signals_config,
+        items=[disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")],
+    )
+    started.loop.tick()
+    other = mech_signal("row-other", "NUE", filer="Other Member")
+    other.metadata["transaction"] = "Sale (Full)"
+    assert started.loop.mechanical.note_disclosures([other]) == 0
+
+
+# ================================================================================
 # Exits: time only, no stop; the breaker halts entries, never closes
 # ================================================================================
 

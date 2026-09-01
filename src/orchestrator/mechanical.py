@@ -52,7 +52,7 @@ from risk_gate.gate import ApprovedOrder, RiskGate
 from risk_gate.schema import EquityBuyOrder, EquitySellToCloseOrder, LimitExecution
 from risk_gate.sectors import SectorMap
 from risk_gate.state import Sleeve
-from signals import Signal
+from signals import Signal, SignalClass
 
 ZERO = Decimal("0")
 CENTS = Decimal("0.01")
@@ -135,6 +135,9 @@ class MechanicalEngine:
         self._hwm = high_water_mark
         self._halted = halted
         self._halted_recorded_for: set[str] = set()
+        #: (decision_id, disclosure external_id) already recorded as filer
+        #: events — one filing, one record, however many drains re-emit it.
+        self._filer_events_seen: Optional[set[tuple[str, str]]] = None
 
     # -- introspection -----------------------------------------------------------
 
@@ -225,6 +228,59 @@ class MechanicalEngine:
             )
             restored += 1
         return restored
+
+    def note_disclosures(self, signals: Iterable[Signal]) -> int:
+        """Record new disclosures by originating filers in held names (2026-09-01).
+
+        RECORD ONLY, by ruling: the strategy under test is hold-a-year regardless,
+        and reacting to the filer's exit would put judgment in the control arm.
+        The ``FilerEventRecord`` exists so attribution can later measure what
+        ignoring the filer's exit cost this arm — position untouched, breaker
+        untouched, exits untouched. Returns the number of events recorded.
+        """
+        if self._filer_events_seen is None:
+            self._filer_events_seen = self._audit.filer_event_keys()
+        noted = 0
+        for signal in signals:
+            if signal.signal_class not in (
+                SignalClass.CLASS_2_MOMENTUM,
+                SignalClass.CLASS_3_THESIS,
+            ):
+                continue
+            meta = signal.metadata
+            filer = (meta.get("representative") or meta.get("fund") or "").strip()
+            ticker = (meta.get("ticker") or "").strip().upper()
+            if not filer or not ticker:
+                continue
+            for position in self._tracked.values():
+                if position.symbol.upper() != ticker:
+                    continue
+                if position.filer.strip().lower() != filer.lower():
+                    continue
+                key = (position.decision_id, signal.external_id or signal.signal_id)
+                if key in self._filer_events_seen:
+                    continue
+                transaction = meta.get("transaction", "").strip() or "transaction"
+                self._audit.record_filer_event(
+                    position.decision_id,
+                    arm="mechanical",
+                    filer=filer,
+                    symbol=ticker,
+                    transaction=transaction,
+                    disclosure_source_id=signal.source_id,
+                    disclosure_external_id=signal.external_id,
+                    transaction_date=meta.get("transaction_date") or None,
+                    report_date=meta.get("report_date") or None,
+                    amount_range=meta.get("amount_range") or None,
+                    detail=(
+                        f"{filer} disclosed a {transaction} of {ticker} while the "
+                        f"mechanical sleeve held it; recorded only — the arm "
+                        f"holds to its time exit by design"
+                    ),
+                )
+                self._filer_events_seen.add(key)
+                noted += 1
+        return noted
 
     # -- qualification + entries ---------------------------------------------------
 

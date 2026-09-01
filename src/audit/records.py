@@ -27,6 +27,12 @@ Instead the trail is a sequence of immutable records keyed by ``decision_id``:
   ``ExitRecord``       one attempt to close a position — the typed reason, the gate's
                        answer to the sell-to-close order, and what the broker did with
                        it. Exits are decisions too.
+  ``FilerEventRecord`` the filer whose disclosure originated a held position filed a
+                       NEW disclosure in that name while we held it (ruling
+                       2026-09-01). On a judged position it also forces a review; on
+                       a mechanical position it changes nothing — recorded so
+                       attribution can later price what ignoring the filer's exit
+                       cost the arm that ignores it by design.
 
 ``AuditTrail`` assembles those back into the single view CLAUDE.md describes.
 
@@ -100,6 +106,11 @@ class SignalSnapshot(_Record):
     #: ``source_id`` names whose words these are; this names who carried them —
     #: attribution goes to the principal, accountability stays with the mirror.
     delivered_by: Optional[str] = None
+    #: Who filed the disclosure this signal renders, when the source has one — a
+    #: congressional member or a 13F fund (2026-09-01). Structured here so replay
+    #: can match a later disclosure by the same filer to the position this signal
+    #: opened, without parsing it back out of the content.
+    filer: Optional[str] = None
 
     @classmethod
     def of(cls, signal: Signal) -> "SignalSnapshot":
@@ -118,6 +129,11 @@ class SignalSnapshot(_Record):
             invisible_stripped=signal.invisible_stripped,
             credibility_key=signal.metadata.get("credibility_key") or None,
             delivered_by=signal.metadata.get("delivered_by") or None,
+            filer=(
+                signal.metadata.get("representative")
+                or signal.metadata.get("fund")
+                or None
+            ),
         )
 
 
@@ -272,6 +288,7 @@ class RecordKind(StrEnum):
     STAGE_REJECTION = "stage_rejection"
     THESIS_REVIEW = "thesis_review"
     EXIT = "exit"
+    FILER_EVENT = "filer_event"
 
 
 class DecisionRecord(_Record):
@@ -545,6 +562,41 @@ class ExitRecord(_Record):
     broker_error: Optional[str] = None
 
 
+class FilerEventRecord(_Record):
+    """A new disclosure by the filer who originated a held position, in that name.
+
+    Keyed by the HELD position's entry ``decision_id`` — the event is a fact about
+    the position, threaded into its trail like reviews and exits are. The
+    disclosure's own identity is carried so the event is written exactly once per
+    (position, disclosure) even though unresearched signals re-emit at startup.
+
+    What it does depends on the arm, and the asymmetry is the experiment:
+    ``judged`` positions get a triggered review (the review decides — a filer sale
+    is evidence, not a verdict); ``mechanical`` positions ride to their time exit
+    untouched, and this record is what lets attribution later measure what that
+    discipline cost or saved.
+    """
+
+    kind: Literal[RecordKind.FILER_EVENT] = RecordKind.FILER_EVENT
+    decision_id: str
+    recorded_at: datetime
+    #: "judged" | "mechanical" — which arm holds the position.
+    arm: str
+    filer: str
+    symbol: str
+    #: The new disclosure's transaction, verbatim from the feed ("Sale",
+    #: "Purchase", "Sale (Partial)", ...).
+    transaction: str
+    #: Identity of the disclosure signal that carried the event.
+    disclosure_source_id: str
+    disclosure_external_id: Optional[str] = None
+    transaction_date: Optional[str] = None
+    report_date: Optional[str] = None
+    amount_range: Optional[str] = None
+    #: The rendered one-line statement handed to the review prompt (judged arm).
+    detail: str = ""
+
+
 AuditRecord = Annotated[
     Union[
         DecisionRecord,
@@ -554,6 +606,7 @@ AuditRecord = Annotated[
         StageRejectionRecord,
         ThesisReviewRecord,
         ExitRecord,
+        FilerEventRecord,
     ],
     Field(discriminator="kind"),
 ]
@@ -573,6 +626,8 @@ class AuditTrail(_Record):
     reviews: tuple[ThesisReviewRecord, ...] = ()
     #: Every attempt to close it, in order. Usually zero or one; retries accumulate.
     exits: tuple[ExitRecord, ...] = ()
+    #: New disclosures by the originating filer in this name while held, in order.
+    filer_events: tuple[FilerEventRecord, ...] = ()
 
     @property
     def decision_id(self) -> str:

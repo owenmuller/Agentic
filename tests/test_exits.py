@@ -1330,6 +1330,243 @@ def test_the_trigger_never_closes_a_position_by_itself(
 
 
 # ================================================================================
+# Filer-event triggered reviews (ruling 2026-09-01)
+# ================================================================================
+
+
+def filer_signal(external_id, ticker, transaction, filer="Test Member"):
+    from signals.records import Priority, Signal, SignalClass
+
+    return Signal(
+        signal_id=f"sig-{external_id}",
+        source_id="congressional_disclosures",
+        signal_class=SignalClass.CLASS_2_MOMENTUM,
+        observed_at=NOW,
+        content=f"disclosure {ticker}",
+        raw_content="raw",
+        priority=Priority.ROUTINE,
+        external_id=external_id,
+        metadata={
+            "representative": filer,
+            "ticker": ticker,
+            "transaction": transaction,
+            "amount_range": "$1,000,001 - $5,000,000",
+            "transaction_date": "2026-08-20",
+            "report_date": "2026-09-01",
+        },
+    )
+
+
+class MutableCongressionalFeed:
+    """A congressional feed tests can append new disclosures to mid-run."""
+
+    def __init__(self, *items) -> None:
+        self.items = list(items)
+
+    def __call__(self, source):
+        return list(self.items) if source.id == "congressional_disclosures" else []
+
+
+def test_a_filer_sale_in_a_held_name_forces_a_review_through_the_loop(
+    tmp_path, limits, signals_config, research_config
+):
+    """End to end: entry on a disclosure, then the filer's sale arrives and the
+    position's review runs out of cadence, told what happened and by whom."""
+    from test_hardening import disclosure_item
+
+    fetcher = MutableCongressionalFeed(
+        disclosure_item("row-entry", "NUE", "$50,001 - $100,000", "2026-08-17")
+    )
+    llm = RoutingLLM(
+        **{
+            REPORT_TOOL_NAME: structured(
+                {**REPORT, "priced_in_analysis": "little priced in since the trade"}
+            )
+        }
+    )
+    clock = FakeClock()
+    started = build(
+        tmp_path, limits, signals_config, research_config,
+        fetcher=fetcher, llm=llm, clock=clock,
+    )
+    entry = started.loop.tick()
+    assert any(result.traded for result in entry.processed)
+    assert entry.filer_events == 0  # the originating disclosure is not an event
+    position = started.exits.tracked[0]
+    assert position.originating_filer == "Test Member"
+    decision_id = position.decision_id
+
+    sale = disclosure_item("row-sale", "NUE", "$1,000,001 - $5,000,000", "2026-08-18")
+    sale.fields["transaction"] = "Sale (Full)"
+    fetcher.items.append(sale)
+    clock.advance(hours=2)  # past the class-2 poll cadence
+    report = started.loop.tick()
+
+    # One event on the judged position, one on the mechanical slice of the same
+    # disclosure — both arms saw the entry signal, so both hold the name.
+    assert report.filer_events == 2
+    assert report.reviews_run == 1
+    trail = started.audit.trail(decision_id)
+    assert trail.filer_events[-1].arm == "judged"
+    assert trail.filer_events[-1].transaction == "Sale (Full)"
+    review = trail.reviews[-1]
+    assert "whose disclosure originated this position" in review.trigger_reason
+    assert "Sale (Full)" in review.trigger_reason
+    assert review.outcome is ReviewOutcome.HOLD  # the event decided nothing
+
+    # The model was told it was a filing, not a price move.
+    review_calls = [c for c in llm.calls if c["tool"] == EXIT_REVIEW_TOOL_NAME]
+    assert "filed a NEW disclosure" in review_calls[-1]["user"]
+    assert "not automatic" in review_calls[-1]["user"]
+
+
+def test_a_different_filers_transaction_is_not_an_event(
+    tmp_path, limits, signals_config, research_config
+):
+    """The trigger is scoped to the ORIGINATING filer: someone else selling a
+    name we hold is not the person whose conviction we entered on."""
+    started, _, _ = enter_position(
+        tmp_path, limits, signals_config, research_config
+    )
+    started.exits.tracked[0].originating_filer = "Test Member"
+
+    other = filer_signal("row-other", "NUE", "Sale (Full)", filer="Other Member")
+    assert started.exits.note_disclosures([other]) == 0
+    assert not started.exits.tracked[0].review_due_reason
+
+
+def test_a_filer_purchase_triggers_too_and_one_filing_is_one_event(
+    tmp_path, limits, signals_config, research_config
+):
+    """An additional purchase cuts the other way but still forces the question —
+    and a re-emitted disclosure (unresearched signals re-emit at startup) must
+    not write a second event or a second review flag."""
+    started, _, _ = enter_position(
+        tmp_path, limits, signals_config, research_config
+    )
+    position = started.exits.tracked[0]
+    position.originating_filer = "Test Member"
+
+    add = filer_signal("row-add", "NUE", "Purchase")
+    assert started.exits.note_disclosures([add]) == 1
+    assert position.review_due_kind == "filer_event"
+    assert "Purchase" in position.review_due_reason
+
+    assert started.exits.note_disclosures([add]) == 0  # same filing, no new event
+    assert len(started.audit.trail(position.decision_id).filer_events) == 1
+
+
+def test_a_filer_event_outranks_a_pending_price_flag(
+    tmp_path, limits, signals_config, research_config
+):
+    """A price move is rediscovered from marks every cycle; a filing never
+    re-arrives. When both are pending, the review must be told about the filing."""
+    started, prices, _ = enter_position(
+        tmp_path,
+        limits,
+        signals_config,
+        research_config,
+        config=orchestrator_config(
+            exits={"review_trigger": {"up_fraction": "0.15", "down_fraction": "0.10",
+                                      "max_per_day": 0}}
+        ),
+    )
+    position = started.exits.tracked[0]
+    position.originating_filer = "Test Member"
+    prices.set("NUE", str(QUOTE * Decimal("1.20")))
+    started.loop.tick()  # capped out: the price flag is set but the review waits
+    assert position.review_due_kind == "price"
+
+    started.exits.note_disclosures([filer_signal("row-s", "NUE", "Sale (Partial)")])
+    assert position.review_due_kind == "filer_event"
+    assert "Sale (Partial)" in position.review_due_reason
+
+
+def test_a_filer_event_review_survives_a_restart(
+    tmp_path, limits, signals_config, research_config
+):
+    """The filing arrives exactly once. A restart between the event and its
+    review must restore the flag from the trail, or the question is lost."""
+    clock = FakeClock()
+    first, _, _ = enter_position(
+        tmp_path, limits, signals_config, research_config, clock=clock
+    )
+    first.exits.tracked[0].originating_filer = "Test Member"
+    assert first.exits.note_disclosures(
+        [filer_signal("row-sale", "NUE", "Sale (Full)")]
+    ) == 1
+    first.loop.shutdown()  # dies before the review runs
+
+    restarted = start(
+        fetcher=feed(),
+        prices=MutablePrices(NUE=str(QUOTE)),
+        llm_client=RoutingLLM(),
+        adapter=FakeBroker(
+            positions=[
+                BrokerPosition("NUE", Decimal("12"), Decimal("1680"), Decimal("1680"))
+            ]
+        ),
+        id_factory=counter("b"),
+        **restart_kwargs(tmp_path, limits, signals_config, research_config, clock),
+    )
+    position = restarted.exits.tracked[0]
+    assert position.review_due_kind == "filer_event"
+    assert "Sale (Full)" in position.review_due_reason
+
+    report = restarted.loop.tick()  # and the owed review actually runs
+    assert report.reviews_run == 1
+    review = restarted.audit.trail(position.decision_id).reviews[-1]
+    assert "Sale (Full)" in review.trigger_reason
+
+
+def test_an_already_reviewed_filer_event_is_not_restored(
+    tmp_path, limits, signals_config, research_config
+):
+    """An event whose review already ran is answered; a restart must not ask twice."""
+    clock = FakeClock()
+    first, _, _ = enter_position(
+        tmp_path, limits, signals_config, research_config, clock=clock
+    )
+    first.exits.tracked[0].originating_filer = "Test Member"
+    first.exits.note_disclosures([filer_signal("row-sale", "NUE", "Sale (Full)")])
+    clock.advance(hours=1)
+    assert first.loop.tick().reviews_run == 1  # the review runs and clears the flag
+    first.loop.shutdown()
+
+    restarted = start(
+        fetcher=feed(),
+        prices=MutablePrices(NUE=str(QUOTE)),
+        llm_client=RoutingLLM(),
+        adapter=FakeBroker(
+            positions=[
+                BrokerPosition("NUE", Decimal("12"), Decimal("1680"), Decimal("1680"))
+            ]
+        ),
+        id_factory=counter("b"),
+        **restart_kwargs(tmp_path, limits, signals_config, research_config, clock),
+    )
+    assert restarted.exits.tracked[0].review_due_reason == ""
+
+
+def test_the_filer_event_prompt_asks_the_question_without_answering_it():
+    position = PositionUnderReview(
+        symbol="NUE", entry_price=Decimal("140"), current_price=Decimal("150"),
+        opened_at=NOW, days_held=10, time_horizon="months", confidence_at_entry=80,
+        source_id="congressional_disclosures", thesis="t", invalidation_condition="i",
+        original_content="c",
+        trigger_reason="Test Member disclosed a Sale (Full) of NUE",
+        trigger_kind="filer_event",
+    )
+    prompt = build_review_prompt(position)
+    assert "filed a NEW disclosure" in prompt
+    assert "Test Member disclosed a Sale (Full) of NUE" in prompt
+    assert "not automatic" in prompt
+    assert "the event is the question, not the answer" in prompt
+    # And the price framing stays the price framing.
+    assert "by a price move" not in prompt
+
+
+# ================================================================================
 # The ratchet: a backstop, never a profit target
 # ================================================================================
 

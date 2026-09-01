@@ -93,6 +93,7 @@ from risk_gate.schema import (
     OptionSellToCloseOrder,
     parse_order,
 )
+from signals import Signal, SignalClass
 
 from orchestrator.budget import ResearchBudget
 from orchestrator.config import ExitsConfig
@@ -150,8 +151,15 @@ class TrackedPosition:
     #: The mark at the last review. Triggers debounce from here, not from entry,
     #: so a position sitting above the threshold does not re-trigger every cycle.
     last_review_price: Optional[Decimal] = None
-    #: Non-empty when a price move has forced a review that has not run yet.
+    #: Non-empty when an out-of-cadence review is owed and has not run yet.
     review_due_reason: str = ""
+    #: What owes it: "price" or "filer_event". Chooses the prompt's framing.
+    review_due_kind: str = ""
+    #: Who filed the disclosure this position was opened on, when the entry
+    #: signal had one (congressional member / 13F fund). Empty for post-driven
+    #: positions. A NEW disclosure by this filer in this name forces a review
+    #: (ruling 2026-09-01).
+    originating_filer: str = ""
     #: Accumulated proceeds from closing fills.
     proceeds: Decimal = ZERO
     last_review_at: Optional[datetime] = None
@@ -232,6 +240,10 @@ class ExitEngine:
         self._close_before_expiry_days = close_before_expiry_days
         self._tracked: dict[str, TrackedPosition] = {}
         self._working: dict[str, _WorkingExit] = {}
+        #: (decision_id, disclosure external_id) already recorded — unresearched
+        #: disclosures re-emit at startup, and one filing is one event, not one
+        #: per drain. Seeded lazily from the log.
+        self._filer_events_seen: Optional[set[tuple[str, str]]] = None
         #: Per-position marks restored from session state before replay: the
         #: ratchet's high-water mark and the last review's price. Seeded by
         #: bootstrap; empty means every position starts from its entry price.
@@ -275,6 +287,90 @@ class ExitEngine:
             position.symbol.upper() for position in self._tracked.values()
         )
 
+    def note_disclosures(self, signals: Iterable[Signal]) -> int:
+        """Match incoming Class 2/3 disclosures to held positions (ruling 2026-09-01).
+
+        A new disclosure in a held name by the filer whose disclosure ORIGINATED
+        the position — a sale, a further purchase, anything — forces a review
+        through the same mechanism as the price triggers: queue-jumping, reserved
+        budget, capped per day. The trigger's job is to force the question, never
+        to answer it: a filer's sale is strong evidence for an exit, and the
+        review still decides (they may be taking profit on an entry made earlier
+        and cheaper than ours). Every match writes a ``FilerEventRecord`` whether
+        or not a flag was already pending, so the trail keeps every filing.
+
+        Runs on the drained queue BEFORE the prefilter — the disclosure may well
+        be prefiltered as an entry signal (a sale in a held name goes to research
+        as its own question, but e.g. an amount below the floor does not), and a
+        position's review must learn about it regardless of what the entry
+        funnel decides. Returns the number of events recorded.
+        """
+        if self._filer_events_seen is None:
+            self._filer_events_seen = self._audit.filer_event_keys()
+        noted = 0
+        for signal in signals:
+            if signal.signal_class not in (
+                SignalClass.CLASS_2_MOMENTUM,
+                SignalClass.CLASS_3_THESIS,
+            ):
+                continue
+            meta = signal.metadata
+            filer = (meta.get("representative") or meta.get("fund") or "").strip()
+            ticker = (meta.get("ticker") or "").strip().upper()
+            if not filer or not ticker:
+                continue
+            for position in self._tracked.values():
+                # An option position's symbol is the OCC contract; the filing
+                # names the underlying. Match what the filer actually traded.
+                held_name = position.symbol
+                if position.is_option and position.entry_order is not None:
+                    held_name = position.entry_order.underlying
+                if held_name.upper() != ticker:
+                    continue
+                if position.originating_filer.strip().lower() != filer.lower():
+                    continue
+                key = (position.decision_id, signal.external_id or signal.signal_id)
+                if key in self._filer_events_seen:
+                    continue
+                transaction = meta.get("transaction", "").strip() or "transaction"
+                detail = (
+                    f"{filer}, whose disclosure originated this position, "
+                    f"disclosed a {transaction} of {ticker}"
+                )
+                if meta.get("transaction_date"):
+                    detail += f" transacted {meta['transaction_date']}"
+                if meta.get("report_date"):
+                    detail += f", reported {meta['report_date']}"
+                if meta.get("amount_range"):
+                    detail += f", amount {meta['amount_range']}"
+                self._audit.record_filer_event(
+                    position.decision_id,
+                    arm="judged",
+                    filer=filer,
+                    symbol=ticker,
+                    transaction=transaction,
+                    disclosure_source_id=signal.source_id,
+                    disclosure_external_id=signal.external_id,
+                    transaction_date=meta.get("transaction_date") or None,
+                    report_date=meta.get("report_date") or None,
+                    amount_range=meta.get("amount_range") or None,
+                    detail=detail,
+                )
+                self._filer_events_seen.add(key)
+                # A filing outranks a pending price flag: the price move is
+                # rediscovered from marks every cycle, the filing never
+                # re-arrives, and the review resets both when it runs.
+                if position.review_due_kind != "filer_event":
+                    position.review_due_reason = detail
+                    position.review_due_kind = "filer_event"
+                logger.info(
+                    "review triggered on %s by a filer event: %s",
+                    position.symbol,
+                    detail,
+                )
+                noted += 1
+        return noted
+
     def track_fill(self, working: WorkingOrder, filled: Decimal, price: Decimal) -> None:
         """Called by the pipeline's fill sink when an entry order settles with a fill."""
         order = working.approved.order
@@ -317,6 +413,11 @@ class ExitEngine:
                 report.expected_resolution_date,
             ),
             high_water_price=price,
+            originating_filer=(
+                working.signal.metadata.get("representative")
+                or working.signal.metadata.get("fund")
+                or ""
+            ),
             instrument_kind="option" if is_option else "equity",
             expiration=order.expiration if is_option else None,
             multiplier=multiplier,
@@ -395,6 +496,16 @@ class ExitEngine:
             marks = self._persisted_marks.get(decision.decision_id, {})
             high_water = marks.get("high_water_price")
             last_review_price = marks.get("last_review_price")
+            # The originating filer, for the filer-event trigger. Records written
+            # before the snapshot field existed carry the member inside the
+            # per-member credibility key, so fall back to that.
+            filer = decision.signal.filer or ""
+            if (
+                not filer
+                and decision.signal.credibility_key
+                and "/" in decision.signal.credibility_key
+            ):
+                filer = decision.signal.credibility_key.split("/", 1)[1]
 
             self._tracked[decision.decision_id] = TrackedPosition(
                 decision_id=decision.decision_id,
@@ -420,6 +531,7 @@ class ExitEngine:
                     high_water if high_water is not None else entry_price
                 ),
                 last_review_price=last_review_price,
+                originating_filer=filer,
                 proceeds=sum((f.filled_value for f in sells), ZERO),
                 instrument_kind=kind,
                 expiration=(
@@ -441,6 +553,18 @@ class ExitEngine:
             if trailing is not None and trailing > restored_position.stop_price:
                 restored_position.stop_price = trailing
                 restored_position.stop_is_trailing = True
+            # A filer event recorded after the last review is a review still
+            # owed. Unlike a price trigger — recomputed from marks every cycle —
+            # a filing arrives exactly once, so a restart between the event and
+            # its review would silently lose the question without this.
+            last_reviewed = last_review.recorded_at if last_review else None
+            for event in trail.filer_events:
+                if last_reviewed is None or event.recorded_at > last_reviewed:
+                    restored_position.review_due_reason = event.detail or (
+                        f"{event.filer} disclosed a {event.transaction} of "
+                        f"{event.symbol} while this position was held"
+                    )
+                    restored_position.review_due_kind = "filer_event"
             restored += 1
         if restored:
             logger.info("restored %d open positions from the audit log", restored)
@@ -542,6 +666,7 @@ class ExitEngine:
                 reason = self._trigger_reason_for(position, price)
                 if reason is not None:
                     position.review_due_reason = reason
+                    position.review_due_kind = "price"
                     logger.info(
                         "review triggered on %s by a price move: %s",
                         position.symbol,
@@ -693,6 +818,7 @@ class ExitEngine:
 
         for position in self._review_queue(moment, interval):
             trigger_reason = position.review_due_reason or None
+            trigger_kind = position.review_due_kind or None
             if trigger_reason is not None:
                 if triggered_today >= self._config.review_trigger.max_per_day:
                     # The day's out-of-cadence allowance is spent. The flag STAYS
@@ -729,6 +855,7 @@ class ExitEngine:
                     leash_days=position.leash_days,
                     leash_ceiling_days=bounds.ceiling,
                     trigger_reason=trigger_reason,
+                    trigger_kind=trigger_kind,
                 )
             )
             position.last_review_at = moment
@@ -738,6 +865,7 @@ class ExitEngine:
             if price is not None:
                 position.last_review_price = price
             position.review_due_reason = ""
+            position.review_due_kind = ""
             if trigger_reason is not None:
                 triggered_today += 1
             reviews_run += 1
