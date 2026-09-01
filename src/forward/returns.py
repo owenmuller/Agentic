@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time as time_module
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -181,10 +182,19 @@ class ForwardReturns:
         bars: BarsSource,
         cache_path: Path,
         clock: Optional[Callable[[], datetime]] = None,
+        pace_seconds: float = 0.35,
+        sleep: Callable[[float], None] = time_module.sleep,
     ) -> None:
         self._bars = bars
         self._path = cache_path
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        #: Pause between symbol fetches. The funnel names hundreds of distinct
+        #: symbols and Alpaca's free data tier allows ~200 requests/minute; the
+        #: first production run tripped HTTP 429 halfway through the alphabet
+        #: (2026-09-01). 0.35s keeps a full sweep under the limit — a weekly
+        #: report can afford minutes; it cannot afford half a scoreboard.
+        self._pace_seconds = pace_seconds
+        self._sleep = sleep
         self._cache: dict[tuple[str, date], ForwardRow] = {}
         self._load()
 
@@ -243,7 +253,9 @@ class ForwardReturns:
                 BENCHMARK,
             )
 
-        for symbol, dates in sorted(pending.items()):
+        for index, (symbol, dates) in enumerate(sorted(pending.items())):
+            if index and self._pace_seconds > 0:
+                self._sleep(self._pace_seconds)
             closes = _closes_of(self._bars(symbol, start, now))
             for observed in dates:
                 row = self._compute(symbol, observed, closes, spy_closes, now)

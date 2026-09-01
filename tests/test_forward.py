@@ -70,7 +70,30 @@ def weekday_series(symbol_start: date, days: int, first: float, step: float):
 
 
 def engine(tmp_path, bars, now=NOW):
-    return ForwardReturns(bars, tmp_path / "forward.jsonl", clock=lambda: now)
+    return ForwardReturns(
+        bars, tmp_path / "forward.jsonl", clock=lambda: now, pace_seconds=0
+    )
+
+
+def test_bulk_fetches_are_paced_under_the_rate_limit(tmp_path):
+    """The first production run tripped Alpaca's 429 halfway through the
+    alphabet; the sweep now pauses between symbols. Sleeps are counted, never
+    endured, via an injected sleeper."""
+    naps: list[float] = []
+    bars = FakeBars(
+        {
+            "AAA": weekday_series(OBSERVED, 5, 10.0, 0.1),
+            "BBB": weekday_series(OBSERVED, 5, 10.0, 0.1),
+            "CCC": weekday_series(OBSERVED, 5, 10.0, 0.1),
+            "SPY": weekday_series(OBSERVED, 5, 500.0, 0.0),
+        }
+    )
+    paced = ForwardReturns(
+        bars, tmp_path / "forward.jsonl", clock=lambda: NOW,
+        pace_seconds=0.35, sleep=naps.append,
+    )
+    paced.rows_for({("AAA", OBSERVED), ("BBB", OBSERVED), ("CCC", OBSERVED)})
+    assert naps == [0.35, 0.35]  # between symbols, not before the first
 
 
 # ================================================================================
