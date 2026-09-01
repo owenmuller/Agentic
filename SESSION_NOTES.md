@@ -1841,6 +1841,37 @@ discipline working. The registry context visibly reached the model's reasoning.
 
 Suite: 951 passed, 3 skipped.
 
+## Fallback-leash reviews must date themselves (ruling 2026-09-02)
+
+INTC's first review reasoned explicitly about a mid-2027 horizon, returned
+`revised_resolution_date: null`, and left the 120-day months-fallback in place —
+an intact eleven-month thesis scheduled to close in December by a clock with no
+connection to it. The defect was in the guidance, not the machinery: "null when
+your view has not changed" reads as "no revision warranted", which is only a
+meaningful answer when a date is already on record.
+
+Fix, in all three places the model reads: the system prompt's TIMELINE
+paragraph (null means "the date on record is right"; a fallback position whose
+analysis names a horizon must WRITE THE DATE DOWN — leaving the fallback clock
+to close an intact thesis is a contradiction), the position lines (a no-date
+position is labelled NOT STATED with the fallback called generic), and the tool
+description. A position WITH a date on record gets none of this — null still
+means "unchanged" there.
+
+Mechanics confirmed, not changed: `_apply_revision` runs inside the SAME review
+pass — a supplied date re-derives the leash immediately (clamped from entry,
+extension gated on intact-and-not-stalled), the guardrails read it from that
+tick on, `leash_days_after` lands in the review record, and replay restores it
+after a restart. `test_an_intact_progressing_thesis_may_extend_within_the_
+ceiling` already pinned exactly this path (fallback 45 → dated 76).
+
+**Live round trip ran 2026-09-02** (production ExitReviewPass + client,
+exit_review tier, the INTC shape with `expected_resolution_date=None`): the
+verdict came back intact/on_track with `revised_resolution_date: 2027-06-20` —
+leash would move 120 → 293, clamped from entry within the months bounds. $0.102.
+
+Suite: 953 passed, 3 skipped.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

@@ -281,7 +281,11 @@ def exit_review_tool_definition() -> dict[str, Any]:
             "has played out. revised_resolution_date: when you now expect resolution, "
             "as YYYY-MM-DD, or null to leave the clock alone — it shortens freely and "
             "lengthens only inside limits this system owns, and only when the thesis "
-            "is intact and not stalled. continuation_thesis: required in one case — "
+            "is intact and not stalled. Null is only meaningful when a date is "
+            "already on record: if the position shows no expected resolution date, "
+            "its time stop is a generic fallback, and an analysis that names a "
+            "horizon must supply the date rather than null. "
+            "continuation_thesis: required in one case — "
             "if you report resolution=substantial and still want to hold, write the "
             "NEW bet here, because holding a thesis that has played out is a new "
             "position and it needs a stated reason. Leave it null otherwise; a "
@@ -347,7 +351,13 @@ will be closed.
 
 TIMELINE. Given all of that, when do you now expect resolution? Set \
 revised_resolution_date when your view of the timeline has genuinely changed, and \
-null when it has not.
+null when it has not. Null means "the date already on record is right" — it is only \
+a meaningful answer when a date IS on record. When the position shows no expected \
+resolution date (the entry pass did not state one), its time stop is a generic \
+per-horizon fallback with no connection to the thesis — so if your analysis names a \
+horizon, WRITE THE DATE DOWN. Calling a thesis intact on an eleven-month view while \
+leaving a four-month fallback clock to close it first is a contradiction, and null \
+is what leaves that clock in place.
 
 Be decisive. hold is a decision that the thesis still justifies the position today — \
 not a default for when you are unsure. If you cannot tell whether the thesis stands, \
@@ -445,8 +455,12 @@ def build_review_prompt(position: PositionUnderReview) -> str:
         )
     else:
         lines.append(
-            "- resolution expected by: not stated at entry (judge progress against "
-            "the thesis's own claims instead)"
+            "- resolution expected by: NOT STATED at entry — the time stop below "
+            "is a generic fallback for the horizon bucket, not a thesis-derived "
+            "date. Judge progress against the thesis's own claims, and if your "
+            "analysis names a resolution horizon, supply revised_resolution_date "
+            "rather than null: null keeps the fallback clock, whatever your "
+            "assessment says about the timeline."
         )
     if position.leash_days is not None:
         lines.append(

@@ -1140,6 +1140,39 @@ def test_an_intact_progressing_thesis_may_extend_within_the_ceiling(
     assert started.exits.tracked[0].leash_days == 76  # 2026-08-17 -> 2026-11-01
 
 
+def test_a_fallback_position_prompt_demands_a_date_not_null():
+    """The INTC lesson (2026-09-02): the review reasoned about mid-2027 and
+    returned null, leaving a 120-day fallback to close an intact thesis six
+    months early. Null means "the date on record is right", so a position with
+    NO date on record must be told to supply one when the analysis names a
+    horizon — in the position lines, the system prompt, and the tool itself."""
+    from datetime import date as date_type
+
+    common = dict(
+        symbol="INTC", entry_price=Decimal("24.31"), current_price=Decimal("24.90"),
+        opened_at=NOW, days_held=1, time_horizon="months", confidence_at_entry=72,
+        source_id="congressional_disclosures", thesis="t",
+        invalidation_condition="i", original_content="c", leash_days=120,
+        leash_ceiling_days=365,
+    )
+    fallback_prompt = build_review_prompt(
+        PositionUnderReview(**common, expected_resolution_date=None)
+    )
+    assert "NOT STATED at entry" in fallback_prompt
+    assert "generic fallback" in fallback_prompt
+    assert "rather than null" in fallback_prompt
+
+    dated_prompt = build_review_prompt(
+        PositionUnderReview(
+            **common, expected_resolution_date=date_type(2027, 6, 17)
+        )
+    )
+    assert "generic fallback" not in dated_prompt  # a real date needs no nag
+
+    assert "WRITE THE DATE DOWN" in EXIT_SYSTEM_PROMPT
+    assert "generic fallback" in exit_review_tool_definition()["description"]
+
+
 def test_an_extension_past_the_ceiling_is_clamped_from_entry_not_from_now(
     tmp_path, limits, signals_config, research_config
 ):
