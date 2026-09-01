@@ -53,6 +53,7 @@ answers, so a signal that dies at stage one is still followable end to end.
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -64,6 +65,7 @@ from research.reports import ResearchReport
 from risk_gate.gate import ApprovedOrder
 from risk_gate.rejections import Rejection
 from signals import Signal, SignalClass
+from signals.classification import extract_tickers
 from sizing.engine import SizedProposal
 
 
@@ -111,6 +113,12 @@ class SignalSnapshot(_Record):
     #: can match a later disclosure by the same filer to the position this signal
     #: opened, without parsing it back out of the content.
     filer: Optional[str] = None
+    #: The instruments this signal named, as the scanner extracted them
+    #: (2026-09-01, forward-return ruling). Structured so the forward-return
+    #: engine and the convergence registry never have to re-parse rendered
+    #: content. Empty on records written before the field existed —
+    #: ``snapshot_tickers`` below carries the fallback parsing for those.
+    tickers: tuple[str, ...] = ()
 
     @classmethod
     def of(cls, signal: Signal) -> "SignalSnapshot":
@@ -134,7 +142,47 @@ class SignalSnapshot(_Record):
                 or signal.metadata.get("fund")
                 or None
             ),
+            tickers=tuple(
+                ticker.strip().upper()
+                for ticker in (signal.metadata.get("tickers") or "").split(",")
+                if ticker.strip()
+            ),
         )
+
+
+#: Fallback parsers for records written before ``SignalSnapshot.tickers`` and the
+#: structured filer/transaction facts existed. The quiver renderer has always
+#: labelled these lines, so old records are recoverable without guessing.
+_CONTENT_TICKER = re.compile(r"^ticker:\s*([A-Z][A-Z0-9.\-]{0,9})\s*$", re.MULTILINE)
+_CONTENT_TRANSACTION = re.compile(r"^transaction:\s*(.+?)\s*$", re.MULTILINE)
+_CONTENT_LAG = re.compile(r"^disclosure lag:\s*(\d+)\s+days", re.MULTILINE)
+
+
+def snapshot_tickers(snapshot: "SignalSnapshot") -> tuple[str, ...]:
+    """The snapshot's instruments, with fallbacks for pre-field records.
+
+    Structured field first; the labelled ``ticker:`` line for old congressional
+    renders second; the scanner's own cashtag/context extraction over the content
+    last — the same extraction that would have populated the field had it existed.
+    """
+    if snapshot.tickers:
+        return snapshot.tickers
+    labelled = _CONTENT_TICKER.findall(snapshot.content)
+    if labelled:
+        return tuple(dict.fromkeys(t.upper() for t in labelled))
+    return extract_tickers(snapshot.content)
+
+
+def snapshot_transaction(snapshot: "SignalSnapshot") -> str:
+    """The disclosure's transaction ("Purchase", "Sale (Full)", ...) or ""."""
+    match = _CONTENT_TRANSACTION.search(snapshot.content)
+    return match.group(1) if match else ""
+
+
+def snapshot_lag_days(snapshot: "SignalSnapshot") -> Optional[int]:
+    """The rendered disclosure lag, when the content states one."""
+    match = _CONTENT_LAG.search(snapshot.content)
+    return int(match.group(1)) if match else None
 
 
 class ResearchSnapshot(_Record):

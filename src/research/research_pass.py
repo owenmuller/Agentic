@@ -15,6 +15,7 @@ package imports nothing that could.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Callable, Optional, Union
 
@@ -37,6 +38,8 @@ LAGGED_CLASSES = frozenset({SignalClass.CLASS_2_MOMENTUM, SignalClass.CLASS_3_TH
 
 #: How much of a malformed response to keep for the audit record.
 _EXCERPT_CHARS = 500
+
+logger = logging.getLogger("research.pass")
 
 ResearchOutcome = Union[ResearchReport, ResearchRejection]
 
@@ -79,6 +82,7 @@ class ResearchPass:
         clock: Optional[Callable[[], datetime]] = None,
         rejection_sink: Optional[Callable[[ResearchRejection], None]] = None,
         market_context: Optional[Callable[[Signal], str]] = None,
+        convergence_context: Optional[Callable[[Signal], Optional[str]]] = None,
         source_tiers: Optional[dict[str, str]] = None,
         screen_graduation: Optional[int] = None,
     ) -> None:
@@ -88,6 +92,10 @@ class ResearchPass:
         self._rejections: list[ResearchRejection] = []
         self._sink = rejection_sink
         self._market_context = market_context
+        #: Convergence registry lookup (ruling 2026-09-01): who else is active
+        #: on the name, and what the system already concluded. None or a
+        #: callable returning None = no block.
+        self._convergence_context = convergence_context
         #: Per-source verification tier names (cost architecture 2026-08-25),
         #: falling back to the signal class. Validated at startup by bootstrap.
         self._source_tiers = dict(source_tiers or {})
@@ -138,8 +146,21 @@ class ResearchPass:
                     f"{type(error).__name__}). Proceed without it; never infer "
                     "or invent these numbers."
                 )
+        convergence_context = None
+        if self._convergence_context is not None:
+            try:
+                convergence_context = self._convergence_context(signal)
+            except Exception as error:  # noqa: BLE001 - context must never block a pass
+                convergence_context = None  # absent beats invented
+                logger.warning(
+                    "convergence context failed (%s); pass proceeds without it",
+                    type(error).__name__,
+                )
         user_prompt = build_user_prompt(
-            signal, credibility_context, market_context=market_context
+            signal,
+            credibility_context,
+            market_context=market_context,
+            convergence_context=convergence_context,
         )
 
         self._last_usage = None

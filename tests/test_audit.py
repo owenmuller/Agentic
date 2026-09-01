@@ -305,6 +305,60 @@ def test_an_approved_but_unresolved_trail_is_not_complete(log, limits):
     assert log.trail(record.decision_id).is_complete is False
 
 
+def resolved_trade(log, limits, confidence, pnl, n):
+    """One resolved judged position at the given confidence."""
+    record, _ = full_decision(
+        log,
+        limits,
+        signal=make_signal(signal_id=f"sig-c{n}"),
+        report=make_report(confidence=confidence),
+    )
+    log.record_fill(record.decision_id, f"brk-c{n}", Decimal("10"), Decimal("140.00"))
+    log.record_outcome(record.decision_id, Decimal(pnl))
+
+
+def test_calibration_cells_below_twenty_render_insufficient(log, limits):
+    """Upgrade 2a (ruling 2026-09-01): hit rate by sizing-table band, and a cell
+    too small to mean anything says so instead of printing a rate to tune on."""
+    from audit.attribution import build_attribution
+
+    resolved_trade(log, limits, confidence=72, pnl="120", n=1)
+    resolved_trade(log, limits, confidence=80, pnl="-50", n=2)
+    report = build_attribution(log.trails(), generated_at=NOW)
+
+    rendered = report.render()
+    assert "Confidence calibration" in rendered
+    assert "70-85 (2.5% band): insufficient (n=2, 1 won" in rendered
+    assert "must not tune the sizing table" in rendered
+    # Bands nothing resolved into do not render at all.
+    assert "85+" not in rendered
+
+
+def test_a_band_with_twenty_resolved_positions_gets_a_hit_rate(log, limits):
+    from audit.attribution import build_attribution
+
+    for n in range(20):
+        resolved_trade(
+            log, limits, confidence=90, pnl="100" if n % 2 == 0 else "-40", n=n
+        )
+    report = build_attribution(log.trails(), generated_at=NOW)
+    assert "85+ (7% band): 50% hit rate over 20 closed" in report.render()
+
+
+def test_calibration_bands_match_the_sizing_table_edges(log, limits):
+    """(lower, upper] with the floor band lower-inclusive, like the table: 70
+    sits in 50-70, 85 sits in 70-85."""
+    from audit.attribution import build_attribution
+
+    resolved_trade(log, limits, confidence=70, pnl="10", n=1)
+    resolved_trade(log, limits, confidence=85, pnl="10", n=2)
+    rows = build_attribution(log.trails(), generated_at=NOW).calibration
+    assert [(row.band, row.resolved) for row in rows] == [
+        ("50-70 (1% band)", 1),
+        ("70-85 (2.5% band)", 1),
+    ]
+
+
 def test_a_filer_event_joins_the_trail_and_survives_a_reopen(tmp_path, limits):
     """The filer-event record (ruling 2026-09-01): threaded into the position's
     trail like reviews and exits, and readable back from the file."""

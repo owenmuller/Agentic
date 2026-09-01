@@ -224,6 +224,81 @@ class ExitReasonAttribution:
         return f"{self.reason}: {self.realised_pnl:+.2f} over {verdict}{ret}"
 
 
+#: Below this many resolved positions a calibration cell is noise, and the report
+#: says "insufficient" instead of printing a hit rate someone might tune on
+#: (human ruling 2026-09-01).
+CALIBRATION_MIN_N = 20
+
+#: The sizing table's own band edges (risk_limits.yaml), labelled the way the
+#: table reads: the floor band is lower-inclusive, every band above is
+#: (lower, upper]. Calibration buckets match the table because the question is
+#: whether THE TABLE's bands are honest about their hit rates.
+_CALIBRATION_BANDS = (
+    ("<50 (no-trade zone)", lambda c: c < 50),
+    ("50-70 (1% band)", lambda c: 50 <= c <= 70),
+    ("70-85 (2.5% band)", lambda c: 70 < c <= 85),
+    ("85+ (7% band)", lambda c: c > 85),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ConfidenceBandCalibration:
+    """Hit rate of one confidence band, over all resolved judged positions.
+
+    Calibration of the EXISTING confidence field (ruling 2026-09-01, upgrade 2a):
+    does 85+ actually win more often than 50-70? Computed since inception rather
+    than windowed — calibration is a property of the scorer, not of a quarter —
+    and rendered "insufficient" below ``CALIBRATION_MIN_N`` so nobody tunes the
+    sizing table on four data points.
+    """
+
+    band: str
+    resolved: int
+    wins: int
+    realised_pnl: Decimal
+
+    @property
+    def hit_rate(self) -> Optional[float]:
+        return self.wins / self.resolved if self.resolved else None
+
+    def summary(self) -> str:
+        if self.resolved < CALIBRATION_MIN_N:
+            detail = f"insufficient (n={self.resolved}"
+            if self.resolved:
+                detail += f", {self.wins} won, {self.realised_pnl:+.2f} realised"
+            return f"{self.band}: {detail})"
+        return (
+            f"{self.band}: {self.hit_rate:.0%} hit rate over {self.resolved} "
+            f"closed, {self.realised_pnl:+.2f} realised"
+        )
+
+
+def _calibration(trails: list[AuditTrail]) -> tuple[ConfidenceBandCalibration, ...]:
+    """Judged, resolved, research-carrying trails only — the mechanical arm has no
+    confidence to calibrate, and an open position has no outcome to score."""
+    rows: list[ConfidenceBandCalibration] = []
+    for band, contains in _CALIBRATION_BANDS:
+        resolved = wins = 0
+        pnl = ZERO
+        for trail in trails:
+            research = trail.decision.research
+            if research is None or trail.outcome is None:
+                continue
+            if not contains(research.confidence):
+                continue
+            resolved += 1
+            pnl += trail.outcome.realised_pnl
+            if trail.outcome.won:
+                wins += 1
+        if resolved:
+            rows.append(
+                ConfidenceBandCalibration(
+                    band=band, resolved=resolved, wins=wins, realised_pnl=pnl
+                )
+            )
+    return tuple(rows)
+
+
 @dataclass(frozen=True, slots=True)
 class CounterfactualHold:
     """What one judged exit would have returned held to the mechanical arm's clock.
@@ -280,6 +355,8 @@ class AttributionReport:
     mechanical: Optional[MechanicalAttribution] = None
     #: Judged-sleeve P&L grouped by exit reason (2026-08-31).
     by_exit_reason: tuple["ExitReasonAttribution", ...] = ()
+    #: Hit rate per sizing-table confidence band, since inception (2026-09-01).
+    calibration: tuple["ConfidenceBandCalibration", ...] = ()
     #: Per judged exit: realised vs held-to-365-days, the mechanical arm's clock.
     counterfactuals: tuple["CounterfactualHold", ...] = ()
     #: One line per paid source: what it costs monthly, when its bill started,
@@ -344,6 +421,16 @@ class AttributionReport:
                     "",
                     "Judged exits by reason (did the exit decision pay?):",
                     *(f"  {row.summary()}" for row in self.by_exit_reason),
+                ]
+            )
+        if self.calibration:
+            lines.extend(
+                [
+                    "",
+                    "Confidence calibration (all resolved judged positions since "
+                    f"inception; cells under n={CALIBRATION_MIN_N} are insufficient "
+                    "and must not tune the sizing table):",
+                    *(f"  {row.summary()}" for row in self.calibration),
                 ]
             )
         if self.counterfactuals:
@@ -669,6 +756,9 @@ def build_attribution(
     ]
     return AttributionReport(
         by_exit_reason=_by_exit_reason(judged_closed),
+        # Since inception on purpose: calibration measures the scorer, not the
+        # quarter, and windowing it would reset the sample every 90 days.
+        calibration=_calibration(trails),
         counterfactuals=_counterfactuals(judged_closed, generated_at, price_on),
         generated_at=generated_at,
         window_days=window_days,

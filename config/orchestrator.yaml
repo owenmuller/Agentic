@@ -98,6 +98,30 @@ exits:
     arm_at_gain: 0.20
     trail_fraction: 0.10
 
+# SIGNAL CONVERGENCE (ruling 2026-09-01). A registry of active signals per symbol
+# over a rolling window, feeding two things and only two things:
+#
+#   dispatch ordering  a bonus added to the scanner's dispatch weight when other
+#                      independent sources are active on the name (diversity, never
+#                      count) or other congressional filers disclosed purchases of
+#                      it (the cross-filer cluster). ORDERING ONLY, same rule as
+#                      the 2026-08-26 dispatch weight — it decides who spends
+#                      limited research slots first and can never touch a cap.
+#   research context   a fenced block in the research prompt: who else is active,
+#                      and what this system already concluded about the name in the
+#                      window — prior declines included, so a second source arriving
+#                      after a decline is shown that decline.
+#
+# Bonus scale: the base weight is log10(amount) - age/7 (~4-7 for disclosures), so
+# the caps below move a signal days of freshness up the queue, never across a class.
+convergence:
+  window_days: 14
+  cluster_bonus_per_filer: 1.0
+  cluster_bonus_cap: 3.0
+  diversity_bonus_per_source: 0.5
+  diversity_bonus_cap: 2.0
+  max_prior_verdicts: 3
+
 # MARKET DATA. Settings for the production PriceSource (execution.market_data.
 # AlpacaPriceSource) — the operator passes these when wiring orchestrator.start().
 market_data:

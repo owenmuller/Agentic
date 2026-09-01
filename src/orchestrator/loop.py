@@ -100,7 +100,8 @@ class TradingLoop:
         pipeline: SignalPipeline,
         exits: ExitEngine,
         prefilter: Optional[ResearchPreFilter],
-        cost_meter: Optional["CostMeter"],
+        registry: Optional[object] = None,
+        cost_meter: Optional["CostMeter"] = None,
         error_sink: Optional[Callable[[str], None]] = None,
         source_caps: Optional[dict[str, int]] = None,
         source_passes: Optional[dict[str, int]] = None,
@@ -121,6 +122,9 @@ class TradingLoop:
         self._pipeline = pipeline
         self._exits = exits
         self._prefilter = prefilter
+        #: The convergence registry (ruling 2026-09-01). Ordering and context
+        #: only: its bonus joins the dispatch sort, never a cap or a size.
+        self._registry = registry
         self._cost_meter = cost_meter
         self._error_sink = error_sink
         #: Per-source daily caps (2026-08-25): counts seed from the audit log at
@@ -189,16 +193,31 @@ class TradingLoop:
 
         pending = self._deferred + self._queue.drain()
         self._deferred = []
+        # The convergence registry sees the batch BEFORE the sort, so same-day
+        # convergence counts; bonuses exclude the signal's own identity, so
+        # nothing converges with itself (ruling 2026-09-01).
+        if self._registry is not None:
+            self._registry.note_signals(pending)
         # Class 1 first; within a class, the dispatch weight (ruling
         # 2026-08-26: log10(amount) - age/7, scanner-computed from structured
-        # feed fields, 0 everywhere but congressional) decides who spends
-        # limited slots first; then oldest first; ties keep arrival order
-        # (stable sort). Every key comes from the scanner or the feed's
-        # structured fields, never from the content of a post.
+        # feed fields, 0 everywhere but congressional) plus the registry's
+        # convergence bonus (ruling 2026-09-01: cross-filer cluster +
+        # source diversity, capped) decides who spends limited slots first;
+        # then oldest first; ties keep arrival order (stable sort). Every key
+        # comes from the scanner, the feed's structured fields, or the
+        # system's own records — never from the content of a post.
+        def _dispatch_rank(signal: Signal) -> float:
+            bonus = (
+                float(self._registry.bonus_for(signal))
+                if self._registry is not None
+                else 0.0
+            )
+            return signal.dispatch_weight + bonus
+
         pending.sort(
             key=lambda signal: (
                 -int(signal.priority),
-                -signal.dispatch_weight,
+                -_dispatch_rank(signal),
                 signal.observed_at,
             )
         )
@@ -322,6 +341,7 @@ class TradingLoop:
             )
             result = self._pipeline.process(signal)
             report.processed.append(result)
+            self._note_verdict(signal, result)
             if (
                 self._error_sink is not None
                 and result.rejection is not None
@@ -373,6 +393,44 @@ class TradingLoop:
                 "closes still pass. Resuming requires a manual human reset."
             )
         return report
+
+    def _note_verdict(self, signal: Signal, result: PipelineResult) -> None:
+        """Feed the convergence registry this session's verdicts, so a second
+        source arriving an hour after a decline is shown that decline."""
+        if self._registry is None:
+            return
+        if result.traded:
+            confidence = (
+                result.decision.research.confidence
+                if result.decision is not None and result.decision.research
+                else None
+            )
+            self._registry.note_outcome(signal, "traded", confidence)
+        elif result.decision is not None and not result.decision.was_approved:
+            self._registry.note_outcome(
+                signal,
+                "gate_rejected",
+                (
+                    result.decision.research.confidence
+                    if result.decision.research
+                    else None
+                ),
+                code=result.decision.gate.rejection_code or "",
+            )
+        elif result.rejection is not None and result.rejection.stage.value in (
+            "sizing",
+            "order_construction",
+        ):
+            self._registry.note_outcome(
+                signal,
+                "declined",
+                (
+                    result.rejection.research.confidence
+                    if result.rejection.research
+                    else None
+                ),
+                code=result.rejection.code,
+            )
 
     # -- running ------------------------------------------------------------------
 

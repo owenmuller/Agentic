@@ -129,11 +129,22 @@ TOPOLOGY: dict[str, Rules] = {
         may_reach_network=True,
         because="observes scheduled catalysts; has no order path and no LLM",
     ),
+    # COUNTERFACTUAL SCOREBOARD (ruling 2026-09-01). Forward returns for every
+    # signal that entered the funnel, computed from daily bars and cached. It
+    # reads the frozen record TYPES (audit.records — data classes with no write
+    # path, never the log class) and the signals package for the same ticker
+    # extraction the scanners run. Deliberately OFFLINE: bars arrive as a
+    # callable handed in by the orchestrator, so there is no client in here and
+    # no way to fetch anything it was not given.
+    "forward": Rules(
+        may_import=frozenset({"audit.records", "signals"}),
+        because="scores the funnel's counterfactuals; observes, never participates",
+    ),
     # The one package permitted to touch more than its neighbours. Its whole job is the
     # seam between the others, and it is the only importer of audit anywhere.
     "orchestrator": Rules(
         may_import=frozenset(
-            {"audit", "execution", "research", "risk_gate", "signals", "sizing"}
+            {"audit", "execution", "forward", "research", "risk_gate", "signals", "sizing"}
         ),
         because="the loop; the single place the stages are wired together",
     ),
@@ -271,9 +282,23 @@ def test_only_the_orchestrator_imports_audit():
     importers = {
         package
         for package, rules in TOPOLOGY.items()
-        if any(entry.split(".")[0] == "audit" for entry in rules.may_import)
+        if "audit" in rules.may_import
     }
     assert importers == {"orchestrator"}
+    # The narrow form is permitted exactly once: forward reads the frozen record
+    # TYPES (audit.records — no AuditLog, no write path). A package that can only
+    # see immutable data classes cannot write its own version of events.
+    narrow = {
+        package
+        for package, rules in TOPOLOGY.items()
+        if package != "orchestrator"
+        and any(
+            entry.split(".")[0] == "audit" and entry != "audit"
+            for entry in rules.may_import
+        )
+    }
+    assert narrow == {"forward"}
+    assert TOPOLOGY["forward"].may_import & {"audit", "audit.log"} == frozenset()
 
 
 #: The packages the loop wires together. ``earnings`` is deliberately not among
@@ -312,6 +337,16 @@ def test_the_earnings_logger_is_isolated_from_the_trading_path():
         assert "earnings" not in {
             entry.split(".")[0] for entry in other.may_import
         }, f"{package} may import earnings; the logger must stay a leaf"
+
+
+def test_the_forward_scoreboard_is_deterministic_and_read_only():
+    """Forward returns argue; they must have no arms. No network client of its
+    own (bars arrive as a callable), no research, no execution, no gate — a
+    number computed here has no path to a size, a weight cap, or an order."""
+    rules = TOPOLOGY["forward"]
+    assert rules.may_reach_network is False
+    roots = {entry.split(".")[0] for entry in rules.may_import}
+    assert roots == {"audit", "signals"}
 
 
 def test_nothing_imports_the_orchestrator():

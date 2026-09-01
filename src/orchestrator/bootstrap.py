@@ -55,6 +55,7 @@ from orchestrator.mechanical import MechanicalEngine
 from orchestrator.pipeline import PriceSource, SignalPipeline
 from orchestrator.prefilter import ResearchPreFilter
 from orchestrator.recovery import recover_unsettled_orders
+from orchestrator.registry import SignalRegistry
 from orchestrator.state import (
     SessionState,
     replay_deployed_today,
@@ -362,12 +363,21 @@ def start(
             if source.research_tier:
                 checks.research_config.tier_for(source.research_tier)  # raises on typo
                 source_tiers[source.id] = source.research_tier
+    # The convergence registry (ruling 2026-09-01): seeded from the log so a
+    # restart remembers last week's cluster, consulted by the loop for dispatch
+    # ordering and by the research pass for fenced context. Ordering and context
+    # only — it can never touch a cap, a size, or the gate.
+    registry = SignalRegistry(
+        checks.orchestrator_config.convergence, checks.clock
+    )
+    registry.seed(checks.audit.records())
     screen_config = checks.research_config.screen
     research = ResearchPass(
         client,
         credibility,
         checks.clock,
         market_context=market_context,
+        convergence_context=registry.context_for,
         source_tiers=source_tiers,
         screen_graduation=(
             screen_config.graduation_confidence if screen_config is not None else None
@@ -481,6 +491,7 @@ def start(
         pipeline=pipeline,
         exits=exits,
         prefilter=research_prefilter,
+        registry=registry,
         mechanical=mechanical,
         cost_meter=cost_meter,
         error_sink=error_sink,

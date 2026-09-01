@@ -155,6 +155,35 @@ class ExitsConfig(BaseModel):
         return self
 
 
+class ConvergenceConfig(BaseModel):
+    """Signal convergence: registry window and dispatch bonuses (ruling 2026-09-01).
+
+    ORDERING AND CONTEXT ONLY. The bonuses join the dispatch sort key — which
+    admitted signals spend limited research slots first — and the registry's
+    summary joins the research prompt as fenced data. Nothing here can touch a
+    cap, a size, or the gate, by the same rule as the 2026-08-26 dispatch weight.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    #: How long a signal counts as "active" on its symbol.
+    window_days: int = Field(default=14, gt=0)
+    #: 4a cross-filer clustering: bonus per OTHER congressional filer disclosing
+    #: a purchase of the same name inside the window, and its cap. Sized against
+    #: the base weight's log10(amount) scale (~4-7): two clustered filers move a
+    #: signal several days of freshness up the queue, never across a class.
+    cluster_bonus_per_filer: Decimal = Field(default=Decimal("1.0"), ge=Decimal("0"))
+    cluster_bonus_cap: Decimal = Field(default=Decimal("3.0"), ge=Decimal("0"))
+    #: Source-diversity bonus: per OTHER independent source active on the name.
+    #: DIVERSITY, never count — ten posts from one account are one source.
+    diversity_bonus_per_source: Decimal = Field(
+        default=Decimal("0.5"), ge=Decimal("0")
+    )
+    diversity_bonus_cap: Decimal = Field(default=Decimal("2.0"), ge=Decimal("0"))
+    #: Most recent prior research verdicts on the name shown to the research pass.
+    max_prior_verdicts: int = Field(default=3, gt=0)
+
+
 class MarketDataConfig(BaseModel):
     """Settings for the production price source. Consumed at wiring time —
     ``AlpacaPriceSource(feed=..., max_quote_age_seconds=...)`` — because the
@@ -188,6 +217,10 @@ class OrchestratorConfig(BaseModel):
     account_type: AccountType
     exits: ExitsConfig
     market_data: MarketDataConfig
+    #: Signal convergence (ruling 2026-09-01). Defaults apply when the yaml has
+    #: no section — the registry is context and ordering, not a risk control, so
+    #: an absent section means the shipped defaults rather than a startup error.
+    convergence: ConvergenceConfig = Field(default_factory=ConvergenceConfig)
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "OrchestratorConfig":

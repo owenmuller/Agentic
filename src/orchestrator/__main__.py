@@ -192,8 +192,36 @@ def attribution() -> int:
         price_on=price_on,
     )
     print(report.render())
+
+    # Forward returns (ruling 2026-09-01): the funnel's counterfactual
+    # scoreboard, computed lazily from bars and cached append-only. A data
+    # outage degrades to a sentence — the attribution above never waits on it.
     if bars is not None:
+        try:
+            from forward import (
+                ForwardReturns,
+                funnel_entries,
+                render_forward_report,
+                wanted_pairs,
+            )
+
+            entries = funnel_entries(checks.audit.records())
+            engine = ForwardReturns(
+                bars.bars,
+                checks.audit.path.parent / "forward_returns.jsonl",
+                clock=checks.clock,
+            )
+            rows = engine.rows_for(wanted_pairs(entries))
+            print()
+            print(render_forward_report(entries, rows))
+        except Exception as error:  # noqa: BLE001 - a report without it beats no report
+            print(f"forward returns unavailable: {error}", file=sys.stderr)
         bars.close()
+    else:
+        print(
+            "forward returns unavailable: no market data this run",
+            file=sys.stderr,
+        )
     return 0
 
 

@@ -1758,6 +1758,89 @@ and reasoned from the invalidation condition). ~47K in / 2.6K out, $0.098.
 
 Suite: 919 passed, 3 skipped.
 
+## Accountability upgrades, BUILD NOW set (human rulings 2026-09-01)
+
+Five-upgrade design review ruled on; the BUILD NOW set shipped this session. The
+principle across all of it: **the judgment layer becomes accountable to data,
+and nothing auto-tunes — data argues, humans rule, rulings are dated.** Safety
+architecture untouched: gate, caps, never-negative, kill switch, mechanical
+arm's no-LLM rule.
+
+### #1 Forward-return tracking — `src/forward/`, in full
+
+Every signal that ever entered the funnel gets forward returns at 1/5/20/60/120
+CALENDAR days from observation. The design insight that shaped it: **no daily
+job** — bars are historical, so the whole thing is a lazy lookup at report time
+with an append-only cache (`data/forward_returns.jsonl`, last row per key wins,
+complete rows never refetched).
+
+- Marks land on the first session close ≥ D+n; base = first close ≥ observation
+  date. Split-adjusted closes (price returns, dividends excluded, same basis
+  both sides). Raw AND SPY-excess. **Absent is absent, never zero.**
+- `SignalSnapshot` gained structured `tickers`; old records recover theirs via
+  `snapshot_tickers` fallbacks (the labelled `ticker:` line for congressional,
+  the scanner's own cashtag extraction for posts).
+- Topology: `forward` is a NEW package, deliberately **offline** — bars arrive
+  as a callable from the orchestrator; it may import `audit.records` (frozen
+  types, no write path — the only-orchestrator-imports-audit invariant was
+  narrowed, not broken) and `signals`. No research, no execution, no gate.
+- Rendered by `python -m orchestrator attribution` after the attribution
+  report: coverage, declined-vs-taken at 20d (does research add value over the
+  funnel?), by-bucket, per-source decay curves, per-filer, and lag-bucket
+  validation. Degrades to a stderr sentence on any data failure.
+
+### 2a Confidence calibration — attribution section
+
+Hit rate per sizing-table band (<50 / 50-70 / 70-85 / 85+, edges matching the
+table's own inclusivity), all resolved judged positions since inception —
+calibration measures the scorer, not the quarter. **Cells under n=20 render
+"insufficient"** and say they must not tune the table. Free — no schema change;
+2b's quantified fields wait for #1's data by ruling.
+
+### 4a + #5 cheap 80% — the convergence registry (`orchestrator/registry.py`)
+
+One deterministic structure, seeded from the audit log at startup (a restart
+remembers last week's cluster), fed by the loop as signals drain and verdicts
+land. Two consumers, bounded by ruling:
+
+- **Dispatch ordering:** cross-filer cluster bonus (other members' PURCHASES of
+  the same name, 4a) + source-DIVERSITY bonus (distinct identities, never
+  volume — ten posts from one account are one source; nothing converges with
+  itself). Caps in `config/orchestrator.yaml` `convergence:`; scale chosen so
+  bonuses move a signal days of freshness up the queue, never across a class.
+  ORDERING ONLY, same rule as the 2026-08-26 dispatch weight. Note: the sorted
+  queue is shared with the mechanical arm's consider() exactly as it was under
+  the 08-26 weight — the mechanical RULESET is untouched.
+- **Research context:** a fenced SIGNAL CONVERGENCE block — who else is active,
+  the cross-filer cluster, and prior verdicts on the name **including
+  declines** (ruling: a second source arriving after a decline is shown that
+  decline). Guidance outside the fence: convergence is context, never
+  corroboration by itself; prior verdicts are not authority.
+
+#5's narrow re-dispatch rule (declined name + real diversity increase, new
+record referencing old, cap 2/day) is BUILD AFTER #1 HAS DATA, with 2b/4b/4c.
+
+### Ruled for later, recorded so they don't relitigate
+
+- **#3 correlation gate:** unmeasurable names admitted but capped at the 55-70
+  band's size regardless of confidence. **Regime scalar:** orchestrator-computed,
+  post-table, ≤1.0 only, LLM-unreachable, CBOE CSV, mechanical exempt, weekly
+  forgone-size line. Measurement may ship anytime, report-only.
+- 4d (legislative calendar) deferred.
+
+### Live round trips (CLAUDE.md § LLM Request-Path Changes)
+
+The entry research prompt changed (convergence block), so the production path
+ran live three times: the two-stage screen at production graduation ($0.146,
+77.6K in), a second screen run ($0.156), and the stage-two verification request
+— production `build_verification_prompt` over the new user prompt, production
+`_call`, class_2 tier — because the screen honestly said no_position both times
+and no_position never graduates. All three returned clean structured reports;
+the verifier overrode a long draft to no_position, which is the override
+discipline working. The registry context visibly reached the model's reasoning.
+
+Suite: 951 passed, 3 skipped.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in
