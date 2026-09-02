@@ -2192,8 +2192,18 @@ event alerts, storms don't), first judged and first mechanical entry of the
 day (daily); startup alerts UNMANAGED positions and orders still pending
 settlement after recovery; the close writes one daily summary (NAV, drawdown,
 positions, research spend). The alerter lives in execution because
-orchestrator stays offline. Test message: sent at build from the droplet —
-set up the two filters on it.
+orchestrator stays offline.
+
+**Test message: DELIVERED 2026-09-02 — from the DEV BOX.** Found at build:
+**DigitalOcean blocks outbound SMTP (25/465/587) on the droplet** — IPv4
+connects time out on both 465 and 587 (probed), so production alerts from the
+droplet CANNOT send until either (a) a DO support ticket lifts the SMTP block
+for the account (usually granted; the standing ask), or (b) a ruling picks an
+HTTPS transport instead. The code path is verified end-to-end (creds valid,
+App Password works, message arrived — set up the two filters on it); the
+droplet's sends will fail-and-log, never block, until the port opens. ACTION
+(human): DO ticket to unblock SMTP, then re-run
+`execution.alerts.Alerter().send_test()` on the droplet.
 
 ### 3. Execution fidelity — every fill now carries its own honesty
 
