@@ -229,6 +229,47 @@ class RegimeScalarConfig(BaseModel):
         return self
 
 
+class AtrSizingConfig(BaseModel):
+    """Volatility-adjusted sizing and stops (human ruling 2026-09-02).
+
+    NEW judged EQUITY entries only: the stop moves from the fixed 15% to
+    ``k x ATR(14)/price`` clamped into [stop_floor, stop_ceiling], and the size
+    equalizes dollar risk — ``min(band capital, band capital x
+    risk_budget_fraction / stop distance)`` — which can only SHRINK below the
+    band (the band caps stay ceilings; with the shipped numbers the min binds
+    at any stop tighter than 15%). Options excluded (premium is the stop);
+    held positions keep the stops they were opened with; the mechanical arm
+    has no price stop at all. Missing ATR data falls back to the fixed-15%
+    regime — status quo ante, never a fabricated volatility.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = True
+    k: Decimal = Field(default=Decimal("2.5"), gt=Decimal("0"))
+    stop_floor: Decimal = Field(default=Decimal("0.08"), gt=Decimal("0"))
+    stop_ceiling: Decimal = Field(default=Decimal("0.20"), gt=Decimal("0"))
+    #: Dollar risk per position as a fraction of the band's capital — 0.15
+    #: matches the old fixed stop, so the worst-case loss per position is
+    #: unchanged by this ruling.
+    risk_budget_fraction: Decimal = Field(default=Decimal("0.15"), gt=Decimal("0"))
+    #: The adverse review trigger as a fraction of the position's own stop
+    #: distance — the trigger must fire while there is still a decision to
+    #: make, whatever the stop is.
+    trigger_down_of_stop: Decimal = Field(
+        default=Decimal("0.66"), gt=Decimal("0"), lt=Decimal("1")
+    )
+
+    @model_validator(mode="after")
+    def _floor_under_ceiling(self) -> "AtrSizingConfig":
+        if self.stop_floor > self.stop_ceiling:
+            raise ValueError(
+                f"ATR stop floor {self.stop_floor} exceeds ceiling "
+                f"{self.stop_ceiling}"
+            )
+        return self
+
+
 class RiskScalarsConfig(BaseModel):
     """Post-table sizing multipliers (human rulings 2026-09-01/02): the graduated
     drawdown ladder and the volatility-regime scalar, composed at ONE point.
@@ -302,6 +343,9 @@ class OrchestratorConfig(BaseModel):
     #: Post-table sizing scalars (rulings 2026-09-01/02). Validation-bounded to
     #: ≤1.0, so the defaults applying on an absent section can only shrink.
     risk_scalars: RiskScalarsConfig = Field(default_factory=RiskScalarsConfig)
+    #: Volatility-adjusted sizing and stops (ruling 2026-09-02). The resize can
+    #: only shrink below the band, so absent-section defaults are safe here too.
+    atr_sizing: AtrSizingConfig = Field(default_factory=AtrSizingConfig)
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "OrchestratorConfig":

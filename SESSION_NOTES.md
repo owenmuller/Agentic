@@ -2107,6 +2107,39 @@ absorbed (~6 days stale), weighed amendment-4-of-an-old-campaign vs an initial
 filing, and returned no_position/42 — the measure-don't-chase discipline the
 guidance asks for, on the first live read. $0.161.
 
+## Methodology rulings, build 4 of 4: ATR sizing and stops (2026-09-02)
+
+As ruled, all parameters in `orchestrator.yaml atr_sizing`: k=2.5, stop bounds
+8%/20%, risk budget = band × 0.15, size = min(band cap, budget/stop),
+trigger-down = 0.66 × the position's own stop, options excluded, NEW ENTRIES
+ONLY — INTC keeps its 15% (stop_fraction is frozen at entry and pre-ruling
+positions replay with None → the fixed regime).
+
+- **ATR(14)** = SIMPLE mean of the last 14 true ranges over split-adjusted
+  Alpaca daily bars (`execution/atr.py` — execution owns the I/O, orchestrator
+  stays offline; injected into the pipeline like the VIX source; cached per
+  symbol per UTC day). Stated choice: not Wilder's recursive smoothing, whose
+  value depends on where the recursion started. Missing/short history → None →
+  the fixed-15% regime untouched (status quo ante, never a fabricated vol).
+- **Order of operations:** confidence table → ATR risk-parity (per-name) →
+  risk scalars (book-level). Each step only shrinks; the option→equity
+  fallback re-sizings pass through the same helpers, so no path skips either.
+  Arithmetic note: with these numbers the band cap binds at any stop tighter
+  than 15%, so the mechanism is one-sided by construction — quiet names at the
+  cap, volatile names shaded (20% stop → 0.75 × band).
+- **Exit engine:** TrackedPosition gained `stop_fraction`; the entry stop arms
+  from the proposal's fraction at fill, replay restores it from the
+  DecisionRecord's SizingSnapshot (old records parse None → 15%), and the
+  ratchet layers on top unchanged (effective stop only ever rises). The
+  adverse trigger for ATR positions = 0.66 × own stop; fixed-regime positions
+  keep the config's 0.10 exactly.
+- **Stamps for attribution:** `atr_fraction`, `stop_fraction`, and
+  `counterfactual_fixed_capital` (the fixed-15% regime's dollars) on every
+  sized decision — the honest warning stands that stop-fire events are rare
+  and this section needs 2–3 quarters before n clears 20.
+- **No LLM request-path change** — stop distances appear in no prompt (kept
+  that way deliberately), so no round trip is owed on this build.
+
 ### #4 PEAD — DEFERRED (design recorded for its return)
 
 Deferred to the earnings shadow's first-season verdict, so earnings gets ONE

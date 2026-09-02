@@ -335,6 +335,12 @@ class SizingSnapshot(_Record):
     #: scalar shrank the proposal (rulings 2026-09-01/02) — the weekly
     #: forgone-size line sums ``table_capital - capital`` over these.
     table_capital: Optional[Decimal] = None
+    #: ATR sizing stamps (ruling 2026-09-02): the raw ATR(14)/price, the
+    #: per-position stop distance armed at fill, and the fixed-15% regime's
+    #: counterfactual dollars. All None on options, missing data, old records.
+    atr_fraction: Optional[Decimal] = None
+    stop_fraction: Optional[Decimal] = None
+    counterfactual_fixed_capital: Optional[Decimal] = None
 
     @classmethod
     def of(cls, proposal: SizedProposal) -> "SizingSnapshot":
@@ -348,6 +354,9 @@ class SizingSnapshot(_Record):
             rationale=proposal.rationale,
             strategy=str(proposal.strategy) if proposal.strategy else None,
             table_capital=proposal.table_capital,
+            atr_fraction=proposal.atr_fraction,
+            stop_fraction=proposal.stop_fraction,
+            counterfactual_fixed_capital=proposal.counterfactual_fixed_capital,
         )
 
 

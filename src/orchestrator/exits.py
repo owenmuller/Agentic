@@ -147,6 +147,12 @@ class TrackedPosition:
     #: What the entry pass (or the latest review) expects. None = no date stated,
     #: leash came from the horizon fallback.
     resolution_date: Optional[date] = None
+    #: The stop distance this position was OPENED with (ruling 2026-09-02):
+    #: k x ATR clamped, from the sizing proposal. None = the fixed
+    #: max_loss_fraction regime — every position opened before the ruling, every
+    #: option, and any entry whose ATR data was missing. Frozen at entry: a held
+    #: position never re-derives its stop (INTC keeps its 15%).
+    stop_fraction: Optional[Decimal] = None
     #: Highest mark seen while holding — the ratchet's anchor. Persisted across
     #: restarts; a reset to entry would loosen an armed stop back down.
     high_water_price: Optional[Decimal] = None
@@ -225,6 +231,7 @@ class ExitEngine:
         cost_sink=None,
         option_prices=None,
         close_before_expiry_days: Optional[int] = None,
+        trigger_down_of_stop: Decimal = Decimal("0.66"),
     ) -> None:
         self._gate = gate
         self._adapter = adapter
@@ -243,6 +250,12 @@ class ExitEngine:
         #: run without a current price — degraded, never invented.
         self._option_prices = option_prices
         self._close_before_expiry_days = close_before_expiry_days
+        #: The adverse review trigger for ATR-stopped positions, as a fraction
+        #: of the position's own stop distance (ruling 2026-09-02) — the
+        #: trigger must fire while a decision is still makeable, whatever the
+        #: stop. Positions without a stop_fraction keep the config's
+        #: down_fraction exactly as before.
+        self._trigger_down_of_stop = trigger_down_of_stop
         self._tracked: dict[str, TrackedPosition] = {}
         self._working: dict[str, _WorkingExit] = {}
         #: (decision_id, disclosure external_id) already recorded — unresearched
@@ -410,7 +423,8 @@ class ExitEngine:
             invalidation_condition=report.invalidation_condition,
             time_horizon=str(report.time_horizon),
             confidence=report.confidence,
-            stop_price=self._stop_for(price),
+            stop_price=self._stop_for(price, working.proposal.stop_fraction),
+            stop_fraction=working.proposal.stop_fraction,
             resolution_date=report.expected_resolution_date,
             leash_days=self._leash_for(
                 str(report.time_horizon),
@@ -527,7 +541,8 @@ class ExitEngine:
                 invalidation_condition=research.invalidation_condition,
                 time_horizon=research.time_horizon,
                 confidence=research.confidence,
-                stop_price=self._stop_for(entry_price),
+                stop_price=self._stop_for(entry_price, decision.sizing.stop_fraction),
+                stop_fraction=decision.sizing.stop_fraction,
                 resolution_date=resolution_date,
                 leash_days=self._leash_for(
                     research.time_horizon, buys[0].recorded_at, resolution_date
@@ -575,8 +590,14 @@ class ExitEngine:
             logger.info("restored %d open positions from the audit log", restored)
         return restored
 
-    def _stop_for(self, entry_price: Decimal) -> Decimal:
-        return entry_price * (Decimal("1") - self._config.max_loss_fraction)
+    def _stop_for(
+        self, entry_price: Decimal, fraction: Optional[Decimal] = None
+    ) -> Decimal:
+        """The entry stop. ``fraction`` is the position's own ATR-derived stop
+        distance (ruling 2026-09-02); None falls back to the fixed
+        max_loss_fraction — old positions, options, missing ATR data."""
+        distance = fraction if fraction is not None else self._config.max_loss_fraction
+        return entry_price * (Decimal("1") - distance)
 
     def _leash_for(
         self,
@@ -624,7 +645,14 @@ class ExitEngine:
         anchor = "the last review" if position.last_review_price else "entry"
         if move >= trigger.up_fraction:
             return f"{move:+.1%} since {anchor} ({reference} to {price})"
-        if move <= -trigger.down_fraction:
+        # ATR-stopped positions (ruling 2026-09-02) trigger at a fraction of
+        # their OWN stop distance, preserving the invariant that the question
+        # is asked while there is still a decision to make; fixed-regime
+        # positions keep the config value exactly as before.
+        down = trigger.down_fraction
+        if position.stop_fraction is not None:
+            down = position.stop_fraction * self._trigger_down_of_stop
+        if move <= -down:
             return f"{move:+.1%} since {anchor} ({reference} to {price})"
         return None
 

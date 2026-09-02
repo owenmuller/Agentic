@@ -56,6 +56,7 @@ from signals import (
     XRecentSearchFetcher,
 )
 
+from execution.atr import AtrSource
 from execution.vix import CboeVixSource
 
 from orchestrator.bootstrap import preflight, start
@@ -387,7 +388,8 @@ def run() -> int:
                 checks.orchestrator_config.market_data.max_quote_age_seconds
             ),
         )
-        context_builder = MarketContextBuilder(AlpacaDailyBars())
+        daily_bars = AlpacaDailyBars()
+        context_builder = MarketContextBuilder(daily_bars)
         startup = start(
             fetcher=fetcher,
             prices=prices,
@@ -402,6 +404,9 @@ def run() -> int:
             # public CSV, fetched at most once per UTC day, missing data loud
             # and x1.0 — never a silent halving of the book on a CDN outage.
             vix_close=CboeVixSource(),
+            # ATR sizing (ruling 2026-09-02): ATR(14)/price from the same daily
+            # bars the market context reads; missing data = the fixed-15% regime.
+            atr_fraction=AtrSource(daily_bars),
         )
         loop = startup.loop
 

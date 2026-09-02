@@ -310,6 +310,7 @@ def start(
     mechanical_sink: Optional[Callable[[str], None]] = None,
     options_chain=None,
     vix_close: Optional[Callable] = None,
+    atr_fraction: Optional[Callable] = None,
     **preflight_kwargs: object,
 ) -> Startup:
     """Run the startup sequence and return a loop ready to tick.
@@ -422,6 +423,11 @@ def start(
         close_before_expiry_days=(
             checks.gate.limits.options_selection.close_before_expiry_days
         ),
+        # ATR-stopped positions trigger their adverse review at this fraction
+        # of their OWN stop distance (ruling 2026-09-02).
+        trigger_down_of_stop=(
+            checks.orchestrator_config.atr_sizing.trigger_down_of_stop
+        ),
     )
     # Positions opened by earlier runs, rebuilt from the log with stops re-armed. Part
     # of the replay step in spirit, but it needs the wired engine, so it runs here.
@@ -473,6 +479,10 @@ def start(
         fill_sink=exits.track_fill,
         convergence_snapshot=registry.snapshot_for,
         scalars=scalars,
+        # ATR sizing (ruling 2026-09-02): production wires AtrSource over the
+        # daily bars; a harness that wires nothing runs the fixed-15% regime.
+        atr_fraction=atr_fraction,
+        atr_config=checks.orchestrator_config.atr_sizing,
         options_chain=options_chain,
         option_selector=option_selector,
         clock=checks.clock,

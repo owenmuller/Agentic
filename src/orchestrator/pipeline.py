@@ -88,7 +88,7 @@ from sizing.selection import (
     SelectedOption,
 )
 from signals import Signal
-from sizing.engine import SizedProposal, SizingEngine
+from sizing.engine import InstrumentKind, SizedProposal, SizingEngine
 
 ZERO = Decimal("0")
 CENTS = Decimal("0.01")
@@ -191,6 +191,8 @@ class SignalPipeline:
         clock: Optional[Callable[[], datetime]] = None,
         probation_sources: Collection[str] = (),
         scalars: Optional["SizingScalars"] = None,
+        atr_fraction: Optional[Callable[[str], Optional[Decimal]]] = None,
+        atr_config: Optional["AtrSizingConfig"] = None,
     ) -> None:
         self._research = research
         self._triage = triage
@@ -200,6 +202,10 @@ class SignalPipeline:
         #: regime, both ≤1.0, applied to every judged proposal this pipeline
         #: sizes — the ONE composition point. None = multiplier 1.0 forever.
         self._scalars = scalars
+        #: ATR sizing (ruling 2026-09-02): equity proposals only. Either piece
+        #: absent = the fixed-15% regime, exactly as before the ruling.
+        self._atr_fraction = atr_fraction
+        self._atr_config = atr_config
         self._gate = gate
         self._adapter = adapter
         self._audit = audit
@@ -616,16 +622,73 @@ class SignalPipeline:
         )
 
     def _propose_equity(self, report, sleeve_nav) -> SizedProposal:
-        """The confidence table, then the post-table risk scalars (rulings
-        2026-09-01/02). EVERY judged proposal — the initial sizing and the
-        option-to-equity fallback re-sizings — reaches the table through these
-        two helpers, so there is no path on which the scalars are skipped."""
+        """The confidence table, then ATR risk-parity (per-name, ruling
+        2026-09-02), then the post-table risk scalars (book-level, rulings
+        2026-09-01/02) — in that order, each step only ever shrinking. EVERY
+        judged proposal — the initial sizing and the option-to-equity fallback
+        re-sizings — reaches the table through these two helpers, so there is
+        no path on which either mechanism is skipped."""
         proposal = self._sizing.propose_equity(report, sleeve_nav)
+        proposal = self._apply_atr(proposal, report)
         return self._scalars.scale(proposal) if self._scalars else proposal
 
     def _propose_option(self, report, sleeve_nav) -> SizedProposal:
+        # Options are EXCLUDED from ATR sizing by ruling: the premium is the
+        # stop, and the halved table already prices the leverage.
         proposal = self._sizing.propose_option(report, sleeve_nav)
         return self._scalars.scale(proposal) if self._scalars else proposal
+
+    def _apply_atr(self, proposal: SizedProposal, report) -> SizedProposal:
+        """Equalized dollar risk inside the band (ruling 2026-09-02).
+
+        stop = clamp(k x ATR(14)/price, floor, ceiling), frozen into the
+        proposal for the exit engine to arm at fill; size = min(band capital,
+        band capital x risk_budget_fraction / stop) — one-sided by the
+        arithmetic: quiet names size at the band cap, volatile names shade
+        down. Missing ATR data returns the proposal untouched, which IS the
+        fixed-15% regime this ruling replaced.
+        """
+        config = self._atr_config
+        if (
+            config is None
+            or not config.enabled
+            or self._atr_fraction is None
+            or not proposal.is_tradeable
+            or proposal.instrument is not InstrumentKind.EQUITY
+            or not report.tickers
+        ):
+            return proposal
+        atr = self._atr_fraction(report.tickers[0])
+        if atr is None or atr <= 0:
+            return proposal
+        stop = min(max(config.k * atr, config.stop_floor), config.stop_ceiling)
+        budget = proposal.capital * config.risk_budget_fraction
+        capital = min(proposal.capital, budget / stop).quantize(
+            CENTS, rounding=ROUND_DOWN
+        )
+        fraction = (
+            proposal.fraction_of_sleeve_nav * capital / proposal.capital
+            if proposal.capital > 0
+            else proposal.fraction_of_sleeve_nav
+        )
+        return SizedProposal(
+            instrument=proposal.instrument,
+            sleeve=proposal.sleeve,
+            confidence=proposal.confidence,
+            sleeve_nav=proposal.sleeve_nav,
+            fraction_of_sleeve_nav=fraction,
+            capital=capital,
+            rationale=(
+                f"{proposal.rationale}; ATR stop {stop:.2%} "
+                f"(k={config.k} x ATR {atr:.2%}, clamped "
+                f"[{config.stop_floor:%}, {config.stop_ceiling:%}]), "
+                f"risk-parity size {capital}"
+            ),
+            strategy=proposal.strategy,
+            atr_fraction=atr,
+            stop_fraction=stop,
+            counterfactual_fixed_capital=proposal.capital,
+        )
 
     def _build_equity_order(
         self,

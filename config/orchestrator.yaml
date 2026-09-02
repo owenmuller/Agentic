@@ -124,6 +124,32 @@ convergence:
   diversity_bonus_cap: 2.0
   max_prior_verdicts: 3
 
+# ATR SIZING AND STOPS (ruling 2026-09-02). NEW judged EQUITY entries only: the
+# stop moves from the fixed 15% to k x ATR(14)/price clamped into
+# [stop_floor, stop_ceiling], and size equalizes dollar risk inside the band -
+# min(band capital, band capital x risk_budget_fraction / stop). One-sided by
+# arithmetic: quiet names size at the band cap (the caps stay CEILINGS),
+# volatile names shade down. risk_budget_fraction 0.15 matches the old fixed
+# stop, so the worst-case dollar loss per position is unchanged by this ruling.
+# Options excluded (the premium is the stop; the halved table already prices
+# the leverage). HELD POSITIONS KEEP THE STOPS THEY WERE OPENED WITH - INTC
+# keeps its 15%. Missing ATR data falls back to the fixed-15% regime: status
+# quo ante, never a fabricated volatility. The adverse review trigger becomes
+# trigger_down_of_stop x the position's own stop distance, preserving the
+# fire-while-a-decision-remains invariant (fixed-regime positions keep
+# review_trigger.down_fraction exactly as before). ATR(14) is a SIMPLE mean of
+# the last 14 true ranges over split-adjusted Alpaca daily bars - stated
+# because Wilder's recursive smoothing depends on where the recursion started.
+# The decision record stamps atr_fraction, stop_fraction, and the fixed-15%
+# counterfactual dollars, so attribution can price the ruling either way.
+atr_sizing:
+  enabled: true
+  k: 2.5
+  stop_floor: 0.08
+  stop_ceiling: 0.20
+  risk_budget_fraction: 0.15
+  trigger_down_of_stop: 0.66
+
 # POST-TABLE RISK SCALARS (rulings 2026-09-01/02). ONE composition point in the
 # pipeline's sizing step: size x drawdown_ladder x regime, every multiplier <=1.0
 # BY VALIDATION — this section can only shrink a size, never widen one. NEW

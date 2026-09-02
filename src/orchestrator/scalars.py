@@ -170,4 +170,9 @@ class SizingScalars:
             ),
             strategy=proposal.strategy,
             table_capital=proposal.capital,
+            # ATR stamps ride through untouched: the stop distance is a fact
+            # about the position, not about the book-level multiplier.
+            atr_fraction=proposal.atr_fraction,
+            stop_fraction=proposal.stop_fraction,
+            counterfactual_fixed_capital=proposal.counterfactual_fixed_capital,
         )

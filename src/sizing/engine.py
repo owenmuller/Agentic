@@ -74,6 +74,14 @@ class SizedProposal:
     #: proposal — ``table_capital - capital`` is the forgone size attribution
     #: prices weekly. None means no scalar touched it.
     table_capital: Optional[Decimal] = None
+    #: ATR sizing (ruling 2026-09-02), set when ATR data existed for an equity
+    #: proposal: the raw ATR(14)/price, the clamped per-position stop the exit
+    #: engine arms at fill, and the dollars the fixed-15% regime would have
+    #: deployed — the counterfactual attribution compares against. All None =
+    #: the fixed regime (options, missing data, or the feature off).
+    atr_fraction: Optional[Decimal] = None
+    stop_fraction: Optional[Decimal] = None
+    counterfactual_fixed_capital: Optional[Decimal] = None
 
     @property
     def is_tradeable(self) -> bool:
