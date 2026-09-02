@@ -2239,6 +2239,132 @@ in the header: report-date staleness, unheld-sale, caps/budget ordering, and
 research verdicts do not replay. Smoke-tested against the local log (29
 entries, zero flips on an identical candidate — correct).
 
+## Live-agent-evidence tier (human ruling 2026-09-02): built 1, 3, 4; designs 2, 5
+
+### 1. Expectancy metrics + reward:risk gate — SHIPPED
+
+- **Metrics** (`ExpectancyStats` in attribution): avg win, avg loss, profit
+  factor, expectancy/trade now render per confidence band (calibration rows),
+  per source (new since-inception section), per class, and per exit reason —
+  n<20 renders "expectancy insufficient (n=X)", same discipline as calibration.
+- **target_price** joined the entry report schema (2b accelerated): a CLAIM,
+  graded, and read by exactly ONE deterministic consumer. Tool description
+  frames it honestly: required for tradeable directions, cannot raise a size,
+  inflating it only records a claim the track record carries. The screen
+  draft passes it to the verify stage.
+- **The gate** (`reward_risk` in orchestrator.yaml): equity longs must clear
+  `(target − entry) / (entry × stop) ≥ 1.5` before sizing; typed rejection
+  `insufficient_reward_risk` (SIZING stage → funnel bucket declined). The stop
+  is the one the position would actually get (ATR-derived clamp; 0.15 fallback
+  mirroring exits). VETO-ONLY by construction — a gamed target passes into
+  ordinary sizing, never past it. No target on a long = rejected (Constraint
+  #6). Missing quote fails OPEN (order construction already blocks unpriced
+  orders). Options excluded (premium is the risk; delta bands + halved table
+  govern). Live round trip: the golden baseline below IS the production
+  two-stage path under the new schema.
+
+### 3. Model pinning — SHIPPED (and the pricing-table correction)
+
+Confirmed against the live Models API 2026-09-02: `claude-opus-5`
+(created 2026-07-24) and `claude-sonnet-4-6` (created 2026-02-17) are the
+CANONICAL COMPLETE ids — the current generation has no dated snapshot variants
+(new capability ships as new ids) and no floating aliases; the bare id IS the
+pin. `claude-haiku-4-5-20251001` (created 2025-10-15) is its generation's
+dated-snapshot form, already pinned. Enforcement: `pinned_models` allow-list in
+research.yaml; ResearchConfig validation HARD-FAILS startup on any configured
+model outside the list or any `-latest` alias. CLAUDE.md § LLM Request-Path
+Changes now carries the ruling: any model change = dated ruling + attribution
+partition + golden replay before ship; same replay before any prompt/tier
+change. Also corrected en route: the opus pricing row had carried a 3x-over
+baseline ($15/$75 vs the published $5/$25) since wiring — estimates only fed
+the COST tripwire, which the error made fire EARLY (conservative direction);
+now matches the published table.
+
+### 4. Golden set — SHIPPED, baseline run below
+
+`config/golden/golden_set.jsonl`: 20 graded cases — 16 real decisions mined
+from the droplet audit log (the BE call declines, the stale SA-13F with NVDA
+puts, the taken INTC calls entry long/54, the AAPL dividend-reinvestment
+non-signal, the Tim-Cook BREAKING verification case, max-lag/priced-in
+declines, Trump noise at several confidence levels) + 4 fixtures (Sarissa
+13D/A and the Form 4 INTC cluster from this week's live round trips, a prompt
+injection that must be declined AND flagged, a fabricated mirror relay that
+must fail verification). Grading = direction set + confidence band
+(+ mandatory manipulation flag where ruled); prose is not graded; context
+builders deliberately absent — the replay isolates prompt × schema × model.
+`python -m orchestrator golden [--only name] [--limit N]` replays through the
+PRODUCTION two-stage pass; exit code 3 on drift. The set skews decline-heavy
+because the log does; new graded cases join by ruling.
+
+**BASELINE (2026-09-02, opus-5 / sonnet-4-6, full run $3.64): 17/20**, and all
+three drifts taught something that is now in the harness:
+
+- Replays initially ran at "now" — time-sensitive cases drift as the calendar
+  moves. Fixed: fixtures carry the ORIGINAL `observed_at`, so the prompt's lag
+  arithmetic matches the graded frame (web search still sees the present — a
+  stated limitation; the set leans on time-robust declines).
+- `sarissa-amrn-13da` "failed" by declining at confidence 82 — which is GOOD
+  calibration, not drift; the band had conflated decline confidence with
+  weak-long size. Fixed: optional `traded_confidence` band applies only to
+  tradeable verdicts. Re-run: no_position/72 PASS ($0.15).
+- `pelosi-uber-priced-in` re-ran long/42 with the frame fixed — below the 50
+  sizing floor, behaviorally a no-trade. Regraded BEHAVIORALLY: decline at any
+  confidence or a sub-floor long both pass; a long that would actually trade
+  is drift. (Its first run long/60 WOULD have traded a stale May disclosure —
+  that flagging was correct and stays possible.)
+- `pelosi-intc-calls-entry` replayed no_position/30 against the taken long/54
+  from two days earlier: genuine verdict instability at the sizing-floor
+  boundary, not a mis-grade. Kept as a BOUNDARY-WATCH case (both verdicts
+  grade, wild confidence does not) — run-to-run flapping here is exactly what
+  the set should make visible over time.
+
+The schema round trip rode the baseline: form4-intc-cluster returned
+long/63-68 WITH target_price (28.995-30) through the new tool schema, twice.
+
+### 2. Exit-authority probation — DESIGN REVIEW (not built)
+
+For 90 days from a dated ruling: a review CLOSE verdict on a position that is
+BOTH profitable (mark > entry) AND validity-intact becomes SHADOW — recorded
+(new ShadowCloseRecord: decision_id, mark, the verdict verbatim), NOT
+executed; the position keeps running under stops/ratchet/leash/invalidation,
+which retain full authority, as do close verdicts on invalidated/displaced
+positions (validity != intact executes as today). Bounded risk by
+construction: the worst a wrong shadow costs is what the ratchet/leash already
+permit. Counterfactual via the forward engine: mark at shadow time vs
+5/20/60d after — "would the close have saved money?" Authority grant/deny:
+after 90 days with n≥20 shadowed verdicts, if the shadowed closes' 20d
+counterfactual shows the review saved money (positions fell after it said
+close), review-close authority on intact winners returns by dated ruling; if
+positions kept rising, probation extends or the verdict class is demoted
+permanently. Edge rules: one counterfactual per position per verdict streak
+(dedup on first shadow); a shadowed position that later stops out records
+which layer actually exited. Build cost ~1 session; nothing touches the
+guardrails. AWAITING RULING.
+
+### 5. Directional-bias audit — DESIGN REVIEW (not built)
+
+- **Measurement (cheap, report-only):** per-position beta from 120d daily
+  bars vs SPY (deterministic regression, absent-never-guessed), book beta =
+  position-weighted; attribution renders beta and beta-adjusted excess
+  (return − beta × SPY) alongside the current 1.0-beta excess. ~1 session.
+- **Why short_via_puts has never fired:** the sources are structurally long —
+  congressional sales are prefiltered unless held (someone's exit ≠ entry
+  thesis), 13Fs are longs-only by law, Form 4 emits code P buys only, 13D
+  stakes are long activism, the X callers overwhelmingly call longs. The
+  research layer CAN return short_via_puts; it is almost never handed a
+  bearish fact pattern. Not a bug — a documented sampling bias.
+- **Bearish paths that would need rulings (report, not built):** (a) Form 4
+  SELL clusters — the mirror-image recipe exists in the fetcher's parser
+  already (code S legs are parsed and discarded); groundwork could log sell
+  clusters as measurement-only prefiltered rows so forward returns grade the
+  bearish signal BEFORE any trading path exists, exactly like the disclosure-
+  reaction slice; (b) 13D stake REDUCTIONS as bearish evidence (amendment
+  deltas are already in the signal); (c) risk-off regime: the VIX scalar
+  currently only shrinks longs — a puts-overlay expression would be a new
+  strategy needing its own ruling and collides with the passed SPY-put
+  assessment. Recommendation: build (a)'s measurement groundwork first if any;
+  no trading path until forward returns argue for one. AWAITING RULING.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

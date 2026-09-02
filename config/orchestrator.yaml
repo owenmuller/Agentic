@@ -181,6 +181,23 @@ risk_scalars:
       - { vix_at_or_above: 35, multiplier: 0.5 }
     max_age_days: 7
 
+# REWARD:RISK GATE (ruling 2026-09-02, from live LLM-agent trading evidence:
+# expectancy discipline beats verdict accuracy). A judged EQUITY LONG must clear
+# (target_price - entry) / (entry x stop_fraction) >= min_ratio before a dollar
+# is sized; below it, typed rejection insufficient_reward_risk. The stop
+# fraction is the one the position would actually get (ATR-derived, clamped;
+# fallback_stop_fraction mirrors exits.max_loss_fraction when ATR data is
+# missing). VETO-ONLY by construction: the model's target claim can block an
+# entry, never enlarge one - a gamed target passes into ordinary sizing and the
+# claim sits on the record to be graded. A long with no target is rejected
+# (Constraint #6); a missing quote fails open because order construction
+# already refuses to price without one. Options entries excluded: premium is
+# the risk and the delta bands + halved table govern.
+reward_risk:
+  enabled: true
+  min_ratio: 1.5
+  fallback_stop_fraction: 0.15
+
 # EXECUTION-FIDELITY HAIRCUT (ruling 2026-09-02). Paper fills are optimistic:
 # no queue position, no adverse selection, no real spread crossing. The weekly
 # report renders judged P&L both RAW and with this many basis points per fill

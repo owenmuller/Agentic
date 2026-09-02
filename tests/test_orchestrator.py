@@ -67,6 +67,10 @@ REPORT = {
     "invalidation_condition": "Exemption granted for the named importers.",
     "manipulation_assessment": "none detected",
     "catalyst_within_horizon": None,
+    # Reward:risk gate (ruling 2026-09-02): a long without a target is rejected,
+    # so the shared fixture states one that clears the 1.5 floor at QUOTE=140
+    # with the 15% fallback stop ((175-140)/21 = 1.67).
+    "target_price": "175",
 }
 
 
@@ -580,7 +584,13 @@ def test_a_sizing_rejection_leaves_a_complete_trail(
         ({"tickers": ["NUE", "STLD"]}, None, "ambiguous_instrument"),
         ({"tickers": []}, None, "ambiguous_instrument"),
         ({}, prices_of(), "no_price"),
-        ({"confidence": 56}, prices_of(NUE="9000000.00"), "below_min_notional"),
+        # target scaled with the absurd quote so the reward:risk gate passes and
+        # the rejection under test stays the order-construction one.
+        (
+            {"confidence": 56, "target_price": "12000000"},
+            prices_of(NUE="9000000.00"),
+            "below_min_notional",
+        ),
     ],
 )
 def test_an_order_construction_rejection_leaves_a_complete_trail(

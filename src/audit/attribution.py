@@ -44,6 +44,69 @@ CENTS = Decimal("0.01")
 DEFAULT_WINDOW_DAYS = 90
 
 
+#: Below this many resolved outcomes, expectancy renders "insufficient" — the
+#: same discipline as calibration: nobody tunes on four data points.
+EXPECTANCY_MIN_N = 20
+
+
+@dataclass(frozen=True, slots=True)
+class ExpectancyStats:
+    """Trade-quality arithmetic over a set of realised P&Ls (ruling 2026-09-02).
+
+    avg win, avg loss, profit factor (gross wins / gross losses), and
+    expectancy (mean P&L per closed trade). Deterministic and windowless — the
+    caller decides what set of trades these describe. Below ``EXPECTANCY_MIN_N``
+    the render says insufficient rather than implying a verdict.
+    """
+
+    n: int
+    wins: int
+    avg_win: Optional[Decimal]
+    avg_loss: Optional[Decimal]
+    profit_factor: Optional[Decimal]
+    expectancy: Optional[Decimal]
+
+    @classmethod
+    def of(cls, pnls: tuple[Decimal, ...]) -> "ExpectancyStats":
+        winners = [p for p in pnls if p > ZERO]
+        losers = [p for p in pnls if p < ZERO]
+        gross_wins = sum(winners, ZERO)
+        gross_losses = -sum(losers, ZERO)
+        return cls(
+            n=len(pnls),
+            wins=len(winners),
+            avg_win=(
+                (gross_wins / len(winners)).quantize(CENTS) if winners else None
+            ),
+            avg_loss=(
+                (gross_losses / len(losers)).quantize(CENTS) if losers else None
+            ),
+            profit_factor=(
+                (gross_wins / gross_losses).quantize(CENTS)
+                if gross_losses > ZERO
+                else None
+            ),
+            expectancy=(
+                (sum(pnls, ZERO) / len(pnls)).quantize(CENTS) if pnls else None
+            ),
+        )
+
+    def line(self) -> str:
+        if self.n < EXPECTANCY_MIN_N:
+            return f"expectancy insufficient (n={self.n})"
+        parts = [
+            f"avg win {self.avg_win:+.2f}" if self.avg_win is not None else "no wins",
+            f"avg loss -{self.avg_loss:.2f}" if self.avg_loss is not None else "no losses",
+            (
+                f"profit factor {self.profit_factor:.2f}"
+                if self.profit_factor is not None
+                else "profit factor n/a (no losses)"
+            ),
+            f"expectancy {self.expectancy:+.2f}/trade",
+        ]
+        return ", ".join(parts)
+
+
 @dataclass(frozen=True, slots=True)
 class ClassAttribution:
     """One signal class's contribution over the window."""
@@ -69,6 +132,8 @@ class ClassAttribution:
     #: The benchmark's (SPY) total return over the same window, in percent.
     #: None when the benchmark could not be fetched — absent, never guessed.
     benchmark_return_pct: Optional[Decimal] = None
+    #: Realised P&L per resolved trade, for the expectancy line (2026-09-02).
+    pnls: tuple[Decimal, ...] = ()
 
     @property
     def hit_rate(self) -> Optional[float]:
@@ -135,10 +200,13 @@ class ClassAttribution:
                 f"; {self.return_pct:+.2f}% on {self.deployed:.2f} deployed, "
                 f"{excess:+.2f}% vs SPY"
             )
-        return (
+        line = (
             f"{self.signal_class}: {pnl}, {verdict}; "
             f"{self.approved} approved / {self.rejected} rejected of {self.decisions}"
         )
+        if self.resolved:
+            line += f"; {ExpectancyStats.of(self.pnls).line()}"
+        return line
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +273,8 @@ class ExitReasonAttribution:
     wins: int
     realised_pnl: Decimal
     deployed: Decimal
+    #: Realised P&L per closed trade, for the expectancy line (2026-09-02).
+    pnls: tuple[Decimal, ...] = ()
 
     @property
     def hit_rate(self) -> Optional[float]:
@@ -221,7 +291,8 @@ class ExitReasonAttribution:
             f"{self.hit_rate:.0%} of {self.closed}" if self.closed else "none closed"
         )
         ret = f", {self.return_pct:+.2f}% on {self.deployed:.2f}" if self.return_pct is not None else ""
-        return f"{self.reason}: {self.realised_pnl:+.2f} over {verdict}{ret}"
+        expectancy = f"; {ExpectancyStats.of(self.pnls).line()}" if self.pnls else ""
+        return f"{self.reason}: {self.realised_pnl:+.2f} over {verdict}{ret}{expectancy}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,6 +370,8 @@ class ConfidenceBandCalibration:
     resolved: int
     wins: int
     realised_pnl: Decimal
+    #: Realised P&L per resolved trade, for the expectancy line (2026-09-02).
+    pnls: tuple[Decimal, ...] = ()
 
     @property
     def hit_rate(self) -> Optional[float]:
@@ -312,7 +385,8 @@ class ConfidenceBandCalibration:
             return f"{self.band}: {detail})"
         return (
             f"{self.band}: {self.hit_rate:.0%} hit rate over {self.resolved} "
-            f"closed, {self.realised_pnl:+.2f} realised"
+            f"closed, {self.realised_pnl:+.2f} realised; "
+            f"{ExpectancyStats.of(self.pnls).line()}"
         )
 
 
@@ -323,6 +397,7 @@ def _calibration(trails: list[AuditTrail]) -> tuple[ConfidenceBandCalibration, .
     for band, contains in _CALIBRATION_BANDS:
         resolved = wins = 0
         pnl = ZERO
+        pnls: list[Decimal] = []
         for trail in trails:
             research = trail.decision.research
             if research is None or trail.outcome is None:
@@ -331,12 +406,17 @@ def _calibration(trails: list[AuditTrail]) -> tuple[ConfidenceBandCalibration, .
                 continue
             resolved += 1
             pnl += trail.outcome.realised_pnl
+            pnls.append(trail.outcome.realised_pnl)
             if trail.outcome.won:
                 wins += 1
         if resolved:
             rows.append(
                 ConfidenceBandCalibration(
-                    band=band, resolved=resolved, wins=wins, realised_pnl=pnl
+                    band=band,
+                    resolved=resolved,
+                    wins=wins,
+                    realised_pnl=pnl,
+                    pnls=tuple(pnls),
                 )
             )
     return tuple(rows)
@@ -402,6 +482,8 @@ class AttributionReport:
     by_exit_reason: tuple["ExitReasonAttribution", ...] = ()
     #: Hit rate per sizing-table confidence band, since inception (2026-09-01).
     calibration: tuple["ConfidenceBandCalibration", ...] = ()
+    #: Expectancy per source, since inception (2026-09-02): (source_id, stats).
+    source_expectancy: tuple[tuple[str, "ExpectancyStats"], ...] = ()
     #: Per judged exit: realised vs held-to-365-days, the mechanical arm's clock.
     counterfactuals: tuple["CounterfactualHold", ...] = ()
     #: One line per paid source: what it costs monthly, when its bill started,
@@ -496,6 +578,18 @@ class AttributionReport:
                     f"inception; cells under n={CALIBRATION_MIN_N} are insufficient "
                     "and must not tune the sizing table):",
                     *(f"  {row.summary()}" for row in self.calibration),
+                ]
+            )
+        if self.source_expectancy:
+            lines.extend(
+                [
+                    "",
+                    "Expectancy by source (since inception; cells under "
+                    f"n={EXPECTANCY_MIN_N} are insufficient):",
+                    *(
+                        f"  {source}: {stats.wins}/{stats.n} won; {stats.line()}"
+                        for source, stats in self.source_expectancy
+                    ),
                 ]
             )
         if self.counterfactuals:
@@ -618,11 +712,13 @@ def _by_exit_reason(trails: list[AuditTrail]) -> tuple[ExitReasonAttribution, ..
     for trail in trails:
         reason = _closing_reason(trail)
         bucket = buckets.setdefault(
-            reason, {"closed": 0, "wins": 0, "pnl": ZERO, "deployed": ZERO}
+            reason,
+            {"closed": 0, "wins": 0, "pnl": ZERO, "deployed": ZERO, "pnls": []},
         )
         bucket["closed"] += 1  # type: ignore[operator]
         if trail.outcome is not None:
             bucket["pnl"] += trail.outcome.realised_pnl  # type: ignore[operator]
+            bucket["pnls"].append(trail.outcome.realised_pnl)  # type: ignore[union-attr]
             if trail.outcome.won:
                 bucket["wins"] += 1  # type: ignore[operator]
         bucket["deployed"] += sum(  # type: ignore[operator]
@@ -635,6 +731,7 @@ def _by_exit_reason(trails: list[AuditTrail]) -> tuple[ExitReasonAttribution, ..
             wins=int(values["wins"]),  # type: ignore[arg-type]
             realised_pnl=values["pnl"],  # type: ignore[arg-type]
             deployed=values["deployed"],  # type: ignore[arg-type]
+            pnls=tuple(values["pnls"]),  # type: ignore[arg-type]
         )
         for reason, values in sorted(buckets.items())
     )
@@ -737,6 +834,7 @@ def build_attribution(
             "pnl": ZERO,
             "flags": 0,
             "deployed": ZERO,
+            "pnls": [],
         }
 
     # A paid class appears even when it made no decisions: the bill does not wait
@@ -764,6 +862,7 @@ def build_attribution(
         if trail.outcome is not None:
             bucket["resolved"] += 1  # type: ignore[operator]
             bucket["pnl"] += trail.outcome.realised_pnl  # type: ignore[operator]
+            bucket["pnls"].append(trail.outcome.realised_pnl)  # type: ignore[union-attr]
             if trail.outcome.won:
                 bucket["wins"] += 1  # type: ignore[operator]
             bucket["deployed"] += sum(  # type: ignore[operator]
@@ -852,6 +951,7 @@ def build_attribution(
             research_cost=(research_costs or {}).get(signal_class, ZERO),
             deployed=values["deployed"],  # type: ignore[arg-type]
             benchmark_return_pct=benchmark_return_pct,
+            pnls=tuple(values["pnls"]),  # type: ignore[arg-type]
         )
         for signal_class, values in buckets.items()
     }
@@ -889,11 +989,25 @@ def build_attribution(
         for t in trails
         if t.outcome is not None and t.decision.recorded_at >= window_start
     ]
+    # Expectancy by source, since inception like calibration: trade quality is a
+    # property of the source, not of a quarter (ruling 2026-09-02).
+    by_source: dict[str, list[Decimal]] = {}
+    for trail in trails:
+        if trail.outcome is not None:
+            by_source.setdefault(trail.decision.signal.source_id, []).append(
+                trail.outcome.realised_pnl
+            )
+    source_expectancy = tuple(
+        (source, ExpectancyStats.of(tuple(pnls)))
+        for source, pnls in sorted(by_source.items())
+    )
+
     return AttributionReport(
         by_exit_reason=_by_exit_reason(judged_closed),
         # Since inception on purpose: calibration measures the scorer, not the
         # quarter, and windowing it would reset the sample every 90 days.
         calibration=_calibration(trails),
+        source_expectancy=source_expectancy,
         counterfactuals=_counterfactuals(judged_closed, generated_at, price_on),
         generated_at=generated_at,
         window_days=window_days,

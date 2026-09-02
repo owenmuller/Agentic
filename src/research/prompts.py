@@ -148,6 +148,7 @@ def build_verification_prompt(user_prompt: str, screen_report) -> str:
             else "null"
         ),
         f"priced_in_analysis: {screen_report.priced_in_analysis or 'null'}",
+        f"target_price: {screen_report.target_price or 'null'}",
         "-----END FIRST-PASS DRAFT-----",
     ]
     return user_prompt + "\n\n" + "\n".join(draft_lines)

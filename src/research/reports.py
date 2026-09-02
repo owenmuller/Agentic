@@ -139,6 +139,22 @@ class ResearchReport(BaseModel):
     #: "none detected" instead — an absent assessment and a clean one are different
     #: findings, and only one of them is evidence about the source.
     manipulation_assessment: Optional[str]
+    #: The price at which this thesis is REALISED (ruling 2026-09-02, accelerating
+    #: quantified-theses 2b): where the position would be worth taking profit if
+    #: the thesis plays out. A CLAIM, recorded and graded — and read by exactly one
+    #: deterministic consumer, the reward:risk gate, which can only ever VETO an
+    #: entry (target vs stop distance below the configured floor), never enlarge
+    #: one. Nullable so no_position reports need not invent a level; a tradeable
+    #: direction without a target is rejected by the gate, so stating one is part
+    #: of calling a trade. Defaulted so pre-ruling audit records parse unchanged.
+    target_price: Optional[Decimal] = None
+
+    @field_validator("target_price")
+    @classmethod
+    def _target_is_positive(cls, value: Optional[Decimal]) -> Optional[Decimal]:
+        if value is not None and value <= 0:
+            raise ValueError(f"target_price must be positive, got {value}")
+        return value
 
     @field_validator("confidence")
     @classmethod
@@ -341,7 +357,16 @@ def report_tool_definition() -> dict[str, Any]:
             "deterministic time stop closes it. State it whenever your thesis has "
             "a timeline you can defend, and null when it genuinely does not. The "
             "date is clamped into limits this system owns; naming a distant one "
-            "does not extend anything past them."
+            "does not extend anything past them. For target_price: the price at "
+            "which your thesis is REALISED — where taking profit would be "
+            "justified if you are right — as a number. REQUIRED for any "
+            "tradeable direction: a long or short call without a defensible "
+            "target is rejected by a deterministic reward:risk check downstream, "
+            "so state the level your analysis actually supports. It is a claim "
+            "you will be graded on, not an order: it cannot raise a size or a "
+            "cap, and inflating it past what your analysis supports only "
+            "records a claim your track record then carries. null only with "
+            "direction no_position."
         ),
         "strict": True,
         "input_schema": schema,

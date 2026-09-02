@@ -200,6 +200,7 @@ class SignalPipeline:
         atr_fraction: Optional[Callable[[str], Optional[Decimal]]] = None,
         atr_config: Optional["AtrSizingConfig"] = None,
         spread_pct: Optional[Callable[[str], Optional[Decimal]]] = None,
+        reward_risk: Optional["RewardRiskConfig"] = None,
     ) -> None:
         self._research = research
         self._triage = triage
@@ -216,6 +217,8 @@ class SignalPipeline:
         #: Execution fidelity (ruling 2026-09-02): the quoted spread at order
         #: submission, recorded on the fill. None = not measured, never zero.
         self._spread_pct = spread_pct
+        #: The reward:risk gate (ruling 2026-09-02): veto-only, equity longs.
+        self._rr_config = reward_risk
         self._gate = gate
         self._adapter = adapter
         self._audit = audit
@@ -358,6 +361,24 @@ class SignalPipeline:
         intends_option = self._option_selector is not None and (
             wants_puts or (report.direction is Direction.LONG and report.has_catalyst)
         )
+        # 2a. The reward:risk gate (ruling 2026-09-02): equity longs must clear
+        # (target - entry) / (entry x stop) >= min_ratio before a dollar is
+        # sized. Veto-only — the model's target claim can block an entry, never
+        # enlarge one.
+        if not intends_option and report.direction is Direction.LONG:
+            failed = self._reward_risk_reason(report)
+            if failed is not None:
+                return self._stopped(
+                    decision_id,
+                    signal,
+                    RejectedStage.SIZING,
+                    "insufficient_reward_risk",
+                    failed,
+                    report=report,
+                    usage=usage,
+                    screen_report=screen_report,
+                    screen_usage=screen_usage,
+                )
         if intends_option:
             proposal = self._propose_option(report, sleeve_nav)
         else:
@@ -641,6 +662,53 @@ class SignalPipeline:
         return self._build_equity_order(
             signal, report, proposal,
             expression=_fallback_snapshot(fallback, chosen="equity"),
+        )
+
+    def _reward_risk_reason(self, report) -> Optional[str]:
+        """Why this equity long fails the reward:risk gate, or None to proceed.
+
+        Deterministic: the model's own target claim over the stop distance the
+        position would actually get (ATR-derived, or the fixed fallback). A
+        missing QUOTE fails open — order construction already refuses to price
+        without one; a missing TARGET fails closed (Constraint #6): a long
+        without a defensible level is not a sized trade.
+        """
+        config = self._rr_config
+        if config is None or not config.enabled or not report.tickers:
+            return None
+        if report.target_price is None:
+            return (
+                "long verdict with no target_price: the reward:risk gate "
+                "cannot price the claim, and an unpriced long is not sized "
+                "(ruling 2026-09-02)"
+            )
+        symbol = report.tickers[0]
+        try:
+            entry = self._prices(symbol)
+        except Exception:  # noqa: BLE001 - a quote outage is not a verdict
+            entry = None
+        if entry is None or entry <= 0:
+            return None  # fail open: the no-quote path blocks downstream anyway
+        stop_fraction = config.fallback_stop_fraction
+        if self._atr_config is not None and self._atr_config.enabled and self._atr_fraction:
+            atr = self._atr_fraction(symbol)
+            if atr is not None and atr > 0:
+                stop_fraction = min(
+                    max(self._atr_config.k * atr, self._atr_config.stop_floor),
+                    self._atr_config.stop_ceiling,
+                )
+        reward = report.target_price - entry
+        risk = entry * stop_fraction
+        if risk <= 0:
+            return None
+        ratio = reward / risk
+        if ratio >= config.min_ratio:
+            return None
+        return (
+            f"reward:risk {ratio:.2f} below the {config.min_ratio} floor: "
+            f"target {report.target_price} vs entry {entry} with a "
+            f"{stop_fraction:.2%} stop risks {risk:.2f} to make {reward:.2f} "
+            f"(ruling 2026-09-02)"
         )
 
     def _propose_equity(self, report, sleeve_nav) -> SizedProposal:

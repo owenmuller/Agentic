@@ -486,6 +486,8 @@ def start(
         # Execution fidelity (ruling 2026-09-02): the production price source
         # can quote a spread; a harness's stub usually cannot, and None is fine.
         spread_pct=getattr(prices, "spread_pct", None),
+        # The reward:risk gate (ruling 2026-09-02): veto-only, equity longs.
+        reward_risk=checks.orchestrator_config.reward_risk,
         options_chain=options_chain,
         option_selector=option_selector,
         clock=checks.clock,

@@ -74,6 +74,7 @@ Five families for convergence purposes, deterministic and load-bearing: **congre
 
 - Any change touching the LLM request/response path — elision or any transcript manipulation, prompt caching, tool configuration, model or tier changes — requires a **live end-to-end validation of the exact request shape production sends** before it may be reported as shipped: a full search→report round trip against the real API, not a component probe.
 - "Verified live" means the production path ran. A proxy for it (a two-call cache probe, a fake-transcript test, a doc citation) is not verification, however convincing. Origin: the 2026-08-24 elision incident — a doc-verified, unit-tested transcript change 400ed on every production research pass for three sessions because the one thing never run was the real round trip.
+- **Model pinning (human ruling 2026-09-02):** the models this system may call are the closed `pinned_models` list in `config/research.yaml`, verified against the live Models API and enforced at startup (an unlisted or `-latest` model string hard-fails preflight). **Any model change is a dated ruling in this file**, and before it ships it requires BOTH an attribution partition (the change date recorded so results split before/after) and a **golden-set replay** (`python -m orchestrator golden`) with the verdict drift reviewed by a human. The same golden replay is required before any prompt or tier change ships, alongside the live round trip above.
 
 ## Sizing Engine — Confidence-Weighted
 

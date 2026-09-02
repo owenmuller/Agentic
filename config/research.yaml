@@ -6,6 +6,21 @@
 
 version: 1
 
+# MODEL PINNING (human ruling 2026-09-02). The closed set of model ids this
+# system may call; startup hard-fails on any model string outside it or on a
+# floating -latest alias. Verified against the live Models API 2026-09-02:
+# claude-opus-5 and claude-sonnet-4-6 are the CANONICAL, COMPLETE ids for their
+# models — the current generation has no dated snapshot variants (new capability
+# ships as NEW ids), so the bare id IS the pin; claude-haiku-4-5-20251001 is the
+# dated snapshot form its generation uses. CHANGING THIS LIST IS A MODEL CHANGE:
+# per CLAUDE.md § LLM Request-Path Changes it requires a dated ruling, an
+# attribution partition, and a golden-set replay (python -m orchestrator golden)
+# BEFORE it ships.
+pinned_models:
+  - claude-opus-5
+  - claude-sonnet-4-6
+  - claude-haiku-4-5-20251001
+
 # Claude model used for the research pass.
 model: claude-opus-5
 
@@ -78,13 +93,15 @@ tiers:
     effort: medium
     max_searches: 1
 
-# Cost estimates, dollars per million tokens. BASELINE NUMBERS — to be replaced
-# with real console figures after week one of the paper period. A model missing
-# from this table records no estimate (None), never a guessed one.
+# Cost estimates, dollars per million tokens. Corrected 2026-09-02 against the
+# published API pricing table (the opus row had carried a 3x-over baseline
+# estimate since wiring — estimates only ever fed the COST tripwire, which the
+# error made fire EARLY, the conservative direction). A model missing from this
+# table records no estimate (None), never a guessed one.
 pricing:
   claude-opus-5:
-    input_per_mtok: "15.00"
-    output_per_mtok: "75.00"
+    input_per_mtok: "5.00"
+    output_per_mtok: "25.00"
   claude-sonnet-4-6:
     input_per_mtok: "3.00"
     output_per_mtok: "15.00"

@@ -336,6 +336,69 @@ def replay() -> int:
     return 0
 
 
+def golden() -> int:
+    """Golden-set replay (ruling 2026-09-02): the frozen graded decisions through
+    the CURRENT prompt/tier/model. Required before any prompt, tier, or model
+    change ships. Spends real API dollars; writes no audit records. Usage:
+
+        python -m orchestrator golden [--only name] [--limit N]
+    """
+    logging.basicConfig(level=logging.WARNING)
+    from execution.environment import load_environment as _load_env
+
+    from orchestrator.golden import (
+        build_source_tiers,
+        load_cases,
+        render_summary,
+        run_golden,
+    )
+    from research.client import AnthropicResearchClient
+    from research.config import ResearchConfig
+    from research.research_pass import ResearchPass
+    from signals import SignalsConfig
+
+    args = sys.argv[2:]
+    only = None
+    limit = None
+    index = 0
+    while index < len(args):
+        if args[index] == "--only" and index + 1 < len(args):
+            only = args[index + 1]
+            index += 2
+        elif args[index] == "--limit" and index + 1 < len(args):
+            limit = int(args[index + 1])
+            index += 2
+        else:
+            print(f"unknown argument {args[index]!r}", file=sys.stderr)
+            return 2
+    try:
+        _load_env()
+        cases = load_cases()
+        if only is not None:
+            cases = [case for case in cases if case.name == only]
+            if not cases:
+                print(f"no golden case named {only!r}", file=sys.stderr)
+                return 2
+        if limit is not None:
+            cases = cases[:limit]
+        config = ResearchConfig.load()
+        research = ResearchPass(
+            AnthropicResearchClient(config),
+            source_tiers=build_source_tiers(SignalsConfig.load()),
+        )
+        print(
+            f"replaying {len(cases)} golden cases through the production pass "
+            f"(model {config.model}, screen "
+            f"{config.screen.model if config.screen else 'off'}) — real API spend"
+        )
+        results = run_golden(research, cases)
+        print(render_summary(results))
+        return 0 if all(result.passed for result in results) else 3
+    except Exception as error:  # noqa: BLE001
+        print(f"GOLDEN REPLAY FAILED: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
+
+
 def run() -> int:
     """One supervised-by-schedule trading session: open to close, then shut down."""
     data_dir = default_data_dir()
@@ -674,6 +737,8 @@ def main() -> int:
         return weekly()
     if command == "replay":
         return replay()
+    if command == "golden":
+        return golden()
     print(
         f"unknown command {command!r}: expected 'check', 'health', 'run', or "
         f"'attribution'",

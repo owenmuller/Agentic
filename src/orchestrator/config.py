@@ -229,6 +229,31 @@ class RegimeScalarConfig(BaseModel):
         return self
 
 
+class RewardRiskConfig(BaseModel):
+    """The deterministic reward:risk gate (ruling 2026-09-02).
+
+    ``(target - entry) / (entry x stop_fraction) >= min_ratio`` required before
+    sizing, on judged EQUITY longs. One-sided by construction: the model's own
+    target claim can only VETO an entry, never enlarge one — a gamed target
+    passes into ordinary sizing, and the claim sits on the record to be graded.
+    A tradeable direction with no target is rejected (Constraint #6). Options
+    entries are excluded (premium is the risk; the delta bands and halved table
+    govern). A missing quote at check time fails OPEN — the order-construction
+    stage already refuses to price an order without a quote, so the real block
+    is downstream and this check must not double-reject on missing data.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = True
+    min_ratio: Decimal = Field(default=Decimal("1.5"), gt=Decimal("0"))
+    #: The stop distance assumed when ATR data is missing — mirrors
+    #: exits.max_loss_fraction, the regime such a position actually gets.
+    fallback_stop_fraction: Decimal = Field(
+        default=Decimal("0.15"), gt=Decimal("0"), lt=Decimal("1")
+    )
+
+
 class AtrSizingConfig(BaseModel):
     """Volatility-adjusted sizing and stops (human ruling 2026-09-02).
 
@@ -350,6 +375,9 @@ class OrchestratorConfig(BaseModel):
     #: SIDE the attribution report subtracts to render paper P&L as live-ish
     #: P&L alongside the raw number. Reporting only — nothing trades on it.
     slippage_haircut_bps: Decimal = Field(default=Decimal("5"), ge=Decimal("0"))
+    #: The reward:risk gate (ruling 2026-09-02): veto-only, can never widen risk,
+    #: so absent-section defaults are safe.
+    reward_risk: RewardRiskConfig = Field(default_factory=RewardRiskConfig)
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "OrchestratorConfig":

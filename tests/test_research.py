@@ -320,8 +320,9 @@ def test_confidence_100_sizes_exactly_like_any_other_top_band_score(limits):
 
 
 def test_report_fields_are_exactly_the_ones_the_spec_names():
-    """CLAUDE.md's seven, plus the catalyst assessment (2026-08-24) and the
-    expected resolution date that now sets the position's leash (2026-08-31)."""
+    """CLAUDE.md's seven, plus the catalyst assessment (2026-08-24), the
+    expected resolution date that sets the position's leash (2026-08-31), and
+    the target price the reward:risk gate vetoes on (2026-09-02)."""
     assert set(ResearchReport.model_fields) == {
         "thesis",
         "tickers",
@@ -333,6 +334,7 @@ def test_report_fields_are_exactly_the_ones_the_spec_names():
         "manipulation_assessment",
         "catalyst_within_horizon",
         "expected_resolution_date",
+        "target_price",
     }
 
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class _Strict(BaseModel):
@@ -94,6 +94,14 @@ class ResearchConfig(_Strict):
     effort: Effort
     web_search: WebSearchConfig
     max_search_continuations: int
+    #: Model pinning (human ruling 2026-09-02): the closed set of model ids this
+    #: system is allowed to call. Every configured model — top-level, triage,
+    #: screen, tiers — must be a member, and floating aliases (-latest) are
+    #: rejected outright. Editing this list IS the model-change ruling trigger:
+    #: CLAUDE.md requires a dated ruling, an attribution partition, and a golden-
+    #: set replay before any change ships. Empty = validation off (tests that
+    #: build minimal configs), which the shipped yaml never is.
+    pinned_models: tuple[str, ...] = ()
     #: Per-class model selection; unset tiers inherit the top-level model/effort.
     tiers: Optional[TierOverrides] = None
     #: Cost-estimate table, keyed by model id. A model missing from the table
@@ -103,6 +111,36 @@ class ResearchConfig(_Strict):
     triage: Optional[TriageConfig] = None
     #: The two-stage screen. None disables it (single pass at the source tier).
     screen: Optional[ScreenStage] = None
+
+    @model_validator(mode="after")
+    def _models_are_pinned(self) -> "ResearchConfig":
+        """Startup hard-fail on an unpinned or floating model id — a model that
+        can drift silently invalidates every attribution partition behind it."""
+        configured: dict[str, str] = {"model": self.model}
+        if self.triage is not None:
+            configured["triage.model"] = self.triage.model
+        if self.screen is not None:
+            configured["screen.model"] = self.screen.model
+        if self.tiers is not None:
+            for name in TIER_NAMES:
+                override = getattr(self.tiers, name, None)
+                if override is not None:
+                    configured[f"tiers.{name}.model"] = override.model
+        for where, model in configured.items():
+            if model.endswith("-latest"):
+                raise ValueError(
+                    f"{where} = {model!r} is a floating alias; a model that can "
+                    f"change under its own name breaks every attribution "
+                    f"partition (ruling 2026-09-02)"
+                )
+            if self.pinned_models and model not in self.pinned_models:
+                raise ValueError(
+                    f"{where} = {model!r} is not in pinned_models; a model "
+                    f"change is a dated ruling with an attribution partition "
+                    f"and a golden-set replay, never a config drift "
+                    f"(ruling 2026-09-02)"
+                )
+        return self
 
     def tier_for(self, name: str) -> ModelTier:
         """Resolve which model/effort a tier runs on. Unknown names are a bug."""
