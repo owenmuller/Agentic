@@ -55,6 +55,8 @@ from signals import (
     XRecentSearchFetcher,
 )
 
+from execution.vix import CboeVixSource
+
 from orchestrator.bootstrap import preflight, start
 from orchestrator.ops import (
     InstanceLock,
@@ -389,6 +391,10 @@ def run() -> int:
             classify_sink=lambda message: run_log.note("CLASSIFY", message),
             mechanical_sink=lambda message: run_log.note("MECH", message),
             options_chain=options_chain,
+            # Regime scalar (rulings 2026-09-01/02): last VIX close from CBOE's
+            # public CSV, fetched at most once per UTC day, missing data loud
+            # and x1.0 — never a silent halving of the book on a CDN outage.
+            vix_close=CboeVixSource(),
         )
         loop = startup.loop
 

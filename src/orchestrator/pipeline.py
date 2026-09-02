@@ -190,11 +190,16 @@ class SignalPipeline:
         option_selector: Optional[OptionSelector] = None,
         clock: Optional[Callable[[], datetime]] = None,
         probation_sources: Collection[str] = (),
+        scalars: Optional["SizingScalars"] = None,
     ) -> None:
         self._research = research
         self._triage = triage
         self._pending_triage_usage: Optional[ResearchUsage] = None
         self._sizing = sizing
+        #: Post-table risk scalars (rulings 2026-09-01/02): drawdown ladder x
+        #: regime, both ≤1.0, applied to every judged proposal this pipeline
+        #: sizes — the ONE composition point. None = multiplier 1.0 forever.
+        self._scalars = scalars
         self._gate = gate
         self._adapter = adapter
         self._audit = audit
@@ -338,9 +343,9 @@ class SignalPipeline:
             wants_puts or (report.direction is Direction.LONG and report.has_catalyst)
         )
         if intends_option:
-            proposal = self._sizing.propose_option(report, sleeve_nav)
+            proposal = self._propose_option(report, sleeve_nav)
         else:
-            proposal = self._sizing.propose_equity(report, sleeve_nav)
+            proposal = self._propose_equity(report, sleeve_nav)
         if not proposal.is_tradeable:
             return self._stopped(
                 decision_id,
@@ -536,7 +541,7 @@ class SignalPipeline:
                 "directional-but-patient thesis: no catalyst inside the horizon, "
                 "so the position expresses as stock",
             )
-            proposal = self._sizing.propose_equity(report, proposal.sleeve_nav)
+            proposal = self._propose_equity(report, proposal.sleeve_nav)
             return self._build_equity_order(
                 signal, report, proposal,
                 expression=_fallback_snapshot(fallback, chosen="equity"),
@@ -604,11 +609,23 @@ class SignalPipeline:
                 str(fallback.reason),
                 f"puts thesis with no valid contract: {fallback.detail}",
             ), proposal, _fallback_snapshot(fallback, chosen="none")
-        proposal = self._sizing.propose_equity(report, proposal.sleeve_nav)
+        proposal = self._propose_equity(report, proposal.sleeve_nav)
         return self._build_equity_order(
             signal, report, proposal,
             expression=_fallback_snapshot(fallback, chosen="equity"),
         )
+
+    def _propose_equity(self, report, sleeve_nav) -> SizedProposal:
+        """The confidence table, then the post-table risk scalars (rulings
+        2026-09-01/02). EVERY judged proposal — the initial sizing and the
+        option-to-equity fallback re-sizings — reaches the table through these
+        two helpers, so there is no path on which the scalars are skipped."""
+        proposal = self._sizing.propose_equity(report, sleeve_nav)
+        return self._scalars.scale(proposal) if self._scalars else proposal
+
+    def _propose_option(self, report, sleeve_nav) -> SizedProposal:
+        proposal = self._sizing.propose_option(report, sleeve_nav)
+        return self._scalars.scale(proposal) if self._scalars else proposal
 
     def _build_equity_order(
         self,

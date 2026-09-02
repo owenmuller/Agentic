@@ -124,6 +124,37 @@ convergence:
   diversity_bonus_cap: 2.0
   max_prior_verdicts: 3
 
+# POST-TABLE RISK SCALARS (rulings 2026-09-01/02). ONE composition point in the
+# pipeline's sizing step: size x drawdown_ladder x regime, every multiplier <=1.0
+# BY VALIDATION — this section can only shrink a size, never widen one. NEW
+# judged entries only: held positions, exits, the mechanical arm (never passes
+# through pipeline sizing) and the cash sweep are untouched by construction.
+# LLM-unreachable — no prompt or schema mentions any of it. The kill switch at
+# 12% is NOT part of this ladder: the last rung deliberately stops below it, and
+# the switch's own code is unchanged.
+#
+#   drawdown ladder  reads the gate's own drawdown() (the kill switch's number,
+#                    read-only). Stateless: recovery restores the multiplier the
+#                    tick the drawdown recovers. Boundaries inclusive toward
+#                    less risk — at exactly 4%, 0.75 applies.
+#   regime scalar    last VIX CLOSE from CBOE's free daily CSV, fetched once
+#                    per UTC day. Missing/stale data runs x1.0 and is LOGGED
+#                    every poll — visible, never a silent halving on an outage.
+#
+# Attribution renders one weekly forgone-size line (table dollars minus scaled
+# dollars) so the scalars' cost/benefit is argued by data, ruled by humans.
+risk_scalars:
+  enabled: true
+  drawdown_steps:
+    - { at: 0.04, multiplier: 0.75 }
+    - { at: 0.08, multiplier: 0.5 }
+  regime:
+    enabled: true
+    thresholds:
+      - { vix_at_or_above: 25, multiplier: 0.75 }
+      - { vix_at_or_above: 35, multiplier: 0.5 }
+    max_age_days: 7
+
 # MARKET DATA. Settings for the production PriceSource (execution.market_data.
 # AlpacaPriceSource) — the operator passes these when wiring orchestrator.start().
 market_data:

@@ -184,6 +184,84 @@ class ConvergenceConfig(BaseModel):
     max_prior_verdicts: int = Field(default=3, gt=0)
 
 
+class DrawdownStep(BaseModel):
+    """One rung of the drawdown ladder: at or beyond this drawdown, this multiplier."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    at: Decimal = Field(gt=Decimal("0"), lt=Decimal("1"))
+    multiplier: Decimal = Field(gt=Decimal("0"), le=Decimal("1"))
+
+
+class RegimeStep(BaseModel):
+    """One rung of the regime scalar: at or above this VIX close, this multiplier."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    vix_at_or_above: Decimal = Field(gt=Decimal("0"))
+    multiplier: Decimal = Field(gt=Decimal("0"), le=Decimal("1"))
+
+
+class RegimeScalarConfig(BaseModel):
+    """The volatility-regime scalar (approved 2026-09-01, built 2026-09-02)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = True
+    thresholds: tuple[RegimeStep, ...] = (
+        RegimeStep(vix_at_or_above=Decimal("25"), multiplier=Decimal("0.75")),
+        RegimeStep(vix_at_or_above=Decimal("35"), multiplier=Decimal("0.5")),
+    )
+    #: A VIX close older than this many calendar days is treated as MISSING.
+    max_age_days: int = Field(default=7, gt=0)
+
+    @model_validator(mode="after")
+    def _rungs_descend(self) -> "RegimeScalarConfig":
+        rungs = self.thresholds
+        for earlier, later in zip(rungs, rungs[1:]):
+            if not (
+                earlier.vix_at_or_above < later.vix_at_or_above
+                and earlier.multiplier >= later.multiplier
+            ):
+                raise ValueError(
+                    "regime rungs must rise in VIX and never rise in multiplier"
+                )
+        return self
+
+
+class RiskScalarsConfig(BaseModel):
+    """Post-table sizing multipliers (human rulings 2026-09-01/02): the graduated
+    drawdown ladder and the volatility-regime scalar, composed at ONE point.
+
+    Both are ≤1.0 BY VALIDATION — this section can only ever shrink a size, so
+    the file's "nothing here can widen a risk limit" contract holds. Applied to
+    NEW judged entries only, after the confidence table, LLM-unreachable; the
+    mechanical arm never passes through the pipeline's sizing and is exempt by
+    construction. The kill switch at 12% is UNTOUCHED — the ladder's last rung
+    deliberately stops below it.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = True
+    drawdown_steps: tuple[DrawdownStep, ...] = (
+        DrawdownStep(at=Decimal("0.04"), multiplier=Decimal("0.75")),
+        DrawdownStep(at=Decimal("0.08"), multiplier=Decimal("0.5")),
+    )
+    regime: RegimeScalarConfig = Field(default_factory=RegimeScalarConfig)
+
+    @model_validator(mode="after")
+    def _ladder_descends(self) -> "RiskScalarsConfig":
+        steps = self.drawdown_steps
+        for earlier, later in zip(steps, steps[1:]):
+            if not (earlier.at < later.at and earlier.multiplier >= later.multiplier):
+                raise ValueError(
+                    "ladder steps must deepen in drawdown and never rise in "
+                    "multiplier"
+                )
+        return self
+
+
 class MarketDataConfig(BaseModel):
     """Settings for the production price source. Consumed at wiring time —
     ``AlpacaPriceSource(feed=..., max_quote_age_seconds=...)`` — because the
@@ -221,6 +299,9 @@ class OrchestratorConfig(BaseModel):
     #: no section — the registry is context and ordering, not a risk control, so
     #: an absent section means the shipped defaults rather than a startup error.
     convergence: ConvergenceConfig = Field(default_factory=ConvergenceConfig)
+    #: Post-table sizing scalars (rulings 2026-09-01/02). Validation-bounded to
+    #: ≤1.0, so the defaults applying on an absent section can only shrink.
+    risk_scalars: RiskScalarsConfig = Field(default_factory=RiskScalarsConfig)
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "OrchestratorConfig":

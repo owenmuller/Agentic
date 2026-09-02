@@ -56,6 +56,7 @@ from orchestrator.pipeline import PriceSource, SignalPipeline
 from orchestrator.prefilter import ResearchPreFilter
 from orchestrator.recovery import recover_unsettled_orders
 from orchestrator.registry import SignalRegistry
+from orchestrator.scalars import SizingScalars
 from orchestrator.sweep import CashSweeper
 from orchestrator.state import (
     SessionState,
@@ -308,6 +309,7 @@ def start(
     classify_sink: Optional[Callable[[str], None]] = None,
     mechanical_sink: Optional[Callable[[str], None]] = None,
     options_chain=None,
+    vix_close: Optional[Callable] = None,
     **preflight_kwargs: object,
 ) -> Startup:
     """Run the startup sequence and return a loop ready to tick.
@@ -444,6 +446,21 @@ def start(
         if options_chain is not None
         else None
     )
+    # Post-table risk scalars (rulings 2026-09-01/02): drawdown ladder x regime
+    # at ONE composition point. The ladder reads the gate's own drawdown — the
+    # kill switch's number, through a read-only accessor; the regime leg runs
+    # only when the operator wired a VIX source (production passes CBOE, tests
+    # pass nothing and get x1.0 regime with the ladder still armed).
+    scalars = (
+        SizingScalars(
+            checks.orchestrator_config.risk_scalars,
+            drawdown=checks.gate.drawdown,
+            vix_close=vix_close,
+            clock=checks.clock,
+        )
+        if checks.orchestrator_config.risk_scalars.enabled
+        else None
+    )
     pipeline = SignalPipeline(
         research=research,
         triage=triage,
@@ -455,6 +472,7 @@ def start(
         id_factory=id_factory,
         fill_sink=exits.track_fill,
         convergence_snapshot=registry.snapshot_for,
+        scalars=scalars,
         options_chain=options_chain,
         option_selector=option_selector,
         clock=checks.clock,

@@ -163,6 +163,13 @@ class RiskGate:
     def kill_switch_tripped(self) -> bool:
         return self._state.kill_switch_tripped
 
+    def drawdown(self) -> Decimal:
+        """Read-only: the state's fractional drawdown from its high-water mark —
+        the same number the kill switch compares against its threshold. Exists
+        so the drawdown ladder (ruling 2026-09-02) reads the gate's truth
+        instead of keeping a second book; nothing about the switch changes."""
+        return self._state.drawdown()
+
     def sleeve_nav(self, sleeve: Sleeve) -> Decimal:
         """Capital notionally allotted to a sleeve: target weight x NAV.
 

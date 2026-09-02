@@ -408,6 +408,11 @@ class AttributionReport:
     #: and how many days of it this window actually bought. Rendered so the feed
     #: total is auditable rather than asserted (2026-08-28).
     feed_cost_detail: tuple[str, ...] = ()
+    #: Dollars the post-table risk scalars (drawdown ladder x regime, rulings
+    #: 2026-09-01/02) shaved off judged entries this window, and how many
+    #: entries they touched. The weekly forgone-size line.
+    scalar_forgone: Decimal = ZERO
+    scalar_scaled_entries: int = 0
 
     @property
     def total_pnl(self) -> Decimal:
@@ -508,6 +513,18 @@ class AttributionReport:
                     f"  {', '.join(self.mechanical.overlap_symbols)}",
                 ]
             )
+        lines.extend(
+            [
+                "",
+                "Risk scalars (drawdown ladder x regime, rulings 2026-09-01/02): "
+                + (
+                    f"forgone ${self.scalar_forgone:.2f} across "
+                    f"{self.scalar_scaled_entries} scaled judged entries this window"
+                    if self.scalar_scaled_entries
+                    else "no judged entry was scaled this window (x1.0 throughout)"
+                ),
+            ]
+        )
         if self.feed_cost_detail:
             lines.extend(
                 [
@@ -737,6 +754,20 @@ def build_attribution(
                 (f.filled_value for f in trail.fills if f.side == "buy"), ZERO
             )
 
+    # Risk-scalar forgone size (rulings 2026-09-01/02): every judged proposal a
+    # post-table scalar shrank carries the table's own dollars, and the weekly
+    # line prices the difference. Judged trails only — the scalars never touch
+    # the mechanical arm or the sweep by construction.
+    scalar_forgone = ZERO
+    scalar_scaled_entries = 0
+    for trail in trails:
+        if trail.decision.recorded_at < window_start:
+            continue
+        sizing = trail.decision.sizing
+        if sizing.table_capital is not None and sizing.table_capital > sizing.capital:
+            scalar_forgone += sizing.table_capital - sizing.capital
+            scalar_scaled_entries += 1
+
     mechanical = None
     windowed = [
         t for t in mechanical_trails if t.decision.recorded_at >= window_start
@@ -853,4 +884,6 @@ def build_attribution(
         mechanical=mechanical,
         cash_management=cash_management,
         feed_cost_detail=feed_cost_detail,
+        scalar_forgone=scalar_forgone,
+        scalar_scaled_entries=scalar_scaled_entries,
     )

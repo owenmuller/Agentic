@@ -69,6 +69,11 @@ class SizedProposal:
     capital: Decimal
     rationale: str
     strategy: Optional[EventStrategy] = None
+    #: What the confidence table alone proposed, set ONLY when a post-table risk
+    #: scalar (drawdown ladder / regime, rulings 2026-09-01/02) shrank this
+    #: proposal — ``table_capital - capital`` is the forgone size attribution
+    #: prices weekly. None means no scalar touched it.
+    table_capital: Optional[Decimal] = None
 
     @property
     def is_tradeable(self) -> bool:

@@ -2029,6 +2029,45 @@ Production two-stage ResearchPass (verify stage forced) on a representative
 priced-in to the 2–5 day transaction lag and explicitly distinguished it from
 the 45-day convention; long / 61 / weeks, CFO-credibility reasoning. $0.325.
 
+## Methodology rulings, build 2 of 4: drawdown ladder + regime scalar (2026-09-02)
+
+Built at ONE composition point as ruled: `size x regime x drawdown`, both ≤1.0
+BY VALIDATION (`orchestrator/scalars.py`, config `orchestrator.yaml
+risk_scalars`), applied by the pipeline to every judged proposal after the
+confidence table — including the option→equity fallback re-sizings, which
+reach the table through the same two helpers so no path skips the scalars.
+
+- **Ladder:** 1.0 / 0.75 @ ≥4% / 0.5 @ ≥8%, inclusive toward less risk,
+  reading the gate's own `drawdown()` through a NEW read-only accessor (the
+  kill switch's number; the switch's code untouched, the ladder's last rung
+  deliberately below it). Stateless — recovery restores the tick it happens.
+- **Regime:** last VIX close from CBOE's free daily CSV
+  (`execution/vix.py CboeVixSource` — execution, not orchestrator, because
+  orchestrator stays offline per topology; the loop's scalars get it as an
+  injected callable, tests inject nothing and get x1.0 regime with the ladder
+  still armed). Rungs 0.75 @ VIX ≥25, 0.5 @ ≥35, inclusive. One fetch per UTC
+  day. **Missing/stale (>7d) data runs x1.0 and is LOGGED** — a CDN outage
+  must not silently halve the book; the choice is stated here for the human.
+  Live close at build time: 16.34 (2026-09-01) → regime x1.0 today.
+- **New entries only, by construction:** held positions, exits, the mechanical
+  arm (never passes through pipeline sizing) and the cash sweep untouched.
+  LLM-unreachable — no prompt or schema mentions any of it.
+- **Attribution:** scaled proposals carry `table_capital` on the
+  SizingSnapshot; the weekly report renders ONE forgone-size line (dollars
+  shaved, entries touched — or "x1.0 throughout").
+
+### SPY put overlay — PASSED, the four reasons (ruling 2026-09-02)
+
+1. Systematic put buying pays the variance risk premium (~−1 to −2%/yr
+   expected); funding it from SGOV yield changes the mental account, not the EV.
+2. The puts would live inside the 20% aggregate premium cap, directly
+   displacing alpha capacity.
+3. The ladder + kill switch already bound the path risk the puts would hedge,
+   at zero premium.
+4. In the vol regimes where the hedge matters its cost triples and the yield
+   no longer covers it. Revisit only if the account grows to where a 12%
+   drawdown is money that matters beyond the experiment.
+
 ### #4 PEAD — DEFERRED (design recorded for its return)
 
 Deferred to the earnings shadow's first-season verdict, so earnings gets ONE

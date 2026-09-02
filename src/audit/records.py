@@ -331,6 +331,10 @@ class SizingSnapshot(_Record):
     capital: Decimal
     rationale: str
     strategy: Optional[str] = None
+    #: The confidence table's own dollars, present only when a post-table risk
+    #: scalar shrank the proposal (rulings 2026-09-01/02) — the weekly
+    #: forgone-size line sums ``table_capital - capital`` over these.
+    table_capital: Optional[Decimal] = None
 
     @classmethod
     def of(cls, proposal: SizedProposal) -> "SizingSnapshot":
@@ -343,6 +347,7 @@ class SizingSnapshot(_Record):
             capital=proposal.capital,
             rationale=proposal.rationale,
             strategy=str(proposal.strategy) if proposal.strategy else None,
+            table_capital=proposal.table_capital,
         )
 
 
