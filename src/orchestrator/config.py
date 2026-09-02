@@ -7,6 +7,7 @@ can spend one.
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
@@ -123,6 +124,24 @@ class RatchetConfig(BaseModel):
     trail_fraction: Decimal = Field(gt=Decimal("0"), lt=Decimal("1"))
 
 
+class ReviewCloseProbation(BaseModel):
+    """Exit-authority probation (human ruling 2026-09-02, from live LLM-agent
+    evidence): for ``days`` from ``start_date``, a review CLOSE verdict on a
+    position that is BOTH profitable AND validity-intact is SHADOWED — written
+    to the audit log with the mark, never executed — while stops, ratchet,
+    leash, and invalidation retain full authority, and closes on invalidated or
+    displaced theses still execute. The forward engine grades every shadow; the
+    grant/deny ruling at the end of the window reads that evidence (n≥20)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    start_date: date
+    days: int = Field(default=90, gt=0)
+
+    def active_on(self, day: date) -> bool:
+        return self.start_date <= day < self.start_date + timedelta(days=self.days)
+
+
 class ExitsConfig(BaseModel):
     """Deterministic guardrails plus the thesis-review cadence."""
 
@@ -139,6 +158,8 @@ class ExitsConfig(BaseModel):
     thesis_review_interval_hours: int = Field(gt=0)
     review_trigger: ReviewTriggerConfig
     ratchet: RatchetConfig
+    #: None = no probation (pre-ruling behavior: every close verdict executes).
+    review_close_probation: Optional[ReviewCloseProbation] = None
 
     @model_validator(mode="after")
     def _fallbacks_sit_inside_their_bounds(self) -> "ExitsConfig":
@@ -227,6 +248,25 @@ class RegimeScalarConfig(BaseModel):
                     "regime rungs must rise in VIX and never rise in multiplier"
                 )
         return self
+
+
+class BoundaryConfirmationConfig(BaseModel):
+    """Boundary confirmation (human ruling 2026-09-02, built after the
+    diagnosis ruled the sizing-floor band stochastic: five identical-input
+    replays of the same case spanned long/38-54 and no_position/30-72).
+
+    A tradeable entry verdict whose confidence lands in [floor, floor + band)
+    must be CONFIRMED by a second independent pass — same tier, fresh context —
+    that also returns the same direction at or above the floor; the LOWER of
+    the two confidences is the one that sizes. Disagreement is a typed
+    rejection, ``unconfirmed_boundary``. Only floor-band candidates pay the
+    extra pass; a verdict comfortably above the band sizes exactly as before.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = True
+    band_width: int = Field(default=10, gt=0)
 
 
 class RewardRiskConfig(BaseModel):
@@ -378,6 +418,11 @@ class OrchestratorConfig(BaseModel):
     #: The reward:risk gate (ruling 2026-09-02): veto-only, can never widen risk,
     #: so absent-section defaults are safe.
     reward_risk: RewardRiskConfig = Field(default_factory=RewardRiskConfig)
+    #: Boundary confirmation (ruling 2026-09-02): a second pass can only block
+    #: or shrink a floor-band entry, never enlarge one — defaults are safe.
+    boundary_confirmation: BoundaryConfirmationConfig = Field(
+        default_factory=BoundaryConfirmationConfig
+    )
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "OrchestratorConfig":

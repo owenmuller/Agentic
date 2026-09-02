@@ -195,6 +195,22 @@ def snapshot_amount_range(snapshot: "SignalSnapshot") -> str:
     return match.group(1) if match else ""
 
 
+_CONTENT_STAKE = re.compile(r"^stake:\s*([\d.]+)% of class", re.MULTILINE)
+
+
+def snapshot_stake_percent(snapshot: "SignalSnapshot") -> Optional[Decimal]:
+    """A 13D's rendered stake percent (bearish-groundwork ruling 2026-09-02):
+    successive filings by the same activist on the same name turn this into
+    stake-INCREASE vs stake-REDUCTION events the forward report can grade."""
+    match = _CONTENT_STAKE.search(snapshot.content)
+    if not match:
+        return None
+    try:
+        return Decimal(match.group(1))
+    except Exception:  # noqa: BLE001 - unparseable is absent, never zero
+        return None
+
+
 def long_term_boundary(acquired: date) -> date:
     """The first sale date that gets long-term capital-gains treatment.
 
@@ -408,6 +424,7 @@ class RecordKind(StrEnum):
     THESIS_REVIEW = "thesis_review"
     EXIT = "exit"
     FILER_EVENT = "filer_event"
+    SHADOW_CLOSE = "shadow_close"
 
 
 class DecisionRecord(_Record):
@@ -737,6 +754,30 @@ class FilerEventRecord(_Record):
     detail: str = ""
 
 
+class ShadowCloseRecord(_Record):
+    """A review CLOSE verdict that was recorded instead of executed
+    (exit-authority probation, human ruling 2026-09-02, 90 days from that date).
+
+    Scope: verdicts on positions that were BOTH profitable at the mark AND
+    validity-intact — the class of close the TradeRank evidence says LLM agents
+    over-fire. Stops, ratchet, leash, and invalidation retained full authority
+    throughout; a close on an invalidated or displaced thesis still executed.
+    The forward engine grades each shadow (what did the price do after the
+    model said sell?) and the 90-day grant/deny ruling reads that evidence.
+    """
+
+    kind: Literal[RecordKind.SHADOW_CLOSE] = RecordKind.SHADOW_CLOSE
+    decision_id: str
+    recorded_at: datetime
+    symbol: str
+    #: The mark the verdict was formed at, and the entry it was profitable over.
+    mark: Decimal
+    entry_price: Decimal
+    days_held: int
+    validity: str
+    assessment: str
+
+
 AuditRecord = Annotated[
     Union[
         DecisionRecord,
@@ -747,6 +788,7 @@ AuditRecord = Annotated[
         ThesisReviewRecord,
         ExitRecord,
         FilerEventRecord,
+        ShadowCloseRecord,
     ],
     Field(discriminator="kind"),
 ]

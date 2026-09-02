@@ -82,7 +82,12 @@ from typing import Collection, Iterable, Optional
 from audit.log import AuditLog
 from audit.records import AuditTrail, ExitReason, ReviewOutcome, long_term_boundary
 from execution.base import BrokerAdapter, BrokerError
-from research.exit_review import ExitReview, ExitReviewPass, PositionUnderReview
+from research.exit_review import (
+    ExitReview,
+    ExitReviewPass,
+    PositionUnderReview,
+    ThesisValidity,
+)
 from risk_gate.gate import ApprovedOrder, RiskGate
 from risk_gate.rejections import Rejection, RejectionCode
 from risk_gate.schema import (
@@ -960,6 +965,41 @@ class ExitEngine:
             if self._cost_sink is not None:
                 self._cost_sink(usage.cost_usd if usage else None)
             if not outcome.should_close:
+                continue
+
+            # Exit-authority probation (ruling 2026-09-02): a close verdict on a
+            # position that is BOTH profitable AND validity-intact is recorded
+            # and NOT executed while the probation window runs — the class of
+            # close the live-agent evidence says over-fires. Everything else
+            # about this position is untouched: the stops, ratchet, leash, and
+            # invalidation all retain authority, and a close on an invalidated
+            # or displaced thesis falls through to execute exactly as before.
+            probation = self._config.review_close_probation
+            if (
+                probation is not None
+                and probation.active_on(moment.date())
+                and outcome.validity is ThesisValidity.INTACT
+                and not outcome.invalidation_triggered
+                and price is not None
+                and price > position.entry_price
+            ):
+                self._audit.record_shadow_close(
+                    position.decision_id,
+                    symbol=position.symbol,
+                    mark=price,
+                    entry_price=position.entry_price,
+                    days_held=position.days_held(moment),
+                    validity=str(outcome.validity),
+                    assessment=outcome.assessment,
+                )
+                logger.info(
+                    "SHADOWED review close of %s (profitable + intact, probation "
+                    "to %s): recorded at %s, not executed; guardrails retain "
+                    "authority",
+                    position.symbol,
+                    probation.start_date + timedelta(days=probation.days),
+                    price,
+                )
                 continue
 
             # Durable intent first, attempt second: if the order cannot go out right

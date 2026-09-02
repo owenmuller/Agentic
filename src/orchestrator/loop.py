@@ -274,8 +274,12 @@ class TradingLoop:
                     reason, rule = verdict
                     # Form 4 singles get their own code (ruling 2026-09-02): the
                     # forward report compares them against clustered entries to
-                    # test the cluster rule itself.
-                    code = "no_cluster" if rule == "cluster" else "pre_filter"
+                    # test the cluster rule itself. Bearish measurement rows
+                    # (sell clusters) likewise carry their own code.
+                    code = {
+                        "cluster": "no_cluster",
+                        "measurement": "bearish_measurement",
+                    }.get(rule, "pre_filter")
                     if (
                         rule == "report_staleness"
                         and signal.external_id

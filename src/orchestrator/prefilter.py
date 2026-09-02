@@ -238,6 +238,13 @@ class ResearchPreFilter:
     ) -> Optional[tuple[str, str]]:
         meta = signal.metadata
 
+        if meta.get("measurement_only") == "true":
+            return (
+                "measurement-only row (bearish groundwork, ruling 2026-09-02): "
+                "recorded for the forward engine to grade, never researched, "
+                "never traded — no bearish path exists"
+            ), "measurement"
+
         if rules.require_cluster and meta.get("cluster") != "true":
             detail = meta.get("cluster_detail") or "no qualifying cluster"
             return (

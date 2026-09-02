@@ -41,6 +41,7 @@ from audit.records import (
     long_term_boundary,
     ResearchSnapshot,
     ReviewOutcome,
+    ShadowCloseRecord,
     SignalSnapshot,
     SizingSnapshot,
     StageRejectionRecord,
@@ -504,6 +505,48 @@ class AuditLog:
             if isinstance(record, FilerEventRecord) and record.disclosure_external_id:
                 keys.add((record.decision_id, record.disclosure_external_id))
         return keys
+
+    def record_shadow_close(
+        self,
+        decision_id: str,
+        *,
+        symbol: str,
+        mark: Decimal,
+        entry_price: Decimal,
+        days_held: int,
+        validity: str,
+        assessment: str,
+    ) -> ShadowCloseRecord:
+        """Record a review CLOSE verdict that probation shadowed instead of
+        executing (ruling 2026-09-02). Validated like a review — a shadow
+        against a decision that never held a position is a phantom."""
+        decision = self._decision(decision_id)
+        if not decision.was_approved:
+            raise AuditLogError(
+                f"{decision_id} was rejected and never held a position for a "
+                f"shadow close to land on"
+            )
+        record = ShadowCloseRecord(
+            decision_id=decision_id,
+            recorded_at=self._clock(),
+            symbol=symbol,
+            mark=mark,
+            entry_price=entry_price,
+            days_held=days_held,
+            validity=validity,
+            assessment=assessment[:300],
+        )
+        self._append(record)
+        return record
+
+    def shadow_closes(self) -> list[ShadowCloseRecord]:
+        """Every shadowed review close, in write order — the probation evidence
+        the 90-day grant/deny ruling reads."""
+        return [
+            record
+            for record in self.records()
+            if isinstance(record, ShadowCloseRecord)
+        ]
 
     def triggered_reviews_on(self, day) -> int:
         """Out-of-cadence reviews recorded on a UTC day (ruling 2026-08-31).

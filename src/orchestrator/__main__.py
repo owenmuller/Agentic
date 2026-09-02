@@ -219,6 +219,57 @@ def _attribution_text(checks) -> str:
     except Exception as error:  # noqa: BLE001 - a report without alpha beats no report
         print(f"benchmark fetch failed: {error}", file=sys.stderr)
 
+    # Directional-bias measurement (ruling 2026-09-02): per-position beta from
+    # ~200 calendar days of daily closes vs SPY, value-weighted into a book
+    # beta. Open positions are derived from the trails (approved, filled, no
+    # outcome); anything unmeasurable renders n/a — absent, never guessed.
+    position_betas: list[tuple] = []
+    if bars is not None:
+        try:
+            from audit.attribution import beta_from_closes
+
+            def closes_of(symbol):
+                out = []
+                for bar in bars.bars(
+                    symbol, generated_at - timedelta(days=200), generated_at
+                ):
+                    day = str(bar.get("t", ""))[:10]
+                    try:
+                        close = Decimal(str(bar.get("c")))
+                    except (InvalidOperation, ValueError, TypeError):
+                        continue
+                    if day and close > 0:
+                        out.append((datetime.fromisoformat(day).date(), close))
+                return out
+
+            held: dict[str, Decimal] = {}
+            for trail in checks.audit.trails():
+                if trail.outcome is not None or not trail.fills:
+                    continue
+                symbol = str((trail.decision.gate.order or {}).get("symbol") or "")
+                if not symbol or "/" in symbol or len(symbol) > 6:
+                    continue  # options carry OCC symbols; beta is an equity fact
+                units = sum(
+                    (
+                        f.filled_quantity if f.side == "buy" else -f.filled_quantity
+                        for f in trail.fills
+                    ),
+                    Decimal("0"),
+                )
+                if units > 0:
+                    held[symbol.upper()] = held.get(symbol.upper(), Decimal("0")) + units
+            if held:
+                spy_closes = closes_of("SPY")
+                for symbol in sorted(held):
+                    asset_closes = closes_of(symbol)
+                    beta = beta_from_closes(asset_closes, spy_closes)
+                    last_close = asset_closes[-1][1] if asset_closes else Decimal("0")
+                    position_betas.append(
+                        (symbol, beta, held[symbol] * last_close)
+                    )
+        except Exception as error:  # noqa: BLE001 - measurement, never blocking
+            print(f"beta measurement unavailable: {error}", file=sys.stderr)
+
     month_start = generated_at.replace(
         day=1, hour=0, minute=0, second=0, microsecond=0
     )
@@ -233,6 +284,7 @@ def _attribution_text(checks) -> str:
         price_on=price_on,
         # Execution fidelity (ruling 2026-09-02): paper P&L raw AND haircut.
         haircut_bps=checks.orchestrator_config.slippage_haircut_bps,
+        position_betas=tuple(position_betas),
     )
     sections.append(report.render())
 
@@ -254,7 +306,14 @@ def _attribution_text(checks) -> str:
                 checks.audit.path.parent / "forward_returns.jsonl",
                 clock=checks.clock,
             )
-            rows = engine.rows_for(wanted_pairs(entries))
+            # Shadowed review closes (probation, 2026-09-02) get forward rows
+            # too: the counterfactual is what the price did AFTER the verdict.
+            shadows = tuple(checks.audit.shadow_closes())
+            pairs = wanted_pairs(entries) | {
+                (shadow.symbol.upper(), shadow.recorded_at.date())
+                for shadow in shadows
+            }
+            rows = engine.rows_for(pairs)
             spotlight = tuple(
                 name
                 for klass in checks.signals_config.classes.values()
@@ -262,7 +321,12 @@ def _attribution_text(checks) -> str:
                 for name in source.spotlight_filers
             )
             sections.append(
-                render_forward_report(entries, rows, spotlight_filers=spotlight)
+                render_forward_report(
+                    entries,
+                    rows,
+                    spotlight_filers=spotlight,
+                    shadow_closes=shadows,
+                )
             )
         except Exception as error:  # noqa: BLE001 - a report without it beats no report
             sections.append(f"forward returns unavailable: {error}")

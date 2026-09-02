@@ -201,6 +201,8 @@ class SignalPipeline:
         atr_config: Optional["AtrSizingConfig"] = None,
         spread_pct: Optional[Callable[[str], Optional[Decimal]]] = None,
         reward_risk: Optional["RewardRiskConfig"] = None,
+        boundary: Optional["BoundaryConfirmationConfig"] = None,
+        sizing_floor: int = 50,
     ) -> None:
         self._research = research
         self._triage = triage
@@ -219,6 +221,10 @@ class SignalPipeline:
         self._spread_pct = spread_pct
         #: The reward:risk gate (ruling 2026-09-02): veto-only, equity longs.
         self._rr_config = reward_risk
+        #: Boundary confirmation (ruling 2026-09-02): the sizing floor's noise
+        #: band demands a second independent pass; the lower confidence sizes.
+        self._boundary = boundary
+        self._sizing_floor = sizing_floor
         self._gate = gate
         self._adapter = adapter
         self._audit = audit
@@ -361,6 +367,24 @@ class SignalPipeline:
         intends_option = self._option_selector is not None and (
             wants_puts or (report.direction is Direction.LONG and report.has_catalyst)
         )
+        # 2a-0. Boundary confirmation (ruling 2026-09-02, post-diagnosis): a
+        # tradeable verdict in the sizing floor's noise band must be confirmed
+        # by a second independent pass, and the LOWER confidence sizes.
+        if not report.recommends_no_position:
+            confirmed, failure = self._confirm_boundary(signal, report)
+            if confirmed is None:
+                return self._stopped(
+                    decision_id,
+                    signal,
+                    RejectedStage.SIZING,
+                    "unconfirmed_boundary",
+                    failure or "boundary confirmation failed",
+                    report=report,
+                    usage=usage,
+                    screen_report=screen_report,
+                    screen_usage=screen_usage,
+                )
+            report = confirmed
         # 2a. The reward:risk gate (ruling 2026-09-02): equity longs must clear
         # (target - entry) / (entry x stop) >= min_ratio before a dollar is
         # sized. Veto-only — the model's target claim can block an entry, never
@@ -663,6 +687,54 @@ class SignalPipeline:
             signal, report, proposal,
             expression=_fallback_snapshot(fallback, chosen="equity"),
         )
+
+    def _confirm_boundary(
+        self, signal: Signal, report: ResearchReport
+    ) -> tuple[Optional[ResearchReport], Optional[str]]:
+        """Boundary confirmation (ruling 2026-09-02, diagnosis: five
+        identical-input replays of a floor-band case spanned long/38-54 and
+        no_position/30-72 — the band admits stochastic noise).
+
+        A tradeable verdict with confidence in [floor, floor + band) runs a
+        SECOND independent pass, same tier and fresh context. Confirmed = same
+        direction at or above the floor; the LOWER-confidence report is the one
+        that sizes (the second pass can only block or shrink, never enlarge).
+        Returns (report, None) to proceed or (None, why) for the typed
+        ``unconfirmed_boundary`` rejection. A second pass that errors outright
+        does not confirm — an unconfirmable boundary verdict is not sized
+        (Constraint #6).
+        """
+        if self._boundary is None or not self._boundary.enabled:
+            return report, None
+        floor = self._sizing_floor
+        if not floor <= report.confidence < floor + self._boundary.band_width:
+            return report, None
+        logger.info(
+            "boundary confirmation on %s: %s/%d sits in the floor band "
+            "[%d, %d); buying a second independent pass",
+            signal.signal_id,
+            report.direction,
+            report.confidence,
+            floor,
+            floor + self._boundary.band_width,
+        )
+        second = self._research.run(signal)
+        if not isinstance(second, ResearchReport):
+            return None, (
+                f"boundary verdict {report.direction}/{report.confidence} could "
+                f"not be confirmed: the second pass failed "
+                f"({getattr(second, 'code', 'error')}) — an unconfirmable "
+                f"floor-band verdict is not sized (ruling 2026-09-02)"
+            )
+        if second.direction is not report.direction or second.confidence < floor:
+            return None, (
+                f"boundary verdict NOT confirmed: first pass "
+                f"{report.direction}/{report.confidence}, second independent "
+                f"pass {second.direction}/{second.confidence} — the floor band "
+                f"is stochastic there, and a verdict that does not replicate "
+                f"is not sized (ruling 2026-09-02)"
+            )
+        return (second if second.confidence < report.confidence else report), None
 
     def _reward_risk_reason(self, report) -> Optional[str]:
         """Why this equity long fails the reward:risk gate, or None to proceed.

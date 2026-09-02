@@ -100,6 +100,20 @@ exits:
     arm_at_gain: 0.20
     trail_fraction: 0.10
 
+  # EXIT-AUTHORITY PROBATION (human ruling 2026-09-02, from live LLM-agent
+  # evidence that review layers over-fire profit-taking closes). For 90 days a
+  # review CLOSE verdict on a position that is BOTH profitable AND
+  # validity-intact is SHADOWED - written to the audit log (ShadowCloseRecord)
+  # with the mark, never executed. Stops, ratchet, leash, and invalidation
+  # retain FULL authority throughout, and a close on an invalidated or
+  # displaced thesis still executes. The forward engine grades every shadow
+  # (what did the price do after the model said sell?); the grant/deny ruling
+  # at the window's end reads that evidence with n>=20. Delete this block to
+  # restore full close authority - which is itself the ruling this measures.
+  review_close_probation:
+    start_date: 2026-09-02
+    days: 90
+
 # SIGNAL CONVERGENCE (ruling 2026-09-01). A registry of active signals per symbol
 # over a rolling window, feeding two things and only two things:
 #
@@ -180,6 +194,20 @@ risk_scalars:
       - { vix_at_or_above: 25, multiplier: 0.75 }
       - { vix_at_or_above: 35, multiplier: 0.5 }
     max_age_days: 7
+
+# BOUNDARY CONFIRMATION (ruling 2026-09-02). Diagnosed live before building:
+# five identical-input replays of the taken INTC boundary entry spanned
+# long/38-54 and no_position/30-72 - the sizing floor's band admits stochastic
+# noise, so a verdict there must REPLICATE before it sizes. A tradeable entry
+# verdict with confidence in [floor, floor + band_width) buys ONE second
+# independent pass (same tier, fresh context); confirmed = same direction at or
+# above the floor, and the LOWER of the two confidences sizes. Disagreement or
+# a failed second pass = typed rejection unconfirmed_boundary (Constraint #6:
+# a verdict that does not replicate is not sized). Only floor-band candidates
+# pay the extra pass. The floor itself comes from risk_limits.yaml sizing.
+boundary_confirmation:
+  enabled: true
+  band_width: 10
 
 # REWARD:RISK GATE (ruling 2026-09-02, from live LLM-agent trading evidence:
 # expectancy discipline beats verdict accuracy). A judged EQUITY LONG must clear

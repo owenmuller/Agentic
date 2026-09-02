@@ -312,6 +312,11 @@ def orchestrator_config(**overrides) -> OrchestratorConfig:
                 "max_per_day": 5,
             },
             "ratchet": {"arm_at_gain": "0.20", "trail_fraction": "0.10"},
+            # Probation mirrors the shipped yaml (ruling 2026-09-02). The
+            # harness clock defaults to 2026-08-17, BEFORE the window, so
+            # every pre-ruling test behaves exactly as it always did; tests
+            # that set a clock inside the window exercise the shadow path.
+            "review_close_probation": {"start_date": "2026-09-02", "days": 90},
         },
         "market_data": {"feed": "iex", "max_quote_age_seconds": 300},
     }

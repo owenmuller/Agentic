@@ -488,6 +488,10 @@ def start(
         spread_pct=getattr(prices, "spread_pct", None),
         # The reward:risk gate (ruling 2026-09-02): veto-only, equity longs.
         reward_risk=checks.orchestrator_config.reward_risk,
+        # Boundary confirmation (ruling 2026-09-02): the floor band is
+        # stochastic (diagnosed live); a second pass confirms or blocks.
+        boundary=checks.orchestrator_config.boundary_confirmation,
+        sizing_floor=checks.limits.sizing.no_trade_below,
         options_chain=options_chain,
         option_selector=option_selector,
         clock=checks.clock,

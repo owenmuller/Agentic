@@ -123,6 +123,12 @@ class _ParsedFiling:
     purchase_date: Optional[str]
     shares: float
     amount: float
+    #: The SELL side (bearish groundwork, ruling 2026-09-02): code S open-market
+    #: sales, summed the same way. Parsed for measurement only — no bearish
+    #: trading path exists.
+    sale_date: Optional[str] = None
+    sale_shares: float = 0.0
+    sale_amount: float = 0.0
 
 
 def parse_ownership_document(xml_text: str) -> Optional[_ParsedFiling]:
@@ -168,12 +174,17 @@ def parse_ownership_document(xml_text: str) -> Optional[_ParsedFiling]:
     shares_total = 0.0
     amount_total = 0.0
     earliest: Optional[str] = None
+    sale_shares_total = 0.0
+    sale_amount_total = 0.0
+    earliest_sale: Optional[str] = None
     for txn in root.iter():
         if _local(txn.tag) != "nonDerivativeTransaction":
             continue
         code = _text(_find(txn, "transactionCode"))
         acquired = _text(_find(txn, "transactionAcquiredDisposedCode"))
-        if code != "P" or acquired != "A":
+        is_purchase = code == "P" and acquired == "A"
+        is_sale = code == "S" and acquired == "D"
+        if not (is_purchase or is_sale):
             continue
         try:
             shares = float(_text(_find(txn, "transactionShares")) or 0)
@@ -183,11 +194,17 @@ def parse_ownership_document(xml_text: str) -> Optional[_ParsedFiling]:
             price = float(_text(_find(txn, "transactionPricePerShare")) or 0)
         except ValueError:
             price = 0.0  # footnoted price: contributes zero, fewer signals
-        shares_total += shares
-        amount_total += shares * price
         when = _text(_find(txn, "transactionDate"))
-        if when and (earliest is None or when < earliest):
-            earliest = when
+        if is_purchase:
+            shares_total += shares
+            amount_total += shares * price
+            if when and (earliest is None or when < earliest):
+                earliest = when
+        else:
+            sale_shares_total += shares
+            sale_amount_total += shares * price
+            if when and (earliest_sale is None or when < earliest_sale):
+                earliest_sale = when
 
     return _ParsedFiling(
         issuer_cik=issuer_cik,
@@ -200,6 +217,9 @@ def parse_ownership_document(xml_text: str) -> Optional[_ParsedFiling]:
         purchase_date=earliest,
         shares=shares_total,
         amount=amount_total,
+        sale_date=earliest_sale,
+        sale_shares=sale_shares_total,
+        sale_amount=sale_amount_total,
     )
 
 
@@ -263,6 +283,10 @@ class Form4InsiderFetcher(EdgarFetcherBase):
         self._seen: dict[str, str] = {}
         #: qualifying opportunistic purchases inside the rolling window.
         self._window: list[QualifyingPurchase] = []
+        #: the mirror image (bearish groundwork, ruling 2026-09-02): qualifying
+        #: opportunistic SALES. Sell clusters are emitted MEASUREMENT-ONLY —
+        #: recorded, never researched, never traded.
+        self._sell_window: list[QualifyingPurchase] = []
         #: owner_cik -> {"months": [...], "fetched": iso date}; misses default
         #: opportunistic (ruling 2026-09-02).
         self._routine: dict[str, dict[str, Any]] = {}
@@ -390,12 +414,18 @@ class Form4InsiderFetcher(EdgarFetcherBase):
         if parsed is None:
             tally["unparseable"] += 1
             return None
-        if parsed.purchase_date is None or parsed.shares <= 0:
-            tally["no_open_market_purchase"] += 1
-            return None
         if parsed.plan:
             tally["plan_10b5_1"] += 1
             return None
+        if parsed.purchase_date is None or parsed.shares <= 0:
+            # No open-market purchase; the SELL side may still matter — bearish
+            # groundwork (ruling 2026-09-02), measurement-only.
+            item = self._process_sale(
+                accession, file_date, parsed, user_agent, today, tally
+            )
+            if item is None:
+                tally["no_open_market_purchase"] += 1
+            return item
         if parsed.amount < self._min_insider_usd:
             tally["below_insider_floor"] += 1
             return None
@@ -435,6 +465,97 @@ class Form4InsiderFetcher(EdgarFetcherBase):
         tally["cluster" if clustered else "single"] += 1
         return self._item(purchase, cluster, clustered, aggregate, insiders)
 
+    def _process_sale(
+        self,
+        accession: str,
+        file_date: str,
+        parsed: "_ParsedFiling",
+        user_agent: str,
+        today: date,
+        tally: Counter,
+    ) -> Optional[RawItem]:
+        """The mirror recipe on the SELL side (bearish groundwork, 2026-09-02):
+        same floors, same window, same routine exclusion — but a completed sell
+        cluster is emitted MEASUREMENT-ONLY (the prefilter records it, research
+        never sees it, nothing trades). Sell singles are not emitted at all."""
+        if (
+            parsed.sale_date is None
+            or parsed.sale_shares <= 0
+            or parsed.sale_amount < self._min_insider_usd
+            or not parsed.symbol
+        ):
+            return None
+        if self._is_routine_month_for(parsed.owner_cik, parsed.sale_date, user_agent):
+            tally["routine_sale"] += 1
+            return None
+        sale = QualifyingPurchase(
+            accession=accession,
+            file_date=file_date or today.isoformat(),
+            issuer_cik=parsed.issuer_cik,
+            issuer_name=parsed.issuer_name,
+            symbol=parsed.symbol,
+            owner_cik=parsed.owner_cik,
+            owner_name=parsed.owner_name,
+            roles=parsed.roles,
+            transaction_date=parsed.sale_date,
+            shares=parsed.sale_shares,
+            amount=parsed.sale_amount,
+        )
+        self._sell_window.append(sale)
+        cluster = [
+            event
+            for event in self._sell_window
+            if event.issuer_cik == sale.issuer_cik
+            and self._within_window(event, sale, today)
+        ]
+        insiders = {event.owner_cik for event in cluster}
+        aggregate = sum(event.amount for event in cluster)
+        if (
+            len(insiders) < self._min_insiders
+            or aggregate < self._min_cluster_usd
+        ):
+            tally["sell_single"] += 1
+            return None
+        tally["sell_cluster"] += 1
+        ordered = sorted(cluster, key=lambda event: event.transaction_date)
+        lines = [
+            "Form 4 insider SELL cluster — BEARISH MEASUREMENT ONLY (ruling "
+            "2026-09-02: recorded for the forward engine, never researched, "
+            "never traded; no bearish path exists)",
+            f"issuer: {sale.issuer_name} ({sale.symbol})",
+            f"{len(insiders)} distinct insiders made open-market sales within "
+            f"the {self._window_days}-day window; aggregate ${aggregate:,.0f}",
+        ]
+        for event in ordered:
+            roles = f" [{event.roles}]" if event.roles else ""
+            lines.append(
+                f"  - {event.owner_name}{roles}: {event.shares:,.0f} shares, "
+                f"${event.amount:,.0f}, traded {event.transaction_date}, "
+                f"filed {event.file_date}"
+            )
+        fields = {
+            "form": "4",
+            "accession": sale.accession,
+            "ticker": sale.symbol,
+            "issuer": sale.issuer_name,
+            "issuer_cik": sale.issuer_cik,
+            "transaction": "Sale",
+            "report_date": sale.file_date,
+            "transaction_date": ordered[0].transaction_date,
+            "amount_range": f"${aggregate:,.0f}",
+            "cluster": "true",
+            "cluster_insiders": str(len(insiders)),
+            "filer": "; ".join(sorted({event.owner_name for event in cluster})),
+            "measurement_only": "true",
+        }
+        published = self._parse_date(sale.file_date) or self._clock()
+        return RawItem(
+            external_id=sale.accession,
+            content="\n".join(lines),
+            published_at=published,
+            fields=fields,
+        )
+
     def _within_window(
         self, event: QualifyingPurchase, anchor: QualifyingPurchase, today: date
     ) -> bool:
@@ -467,14 +588,21 @@ class Form4InsiderFetcher(EdgarFetcherBase):
     # -- routine vs opportunistic ---------------------------------------------------
 
     def _is_routine(self, parsed: _ParsedFiling, user_agent: str) -> bool:
-        cached = self._routine.get(parsed.owner_cik)
+        return self._is_routine_month_for(
+            parsed.owner_cik, parsed.purchase_date or "", user_agent
+        )
+
+    def _is_routine_month_for(
+        self, owner_cik: str, transaction_date: str, user_agent: str
+    ) -> bool:
+        cached = self._routine.get(owner_cik)
         if cached is None:
-            cached = self._fetch_filing_months(parsed.owner_cik, user_agent)
-            self._routine[parsed.owner_cik] = cached
+            cached = self._fetch_filing_months(owner_cik, user_agent)
+            self._routine[owner_cik] = cached
         months = set(cached.get("months", ()))
         if not months:
             return False  # unknown history defaults opportunistic (ruling)
-        return is_routine_month(months, (parsed.purchase_date or "")[:7])
+        return is_routine_month(months, transaction_date[:7])
 
     def _fetch_filing_months(self, owner_cik: str, user_agent: str) -> dict:
         """The owner's Form 4 filing months from their submissions index. One
@@ -586,15 +714,20 @@ class Form4InsiderFetcher(EdgarFetcherBase):
 
     def _prune(self, today: date) -> None:
         window_floor = today - timedelta(days=self._window_days)
-        kept: list[QualifyingPurchase] = []
-        for event in self._window:
-            try:
-                fresh = date.fromisoformat(event.transaction_date) >= window_floor
-            except ValueError:
-                fresh = False
-            if fresh:
-                kept.append(event)
-        self._window = kept
+
+        def fresh_only(events: list[QualifyingPurchase]) -> list[QualifyingPurchase]:
+            kept: list[QualifyingPurchase] = []
+            for event in events:
+                try:
+                    fresh = date.fromisoformat(event.transaction_date) >= window_floor
+                except ValueError:
+                    fresh = False
+                if fresh:
+                    kept.append(event)
+            return kept
+
+        self._window = fresh_only(self._window)
+        self._sell_window = fresh_only(self._sell_window)
         seen_floor = (
             today
             - timedelta(days=max(self._first_poll_lookback_days, self._lookback_days) + 2)
@@ -614,6 +747,9 @@ class Form4InsiderFetcher(EdgarFetcherBase):
             self._window = [
                 QualifyingPurchase(**event) for event in raw.get("window", ())
             ]
+            self._sell_window = [
+                QualifyingPurchase(**event) for event in raw.get("sell_window", ())
+            ]
             self._routine = dict(raw.get("routine", {}))
             self._backlog = [tuple(entry) for entry in raw.get("backlog", ())]
         except Exception as error:  # noqa: BLE001 - a corrupt file must not stop polling
@@ -632,6 +768,7 @@ class Form4InsiderFetcher(EdgarFetcherBase):
                 "version": 1,
                 "seen": self._seen,
                 "window": [asdict(event) for event in self._window],
+                "sell_window": [asdict(event) for event in self._sell_window],
                 "routine": self._routine,
                 "backlog": [list(entry) for entry in self._backlog],
             }

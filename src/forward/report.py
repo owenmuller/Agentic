@@ -111,6 +111,7 @@ def render_forward_report(
     entries: list[FunnelEntry],
     rows: dict[tuple[str, date], ForwardRow],
     spotlight_filers: tuple[str, ...] = (),
+    shadow_closes: tuple = (),
 ) -> str:
     with_ticker = [e for e in entries if e.primary_ticker is not None]
     with_base = [
@@ -285,6 +286,105 @@ def render_forward_report(
                 ),
             ]
         )
+
+    # Bearish groundwork (ruling 2026-09-02): measurement-only rows, graded
+    # before any bearish trading path exists. For BOTH slices a NEGATIVE excess
+    # means the bearish signal was right.
+    sell_clusters = [
+        e
+        for e in with_ticker
+        if e.source_id == "form4_insiders"
+        and e.code == "bearish_measurement"
+    ]
+    if sell_clusters:
+        lines.extend(
+            [
+                "",
+                "Form 4 insider SELL clusters (measurement only — negative "
+                "excess means the bearish signal was right):",
+                *(
+                    _stat_line(
+                        f"{horizon}d after the cluster",
+                        _excess_values(sell_clusters, rows, horizon),
+                    )
+                    for horizon in (5, 20, 60)
+                ),
+            ]
+        )
+    thirteen_d = sorted(
+        (
+            e
+            for e in with_ticker
+            if e.source_id == "form_13d" and e.stake_percent is not None
+        ),
+        key=lambda e: e.observed_at,
+    )
+    if thirteen_d:
+        last_stake: dict[tuple[str, str], object] = {}
+        reductions = []
+        increases = []
+        for entry in thirteen_d:
+            key = (entry.credibility_key, entry.primary_ticker or "")
+            previous = last_stake.get(key)
+            if previous is not None:
+                (reductions if entry.stake_percent < previous else increases).append(
+                    entry
+                )
+            last_stake[key] = entry.stake_percent
+        if reductions or increases:
+            lines.extend(
+                [
+                    "",
+                    "13D stake changes across successive filings (measurement "
+                    "only — a REDUCTION is the bearish event):",
+                    _stat_line(
+                        f"reductions ({len(reductions)}), {KEY_HORIZON}d",
+                        _excess_values(reductions, rows, KEY_HORIZON),
+                    ),
+                    _stat_line(
+                        f"increases ({len(increases)}), {KEY_HORIZON}d",
+                        _excess_values(increases, rows, KEY_HORIZON),
+                    ),
+                ]
+            )
+
+    # Exit-authority probation (ruling 2026-09-02): every shadowed review close,
+    # graded by what the price did AFTER the model said sell. Negative excess
+    # after a shadow means the close would have been right; positive means
+    # holding through it paid. The 90-day grant/deny ruling reads this section.
+    if shadow_closes:
+        lines.extend(
+            [
+                "",
+                f"Shadowed review closes (exit-authority probation): "
+                f"{len(shadow_closes)} recorded, graded by the move AFTER the "
+                f"close verdict (negative = the close would have been right):",
+            ]
+        )
+        for horizon in (5, 20, 60):
+            values: list[float] = []
+            for shadow in shadow_closes:
+                row = rows.get(
+                    (shadow.symbol.upper(), shadow.recorded_at.date())
+                )
+                if row is None:
+                    continue
+                mark = row.marks.get(horizon)
+                if mark is not None and mark.excess_pct is not None:
+                    values.append(float(mark.excess_pct))
+            lines.append(_stat_line(f"{horizon}d after the verdict", values))
+        for shadow in shadow_closes[-10:]:
+            gain = (
+                (shadow.mark / shadow.entry_price - 1) * 100
+                if shadow.entry_price
+                else None
+            )
+            lines.append(
+                f"  {shadow.recorded_at.date()} {shadow.symbol}: shadowed at "
+                f"{shadow.mark}"
+                + (f" ({gain:+.1f}% over entry)" if gain is not None else "")
+                + f", day {shadow.days_held}"
+            )
 
     lines.extend(
         [

@@ -2365,6 +2365,81 @@ guardrails. AWAITING RULING.
   assessment. Recommendation: build (a)'s measurement groundwork first if any;
   no trading path until forward returns argue for one. AWAITING RULING.
 
+## CORRECTION (2026-09-02): every dollar figure for Opus research spend above is ~3x OVERSTATED
+
+The research.yaml pricing table carried a baseline estimate of $15/$75 per MTok
+for claude-opus-5 from wiring (2026-08-17) until today's correction to the
+published $5/$25. Every per-pass cost in earlier entries that ran on the Opus
+tier — the $0.325 form4 round trip, the $0.146/$0.156 convergence screens, the
+$0.102 reviews, and the cumulative daily research spend the COST tripwire and
+attribution reported — is therefore roughly THREE TIMES the real bill (Sonnet
+and Haiku rows were correct). Actual research spend to date is materially lower
+than recorded. Past audit records are append-only and keep their as-written
+estimates; from today the estimates match the published table, and the console
+bill remains the truth. The error's only operational effect was conservative:
+the $10/day tripwire fired early.
+
+## Exit-authority probation — APPROVED and BUILT (ruling 2026-09-02)
+
+As designed, 90 days from 2026-09-02 (`orchestrator.yaml
+exits.review_close_probation`): a review CLOSE on a position both profitable
+AND validity-intact writes a `ShadowCloseRecord` (mark, entry, days held,
+verdict prose) and does NOT execute; stops/ratchet/leash/invalidation retain
+full authority, and closes on invalidated/displaced theses execute unchanged
+(tested each way, plus outside-window behavior). The forward report gained a
+"Shadowed review closes" section grading each shadow by the move at 5/20/60d
+AFTER the verdict — negative excess means the close would have been right. The
+grant/deny ruling is due ~2026-12-01 with n≥20.
+
+## Directional-bias measurement — APPROVED SCOPE BUILT (ruling 2026-09-02)
+
+- **Beta:** `beta_from_closes` (OLS over date-aligned daily returns, n≥40 or
+  absent) in attribution; the weekly report renders per-position betas, the
+  value-weighted book beta, and a beta-adjusted excess line (return − β×SPY —
+  the honest alpha line for a long-biased book). Options positions excluded
+  (OCC symbols are not equity betas).
+- **Form 4 sell clusters:** the fetcher now parses code-S legs and runs the
+  MIRROR recipe (same floors/window/routine exclusion) into a separate sell
+  window (persisted); a completed sell cluster emits ONE row marked
+  `measurement_only` → prefilter code `bearish_measurement` — recorded, never
+  researched, never traded. Sell singles are not emitted.
+- **13D stake changes:** derived report-side from successive recorded filings
+  per (activist, name) via the new `snapshot_stake_percent` parser — no new
+  state, replay-safe. The forward report slices reductions vs increases.
+- **(c) risk-off puts overlay: DECLINED** — recorded alongside the 2026-09-02
+  put-overlay pass (same four reasons apply; the VIX scalar remains the only
+  risk-off response, and it only shrinks).
+
+## Boundary confirmation — DIAGNOSED STOCHASTIC, BUILT (ruling 2026-09-02)
+
+**Diagnosis first, as ruled:** three additional identical-input replays of the
+INTC golden entry (original observed_at, same content, same config):
+no_position/52, no_position/72, long/38 — with the baseline's no_position/30
+and the originally-taken long/54, five runs of the same inputs span BOTH
+directions and 42 confidence points. Verdict: the sizing-floor band admits
+stochastic noise; the 09-02 replay difference was not the model updating on
+new inputs. ($0.55 of diagnosis spend.)
+
+**Built:** `boundary_confirmation` in orchestrator.yaml (band_width 10; the
+floor itself read from risk_limits sizing at bootstrap). A tradeable entry
+verdict with confidence in [floor, floor+10) buys ONE second independent pass
+(same tier, fresh context, the production `ResearchPass.run`); confirmed =
+same direction at or above the floor, and the LOWER of the two confidences
+sizes — the second pass can only block or shrink, never enlarge. Disagreement
+or a failed second pass = typed rejection `unconfirmed_boundary` (a verdict
+that does not replicate is not sized, Constraint #6). Only floor-band
+candidates pay the extra pass; its cost rides the same dispatched budget pass
+(bounded by the band's rarity — note for the budget ledger).
+
+**Live round trip (§ LLM Request-Path Changes):** first attempted on the INTC
+case itself — five more production first-passes all declined (68/72/32/52/42;
+yet more stochasticity evidence, ten runs of these inputs now on record) so no
+tradeable band verdict arose there. Completed on the form4-intc-cluster case
+with band_width temporarily 25 (a valid config value; production ships 10; the
+request shape is identical at any band): first pass long/62 → the REAL
+`_confirm_boundary` bought the second production pass → CONFIRMED, sizes on
+the lower confidence (62). ~$0.30.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

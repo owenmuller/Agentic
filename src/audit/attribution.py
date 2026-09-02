@@ -29,7 +29,7 @@ never re-derives them from a monthly rate it cannot date.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Mapping, Optional
 
@@ -47,6 +47,44 @@ DEFAULT_WINDOW_DAYS = 90
 #: Below this many resolved outcomes, expectancy renders "insufficient" — the
 #: same discipline as calibration: nobody tunes on four data points.
 EXPECTANCY_MIN_N = 20
+
+#: Overlapping daily returns a beta needs before it is a number rather than
+#: noise (directional-bias ruling 2026-09-02).
+BETA_MIN_OVERLAP = 40
+
+
+def beta_from_closes(
+    asset: list[tuple[date, Decimal]],
+    benchmark: list[tuple[date, Decimal]],
+) -> Optional[Decimal]:
+    """OLS beta of an asset's daily returns against the benchmark's, aligned by
+    date (directional-bias ruling 2026-09-02). Deterministic arithmetic over
+    closes the caller supplies; None below ``BETA_MIN_OVERLAP`` overlapping
+    return observations — absent, never guessed."""
+    asset_by_date = dict(asset)
+    benchmark_by_date = dict(benchmark)
+    shared = sorted(set(asset_by_date) & set(benchmark_by_date))
+    asset_returns: list[Decimal] = []
+    benchmark_returns: list[Decimal] = []
+    for previous, current in zip(shared, shared[1:]):
+        a0, a1 = asset_by_date[previous], asset_by_date[current]
+        b0, b1 = benchmark_by_date[previous], benchmark_by_date[current]
+        if a0 > ZERO and b0 > ZERO:
+            asset_returns.append(a1 / a0 - 1)
+            benchmark_returns.append(b1 / b0 - 1)
+    if len(asset_returns) < BETA_MIN_OVERLAP:
+        return None
+    n = Decimal(len(asset_returns))
+    mean_asset = sum(asset_returns, ZERO) / n
+    mean_benchmark = sum(benchmark_returns, ZERO) / n
+    covariance = sum(
+        ((a - mean_asset) * (b - mean_benchmark) for a, b in zip(asset_returns, benchmark_returns)),
+        ZERO,
+    )
+    variance = sum(((b - mean_benchmark) ** 2 for b in benchmark_returns), ZERO)
+    if variance <= ZERO:
+        return None
+    return (covariance / variance).quantize(Decimal("0.01"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -500,6 +538,11 @@ class AttributionReport:
     #: render shows paper P&L raw AND live-ish. None bps = line not rendered.
     haircut_bps: Optional[Decimal] = None
     haircut_notional: Decimal = ZERO
+    #: Directional-bias measurement (ruling 2026-09-02): per open position
+    #: (symbol, beta or None, market value weight), the value-weighted book
+    #: beta, and the excess re-based to it. All reporting; nothing trades on it.
+    position_betas: tuple[tuple[str, Optional[Decimal], Decimal], ...] = ()
+    book_beta: Optional[Decimal] = None
 
     @property
     def total_pnl(self) -> Decimal:
@@ -643,6 +686,23 @@ class AttributionReport:
                     *(f"  {detail}" for detail in self.feed_cost_detail),
                 ]
             )
+        if self.position_betas:
+            rendered = ", ".join(
+                f"{symbol} {f'{beta}' if beta is not None else 'n/a'}"
+                for symbol, beta, _ in self.position_betas
+            )
+            book = (
+                f"book beta {self.book_beta}"
+                if self.book_beta is not None
+                else "book beta unavailable"
+            )
+            lines.extend(
+                [
+                    "",
+                    f"Directional exposure (measurement only, ruling 2026-09-02): "
+                    f"{book}; per position: {rendered}",
+                ]
+            )
         if self.benchmark_return_pct is not None:
             benchmark_line = (
                 f"Benchmark: SPY {self.benchmark_return_pct:+.2f}% over the window"
@@ -652,6 +712,19 @@ class AttributionReport:
                 benchmark_line += (
                     f"; portfolio excess return {excess:+.2f}% "
                     f"(a bull market must not flatter a signal class)"
+                )
+            if (
+                self.book_beta is not None
+                and self.total_deployed > ZERO
+            ):
+                ours = (self.total_pnl / self.total_deployed * 100).quantize(CENTS)
+                beta_adjusted = (
+                    ours - self.book_beta * self.benchmark_return_pct
+                ).quantize(CENTS)
+                benchmark_line += (
+                    f"; beta-adjusted excess {beta_adjusted:+.2f}% "
+                    f"(return minus beta x SPY — the honest alpha line for a "
+                    f"long-biased book)"
                 )
             lines.append(benchmark_line)
         else:
@@ -795,6 +868,7 @@ def build_attribution(
     feed_cost_detail: tuple[str, ...] = (),
     price_on=None,
     haircut_bps: Optional[Decimal] = None,
+    position_betas: tuple[tuple[str, Optional[Decimal], Decimal], ...] = (),
 ) -> AttributionReport:
     """Compute attribution from audit trails.
 
@@ -1022,4 +1096,15 @@ def build_attribution(
         scalar_scaled_entries=scalar_scaled_entries,
         haircut_bps=haircut_bps,
         haircut_notional=haircut_notional,
+        position_betas=position_betas,
+        # Value-weighted book beta over the positions a beta exists for
+        # (directional-bias ruling 2026-09-02); None when none is measurable.
+        book_beta=(
+            (
+                sum((beta * weight for _, beta, weight in position_betas if beta is not None), ZERO)
+                / sum((weight for _, beta, weight in position_betas if beta is not None), ZERO)
+            ).quantize(Decimal("0.01"))
+            if any(beta is not None and weight > ZERO for _, beta, weight in position_betas)
+            else None
+        ),
     )
