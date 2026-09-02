@@ -267,7 +267,7 @@ def test_the_snapshot_counts_families_including_the_signals_own():
     assert snapshot.independent_identities == 2
 
     # A signal alone on its name still stamps its own family — count 1.
-    solo = post("p-9", "ZZZQ")
+    solo = post("p-9", "ZZZQ", source="nolimitgains")
     reg.note_signals([solo])
     assert reg.snapshot_for(solo).families == ("x_callers",)
 

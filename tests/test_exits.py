@@ -1627,9 +1627,16 @@ def test_the_tax_factor_renders_only_when_supplied():
 def test_a_gaining_position_near_the_boundary_tells_its_review(
     tmp_path, limits, signals_config, research_config
 ):
-    llm = routing(HOLD_REVIEW)
-    started, prices, clock = enter_with_resolution(
-        tmp_path, limits, signals_config, research_config, "2027-08-20",
+    # One LLM instance for BOTH the dated entry report and the review verdicts,
+    # so ITS call log is the one the loop actually writes to.
+    llm = RoutingLLM(
+        **{
+            REPORT_TOOL_NAME: dated_report("2027-08-20", "months"),
+            EXIT_REVIEW_TOOL_NAME: structured(HOLD_REVIEW),
+        }
+    )
+    started, prices, clock = enter_position(
+        tmp_path, limits, signals_config, research_config,
         config=review_config(), llm=llm,
     )
     clock.advance(days=330)  # inside 45 days of the long-term boundary
