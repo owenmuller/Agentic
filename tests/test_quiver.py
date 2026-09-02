@@ -321,6 +321,7 @@ def test_the_router_dispatches_each_class_to_its_fetcher(signals_config):
             "form_13f": fake("edgar"),
             "congressional_disclosures": fake("quiver"),
             "form4_insiders": fake("form4"),
+            "form_13d": fake("form13d"),
             "nolimitgains": fake("x"),
             "unusual_whales": fake("x"),
             "optionshawk": fake("x"),
@@ -342,6 +343,7 @@ def test_the_router_dispatches_each_class_to_its_fetcher(signals_config):
         "x:nolimitgains",
         "quiver:congressional_disclosures",
         "form4:form4_insiders",
+        "form13d:form_13d",
         "x:citrini",
         "edgar:form_13f",
     ]
@@ -379,6 +381,7 @@ def test_every_configured_source_has_a_wiring_decision(signals_config):
             "form_13f": lambda s: [],
             "congressional_disclosures": lambda s: [],
             "form4_insiders": lambda s: [],
+            "form_13d": lambda s: [],
             "nolimitgains": lambda s: [],
             "unusual_whales": lambda s: [],
             "optionshawk": lambda s: [],

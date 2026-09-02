@@ -86,6 +86,7 @@ def test_exactly_the_configured_sources_are_filtered(prefilter):
     assert prefilter.filtered_sources == (
         "congressional_disclosures",
         "form4_insiders",
+        "form_13d",
         "form_13f",
         "trump_posts",
     )

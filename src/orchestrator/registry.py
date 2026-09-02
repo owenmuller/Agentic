@@ -58,6 +58,8 @@ def family_of(source_id: str, signal_class: SignalClass) -> str:
         return "congressional_filings"
     if source_id == "form4_insiders":
         return "insider_filings"
+    if source_id == "form_13d":
+        return "13f_filings"  # a fund's 13D and its 13F are one identity class
     if signal_class is SignalClass.CLASS_3_THESIS:
         return "13f_filings"
     if source_id == "trump_posts":

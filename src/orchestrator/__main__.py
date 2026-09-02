@@ -48,6 +48,7 @@ from execution import AlpacaDailyBars, AlpacaPriceSource, MarketContextBuilder
 from execution.options_data import AlpacaOptionsChain
 from signals import (
     Form4InsiderFetcher,
+    Form13DFetcher,
     Form13FFetcher,
     QuiverCongressFetcher,
     SignalClass,
@@ -264,6 +265,7 @@ def run() -> int:
     loop = None
     edgar = None
     form4 = None
+    form13d = None
     quiver = None
     x_search = None
     prices = None
@@ -296,6 +298,9 @@ def run() -> int:
             state_path=default_data_dir() / "form4_state.json",
             seen=seen_for("form4_insiders"),
         )
+        # Activist 13Ds (ruling 2026-09-02): market-wide listing, watchlist
+        # filter client-side, structured primary_doc.xml facts.
+        form13d = Form13DFetcher(seen=seen_for("form_13d"))
         # Session-gap first-poll lookback (ruling 2026-08-26): the old fixed
         # 15-minute window lost every post made between sessions. Floor 15min
         # (a mid-session bounce re-reads almost nothing), cap 24h (X bills per
@@ -344,6 +349,8 @@ def run() -> int:
                 ),
                 # Insider clusters (human ruling 2026-09-02): Class 2 hourly.
                 "form4_insiders": logged("form4_insiders", form4),
+                # Activist 13Ds (human ruling 2026-09-02): Class 2 hourly.
+                "form_13d": logged("form_13d", form13d),
                 "nolimitgains": logged("nolimitgains", x_search),
                 # Options-flow free taste (human-authorized 2026-08-25).
                 "unusual_whales": logged("unusual_whales", x_search),
@@ -444,6 +451,8 @@ def run() -> int:
             edgar.close()
         if form4 is not None:
             form4.close()
+        if form13d is not None:
+            form13d.close()
         if quiver is not None:
             quiver.close()
         if x_search is not None:

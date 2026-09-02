@@ -392,6 +392,33 @@ class Class2CongressionalScanner(Scanner):
             # downstream — an hourly-polled call can be hours stale, and the
             # research layer must say what has already moved since the post.
             return self._handle_trade_call(source, item, now)
+        if item.fields.get("form", "").startswith("SCHEDULE 13D"):
+            # Activist 13Ds (human ruling 2026-09-02): Class 2 cadence on the
+            # 13F fetcher's plumbing, but timelier than any 13F — an initial
+            # 13D is due five business days after crossing 5%, an amendment
+            # two business days after a material change.
+            metadata = {
+                **item.fields,
+                "tickers": item.fields.get("ticker", ""),
+                "priced_in_analysis_required": "true",
+                "copy_trade": "false",
+                "disclosure_lag_note": "13D files within 5 business days of "
+                "crossing 5% (amendments within 2); the filing-day pop is "
+                "public before we poll — measure what has moved since the "
+                "filing itself",
+            }
+            signal = self._build(
+                source,
+                item,
+                item.content,
+                now,
+                metadata=metadata,
+                dispatch_weight=dispatch_weight_for(
+                    "", item.fields.get("report_date", ""), now
+                ),
+            )
+            enqueued = self._enqueue(signal)
+            return [enqueued] if enqueued else []
         if item.fields.get("form") == "4":
             # Form 4 insider filings (human ruling 2026-09-02): Class 2 cadence,
             # but the lag is DAYS — the filing deadline is two business days

@@ -230,7 +230,32 @@ def build_user_prompt(
         lines.append(f"- tickers extracted by the scanner: {tickers}")
 
     guidance = _CLASS_GUIDANCE[signal.signal_class]
-    if (
+    if signal.signal_class is SignalClass.CLASS_2_MOMENTUM and signal.metadata.get(
+        "form", ""
+    ).startswith("SCHEDULE 13D"):
+        # Activist 13Ds (human ruling 2026-09-02): neither congressional nor
+        # 45 days stale — and the famous filing-day pop is already public.
+        guidance = (
+            "This is a Schedule 13D beneficial-ownership filing: an activist "
+            "investor crossed (or amended a stake above) 5% of the company. "
+            "Timing facts: an initial 13D is due within FIVE business days of "
+            "crossing 5%, an amendment within two business days of a material "
+            "change — and the well-documented announcement-day pop happens "
+            "within hours of the filing hitting EDGAR, which is BEFORE this "
+            "system reads it. Do not chase that pop: measure it. "
+            "priced_in_analysis is MANDATORY and must say what has already "
+            "moved since the filing (and since the stated date of event). The "
+            "tradeable question is the campaign, not the announcement: the "
+            "filer's activist track record (research it yourself — campaign "
+            "outcomes, not press), the stake size and whether an amendment "
+            "grew or cut it, the target's vulnerability to the likely agenda, "
+            "and the realistic horizon of a campaign (months, not days). An "
+            "amendment REDUCING a stake is evidence against the thesis, not "
+            "for it. The filing is a fact about ownership, never a "
+            "recommendation: form your own view and assign your own "
+            "confidence."
+        )
+    elif (
         signal.signal_class is SignalClass.CLASS_2_MOMENTUM
         and signal.metadata.get("form") == "4"
     ):

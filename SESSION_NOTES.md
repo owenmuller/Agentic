@@ -2068,6 +2068,45 @@ reach the table through the same two helpers so no path skips the scalars.
    no longer covers it. Revisit only if the account grows to where a 12%
    drawdown is money that matters beyond the experiment.
 
+## Methodology rulings, build 3 of 4: activist 13Ds (2026-09-02)
+
+`signals/form13d.py` on the shared EDGAR base, Class 2 hourly as ruled.
+
+- **Access (probed live):** since the SEC's structured-data rule the forms file
+  as `SCHEDULE 13D` / `SCHEDULE 13D/A` (935 + 671 market-wide in the probe
+  month) with machine-readable `primary_doc.xml` — stake %, aggregate shares,
+  date of event, amendment number are field reads. The FTS hit's display name
+  carries the subject's TICKER, so no CUSIP mapping exists anywhere. Listing is
+  market-wide (two throttled requests per poll), filtered client-side against
+  the watchlist by filer-display-name substring — the 13F convention.
+- **Watchlist (~15, proposed in the commit for confirmation):** Elliott,
+  Starboard Value, ValueAct, Third Point, Icahn, JANA Partners, Ancora, Trian,
+  Pershing Square, Engaged Capital, Sachem Head, Legion Partners,
+  Land & Buildings, Politan Capital, Sarissa Capital. Adding/removing is a
+  human ruling per name.
+- **Fields in the signal:** filer, stake (the activist's own percentOfClass —
+  the max, not a group member's slice), shares, date of event, amendment no.;
+  `credibility_key = form_13d/<activist>` so attribution ranks activists like
+  congressional members. An unparseable XML degrades to hit-level facts —
+  under-filtering surfaces, a drop would not.
+- **Honesty about latency, in the prompt branch:** initial 13D due 5 business
+  days after crossing 5%, amendments 2; the filing-day pop is public before we
+  poll — the guidance says measure it, never chase it; the tradeable claim is
+  the campaign (drift + amendment trail), an amendment REDUCING a stake is
+  evidence against. Family: 13f_filings (a fund's 13D and its 13F are one
+  identity class) — `family_of()` updated. daily_research_cap 3, monthly_cost
+  0. Mechanical arm never sees it (structural source filter).
+
+### Live round trip (§ LLM Request-Path Changes — the prompt gained a branch)
+
+The REAL fetcher ran against real EDGAR first (5-day watchlist window: quiet —
+zero filings, itself a good volume datum), so the representative Sarissa/AMRN
+13D/A shape stood in, built through the real scanner, production two-stage
+ResearchPass with verify forced. The model measured the filing-day pop as
+absorbed (~6 days stale), weighed amendment-4-of-an-old-campaign vs an initial
+filing, and returned no_position/42 — the measure-don't-chase discipline the
+guidance asks for, on the first live read. $0.161.
+
 ### #4 PEAD — DEFERRED (design recorded for its return)
 
 Deferred to the earnings shadow's first-season verdict, so earnings gets ONE

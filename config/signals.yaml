@@ -355,6 +355,42 @@ classes:
           # instead of consuming cap slots — same rule as congressional.
           max_report_age_days: 7
 
+      - id: form_13d
+        # Human ruling 2026-09-02: activist Schedule 13D filings and amendments
+        # at Class 2 cadence on the shared EDGAR base. The filing-day pop is
+        # public before we poll — forfeit by design; the tradeable claim is
+        # post-filing campaign drift and the amendment trail. Family:
+        # 13f_filings (a fund's 13D and its 13F are not independent).
+        # Watchlist proposed 2026-09-02 for human confirmation with the build
+        # ruling: ~15 prominent activists, substring-matched against the EDGAR
+        # filer display name (same convention as the 13F watchlist). Adding or
+        # removing a name is a human ruling, per source.
+        provider: sec_edgar_full_text_search
+        monthly_cost: 0 # EDGAR is free
+        start_date: 2026-09-02
+        user_agent: "Agentic trading research omuller@brasacap.com"
+        daily_research_cap: 3
+        prefilter:
+          # Backfill floods (cold start) die here, recorded — same rule as
+          # congressional. Steady-state report ages are 0-1 day.
+          max_report_age_days: 7
+        watchlist:
+          - { activist: Elliott Investment Management }
+          - { activist: Starboard Value }
+          - { activist: ValueAct }
+          - { activist: Third Point }
+          - { activist: Icahn }
+          - { activist: JANA Partners }
+          - { activist: Ancora }
+          - { activist: Trian Fund Management }
+          - { activist: Pershing Square }
+          - { activist: Engaged Capital }
+          - { activist: Sachem Head }
+          - { activist: Legion Partners }
+          - { activist: Land & Buildings }
+          - { activist: Politan Capital }
+          - { activist: Sarissa Capital }
+
       - id: citrini
         # Human-authorized 2026-08-25. Thematic thesis caller (@Citrini7) with
         # a self-published tracker (the Citrindex) covering ALL published
