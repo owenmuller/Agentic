@@ -263,6 +263,29 @@ def render_forward_report(
                         "  " + _stat_line(label, _excess_values(members, rows, 3))
                     )
 
+    # Form 4 cluster rule (ruling 2026-09-02): the prefiltered singles are the
+    # control group. If singles' forward returns match clusters', the >=2-insider
+    # requirement is filtering noise-free signal and a human should hear it.
+    form4 = [e for e in with_ticker if e.source_id == "form4_insiders"]
+    if form4:
+        clustered = [e for e in form4 if e.code != "no_cluster"]
+        singles = [e for e in form4 if e.code == "no_cluster"]
+        lines.extend(
+            [
+                "",
+                f"Form 4 cluster rule (excess at {KEY_HORIZON}d — does "
+                f"requiring >=2 insiders earn its keep?):",
+                _stat_line(
+                    "clustered (researched)",
+                    _excess_values(clustered, rows, KEY_HORIZON),
+                ),
+                _stat_line(
+                    "singles (prefiltered control)",
+                    _excess_values(singles, rows, KEY_HORIZON),
+                ),
+            ]
+        )
+
     lines.extend(
         [
             "",

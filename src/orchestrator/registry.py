@@ -46,14 +46,18 @@ from orchestrator.config import ConvergenceConfig
 
 
 def family_of(source_id: str, signal_class: SignalClass) -> str:
-    """The signal's source FAMILY (human ruling 2026-09-02, recorded in CLAUDE.md).
+    """The signal's source FAMILY (human rulings 2026-09-02, recorded in CLAUDE.md).
 
-    Four families, deterministic: congressional filings, 13F filings, Trump
-    posts, and X trade-callers — ALL X accounts are ONE family, however many of
-    them post, because accounts amplifying each other is not independence.
+    Five families, deterministic: congressional filings, 13F filings (13D
+    beneficial-ownership filings join here — Elliott's 13D and Elliott's 13F
+    must not count as independent), insider filings (Form 4), Trump posts, and
+    X trade-callers — ALL X accounts are ONE family, however many of them post,
+    because accounts amplifying each other is not independence.
     """
     if source_id == "congressional_disclosures":
         return "congressional_filings"
+    if source_id == "form4_insiders":
+        return "insider_filings"
     if signal_class is SignalClass.CLASS_3_THESIS:
         return "13f_filings"
     if source_id == "trump_posts":

@@ -272,7 +272,10 @@ class TradingLoop:
                 )
                 if verdict is not None:
                     reason, rule = verdict
-                    code = "pre_filter"
+                    # Form 4 singles get their own code (ruling 2026-09-02): the
+                    # forward report compares them against clustered entries to
+                    # test the cluster rule itself.
+                    code = "no_cluster" if rule == "cluster" else "pre_filter"
                     if (
                         rule == "report_staleness"
                         and signal.external_id

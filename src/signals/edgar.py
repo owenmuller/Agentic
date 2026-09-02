@@ -75,7 +75,99 @@ def _child_text(element: ET.Element, name: str) -> Optional[str]:
     return None
 
 
-class Form13FFetcher:
+class EdgarFetcherBase:
+    """The shared EDGAR plumbing every SEC fetcher rides (extracted 2026-09-02
+    for the Form 4 fetcher): the courtesy throttle, the required contact
+    User-Agent, the single retry, and the JSON/date helpers. Subclasses add
+    what to fetch; this class owns how to fetch it politely."""
+
+    def __init__(
+        self,
+        client: Optional[httpx.Client] = None,
+        *,
+        user_agent: Optional[str] = None,
+        min_request_interval: float = 0.5,
+        timeout: float = 15.0,
+        clock: Optional[Callable[[], datetime]] = None,
+        sleeper: Optional[Callable[[float], None]] = None,
+        monotonic: Optional[Callable[[], float]] = None,
+    ) -> None:
+        self._client = client or httpx.Client(timeout=timeout, follow_redirects=True)
+        self._user_agent = user_agent
+        self._interval = min_request_interval
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._sleep = sleeper or time.sleep
+        self._monotonic = monotonic or time.monotonic
+        self._last_request: Optional[float] = None
+
+    def _resolve_user_agent(self, source: SourceConfig) -> str:
+        """The SEC-required contact header. Config first, environment as fallback."""
+        candidate = (
+            source.user_agent
+            or self._user_agent
+            or os.environ.get("SEC_EDGAR_USER_AGENT")
+            or ""
+        ).strip()
+        if "@" not in candidate:
+            raise EdgarError(
+                "the SEC requires a User-Agent naming a contact (an email address). "
+                "Set user_agent on the source in config/signals.yaml, or "
+                "SEC_EDGAR_USER_AGENT in .env."
+            )
+        return candidate
+
+    #: One retry, once, on a throttle or server blip. More than one retry would
+    #: start to look like the hammering the throttle exists to stop.
+    _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+    _RETRY_PAUSE_SECONDS = 2.0
+
+    def _get(
+        self, url: str, user_agent: str, params: Optional[dict] = None
+    ) -> httpx.Response:
+        """One throttled request. Conservative against the SEC's 10 req/s ceiling."""
+        response = self._request_once(url, user_agent, params)
+        if response.status_code in self._RETRY_STATUSES:
+            logger.warning(
+                "EDGAR returned HTTP %d for %s; retrying once after %.0fs",
+                response.status_code,
+                url,
+                self._RETRY_PAUSE_SECONDS,
+            )
+            self._sleep(self._RETRY_PAUSE_SECONDS)
+            response = self._request_once(url, user_agent, params)
+        return response
+
+    def _request_once(
+        self, url: str, user_agent: str, params: Optional[dict] = None
+    ) -> httpx.Response:
+        if self._last_request is not None:
+            elapsed = self._monotonic() - self._last_request
+            remaining = self._interval - elapsed
+            if remaining > 0:
+                self._sleep(remaining)
+        self._last_request = self._monotonic()
+        return self._client.get(
+            url, params=params, headers={"User-Agent": user_agent}
+        )
+
+    def _get_json(self, url: str, user_agent: str) -> dict:
+        response = self._get(url, user_agent)
+        if response.status_code != 200:
+            raise EdgarError(f"{url} returned HTTP {response.status_code}")
+        return response.json()
+
+    @staticmethod
+    def _parse_date(raw: str) -> Optional[datetime]:
+        try:
+            return datetime.fromisoformat(raw).replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+
+    def close(self) -> None:
+        self._client.close()
+
+
+class Form13FFetcher(EdgarFetcherBase):
     """Fetches new 13F-HR filings for the funds on the source's watchlist."""
 
     def __init__(
@@ -92,15 +184,17 @@ class Form13FFetcher:
         monotonic: Optional[Callable[[], float]] = None,
         seen: Optional[Sequence[str]] = None,
     ) -> None:
-        self._client = client or httpx.Client(timeout=timeout, follow_redirects=True)
-        self._user_agent = user_agent
+        super().__init__(
+            client,
+            user_agent=user_agent,
+            min_request_interval=min_request_interval,
+            timeout=timeout,
+            clock=clock,
+            sleeper=sleeper,
+            monotonic=monotonic,
+        )
         self._lookback = timedelta(days=lookback_days)
         self._top = top_holdings
-        self._interval = min_request_interval
-        self._clock = clock or (lambda: datetime.now(timezone.utc))
-        self._sleep = sleeper or time.sleep
-        self._monotonic = monotonic or time.monotonic
-        self._last_request: Optional[float] = None
         #: Accessions already emitted. Seed from the audit log
         #: (``AuditLog.researched_external_ids``) so a restart does not re-research
         #: filings it already paid for; unseeded, the in-process set still dedups
@@ -309,71 +403,4 @@ class Form13FFetcher:
             )
         return "\n".join(lines)
 
-    # -- plumbing ---------------------------------------------------------------------
-
-    def _resolve_user_agent(self, source: SourceConfig) -> str:
-        """The SEC-required contact header. Config first, environment as fallback."""
-        candidate = (
-            source.user_agent
-            or self._user_agent
-            or os.environ.get("SEC_EDGAR_USER_AGENT")
-            or ""
-        ).strip()
-        if "@" not in candidate:
-            raise EdgarError(
-                "the SEC requires a User-Agent naming a contact (an email address). "
-                "Set user_agent on the form_13f source in config/signals.yaml, or "
-                "SEC_EDGAR_USER_AGENT in .env."
-            )
-        return candidate
-
-    #: One retry, once, on a throttle or server blip. The class polls daily, so a
-    #: single transient 503 would otherwise cost a full day of latency; more than one
-    #: retry would start to look like the hammering the throttle exists to stop.
-    _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
-    _RETRY_PAUSE_SECONDS = 2.0
-
-    def _get(
-        self, url: str, user_agent: str, params: Optional[dict] = None
-    ) -> httpx.Response:
-        """One throttled request. Conservative against the SEC's 10 req/s ceiling."""
-        response = self._request_once(url, user_agent, params)
-        if response.status_code in self._RETRY_STATUSES:
-            logger.warning(
-                "EDGAR returned HTTP %d for %s; retrying once after %.0fs",
-                response.status_code,
-                url,
-                self._RETRY_PAUSE_SECONDS,
-            )
-            self._sleep(self._RETRY_PAUSE_SECONDS)
-            response = self._request_once(url, user_agent, params)
-        return response
-
-    def _request_once(
-        self, url: str, user_agent: str, params: Optional[dict] = None
-    ) -> httpx.Response:
-        if self._last_request is not None:
-            elapsed = self._monotonic() - self._last_request
-            remaining = self._interval - elapsed
-            if remaining > 0:
-                self._sleep(remaining)
-        self._last_request = self._monotonic()
-        return self._client.get(
-            url, params=params, headers={"User-Agent": user_agent}
-        )
-
-    def _get_json(self, url: str, user_agent: str) -> dict:
-        response = self._get(url, user_agent)
-        if response.status_code != 200:
-            raise EdgarError(f"{url} returned HTTP {response.status_code}")
-        return response.json()
-
-    @staticmethod
-    def _parse_date(raw: str) -> Optional[datetime]:
-        try:
-            return datetime.fromisoformat(raw).replace(tzinfo=timezone.utc)
-        except ValueError:
-            return None
-
-    def close(self) -> None:
-        self._client.close()
+    # Plumbing (throttle, retry, User-Agent, close) lives on EdgarFetcherBase.

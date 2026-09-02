@@ -238,6 +238,16 @@ class ResearchPreFilter:
     ) -> Optional[tuple[str, str]]:
         meta = signal.metadata
 
+        if rules.require_cluster and meta.get("cluster") != "true":
+            detail = meta.get("cluster_detail") or "no qualifying cluster"
+            return (
+                f"single-insider Form 4 purchase, recorded for measurement and "
+                f"not researched: {detail} (signals.yaml "
+                f"prefilter.require_cluster, ruling 2026-09-02 — the "
+                f"prefiltered singles are the control group that tests the "
+                f"cluster rule)"
+            ), "cluster"
+
         if rules.min_amount_max is not None:
             amount_max = _amount_range_max(meta.get("amount_range", ""))
             if amount_max is not None and amount_max < rules.min_amount_max:

@@ -89,6 +89,11 @@ class PrefilterConfig(_Strict):
     #: Class 3: skip filings whose period-of-report is older than this many days.
     #: The research layer has already proven it rejects these; stop paying it to.
     max_period_age_days: Optional[int] = Field(default=None, gt=0)
+    #: Form 4 (ruling 2026-09-02): research ONLY signals the fetcher marked as a
+    #: qualifying insider CLUSTER (metadata cluster: "true"). Singles are
+    #: recorded with code no_cluster — the control group that lets the
+    #: forward-return report test whether the cluster rule earns its keep.
+    require_cluster: bool = False
 
 
 class SourceConfig(_Strict):

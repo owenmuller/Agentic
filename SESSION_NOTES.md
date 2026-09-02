@@ -1975,6 +1975,77 @@ anything. $0.102. (The sweep, funnel, and stamp changes touch no LLM path.)
 
 Suite: 971 passed, 3 skipped.
 
+## Methodology rulings, build 1 of 4: Form 4 insider clusters (human ruling 2026-09-02)
+
+Sequence ruled 1 (Form 4) → 5 (drawdown ladder + regime scalar) → 3 (13D) →
+2 (ATR sizing/stops); #4 PEAD DEFERRED to the earnings shadow's first-season
+verdict (design at the bottom of this entry). One commit per build, both hosts
+verified, droplet pulled, bounce between.
+
+### Families amended to FIVE (CLAUDE.md updated)
+
+congressional_filings, 13f_filings (13D joins here), **insider_filings (new)**,
+x_callers, trump_posts. PEAD-style market-data screens sit OUTSIDE convergence.
+`family_of()` in orchestrator/registry.py is the deterministic mapping.
+
+### The source (`signals/form4.py`, new; shared base extracted first)
+
+`EdgarFetcherBase` extracted from the 13F fetcher (throttle, contact UA, one
+retry, JSON/date helpers); both EDGAR fetchers ride it. `Form4InsiderFetcher`:
+
+- **Listing** via the same FTS endpoint (`forms=4`, 100 hits/page, `from=`
+  paging; probed live 2026-09-02 — 549 Form 4s filed 2026-09-01, quiet season;
+  earnings windows run 2-3x). 4/A amendments skipped, stated in code.
+- **One further request per filing**: the full-submission `.txt`, the
+  structured `ownershipDocument` XML sliced out of it. A per-poll fetch budget
+  (default 150) bounds wall time; the remainder carries in a backlog, newest
+  first, warned, never silently dropped.
+- **The ruled recipe, all in the fetcher:** code P non-derivative only;
+  10b5-1 excluded via the structured `aff10b5One` checkbox (a field read, not
+  footnote mining); roles captured; **$50K per-insider floor AND $150K cluster
+  aggregate**; cluster = ≥2 distinct insiders within 15 days; routine =
+  same-calendar-month Form 4s in 3+ consecutive prior years (v1 PROXY: filing
+  months from the owner's data.sec.gov submissions index — over-suppresses,
+  the less-risk direction; one cached request per insider); **unknown history
+  defaults OPPORTUNISTIC** (stated choice in the ruling). A multi-owner filing
+  is ONE identity — co-filers must not manufacture clusters.
+- **Singles failing only the cluster test are emitted** marked
+  `cluster: false` → prefilter records them code **`no_cluster`** (new
+  `require_cluster` prefilter rule): the control group. The forward report
+  gained a "Form 4 cluster rule" section comparing clustered vs singles at
+  20d — the data tests the cluster rule itself.
+- **State** (window, seen accessions, routine cache, backlog) persists to
+  `data/form4_state.json`: a restart neither re-buys filings nor forgets a
+  half-formed cluster.
+- Class 2 hourly; `daily_research_cap: 5`; `monthly_cost: 0`; prompt branch
+  anchors priced-in to the TRANSACTION date (2 business days), never the
+  45-day congressional framing; mechanical arm never sees it (source filter is
+  structural). Dispatch weight = same log10(amount) − age/7 as congressional.
+
+### Live round trip (§ LLM Request-Path Changes — the prompt gained a branch)
+
+Production two-stage ResearchPass (verify stage forced) on a representative
+2-insider INTC cluster built through the real scanner: the model anchored
+priced-in to the 2–5 day transaction lag and explicitly distinguished it from
+the 45-day convention; long / 61 / weeks, CFO-credibility reasoning. $0.325.
+
+### #4 PEAD — DEFERRED (design recorded for its return)
+
+Deferred to the earnings shadow's first-season verdict, so earnings gets ONE
+verdict, not two adjacent efforts on different clocks. The design as reviewed:
+deterministic screen on the existing Finnhub plumbing (`/calendar/earnings` +
+`/stock/earnings` are free-tier; guidance direction is NOT — premium — so v1 is
+EPS surprise magnitude + day-1 gap-and-hold from Alpaca bars, guidance left to
+the research pass's own search). Proposed thresholds: |surprise| ≥ 10% of
+estimate AND gap ≥ 4% from prior close holding above the open at the close —
+both boundaries resolving toward fewer candidates. Routes to research as a
+weeks-horizon, catalyst-passed, EQUITY-ONLY candidate (the shadow ruling owns
+pre-catalyst options); daily post-close batch, violently seasonal (3–10/day in
+peak weeks, ~0 off-season); NO convergence family (no filer — outside
+convergence per the family amendment). Evidence honestly weak-to-moderate:
+textbook PEAD is arbitraged away in liquid names; the day-1-reaction
+conditioning is the modern survivor. Expected 0–2%/yr, low end likely.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

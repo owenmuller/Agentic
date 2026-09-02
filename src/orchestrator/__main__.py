@@ -47,6 +47,7 @@ from audit.log import default_data_dir
 from execution import AlpacaDailyBars, AlpacaPriceSource, MarketContextBuilder
 from execution.options_data import AlpacaOptionsChain
 from signals import (
+    Form4InsiderFetcher,
     Form13FFetcher,
     QuiverCongressFetcher,
     SignalClass,
@@ -260,6 +261,7 @@ def run() -> int:
     now = datetime.now(timezone.utc)
     loop = None
     edgar = None
+    form4 = None
     quiver = None
     x_search = None
     prices = None
@@ -285,6 +287,13 @@ def run() -> int:
 
         edgar = Form13FFetcher(seen=seen_for("form_13f"))
         quiver = QuiverCongressFetcher(seen=seen_for("congressional_disclosures"))
+        # Form 4 insider clusters (ruling 2026-09-02): market-wide EDGAR, its
+        # rolling cluster window and seen accessions persisted so a restart
+        # neither re-buys filings nor forgets a half-formed cluster.
+        form4 = Form4InsiderFetcher(
+            state_path=default_data_dir() / "form4_state.json",
+            seen=seen_for("form4_insiders"),
+        )
         # Session-gap first-poll lookback (ruling 2026-08-26): the old fixed
         # 15-minute window lost every post made between sessions. Floor 15min
         # (a mid-session bounce re-reads almost nothing), cap 24h (X bills per
@@ -331,6 +340,8 @@ def run() -> int:
                 "congressional_disclosures": logged(
                     "congressional_disclosures", quiver
                 ),
+                # Insider clusters (human ruling 2026-09-02): Class 2 hourly.
+                "form4_insiders": logged("form4_insiders", form4),
                 "nolimitgains": logged("nolimitgains", x_search),
                 # Options-flow free taste (human-authorized 2026-08-25).
                 "unusual_whales": logged("unusual_whales", x_search),
@@ -425,6 +436,8 @@ def run() -> int:
             options_chain.close()
         if edgar is not None:
             edgar.close()
+        if form4 is not None:
+            form4.close()
         if quiver is not None:
             quiver.close()
         if x_search is not None:

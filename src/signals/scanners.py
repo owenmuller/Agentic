@@ -392,6 +392,34 @@ class Class2CongressionalScanner(Scanner):
             # downstream — an hourly-polled call can be hours stale, and the
             # research layer must say what has already moved since the post.
             return self._handle_trade_call(source, item, now)
+        if item.fields.get("form") == "4":
+            # Form 4 insider filings (human ruling 2026-09-02): Class 2 cadence,
+            # but the lag is DAYS — the filing deadline is two business days
+            # after the transaction — so the priced-in question anchors to the
+            # transaction date the fetcher extracted, never to the 45-day
+            # congressional framing.
+            metadata = {
+                **item.fields,
+                "tickers": item.fields.get("ticker", ""),
+                "priced_in_analysis_required": "true",
+                "copy_trade": "false",
+                "disclosure_lag_note": "Form 4 files within 2 business days of "
+                "the transaction; evaluate from the transaction date",
+            }
+            signal = self._build(
+                source,
+                item,
+                item.content,
+                now,
+                metadata=metadata,
+                dispatch_weight=dispatch_weight_for(
+                    item.fields.get("amount_range", ""),
+                    item.fields.get("report_date", ""),
+                    now,
+                ),
+            )
+            enqueued = self._enqueue(signal)
+            return [enqueued] if enqueued else []
         metadata = {
             **item.fields,
             # The uniform instrument key (defect fix 2026-08-27): Quiver's

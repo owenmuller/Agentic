@@ -140,6 +140,9 @@ class SignalSnapshot(_Record):
             filer=(
                 signal.metadata.get("representative")
                 or signal.metadata.get("fund")
+                # Form 4 (2026-09-02): the fetcher's structured filer field —
+                # the cluster's insider names, joined.
+                or signal.metadata.get("filer")
                 or None
             ),
             tickers=tuple(

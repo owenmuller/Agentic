@@ -329,6 +329,32 @@ classes:
         # pre_filtered code source_cap. Survives restarts (seeded from audit).
         daily_research_cap: 5
 
+      - id: form4_insiders
+        # Human ruling 2026-09-02: Form 4 insider CLUSTER buying, market-wide on
+        # SEC EDGAR (free). The deterministic recipe lives in the fetcher and is
+        # part of the ruling: transaction code P only, Rule 10b5-1 plan trades
+        # excluded via the structured aff10b5One checkbox, $50K per-insider
+        # floor, cluster = >=2 distinct insiders within 15 days AND >=$150K
+        # aggregate, routine (same-calendar-month 3+ consecutive years) buyers
+        # excluded, unknown-history insiders default OPPORTUNISTIC (stated
+        # choice). Singles failing only the cluster test are emitted and
+        # recorded with code no_cluster — the control group that lets the
+        # forward-return report test the cluster rule itself.
+        # Latency: the filing deadline is 2 business days after the trade, so
+        # priced-in analysis anchors to the TRANSACTION date, never the 45-day
+        # congressional framing (the prompt branch carries that).
+        provider: sec_edgar_full_text_search
+        monthly_cost: 0 # EDGAR is free
+        start_date: 2026-09-02
+        user_agent: "Agentic trading research omuller@brasacap.com"
+        # Cost governance: at most this many research passes per UTC day.
+        daily_research_cap: 5
+        prefilter:
+          require_cluster: true
+          # Backfill floods (cold start, lost state file) die here, recorded,
+          # instead of consuming cap slots — same rule as congressional.
+          max_report_age_days: 7
+
       - id: citrini
         # Human-authorized 2026-08-25. Thematic thesis caller (@Citrini7) with
         # a self-published tracker (the Citrindex) covering ALL published

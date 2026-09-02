@@ -232,6 +232,34 @@ def build_user_prompt(
     guidance = _CLASS_GUIDANCE[signal.signal_class]
     if (
         signal.signal_class is SignalClass.CLASS_2_MOMENTUM
+        and signal.metadata.get("form") == "4"
+    ):
+        # Form 4 insider clusters (human ruling 2026-09-02). The class default
+        # says "congressional disclosure, 45 days" — wrong on both counts here:
+        # this filing was due two business days after the insider's trade.
+        guidance = (
+            "This is a Form 4 insider filing: open-market stock purchases "
+            "(transaction code P) by the company's own officers, directors, or "
+            "10% holders, filed with the SEC within TWO BUSINESS DAYS of the "
+            "transaction. The system emits it only as a cluster — at least two "
+            "distinct insiders purchasing within a 15-day window — with Rule "
+            "10b5-1 plan trades and routine same-month-every-year buyers "
+            "already excluded; the content block lists each insider, their "
+            "role, and their dollars. The lag is DAYS, not the 45-day "
+            "congressional convention: anchor priced_in_analysis to the "
+            "TRANSACTION dates in the content (typically 2-5 days back) and "
+            "measure what has moved since. priced_in_analysis is MANDATORY. "
+            "Weigh role seniority (a CFO or CEO buying reads the finances; an "
+            "outside director may not), the sizes relative to what such "
+            "insiders typically stake, and the setting — purchases into a "
+            "large decline are a value judgment on known facts, purchases "
+            "before any identifiable catalyst deserve the question of what "
+            "the insiders may see. The filing is evidence of conviction, "
+            "never a recommendation: form your own view of the company and "
+            "assign your own confidence."
+        )
+    elif (
+        signal.signal_class is SignalClass.CLASS_2_MOMENTUM
         and signal.classification is not None
     ):
         # Class-2 trade calls (citrini, 2026-08-25): hourly-polled X thesis

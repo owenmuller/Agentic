@@ -46,14 +46,15 @@ Three classes. Scan cadence is matched to signal decay speed so options and buy/
 ### Class 2 — Medium-latency momentum confirmation (poll hourly)
 - **Congressional trading disclosures** — Pelosi and a configurable watchlist of high-signal members (via Quiver Quant / Unusual Whales / Capitol Trades API).
 - **Known lag: STOCK Act allows up to 45 days between trade and disclosure.** The research layer MUST evaluate what has already been priced in since the trade date, not the disclosure date. A disclosure is a thesis input, not a copy-trade trigger.
+- **Form 4 insider clusters (human ruling 2026-09-02)** — market-wide SEC EDGAR, deterministic recipe in the fetcher: code P open-market purchases only, 10b5-1 plan trades excluded via the structured checkbox, $50K per-insider floor, cluster = ≥2 distinct insiders within 15 days AND ≥$150K aggregate, routine same-month-3-years buyers excluded, unknown history defaults opportunistic. Singles failing only the cluster test are recorded (code `no_cluster`) as the control group that tests the cluster rule. **Known lag: 2 business days** — priced-in analysis anchors to the transaction date, never the 45-day congressional framing. The mechanical arm never sees this source.
 
 ### Class 3 — Slow thesis anchoring (poll daily)
 - **13F filings** — Leopold Aschenbrenner / Situational Awareness fund, plus a configurable watchlist of funds (via SEC EDGAR full-text search).
 - **Known lag: quarterly, +45 days.** 13Fs show longs only — no shorts, no exits between quarters. Use for directional conviction and sector weighting, never for timing.
 
-### Source families (human ruling 2026-09-02)
+### Source families (human rulings 2026-09-02, amended same day)
 
-Four families for convergence purposes, deterministic and load-bearing: **congressional filings**, **13F filings**, **X trade-callers** (ALL X accounts are ONE family — accounts amplifying each other is not independence), and **Trump posts**. Any future convergence band-upgrade requires **≥3 families active with at least one filing family present**; the band-up lever itself stays unbuilt until forward-return evidence shows convergent signals outperform. Until then, family state is stamped on decision records so the evidence can accumulate.
+Five families for convergence purposes, deterministic and load-bearing: **congressional filings**, **13F filings** (13D beneficial-ownership filings join this family — a fund's 13D and its 13F are not independent), **insider filings** (Form 4), **X trade-callers** (ALL X accounts are ONE family — accounts amplifying each other is not independence), and **Trump posts**. PEAD-style market-data screens have no filer and sit **outside convergence entirely**. Any future convergence band-upgrade requires **≥3 families active with at least one filing family present**; the band-up lever itself stays unbuilt until forward-return evidence shows convergent signals outperform. Until then, family state is stamped on decision records so the evidence can accumulate.
 
 ## Research & Confidence Layer
 
