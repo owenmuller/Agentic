@@ -129,7 +129,7 @@ def config(**overrides):
 
 
 def observer(tmp_path, *, calendar=None, chain=None, bars=None, spot="100.00",
-             clock=None, cfg=None):
+             clock=None, cfg=None, extra_iv=()):
     return ShadowObserver(
         config=cfg or config(),
         calendar=calendar or FakeCalendar(EarningsEvent("NVDA", PRINT_DATE, "amc")),
@@ -138,6 +138,7 @@ def observer(tmp_path, *, calendar=None, chain=None, bars=None, spot="100.00",
         spot=lambda symbol: Decimal(spot) if spot else None,
         log=ShadowLog(tmp_path / "shadow.jsonl"),
         clock=clock or (lambda: NOW),
+        extra_iv_symbols=tuple(extra_iv),
     )
 
 
@@ -309,6 +310,24 @@ def test_the_daily_iv_snapshot_builds_the_history_the_system_lacks(tmp_path):
     assert snapshot["atm_iv"] == "0.62"
     # One per name per day, not one per pass.
     assert watcher.run().iv_snapshots == 0
+
+
+def test_iv_watch_names_are_snapshotted_but_never_armed(tmp_path):
+    """IV-watch widening (ruling 2026-09-02): the trading loop's names get a
+    daily IV reading alongside the earnings universe — snapshots ONLY. A
+    watched name is never armed for a print, and the cap bounds the fetches."""
+    watcher = observer(tmp_path, extra_iv=("INTC",))
+    report = watcher.run()
+    assert report.iv_snapshots == 2  # NVDA (universe) + INTC (watch)
+    assert {r["symbol"] for r in records(tmp_path, "iv")} == {"NVDA", "INTC"}
+    assert {r["symbol"] for r in records(tmp_path, "armed")} == {"NVDA"}
+
+    capped = observer(
+        tmp_path / "capped",
+        cfg=config(iv_watch_max_names=1),
+        extra_iv=("INTC",),
+    )
+    assert capped.run().iv_snapshots == 1  # alphabetical first under the cap
 
 
 # ================================================================================

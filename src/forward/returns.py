@@ -37,8 +37,10 @@ from typing import Any, Callable, Iterable, Optional
 
 logger = logging.getLogger("forward.returns")
 
-#: Calendar-day horizons, per the ruling.
-HORIZONS = (1, 5, 20, 60, 120)
+#: Calendar-day horizons. 3d added by the disclosure-reaction ruling
+#: (2026-09-02) — the pop, if it exists, lives in the first sessions after
+#: publication. Existing complete cache rows recompute once to pick it up.
+HORIZONS = (1, 3, 5, 20, 60, 120)
 
 BENCHMARK = "SPY"
 

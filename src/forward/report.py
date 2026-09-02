@@ -15,17 +15,46 @@ these numbers argue; a human rules, and rulings are dated.
 
 from __future__ import annotations
 
+import re
 import statistics
 from datetime import date
 from typing import Iterable, Optional
 
 from forward.funnel import FunnelEntry
 from forward.returns import HORIZONS, ForwardRow
+from signals.quiver import _matches_name
 
 #: Sections rank groups by this horizon when one number is needed.
 KEY_HORIZON = 20
 
 _LAG_BUCKETS = ((0, 7), (8, 14), (15, 30), (31, 45), (46, 10_000))
+
+#: Disclosure amount bands for the reaction slice (2026-09-02), by range MAX.
+_AMOUNT_BANDS = (
+    (15_000, "<=15K"),
+    (50_000, "15-50K"),
+    (100_000, "50-100K"),
+    (250_000, "100-250K"),
+    (1_000_000, "250K-1M"),
+    (10_000_000_000, "1M+"),
+)
+
+_NUMBER = re.compile(r"\d[\d,]*")
+
+#: The horizons the reaction slice reads — the pop, if real, is fast.
+_REACTION_HORIZONS = (1, 3, 5)
+
+
+def _amount_band(rendered: str) -> Optional[str]:
+    """Band by the range MAX; None when nothing numeric can be read."""
+    figures = [int(match.replace(",", "")) for match in _NUMBER.findall(rendered)]
+    if not figures:
+        return None
+    top = max(figures)
+    for ceiling, label in _AMOUNT_BANDS:
+        if top <= ceiling:
+            return label
+    return None
 
 
 def _excess_values(
@@ -79,7 +108,9 @@ def _stat_line(label: str, values: list[float], suffix: str = "") -> str:
 
 
 def render_forward_report(
-    entries: list[FunnelEntry], rows: dict[tuple[str, date], ForwardRow]
+    entries: list[FunnelEntry],
+    rows: dict[tuple[str, date], ForwardRow],
+    spotlight_filers: tuple[str, ...] = (),
 ) -> str:
     with_ticker = [e for e in entries if e.primary_ticker is not None]
     with_base = [
@@ -182,6 +213,55 @@ def render_forward_report(
             lines.append(
                 _stat_line(label, _excess_values(members, rows, KEY_HORIZON))
             )
+
+    # Disclosure-reaction slice (ruling 2026-09-02): does a publication pop
+    # exist on the filers everyone watches? Purchases only, measured from the
+    # disclosure's observation, by amount band. MEASUREMENT ONLY — no latency
+    # work and no trading path exist until this says the pop is real.
+    if spotlight_filers and congressional:
+        def is_spotlight(entry: FunnelEntry) -> bool:
+            filer = (
+                entry.credibility_key.split("/", 1)[1]
+                if "/" in entry.credibility_key
+                else entry.credibility_key
+            )
+            return any(_matches_name(filer, name) for name in spotlight_filers)
+
+        spotlight = [
+            e
+            for e in congressional
+            if is_spotlight(e) and "purchase" in e.transaction.lower()
+        ]
+        lines.extend(
+            [
+                "",
+                f"Disclosure reaction — spotlight-filer PURCHASES "
+                f"({len(spotlight)} of {len(congressional)} congressional "
+                f"entries), excess at 1/3/5d (does the publication pop exist?):",
+            ]
+        )
+        if not spotlight:
+            lines.append("  no spotlight-filer purchases in the log yet")
+        else:
+            for horizon in _REACTION_HORIZONS:
+                lines.append(
+                    _stat_line(
+                        f"all spotlight purchases, {horizon}d",
+                        _excess_values(spotlight, rows, horizon),
+                    )
+                )
+            lines.append("  by amount band (range max), excess at 3d:")
+            banded: dict[str, list[FunnelEntry]] = {}
+            for entry in spotlight:
+                band = _amount_band(entry.amount_range)
+                if band is not None:
+                    banded.setdefault(band, []).append(entry)
+            for _, label in _AMOUNT_BANDS:
+                members = banded.get(label)
+                if members:
+                    lines.append(
+                        "  " + _stat_line(label, _excess_values(members, rows, 3))
+                    )
 
     lines.extend(
         [

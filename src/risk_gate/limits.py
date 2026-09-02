@@ -126,6 +126,27 @@ class MechanicalSleeveLimits(_Strict):
     entries_enabled: bool = True
 
 
+class CashManagementLimits(_Strict):
+    """The idle-cash yield sweep (human ruling 2026-09-02).
+
+    Design pins, all from the ruling: the swept ETF is NEVER buying power — the
+    gate's cash model is untouched and every order still reserves settled cash;
+    the sweeper maintains ``cash >= buffer`` where the buffer is the sum of both
+    sleeves' daily deployment caps, working-order reservations, and the margin
+    below; sweep buys halt under the kill switch, unsweep sells stay permitted;
+    and the position carries no allocation weight, no alpha caps, and no
+    attribution into any signal class. Settled/unsettled cash split is deferred
+    to the live-gate review — in paper, settlement is instant."""
+
+    enabled: bool
+    #: The T-bill ETF the sweep parks in (SGOV or BIL).
+    symbol: str
+    #: Extra cushion above the deterministic buffer components, in dollars.
+    buffer_margin_usd: Annotated[Decimal, Field(ge=Decimal("0"))]
+    #: Smallest sweep or unsweep order, so the sweeper never churns dust.
+    min_order_notional_usd: Annotated[Decimal, Field(gt=Decimal("0"))]
+
+
 class KillSwitchLimits(_Strict):
     drawdown_from_high_water_mark: Fraction
     halts: str
@@ -308,6 +329,7 @@ class RiskLimits(_Strict):
     sizing: SizingLimits
     mechanical_sleeve: MechanicalSleeveLimits
     prediction_sleeve: PredictionSleeveLimits
+    cash_management: CashManagementLimits
     options_selection: OptionsSelectionLimits
     execution: ExecutionLimits
 

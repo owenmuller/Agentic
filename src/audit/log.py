@@ -24,6 +24,7 @@ from typing import Callable, Iterator, Optional
 from pydantic import TypeAdapter
 
 from audit.records import (
+    ConvergenceSnapshot,
     ExpressionSnapshot,
     AuditRecord,
     MechanicalSnapshot,
@@ -37,6 +38,7 @@ from audit.records import (
     GateSnapshot,
     OutcomeRecord,
     RejectedStage,
+    long_term_boundary,
     ResearchSnapshot,
     ReviewOutcome,
     SignalSnapshot,
@@ -93,6 +95,7 @@ class AuditLog:
         expression: Optional["ExpressionSnapshot"] = None,
         screen_report: Optional[ResearchReport] = None,
         screen_usage: Optional[ResearchUsage] = None,
+        convergence: Optional["ConvergenceSnapshot"] = None,
     ) -> DecisionRecord:
         """Write the complete decision-time record. Approved or rejected, both land."""
         record = DecisionRecord(
@@ -103,6 +106,7 @@ class AuditLog:
             sizing=SizingSnapshot.of(proposal),
             gate=GateSnapshot.of(gate_decision),  # type: ignore[arg-type]
             expression=expression,
+            convergence=convergence,
             screen_research=(
                 ResearchSnapshot.of(screen_report)
                 if screen_report is not None
@@ -156,6 +160,56 @@ class AuditLog:
                 ticker=metadata.get("ticker") or None,
                 amount_range=metadata.get("amount_range") or None,
                 report_date=metadata.get("report_date") or None,
+            ),
+            gate=GateSnapshot.of(gate_decision),  # type: ignore[arg-type]
+        )
+        self._append(record)
+        return record
+
+    def record_sweep(
+        self,
+        *,
+        side: str,
+        detail: str,
+        gate_decision: object,
+        capital: Decimal,
+        decision_id: Optional[str] = None,
+    ) -> DecisionRecord:
+        """A cash-management sweep order (human ruling 2026-09-02): a
+        DecisionRecord with no research snapshot and ``strategy="cash_sweep"``.
+        The signal snapshot is synthetic — the system's own deterministic buffer
+        arithmetic, stated as content — because a sweep has no external signal,
+        and CLAUDE.md still wants every order written down. Carries no
+        external_id, so it can never seal anything, and every counter that
+        matters (research passes, source caps, class attribution, the funnel,
+        the registry) partitions it out by strategy."""
+        now = self._clock()
+        record_id = decision_id or self._id_factory()
+        snapshot = SignalSnapshot(
+            signal_id=f"sweep-{record_id}",
+            source_id="cash_management",
+            signal_class=SignalClass.CLASS_3_THESIS,
+            observed_at=now,
+            content=detail,
+            raw_content=detail,
+        )
+        record = DecisionRecord(
+            decision_id=record_id,
+            recorded_at=now,
+            signal=snapshot,
+            research=None,
+            sizing=SizingSnapshot(
+                instrument="equity",
+                sleeve="cash_management",
+                confidence=0,  # not applicable: no research ran, by design
+                sleeve_nav=capital,
+                fraction_of_sleeve_nav=Decimal("1"),
+                capital=capital,
+                rationale=(
+                    f"idle-cash yield sweep ({side}): deterministic buffer "
+                    f"arithmetic, no LLM in the path — {detail}"
+                ),
+                strategy="cash_sweep",
             ),
             gate=GateSnapshot.of(gate_decision),  # type: ignore[arg-type]
         )
@@ -355,12 +409,32 @@ class AuditLog:
                 f"CorrectionRecord rather than resolving it twice"
             )
 
+        # Tax character (2026-09-02): long-term iff the close lands on or after
+        # the boundary derived from the FIRST buy fill. None when no buy fill is
+        # findable — absent, never guessed.
+        closed = closed_at or self._clock()
+        first_buy = None
+        for record in self.records():
+            if (
+                isinstance(record, FillRecord)
+                and record.decision_id == decision_id
+                and record.side == "buy"
+            ):
+                first_buy = record.recorded_at
+                break
+        long_term = (
+            closed.date() >= long_term_boundary(first_buy.date())
+            if first_buy is not None
+            else None
+        )
+
         record = OutcomeRecord(
             decision_id=decision_id,
             recorded_at=self._clock(),
-            closed_at=closed_at or self._clock(),
+            closed_at=closed,
             realised_pnl=realised_pnl,
             note=note,
+            long_term=long_term,
         )
         self._append(record)
 
@@ -544,12 +618,23 @@ class AuditLog:
         ]
 
     def mechanical_open_positions(self) -> dict[str, tuple[Decimal, Decimal]]:
-        """symbol -> (net quantity, net cost) of open mechanical positions,
+        """symbol -> (net quantity, net cost) of open mechanical positions."""
+        return self.strategy_open_positions("mechanical")
+
+    def strategy_open_positions(
+        self, strategy: str
+    ) -> dict[str, tuple[Decimal, Decimal]]:
+        """symbol -> (net quantity, net cost) of a strategy's open positions,
         replayed from the log. Startup uses this to split the broker's single
         per-symbol holding between the sleeves — the broker stays authoritative
         on totals; the log alone knows which sleeve owns what."""
         open_positions: dict[str, tuple[Decimal, Decimal]] = {}
-        for trail in self.mechanical_trails():
+        trails = [
+            self.trail(d.decision_id)
+            for d in self.decisions()
+            if d.sizing.strategy == strategy
+        ]
+        for trail in trails:
             decision = trail.decision
             if not decision.was_approved or trail.outcome is not None:
                 continue
@@ -618,6 +703,11 @@ class AuditLog:
             if record.recorded_at.date() != day:
                 continue
             if isinstance(record, DecisionRecord):
+                if record.sizing.strategy in ("mechanical", "cash_sweep"):
+                    # No LLM ran (defect fix 2026-09-02): a mechanical entry or
+                    # a cash sweep spent no pass, and counting it here was
+                    # quietly consuming the judged source cap on every restart.
+                    continue
                 source = record.signal.source_id
             elif isinstance(record, StageRejectionRecord):
                 if record.stage in (RejectedStage.PRE_FILTER, RejectedStage.TRIAGE):
@@ -665,6 +755,13 @@ class AuditLog:
             and not (
                 isinstance(record, StageRejectionRecord)
                 and record.stage in (RejectedStage.PRE_FILTER, RejectedStage.TRIAGE)
+            )
+            # Mechanical entries and cash sweeps have no LLM in their paths
+            # (defect fix 2026-09-02): replaying them as spent passes was
+            # quietly shrinking the day's research budget after every restart.
+            and not (
+                isinstance(record, DecisionRecord)
+                and record.sizing.strategy in ("mechanical", "cash_sweep")
             )
         )
         return new_ids + reviews

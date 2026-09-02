@@ -1600,6 +1600,56 @@ def test_the_filer_event_prompt_asks_the_question_without_answering_it():
 
 
 # ================================================================================
+# The tax boundary: a factor the review hears about, never a rule (2026-09-02)
+# ================================================================================
+
+
+def test_the_tax_factor_renders_only_when_supplied():
+    from datetime import date as date_type
+
+    common = dict(
+        symbol="NUE", entry_price=Decimal("140"), current_price=Decimal("160"),
+        opened_at=NOW, days_held=330, time_horizon="months",
+        confidence_at_entry=80, source_id="congressional_disclosures",
+        thesis="t", invalidation_condition="i", original_content="c",
+    )
+    with_factor = build_review_prompt(
+        PositionUnderReview(**common, long_term_boundary=date_type(2027, 8, 18))
+    )
+    assert "tax timing factor" in with_factor
+    assert "NEVER overrides" in with_factor
+    assert "dead thesis held for the wrong reason" in with_factor
+    assert "tax timing factor" not in build_review_prompt(
+        PositionUnderReview(**common)
+    )
+
+
+def test_a_gaining_position_near_the_boundary_tells_its_review(
+    tmp_path, limits, signals_config, research_config
+):
+    llm = routing(HOLD_REVIEW)
+    started, prices, clock = enter_with_resolution(
+        tmp_path, limits, signals_config, research_config, "2027-08-20",
+        config=review_config(), llm=llm,
+    )
+    clock.advance(days=330)  # inside 45 days of the long-term boundary
+    prices.set("NUE", str(QUOTE * Decimal("1.10")))  # a gain to defer
+    report = started.loop.tick()
+
+    assert report.reviews_run == 1
+    review_calls = [c for c in llm.calls if c["tool"] == EXIT_REVIEW_TOOL_NAME]
+    assert "tax timing factor" in review_calls[-1]["user"]
+
+    # And a LOSS near the boundary has nothing to defer: no factor.
+    llm.calls.clear()
+    prices.set("NUE", str(QUOTE * Decimal("0.95")))
+    clock.advance(days=2)
+    assert started.loop.tick().reviews_run == 1
+    review_calls = [c for c in llm.calls if c["tool"] == EXIT_REVIEW_TOOL_NAME]
+    assert "tax timing factor" not in review_calls[-1]["user"]
+
+
+# ================================================================================
 # The ratchet: a backstop, never a profit target
 # ================================================================================
 

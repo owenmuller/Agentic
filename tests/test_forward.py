@@ -402,6 +402,54 @@ def test_the_report_renders_the_scoreboard(tmp_path):
     assert "humans rule" in report
 
 
+def test_the_disclosure_reaction_slice_measures_spotlight_purchases(tmp_path):
+    """Ruling 2026-09-02: purchases by the configured spotlight filers, by
+    amount band, at 1/3/5d — the measurement that decides whether latency work
+    or a trading path ever exists. Sales and non-spotlight filers stay out."""
+    def congressional(filer, transaction, amount, external):
+        return snapshot(
+            source="congressional_disclosures",
+            signal_class=SignalClass.CLASS_2_MOMENTUM,
+            content=(
+                f"ticker: NUE\ntransaction: {transaction}\n"
+                f"amount range: {amount}\n"
+                "disclosure lag: 10 days between the trade and its disclosure"
+            ),
+            credibility_key=f"congressional_disclosures/{filer}",
+            filer=filer,
+        )
+
+    entries = funnel_entries(
+        [
+            rejection("d-1", RejectedStage.PRE_FILTER, "pre_filter",
+                      snap=congressional("Nancy Pelosi", "Purchase",
+                                         "$1,000,001 - $5,000,000", "r1")),
+            rejection("d-2", RejectedStage.PRE_FILTER, "pre_filter",
+                      snap=congressional("Nancy Pelosi", "Sale (Full)",
+                                         "$1,000,001 - $5,000,000", "r2")),
+            rejection("d-3", RejectedStage.PRE_FILTER, "pre_filter",
+                      snap=congressional("Obscure Member", "Purchase",
+                                         "$50,001 - $100,000", "r3")),
+        ]
+    )
+    observed = NOW.date()
+    bars = FakeBars(
+        {
+            "NUE": weekday_series(observed, 20, 100.0, 1.0),
+            "SPY": weekday_series(observed, 20, 500.0, 0.0),
+        }
+    )
+    late = datetime.combine(observed + timedelta(days=10), time(14), tzinfo=timezone.utc)
+    rows = engine(tmp_path, bars, now=late).rows_for(wanted_pairs(entries))
+    report = render_forward_report(
+        entries, rows, spotlight_filers=("Nancy Pelosi", "Tommy Tuberville")
+    )
+    assert "Disclosure reaction — spotlight-filer PURCHASES (1 of 3" in report
+    assert "all spotlight purchases, 1d" in report
+    assert "all spotlight purchases, 3d" in report
+    assert "1M+" in report  # the amount band, by range max
+
+
 def test_the_report_says_no_marks_rather_than_zero(tmp_path):
     entries = funnel_entries([decision("d-1", approved=True)])
     rows = engine(tmp_path, FakeBars({})).rows_for(wanted_pairs(entries))
@@ -411,4 +459,5 @@ def test_the_report_says_no_marks_rather_than_zero(tmp_path):
 
 
 def test_horizons_are_the_ruled_set():
-    assert HORIZONS == (1, 5, 20, 60, 120)
+    # 3d added by the disclosure-reaction ruling (2026-09-02).
+    assert HORIZONS == (1, 3, 5, 20, 60, 120)

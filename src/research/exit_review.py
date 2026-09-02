@@ -251,6 +251,11 @@ class PositionUnderReview:
     #: prompt's framing differs — a move asks "has this resolved"; a filing asks
     #: "what does the filer's own action say about the thesis".
     trigger_kind: Optional[str] = None
+    #: Set when the position is approaching long-term capital-gains treatment
+    #: with an unrealised gain (ruling 2026-09-02). A deferral FACTOR in timing
+    #: judgement only — the prompt says explicitly that it never overrides
+    #: invalidation, the stops, or the leash ceiling. None otherwise.
+    long_term_boundary: Optional[date] = None
 
 
 #: Name of the tool the model must call to deliver a review.
@@ -472,6 +477,17 @@ def build_review_prompt(position: PositionUnderReview) -> str:
             f"- the furthest that stop can be moved: day "
             f"{position.leash_ceiling_days} after entry (a configured ceiling; a "
             f"later date is clamped to it)"
+        )
+    if position.long_term_boundary is not None:
+        lines.append(
+            f"- tax timing factor: this position's gains become long-term for "
+            f"tax on {position.long_term_boundary.isoformat()}. This is a "
+            f"FACTOR in timing judgement only — if the thesis independently "
+            f"supports holding, reaching the boundary is worth weighing; it "
+            f"NEVER overrides a triggered invalidation, a dead or displaced "
+            f"thesis, or the deterministic stops and ceiling above. A thesis "
+            f"that only survives because selling would be taxed is a dead "
+            f"thesis held for the wrong reason."
         )
     lines.extend(
         [

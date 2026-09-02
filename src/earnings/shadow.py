@@ -157,7 +157,15 @@ class ShadowObserver:
         spot: Callable[[str], Optional[Decimal]],
         log: ShadowLog,
         clock: Optional[Callable[[], datetime]] = None,
+        extra_iv_symbols: tuple[str, ...] = (),
     ) -> None:
+        #: IV-watch widening (human ruling 2026-09-02): names beyond the earnings
+        #: universe whose daily ATM IV should also be snapshotted — the funnel's
+        #: and the book's names, handed over as a plain file by the trading loop
+        #: (never an import; this package stays a leaf). Snapshots ONLY — these
+        #: names are never armed for prints, and the cap below bounds the daily
+        #: chain fetches.
+        self._extra_iv = tuple(extra_iv_symbols)
         self._config = config
         self._calendar = calendar
         self._chain = chain
@@ -280,7 +288,18 @@ class ShadowObserver:
         today = now.date()
         done = self._log.iv_days()
         count = 0
-        for symbol in sorted({s.upper() for s in self._config.universe}):
+        watched = {s.upper() for s in self._config.universe} | {
+            s.upper() for s in self._extra_iv
+        }
+        capped = sorted(watched)[: self._config.iv_watch_max_names]
+        if len(watched) > len(capped):
+            logger.warning(
+                "iv watch has %d names; snapshotting the first %d "
+                "(earnings.yaml iv_watch_max_names bounds the daily chain fetches)",
+                len(watched),
+                len(capped),
+            )
+        for symbol in capped:
             if (symbol, today.isoformat()) in done:
                 continue
             snapshot = self._iv_snapshot(symbol, now)

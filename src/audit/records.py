@@ -54,7 +54,7 @@ answers, so a signal that dies at stage one is still followable end to end.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Optional, Union
@@ -156,6 +156,7 @@ class SignalSnapshot(_Record):
 _CONTENT_TICKER = re.compile(r"^ticker:\s*([A-Z][A-Z0-9.\-]{0,9})\s*$", re.MULTILINE)
 _CONTENT_TRANSACTION = re.compile(r"^transaction:\s*(.+?)\s*$", re.MULTILINE)
 _CONTENT_LAG = re.compile(r"^disclosure lag:\s*(\d+)\s+days", re.MULTILINE)
+_CONTENT_AMOUNT = re.compile(r"^amount range:\s*(.+?)\s*$", re.MULTILINE)
 
 
 def snapshot_tickers(snapshot: "SignalSnapshot") -> tuple[str, ...]:
@@ -183,6 +184,27 @@ def snapshot_lag_days(snapshot: "SignalSnapshot") -> Optional[int]:
     """The rendered disclosure lag, when the content states one."""
     match = _CONTENT_LAG.search(snapshot.content)
     return int(match.group(1)) if match else None
+
+
+def snapshot_amount_range(snapshot: "SignalSnapshot") -> str:
+    """The disclosure's rendered amount range ("$50,001 - $100,000") or ""."""
+    match = _CONTENT_AMOUNT.search(snapshot.content)
+    return match.group(1) if match else ""
+
+
+def long_term_boundary(acquired: date) -> date:
+    """The first sale date that gets long-term capital-gains treatment.
+
+    The holding period runs trade date to trade date and long-term requires
+    holding MORE than one year, so the boundary is the day AFTER the one-year
+    anniversary. Anniversary arithmetic rather than day counts, so leap years
+    cannot shave a day off: Feb 29 anniversaries land on Mar 1.
+    """
+    try:
+        anniversary = acquired.replace(year=acquired.year + 1)
+    except ValueError:  # Feb 29 in a year without one
+        anniversary = date(acquired.year + 1, 3, 1)
+    return anniversary + timedelta(days=1)
 
 
 class ResearchSnapshot(_Record):
@@ -231,6 +253,38 @@ class ResearchSnapshot(_Record):
                 else None
             ),
             expected_resolution_date=report.expected_resolution_date,
+        )
+
+
+class ConvergenceSnapshot(_Record):
+    """The signal's convergence state at dispatch (ruling 2026-09-02).
+
+    Stamped so the evidence for any future band-upgrade rule accumulates from
+    today: the rule (≥3 independent source FAMILIES within the window, at least
+    one filing family present) stays UNBUILT until forward returns show that
+    convergent signals actually outperform — this record is what makes that
+    showing possible. Families per the ruling, recorded in CLAUDE.md:
+    congressional filings, 13F filings, X trade-callers (all X accounts are one
+    family), Trump posts.
+    """
+
+    #: The ticker the state was measured on (the best of a multi-ticker signal).
+    symbol: str
+    #: Families active on the symbol in the window, THIS signal's included.
+    families: tuple[str, ...]
+    #: Distinct identities active besides this signal's own.
+    independent_identities: int
+    #: Other congressional filers with purchase disclosures in the window.
+    cluster_filers: int
+
+    @property
+    def family_count(self) -> int:
+        return len(self.families)
+
+    @property
+    def has_filing_family(self) -> bool:
+        return bool(
+            {"congressional_filings", "13f_filings"} & set(self.families)
         )
 
 
@@ -356,6 +410,10 @@ class DecisionRecord(_Record):
     mechanical: Optional["MechanicalSnapshot"] = None
     #: How the thesis was expressed (options vs equity), when routing ran.
     expression: Optional[ExpressionSnapshot] = None
+    #: Convergence state at dispatch (2026-09-02): who else was active on the
+    #: name when this decision was made. None on records written before the
+    #: field, on mechanical entries, and on sweeps.
+    convergence: Optional["ConvergenceSnapshot"] = None
     #: Two-stage research (2026-08-25): the stage-one screen draft behind a
     #: verified verdict, with its own cost. None when the pass ended at stage
     #: one (``research`` IS the screen report) or two-stage is off.
@@ -401,6 +459,11 @@ class OutcomeRecord(_Record):
     closed_at: datetime
     realised_pnl: Decimal
     note: str = ""
+    #: Tax character (ruling 2026-09-02): True when the close falls on or after
+    #: the long-term boundary (more than one year, trade date to trade date),
+    #: False when short-term, None on records written before the field existed
+    #: or when the first fill date could not be established.
+    long_term: Optional[bool] = None
 
     @property
     def won(self) -> bool:
@@ -532,6 +595,10 @@ class ExitReason(StrEnum):
     #: The mechanical sleeve's only exit (ruling 2026-08-27): hold_days after
     #: fill, no price stop — the stop is the slice size.
     MECHANICAL_TIME_EXIT = "mechanical_time_exit"
+    #: Cash-management unsweep (ruling 2026-09-02): the sweeper selling its
+    #: T-bill ETF to restore the liquidity buffer. Risk-reducing by nature,
+    #: permitted under a kill-switch halt like every close.
+    CASH_UNSWEEP = "cash_unsweep"
 
 
 class ReviewOutcome(StrEnum):

@@ -33,15 +33,32 @@ from typing import Iterable, Optional
 
 from audit.records import (
     AuditRecord,
+    ConvergenceSnapshot,
     DecisionRecord,
     RejectedStage,
     StageRejectionRecord,
     snapshot_tickers,
     snapshot_transaction,
 )
-from signals import Signal
+from signals import Signal, SignalClass
 
 from orchestrator.config import ConvergenceConfig
+
+
+def family_of(source_id: str, signal_class: SignalClass) -> str:
+    """The signal's source FAMILY (human ruling 2026-09-02, recorded in CLAUDE.md).
+
+    Four families, deterministic: congressional filings, 13F filings, Trump
+    posts, and X trade-callers — ALL X accounts are ONE family, however many of
+    them post, because accounts amplifying each other is not independence.
+    """
+    if source_id == "congressional_disclosures":
+        return "congressional_filings"
+    if signal_class is SignalClass.CLASS_3_THESIS:
+        return "13f_filings"
+    if source_id == "trump_posts":
+        return "trump_posts"
+    return "x_callers"
 
 logger = logging.getLogger("orchestrator.registry")
 
@@ -57,6 +74,8 @@ class _Active:
     symbol: str
     observed_at: datetime
     is_purchase: bool
+    #: The source FAMILY (2026-09-02): the independence unit one level up.
+    family: str = "x_callers"
 
 
 @dataclass(slots=True)
@@ -111,8 +130,9 @@ class SignalRegistry:
                 continue
             snapshot = record.signal
             if isinstance(record, DecisionRecord):
-                if record.sizing.strategy == "mechanical":
-                    continue  # the judged record of the same disclosure seeds it
+                if record.sizing.strategy in ("mechanical", "cash_sweep"):
+                    continue  # the judged record of the disclosure seeds it;
+                    # parked cash is not a signal at all
                 outcome = "traded" if record.was_approved else "gate_rejected"
                 code = "" if record.was_approved else (record.gate.rejection_code or "")
                 confidence = (
@@ -139,6 +159,9 @@ class SignalRegistry:
                         symbol=ticker,
                         observed_at=snapshot.observed_at,
                         is_purchase="purchase" in transaction.lower(),
+                        family=family_of(
+                            snapshot.source_id, snapshot.signal_class
+                        ),
                     ),
                 )
                 if outcome:
@@ -175,6 +198,7 @@ class SignalRegistry:
                         symbol=ticker,
                         observed_at=signal.observed_at,
                         is_purchase="purchase" in transaction.lower(),
+                        family=family_of(signal.source_id, signal.signal_class),
                     ),
                 )
 
@@ -262,6 +286,41 @@ class SignalRegistry:
             if lines:
                 sections.append("\n".join([f"{ticker}:"] + lines))
         return "\n".join(sections) if sections else None
+
+    def snapshot_for(self, signal: Signal) -> Optional[ConvergenceSnapshot]:
+        """The signal's convergence state at dispatch, for the decision record.
+
+        Includes the signal's OWN family — the future band-up rule counts
+        families present, and this signal is present. The best ticker of a
+        multi-ticker signal wins (most families, then most identities). None
+        when the signal names no instrument.
+        """
+        own_family = family_of(signal.source_id, signal.signal_class)
+        own_identity = self._own_identity(signal)
+        best: Optional[ConvergenceSnapshot] = None
+        for ticker in self._tickers_of(signal):
+            others = self._other_identities(ticker, own_identity)
+            families = {own_family} | {entry.family for entry in others.values()}
+            candidate = ConvergenceSnapshot(
+                symbol=ticker,
+                families=tuple(sorted(families)),
+                independent_identities=len(others),
+                cluster_filers=len(
+                    self._cluster_filers(ticker, self._own_filer(signal))
+                ),
+            )
+            if best is None or (
+                candidate.family_count,
+                candidate.independent_identities,
+            ) > (best.family_count, best.independent_identities):
+                best = candidate
+        return best
+
+    def in_window_symbols(self) -> tuple[str, ...]:
+        """Symbols with any active signal in the window — the IV-watch feed
+        (ruling 2026-09-02): names the shadow logger should snapshot daily so
+        an IV-rank history exists for what the system might actually trade."""
+        return tuple(sorted({entry.symbol for entry in self._in_window()}))
 
     # -- internals --------------------------------------------------------------------
 

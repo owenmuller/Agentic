@@ -69,12 +69,14 @@ exits:
   # Bounds every leash is clamped into, whatever its source — the entry report's
   # date, a review's revision, or the fallback above. MEASURED FROM ENTRY, never
   # from the review asking: a ceiling measured from "now" is not a ceiling.
-  # The months ceiling matches the mechanical arm's 365-day hold deliberately, so
-  # the leash stops being a confound in the two-arm comparison.
+  # The months ceiling matches the mechanical arm's hold deliberately, so the
+  # leash stays out of the two-arm comparison. Both moved 365 -> 367 in the same
+  # ruling (2026-09-02): long-term tax treatment needs MORE than one year, trade
+  # date to trade date, and 367 carries a one-day cushion over the boundary.
   leash_bounds:
     days: { floor: 3, ceiling: 21 }
     weeks: { floor: 14, ceiling: 90 }
-    months: { floor: 60, ceiling: 365 }
+    months: { floor: 60, ceiling: 367 }
 
   # How often each open position gets a thesis review. Reviews spend the daily
   # research budget, but 25% of it is reserved for them (see

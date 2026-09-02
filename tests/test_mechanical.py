@@ -393,6 +393,10 @@ def test_the_time_exit_closes_at_hold_days_and_resolves_the_outcome(
 
     prices.set("NUE", "150.00")
     clock.advance(days=366)
+    # Day 366 is still SHORT-term for tax; the 367-day hold (ruling 2026-09-02)
+    # deliberately clears the long-term boundary before it exits.
+    assert started.loop.tick().mechanical_exits == 0
+    clock.advance(days=1)
     report = started.loop.tick()
     assert report.mechanical_exits == 1
 

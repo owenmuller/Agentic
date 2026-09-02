@@ -1872,6 +1872,109 @@ leash would move 120 → 293, clamped from entry within the months bounds. $0.10
 
 Suite: 953 passed, 3 skipped.
 
+## Alpha/efficiency rulings, built 2026-09-02 (build order 1, 2, 3, 5)
+
+### 1. Idle-cash yield sweep — SHIPPED as ruled
+
+- **`Sleeve.CASH_MANAGEMENT` + `orchestrator/sweep.py`.** SGOV is NEVER buying
+  power: the gate's cash model is untouched, every sweep buy reserves settled
+  cash like any order, and the never-negative check binds identically. The
+  sleeve is exempt from the ALPHA caps only (single-position, sector, daily
+  deployment, drift) — parked cash is not the exposure those bound.
+- **Buffer** = judged daily cap + mechanical daily cap + working reservations
+  + `buffer_margin_usd` ($2,500), recomputed live (it scales with NAV — the
+  unsweep defends the buffer exactly, never lot-flattens). Config:
+  `risk_limits.yaml cash_management` (enabled, SGOV, min notional $500).
+- Kill switch: sweep buys pause (one note, not a record per tick); unsweep
+  sells permitted. Sweep buys are lots (DecisionRecords, strategy
+  `cash_sweep`, synthetic signal, no external_id → seals nothing); unsweeps
+  close lots oldest-first via ExitRecords (`cash_unsweep`); a flat lot's
+  OutcomeRecord realises captured yield. Own attribution line ("cash
+  management (SGOV): +X accrued..."), partitioned out of every signal class,
+  the funnel, and the registry. Startup splits broker holdings three ways now
+  (judged/mechanical/cash_management) from the log.
+- One working order at a time; PDT day-trade note in the module docstring;
+  settled/unsettled split deferred to the live-gate review as ruled.
+- **Expect the next paper session to park ~$80K.** NAV is unchanged by
+  parking; paper Alpaca may not simulate SGOV dividends, so the paper phase
+  proves mechanics, not dollars.
+
+### Defect fix surfaced by the sweep work (2026-09-02)
+
+`research_passes_on` and `research_passes_by_source_on` were counting
+MECHANICAL DecisionRecords — no LLM ever ran on them — so every restart
+replayed mechanical entries as spent research passes and consumed the judged
+congressional source cap. Both counters now skip strategies
+`("mechanical", "cash_sweep")`. This had been quietly shrinking post-restart
+budgets since 08-27.
+
+### 2. Tax-aware holding — SHIPPED except lot selection (deferred as ruled)
+
+- **mechanical hold_days 365 → 367** and **judged months leash ceiling
+  365 → 367 in the same commit** — long-term treatment needs MORE than one
+  year, trade date to trade date; 367 is the boundary plus a one-day cushion.
+  CLAUDE.md text updated. `MECHANICAL_HOLD_DAYS` (counterfactual horizon)
+  moved with them.
+- **`long_term_boundary(acquired)`** (audit.records): anniversary + 1 day,
+  Feb-29 → Mar 1, never day-count arithmetic (leap years shave nothing).
+- **`OutcomeRecord.long_term`**: stamped at close from the first buy fill.
+  Old records parse as None.
+- **Review tax factor:** a non-option position within 45 days of its boundary
+  WITH an unrealised gain gets one prompt line — "a FACTOR in timing judgement
+  only... NEVER overrides a triggered invalidation, a dead or displaced
+  thesis, or the deterministic stops and ceiling... a thesis that only
+  survives because selling would be taxed is a dead thesis held for the wrong
+  reason." Losses get nothing (nothing to defer). Options excluded (theta
+  endgame owns that clock).
+
+### 3. Disclosure-reaction: MEASUREMENT ONLY, as ruled
+
+- Forward horizons now (1, **3**, 5, 20, 60, 120) — existing complete cache
+  rows recompute once. FunnelEntry carries transaction + amount range.
+- `spotlight_filers` in signals.yaml (Pelosi + 10 most-tracked; token-subset
+  matching, same as the watchlist). The forward report gains "Disclosure
+  reaction — spotlight-filer PURCHASES": 1/3/5d excess, by amount band (range
+  max: ≤15K...1M+). No latency work, no trading path — the section's verdict
+  decides whether those ever exist.
+
+### 4. Scaling — DEFERRED as ruled; design recorded for its return
+
+Adds keyed off EXISTING verdict fields only (validity==intact AND
+progress==ahead — no new verdict vocabulary), deterministic size, max one add,
+only INTO STRENGTH (current > entry, unfakeable), each add a NEW decision_id
+with its own stop/leash/ratchet (per-lot; merging would loosen the original
+stop), aggregate bounded by the per-symbol 7% cap; trims on
+resolution==partial from the triggering lot, own Entry/ExitReasons. Waits on
+2a calibration showing progress:ahead predicts continuation.
+
+### 5. Groundwork — SHIPPED
+
+- **Source families (recorded in CLAUDE.md, load-bearing):** FOUR —
+  congressional filings, 13F filings, X trade-callers (ALL X accounts are ONE
+  family), Trump posts. `family_of()` is deterministic: congressional by
+  source id, 13F by class, Trump by source id, everything else x_callers. Any
+  future band-up: ≥3 families with ≥1 filing family — the lever stays UNBUILT
+  pending forward-return evidence.
+- **`ConvergenceSnapshot` stamped on judged DecisionRecords at dispatch**
+  (families incl. own, independent identities, cluster filers; best ticker of
+  a multi-ticker signal). Mechanical records deliberately never stamped.
+- **IV-watch widening:** the loop writes `data/iv_watch.json` each tick (held
+  names first — option positions by UNDERLYING — then the registry's in-window
+  funnel names, cap 60); the earnings logger unions it with its universe for
+  DAILY IV SNAPSHOTS ONLY (never armed for prints), bounded by
+  `iv_watch_max_names` (default 60). A file, never an import — the logger
+  stays a leaf and the topology is untouched.
+
+### Live round trips (§ LLM Request-Path Changes)
+
+The exit-review prompt changed (tax factor), so the production review path ran
+live: a gaining months position 36 days from its boundary. Verdict intact /
+on_track / partial / hold, and the model used the factor precisely as designed
+— it refined the resolution date TO the boundary date rather than overriding
+anything. $0.102. (The sweep, funnel, and stamp changes touch no LLM path.)
+
+Suite: 971 passed, 3 skipped.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

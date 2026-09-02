@@ -279,6 +279,24 @@ classes:
         # Feed cost is billed from here, not from the window start
         # (ruling 2026-08-28): the date this source was wired.
         start_date: 2026-08-17
+        # Disclosure-reaction measurement (human ruling 2026-09-02): the
+        # forward-return report slices these filers' PURCHASES at 1/3/5 days,
+        # by amount band, to test whether a publication pop exists at all.
+        # MEASUREMENT ONLY — nothing trades on this list; Pelosi plus the most
+        # widely-tracked members. Names match the feed's Representative field
+        # by token subset, same matching as the watchlist.
+        spotlight_filers:
+          - Nancy Pelosi
+          - Tommy Tuberville
+          - Dan Crenshaw
+          - Marjorie Taylor Greene
+          - Michael McCaul
+          - Josh Gottheimer
+          - Ro Khanna
+          - Markwayne Mullin
+          - Debbie Wasserman Schultz
+          - Pete Sessions
+          - Michael Burgess
         # RESEARCH PRE-FILTER (cost pass, 2026-08-19): free deterministic checks
         # before the LLM spends a pass. A disclosure is skipped (recorded as a
         # pre_filter stage rejection, never silently dropped) when:

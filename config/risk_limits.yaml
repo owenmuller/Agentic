@@ -103,12 +103,32 @@ mechanical_sleeve:
   max_positions: 30 # equal-weight slots; slice = sleeve NAV / 30
   max_per_filer: 6 # one member's filing spree is not a portfolio
   max_per_sector_slots: 8 # of 30, mapped sectors; unmapped names = singletons
-  hold_days: 365 # time exit only — no price stop; the stop IS the slice size
+  # 365 -> 367 (human ruling 2026-09-02): a 365-day exit is short-term for tax
+  # by construction — long-term treatment needs MORE than one year, trade date
+  # to trade date, and 367 carries a one-day cushion over the legal boundary.
+  # The judged months leash ceiling moved in the same ruling so the two arms'
+  # clocks stay comparable.
+  hold_days: 367 # time exit only — no price stop; the stop IS the slice size
   drawdown_halt_fraction: 0.25 # sleeve circuit breaker vs its OWN high-water mark
   ruleset_version: "2026-08-27.1"
   # Operational off switch: false stops new mechanical entries
   # (code mechanical_disabled) while time exits still fire.
   entries_enabled: true
+
+# Idle-cash yield sweep (human ruling 2026-09-02). The swept ETF is NEVER buying
+# power: the gate's cash model is unchanged and every order still reserves cash.
+# The sweeper keeps cash >= buffer, where buffer = judged daily deployment cap
+# + mechanical daily deployment cap + working-order reservations + the margin
+# below — so on a day the system wants to deploy maximally, the cash is already
+# there. Sweep buys halt under the kill switch; unsweep sells are risk-reducing
+# and stay permitted. No allocation weight, no alpha caps, no signal-class
+# attribution; its accrual gets its own attribution line. Settled/unsettled
+# cash split deferred to the live-gate review (paper settles instantly).
+cash_management:
+  enabled: true
+  symbol: SGOV
+  buffer_margin_usd: 2500
+  min_order_notional_usd: 500
 
 prediction_sleeve:
   arbitrage:

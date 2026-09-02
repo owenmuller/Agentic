@@ -47,11 +47,15 @@ class Sleeve(StrEnum):
     """CLAUDE.md § Portfolio Structure. EQUITY is the judged sleeve;
     MECHANICAL is the no-LLM disclosure follower (human ruling 2026-08-27),
     isolated by the same per-sleeve allocation machinery; PREDICTION is the
-    event-contract sleeve (inactive until a venue ships)."""
+    event-contract sleeve (inactive until a venue ships); CASH_MANAGEMENT is
+    the idle-cash yield sweep (human ruling 2026-09-02) — a cash-equivalent
+    parking position, never buying power, with no allocation weight and no
+    alpha caps of its own."""
 
     EQUITY = "equity"
     MECHANICAL = "mechanical"
     PREDICTION = "prediction"
+    CASH_MANAGEMENT = "cash_management"
 
 
 class AccountType(StrEnum):

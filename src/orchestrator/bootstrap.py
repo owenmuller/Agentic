@@ -56,6 +56,7 @@ from orchestrator.pipeline import PriceSource, SignalPipeline
 from orchestrator.prefilter import ResearchPreFilter
 from orchestrator.recovery import recover_unsettled_orders
 from orchestrator.registry import SignalRegistry
+from orchestrator.sweep import CashSweeper
 from orchestrator.state import (
     SessionState,
     replay_deployed_today,
@@ -254,8 +255,10 @@ def preflight(
             decisions, today
         ),
         # The audit log alone knows which sleeve owns what: split the broker's
-        # per-symbol holdings so the mechanical sleeve wakes up holding its own.
+        # per-symbol holdings so the mechanical sleeve wakes up holding its own,
+        # and the cash-management sleeve its parked ETF (ruling 2026-09-02).
         mechanical_open=audit.mechanical_open_positions(),
+        cash_management_open=audit.strategy_open_positions("cash_sweep"),
         today=today,
         account_type=orchestrator_config.account_type,
     )
@@ -451,6 +454,7 @@ def start(
         prices=prices,
         id_factory=id_factory,
         fill_sink=exits.track_fill,
+        convergence_snapshot=registry.snapshot_for,
         options_chain=options_chain,
         option_selector=option_selector,
         clock=checks.clock,
@@ -485,6 +489,29 @@ def start(
         )
         mechanical.replay(checks.audit.mechanical_trails())
 
+    # The idle-cash yield sweeper (ruling 2026-09-02): deterministic, config-
+    # switched, replayed from its own trails. Never buying power, never alpha.
+    sweeper = None
+    if checks.limits.cash_management.enabled:
+        import uuid as _uuid
+
+        sweeper = CashSweeper(
+            gate=checks.gate,
+            adapter=checks.adapter,
+            audit=checks.audit,
+            prices=prices,
+            config=checks.limits.cash_management,
+            clock=checks.clock,
+            id_factory=id_factory or (lambda: _uuid.uuid4().hex[:16]),
+            note=mechanical_sink,
+        )
+        # Replay only when sweep history exists: trails() assembly is the
+        # expensive part of startup, and a log with no sweeps has no lots.
+        if any(
+            d.sizing.strategy == "cash_sweep" for d in checks.audit.decisions()
+        ):
+            sweeper.replay(checks.audit.trails())
+
     loop = TradingLoop(
         scanners=scanners,
         queue=queue,
@@ -493,6 +520,7 @@ def start(
         prefilter=research_prefilter,
         registry=registry,
         mechanical=mechanical,
+        sweeper=sweeper,
         cost_meter=cost_meter,
         error_sink=error_sink,
         source_caps={

@@ -185,6 +185,7 @@ class SignalPipeline:
         prices: PriceSource,
         id_factory: Optional[Callable[[], str]] = None,
         fill_sink: Optional[Callable[["WorkingOrder", Decimal, Decimal], None]] = None,
+        convergence_snapshot: Optional[Callable] = None,
         options_chain=None,
         option_selector: Optional[OptionSelector] = None,
         clock: Optional[Callable[[], datetime]] = None,
@@ -198,6 +199,9 @@ class SignalPipeline:
         self._adapter = adapter
         self._audit = audit
         self._prices = prices
+        #: Convergence state at dispatch (2026-09-02), stamped on decision
+        #: records so band-upgrade evidence accumulates. None = no registry.
+        self._convergence_snapshot = convergence_snapshot
         #: The options expression seam (2026-08-24). Both None = equity-only
         #: pipeline, byte-identical to the pre-options behaviour — which is what
         #: every harness without a chain gets.
@@ -396,6 +400,12 @@ class SignalPipeline:
 
         # 4. The risk gate. Approved or rejected, this writes the full decision record.
         decision = self._gate.submit(order)
+        convergence = None
+        if self._convergence_snapshot is not None:
+            try:
+                convergence = self._convergence_snapshot(signal)
+            except Exception:  # noqa: BLE001 - a stamp must never block a record
+                logger.exception("convergence snapshot failed; recording without it")
         record = self._audit.record_decision(
             signal,
             report,
@@ -406,6 +416,7 @@ class SignalPipeline:
             expression=expression,
             screen_report=screen_report,
             screen_usage=screen_usage,
+            convergence=convergence,
         )
         if not decision.is_approved:
             return PipelineResult(

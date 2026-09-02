@@ -33,8 +33,10 @@ from audit.records import (
     DecisionRecord,
     RejectedStage,
     StageRejectionRecord,
+    snapshot_amount_range,
     snapshot_lag_days,
     snapshot_tickers,
+    snapshot_transaction,
 )
 from signals import SignalClass
 
@@ -64,6 +66,10 @@ class FunnelEntry:
     confidence: Optional[int]
     #: Rendered disclosure lag, congressional rows only.
     lag_days: Optional[int]
+    #: The disclosure's transaction and amount range, congressional rows only
+    #: (disclosure-reaction ruling 2026-09-02). "" where the content has none.
+    transaction: str = ""
+    amount_range: str = ""
 
     @property
     def primary_ticker(self) -> Optional[str]:
@@ -77,8 +83,8 @@ def funnel_entries(records: Iterable[AuditRecord]) -> list[FunnelEntry]:
     out: list[FunnelEntry] = []
     for record in records:
         if isinstance(record, DecisionRecord):
-            if record.sizing.strategy == "mechanical":
-                continue
+            if record.sizing.strategy in ("mechanical", "cash_sweep"):
+                continue  # copies of judged inputs / parked cash — not signals
             if record.decision_id in seen:
                 continue
             seen.add(record.decision_id)
@@ -100,6 +106,8 @@ def funnel_entries(records: Iterable[AuditRecord]) -> list[FunnelEntry]:
                         else None
                     ),
                     lag_days=snapshot_lag_days(record.signal),
+                    transaction=snapshot_transaction(record.signal),
+                    amount_range=snapshot_amount_range(record.signal),
                 )
             )
         elif isinstance(record, StageRejectionRecord):
@@ -127,6 +135,8 @@ def funnel_entries(records: Iterable[AuditRecord]) -> list[FunnelEntry]:
                         else None
                     ),
                     lag_days=snapshot_lag_days(record.signal),
+                    transaction=snapshot_transaction(record.signal),
+                    amount_range=snapshot_amount_range(record.signal),
                 )
             )
     return out

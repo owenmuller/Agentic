@@ -287,6 +287,7 @@ def seed_account_state(
     account_type: AccountType = AccountType.CASH,
     mechanical_deployed_today: Decimal = ZERO,
     mechanical_open: Optional[dict[str, tuple[Decimal, Decimal]]] = None,
+    cash_management_open: Optional[dict[str, tuple[Decimal, Decimal]]] = None,
 ) -> AccountState:
     """Assemble the state a restarted gate should wake up holding.
 
@@ -308,25 +309,33 @@ def seed_account_state(
         # stays authoritative on totals, and anything it holds beyond what
         # either sleeve accounts for defaults to the judged sleeve, where the
         # unmanaged-exposure warning already surfaces it to a human.
-        mechanical = (mechanical_open or {}).get(holding.symbol)
-        if mechanical is not None and not holding.is_option:
-            mech_quantity, mech_cost = mechanical
-            take = min(mech_quantity, position.quantity)
+        splits = (
+            (Sleeve.MECHANICAL, (mechanical_open or {}).get(holding.symbol)),
+            (
+                Sleeve.CASH_MANAGEMENT,
+                (cash_management_open or {}).get(holding.symbol),
+            ),
+        )
+        for sleeve, claim in splits:
+            if claim is None or holding.is_option or position.quantity <= 0:
+                continue
+            claim_quantity, claim_cost = claim
+            take = min(claim_quantity, position.quantity)
             if take > 0:
                 fraction = take / position.quantity
-                mech_value = position.market_value * fraction
-                cost_share = min(mech_cost, position.cost_basis)
-                held[("mechanical", holding.symbol)] = Position(
-                    key=("mechanical", holding.symbol),
-                    sleeve=Sleeve.MECHANICAL,
+                claim_value = position.market_value * fraction
+                cost_share = min(claim_cost, position.cost_basis)
+                held[(sleeve.value, holding.symbol)] = Position(
+                    key=(sleeve.value, holding.symbol),
+                    sleeve=sleeve,
                     quantity=take,
                     cost_basis=cost_share,
-                    market_value=mech_value,
+                    market_value=claim_value,
                     last_open_date=today,
                 )
                 position.quantity -= take
                 position.cost_basis -= cost_share
-                position.market_value -= mech_value
+                position.market_value -= claim_value
         if position.quantity > 0:
             held[position.key] = position
 

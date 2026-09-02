@@ -32,6 +32,7 @@ claiming to be urgent is a post claiming something.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -82,6 +83,8 @@ class TickReport:
     #: Filer events recorded this tick, both arms (ruling 2026-09-01): new
     #: disclosures by originating filers in held names.
     filer_events: int = 0
+    #: Cash-management sweep/unsweep orders placed this tick (ruling 2026-09-02).
+    sweep_orders: int = 0
     halted: bool = False
 
     @property
@@ -108,6 +111,7 @@ class TradingLoop:
         source_pass_day: Optional[date] = None,
         previously_capped: Optional[set[tuple[str, str]]] = None,
         mechanical: Optional[object] = None,
+        sweeper: Optional[object] = None,
         budget: ResearchBudget,
         session: SessionState,
         gate: RiskGate,
@@ -141,6 +145,9 @@ class TradingLoop:
         #: The mechanical disclosure follower (ruling 2026-08-27). None when
         #: the sleeve weight is zero — the whole arm switches off in config.
         self._mechanical = mechanical
+        #: The idle-cash yield sweeper (ruling 2026-09-02). None when
+        #: cash_management.enabled is false.
+        self._sweeper = sweeper
         self._budget = budget
         self._session = session
         self._gate = gate
@@ -163,6 +170,10 @@ class TradingLoop:
     @property
     def mechanical(self):
         return self._mechanical
+
+    @property
+    def sweeper(self):
+        return self._sweeper
 
     @property
     def deferred(self) -> tuple[Signal, ...]:
@@ -383,9 +394,16 @@ class TradingLoop:
             report.mechanical_exits = mechanical_report.exits_started
             self._session.capture_mechanical(self._mechanical, now)
 
+        # The sweep runs LAST, after every trading decision this tick has made
+        # its reservations — the buffer it defends includes them, so ordering
+        # it after the entries is what keeps it from racing them.
+        if self._sweeper is not None:
+            report.sweep_orders = self._sweeper.tick(now)
+
         report.halted = self._gate.kill_switch_tripped
         self._session.capture_exits(self._exits)
         self._session.persist(self._gate, now)
+        self._write_iv_watch()
 
         if report.halted:
             logger.warning(
@@ -393,6 +411,34 @@ class TradingLoop:
                 "closes still pass. Resuming requires a manual human reset."
             )
         return report
+
+    def _write_iv_watch(self) -> None:
+        """Hand the earnings shadow logger the names worth an IV history
+        (ruling 2026-09-02): the book first, then the funnel's recent names.
+        A plain file, never an import — the logger stays a leaf. A write
+        failure costs the widening, never the tick."""
+        try:
+            held: list[str] = []
+            for position in self._exits.tracked:
+                name = position.symbol
+                if position.is_option and position.entry_order is not None:
+                    name = position.entry_order.underlying
+                held.append(name.upper())
+            if self._mechanical is not None:
+                held.extend(p.symbol.upper() for p in self._mechanical.tracked)
+            funnel: list[str] = []
+            if self._registry is not None:
+                funnel = [s.upper() for s in self._registry.in_window_symbols()]
+            symbols = list(dict.fromkeys(held + sorted(set(funnel) - set(held))))
+            path = self._session.path.parent / "iv_watch.json"
+            path.write_text(
+                json.dumps({"symbols": symbols[:60]}), encoding="utf-8"
+            )
+        except Exception:  # noqa: BLE001 - a watch-file bug must not kill the loop
+            logger.exception(
+                "iv_watch.json write failed; the shadow logger keeps its "
+                "configured universe"
+            )
 
     def _note_verdict(self, signal: Signal, result: PipelineResult) -> None:
         """Feed the convergence registry this session's verdicts, so a second
@@ -474,6 +520,8 @@ class TradingLoop:
         if self._mechanical is not None:
             report.settled += len(self._mechanical.cancel_working())
             self._session.capture_mechanical(self._mechanical, self._clock())
+        if self._sweeper is not None:
+            report.settled += len(self._sweeper.cancel_working())
         report.halted = self._gate.kill_switch_tripped
         self._session.capture_exits(self._exits)
         self._session.persist(self._gate, self._clock())

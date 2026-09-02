@@ -224,6 +224,49 @@ class ExitReasonAttribution:
         return f"{self.reason}: {self.realised_pnl:+.2f} over {verdict}{ret}"
 
 
+@dataclass(frozen=True, slots=True)
+class CashManagementAttribution:
+    """The sweep's own line (ruling 2026-09-02): what parked cash earned.
+
+    Never a signal class and never alpha — the counterfactual is idle cash at
+    exactly $0.00, so the accrual is the whole story. Realised P&L from lots
+    sold flat plus the mark-to-market on what is still parked, against cost."""
+
+    symbol: str
+    #: Cost of every sweep buy fill in the log.
+    deployed: Decimal
+    #: Proceeds of every unsweep sell fill.
+    proceeds: Decimal
+    #: Units still parked.
+    open_units: Decimal
+    #: A recent close for the open units. None = no mark available.
+    mark: Optional[Decimal]
+
+    @property
+    def accrual(self) -> Optional[Decimal]:
+        """Yield captured: (proceeds + open value) - cost. None when open units
+        exist but no mark does — absent, never guessed."""
+        if self.open_units > ZERO and self.mark is None:
+            return None
+        open_value = (
+            self.open_units * self.mark if self.mark is not None else ZERO
+        )
+        return (self.proceeds + open_value - self.deployed).quantize(CENTS)
+
+    def summary(self) -> str:
+        if self.accrual is None:
+            return (
+                f"cash management ({self.symbol}): {self.deployed:.2f} parked, "
+                f"accrual unavailable (no recent mark for {self.open_units} "
+                f"open units)"
+            )
+        return (
+            f"cash management ({self.symbol}): {self.accrual:+.2f} accrued on "
+            f"{self.deployed:.2f} parked ({self.open_units} units still held; "
+            f"idle-cash counterfactual is exactly 0.00)"
+        )
+
+
 #: Below this many resolved positions a calibration cell is noise, and the report
 #: says "insufficient" instead of printing a hit rate someone might tune on
 #: (human ruling 2026-09-01).
@@ -353,6 +396,8 @@ class AttributionReport:
     mtd_research_cost: Optional[Decimal] = None
     #: The mechanical sleeve's bucket; None when the sleeve has no history.
     mechanical: Optional[MechanicalAttribution] = None
+    #: The idle-cash sweep's own line (2026-09-02); None when nothing swept.
+    cash_management: Optional[CashManagementAttribution] = None
     #: Judged-sleeve P&L grouped by exit reason (2026-08-31).
     by_exit_reason: tuple["ExitReasonAttribution", ...] = ()
     #: Hit rate per sizing-table confidence band, since inception (2026-09-01).
@@ -493,6 +538,8 @@ class AttributionReport:
             lines.append(f"  {self.by_class[signal_class].summary()}")
         if self.mechanical is not None:
             lines.append(f"  {self.mechanical.summary()}")
+        if self.cash_management is not None:
+            lines.append(f"  {self.cash_management.summary()}")
 
         if self.flagged_classes:
             lines.extend(
@@ -514,7 +561,8 @@ class AttributionReport:
 
 
 #: The mechanical sleeve's holding period, and the counterfactual's horizon.
-MECHANICAL_HOLD_DAYS = 365
+#: 365 -> 367 with the tax ruling (2026-09-02), in step with risk_limits.yaml.
+MECHANICAL_HOLD_DAYS = 367
 
 
 def _closing_reason(trail: AuditTrail) -> str:
@@ -632,10 +680,18 @@ def build_attribution(
     window_start = generated_at - timedelta(days=window_days)
     # The mechanical sleeve's trails are partitioned out first: they carry no
     # research snapshot and belong to their own bucket, never a signal class.
+    # Same for the cash sweep (2026-09-02) — parked cash is not a signal.
     mechanical_trails = [
         t for t in trails if t.decision.sizing.strategy == "mechanical"
     ]
-    trails = [t for t in trails if t.decision.sizing.strategy != "mechanical"]
+    sweep_trails = [
+        t for t in trails if t.decision.sizing.strategy == "cash_sweep"
+    ]
+    trails = [
+        t
+        for t in trails
+        if t.decision.sizing.strategy not in ("mechanical", "cash_sweep")
+    ]
     buckets: dict[SignalClass, dict[str, object]] = {}
 
     def empty_bucket() -> dict[str, object]:
@@ -749,6 +805,34 @@ def build_attribution(
         for signal_class, values in buckets.items()
     }
 
+    cash_management = None
+    if sweep_trails:
+        deployed = proceeds = units = ZERO
+        symbol = ""
+        for trail in sweep_trails:
+            symbol = str((trail.decision.gate.order or {}).get("symbol") or symbol)
+            for fill in trail.fills:
+                if fill.side == "buy":
+                    deployed += fill.filled_value
+                    units += fill.filled_quantity
+                else:
+                    proceeds += fill.filled_value
+                    units -= fill.filled_quantity
+        mark = None
+        if price_on is not None and symbol:
+            # The freshest close available: try near today first, walk back.
+            for days_back in (1, 2, 4, 6):
+                mark = price_on(symbol, generated_at - timedelta(days=days_back))
+                if mark is not None:
+                    break
+        cash_management = CashManagementAttribution(
+            symbol=symbol or "?",
+            deployed=deployed,
+            proceeds=proceeds,
+            open_units=units,
+            mark=mark,
+        )
+
     judged_closed = [
         t
         for t in trails
@@ -767,5 +851,6 @@ def build_attribution(
         benchmark_return_pct=benchmark_return_pct,
         mtd_research_cost=mtd_research_cost,
         mechanical=mechanical,
+        cash_management=cash_management,
         feed_cost_detail=feed_cost_detail,
     )

@@ -1319,6 +1319,8 @@ def test_no_record_written_by_an_adversarial_run_is_anything_but_a_known_kind(
         # Expression routing (2026-08-24): how the thesis was expressed —
         # option contract chosen, or the typed fallback to equity.
         "expression",
+        # Convergence state at dispatch (2026-09-02): band-upgrade evidence.
+        "convergence",
         # Two-stage research (2026-08-25): the screen draft and its cost.
         "screen_research",
         "screen_est_cost_usd",

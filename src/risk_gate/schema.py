@@ -198,10 +198,11 @@ class EquityBuyOrder(_OrderBase):
     quantity: ShareQuantity
     execution: BuyExecution
     #: Which sleeve the position belongs to (mechanical follower, ruling
-    #: 2026-08-27). Only the two equity-shaped sleeves are representable —
-    #: the schema still cannot express a prediction-market or written-option
-    #: order, and sleeve attribution changes caps, never capabilities.
-    sleeve: Literal["equity", "mechanical"] = "equity"
+    #: 2026-08-27; cash_management sweep, ruling 2026-09-02). Only equity-shaped
+    #: sleeves are representable — the schema still cannot express a
+    #: prediction-market or written-option order, and sleeve attribution
+    #: changes caps, never capabilities.
+    sleeve: Literal["equity", "mechanical", "cash_management"] = "equity"
 
     def max_loss(self) -> Decimal:
         return self.execution.price_bound * self.quantity
@@ -225,7 +226,7 @@ class EquitySellToCloseOrder(_OrderBase):
     execution: SellExecution
     #: Must match the position being closed — the gate keys positions by
     #: (sleeve, symbol), so a judged exit can never sell mechanical shares.
-    sleeve: Literal["equity", "mechanical"] = "equity"
+    sleeve: Literal["equity", "mechanical", "cash_management"] = "equity"
 
     def max_loss(self) -> Decimal:
         return ZERO

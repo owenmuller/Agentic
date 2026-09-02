@@ -173,6 +173,11 @@ class SourceConfig(_Strict):
     #: three months. Unset means "bill the whole window": the conservative
     #: reading, and what every source did before start dates existed.
     start_date: Optional[date] = None
+    #: Disclosure-reaction measurement (human ruling 2026-09-02): the high-profile
+    #: filers whose purchases the forward-return report slices at 1/3/5 days —
+    #: does the publication pop exist? Measurement only; nothing trades on this
+    #: list, and editing it is editing a report, not a strategy.
+    spotlight_filers: tuple[str, ...] = ()
 
     @property
     def classifies_posts(self) -> bool:

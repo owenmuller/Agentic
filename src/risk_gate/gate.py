@@ -322,6 +322,26 @@ class RiskGate:
                     observed=cost,
                 )
 
+        # Cash-management sweep (human ruling 2026-09-02): SGOV-style parking of
+        # idle cash above the liquidity buffer. Cash-secured like everything else
+        # — the reservation above is the whole risk, because the position IS the
+        # cash in another form. Deliberately exempt from the alpha caps (single
+        # position, sector, daily deployment, sleeve drift): those bound risk
+        # concentration, and a T-bill ETF bought only with cash on hand is not
+        # exposure the caps exist to bound. It has no allocation weight, so it
+        # can never crowd out a sleeve; NAV includes it, so the kill switch and
+        # sizing stay honest; and the kill-switch halt above already stops sweep
+        # BUYS while unsweep sells stay permitted like every risk-reducing close.
+        if sleeve is Sleeve.CASH_MANAGEMENT:
+            target_position = state.ensure_position(
+                key, sleeve, unit_multiplier(order), is_option(order)
+            )
+            state.reserved_cash += cost
+            target_position.pending_open_units += units_of(order)
+            target_position.pending_open_cost += cost
+            target_position.last_open_date = today
+            return self._approve(order, cost, now)
+
         sleeve_nav = self.sleeve_nav(sleeve)
 
         # Max single position.

@@ -46,6 +46,10 @@ class EarningsConfig(_Strict):
     max_spread_pct_of_mid: Decimal = Field(default=Decimal("0.20"), gt=Decimal("0"))
     #: Sessions after the print at which the result is marked.
     settle_after_days: int = Field(default=1, gt=0)
+    #: IV-watch widening (human ruling 2026-09-02): ceiling on the number of
+    #: names snapshotted daily — the earnings universe plus whatever the trading
+    #: loop's iv_watch.json hands over — so the daily chain fetches stay bounded.
+    iv_watch_max_names: int = Field(default=60, gt=0)
 
     @model_validator(mode="after")
     def _expiry_window_is_ordered(self) -> "EarningsConfig":

@@ -212,8 +212,14 @@ def attribution() -> int:
                 clock=checks.clock,
             )
             rows = engine.rows_for(wanted_pairs(entries))
+            spotlight = tuple(
+                name
+                for klass in checks.signals_config.classes.values()
+                for source in klass.sources
+                for name in source.spotlight_filers
+            )
             print()
-            print(render_forward_report(entries, rows))
+            print(render_forward_report(entries, rows, spotlight_filers=spotlight))
         except Exception as error:  # noqa: BLE001 - a report without it beats no report
             print(f"forward returns unavailable: {error}", file=sys.stderr)
         bars.close()

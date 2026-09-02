@@ -228,6 +228,152 @@ def test_a_broken_context_callable_never_blocks_the_pass():
 
 
 # ================================================================================
+# Source families and the decision stamp (ruling 2026-09-02)
+# ================================================================================
+
+
+def test_the_four_families_map_deterministically():
+    from orchestrator.registry import family_of
+    from signals.records import SignalClass
+
+    assert family_of("congressional_disclosures", SignalClass.CLASS_2_MOMENTUM) == (
+        "congressional_filings"
+    )
+    assert family_of("form13f_situational", SignalClass.CLASS_3_THESIS) == (
+        "13f_filings"
+    )
+    assert family_of("trump_posts", SignalClass.CLASS_1_REALTIME) == "trump_posts"
+    # ALL X accounts are ONE family — amplification is not independence.
+    for account in ("nolimitgains", "citrini", "optionshawk", "unusual_whales"):
+        assert family_of(account, SignalClass.CLASS_1_REALTIME) == "x_callers"
+
+
+def test_the_snapshot_counts_families_including_the_signals_own():
+    reg = registry()
+    reg.note_signals([post("p-1", "NUE", source="trump_posts")])
+    reg.note_signals([post("p-2", "NUE", source="nolimitgains")])
+    subject = disclosure("d-1", "NUE", "Test Member")
+    reg.note_signals([subject])
+
+    snapshot = reg.snapshot_for(subject)
+    assert snapshot.symbol == "NUE"
+    assert snapshot.families == (
+        "congressional_filings",
+        "trump_posts",
+        "x_callers",
+    )
+    assert snapshot.family_count == 3
+    assert snapshot.has_filing_family  # the future band-up rule's second gate
+    assert snapshot.independent_identities == 2
+
+    # A signal alone on its name still stamps its own family — count 1.
+    solo = post("p-9", "ZZZQ")
+    reg.note_signals([solo])
+    assert reg.snapshot_for(solo).families == ("x_callers",)
+
+
+def test_the_mechanical_record_is_never_stamped(tmp_path):
+    """No judgment-layer artefacts in the control arm — the mechanical entry's
+    DecisionRecord carries no convergence stamp."""
+    from risk_gate import RiskLimits
+    from research.config import ResearchConfig
+    from signals import SignalsConfig
+    from test_orchestrator import FakeBroker, FakeClock, build, prices_of
+
+    started = build(
+        tmp_path,
+        RiskLimits.load(),
+        SignalsConfig.load(),
+        ResearchConfig.load(),
+        llm=RoutingLLM(
+            **{
+                "submit_research": structured(
+                    {**REPORT, "priced_in_analysis": "measured", "confidence": 40}
+                )
+            }
+        ),
+        fetcher=congressional_feed(
+            disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")
+        ),
+        prices=prices_of(NUE="140.00", SGOV="100.40"),
+        broker=FakeBroker(),
+        clock=FakeClock(),
+    )
+    started.loop.tick()
+    # Confidence 40 -> the judged path declines at sizing (a stage rejection,
+    # no stamp needed); the MECHANICAL entry's DecisionRecord must NOT be
+    # stamped — no judgment-layer artefacts in the control arm.
+    mechanical = [
+        d
+        for d in started.audit.decisions()
+        if d.sizing.strategy == "mechanical"
+    ]
+    assert mechanical and mechanical[0].convergence is None
+
+
+def test_a_traded_decision_is_stamped(tmp_path):
+    from risk_gate import RiskLimits
+    from research.config import ResearchConfig
+    from signals import SignalsConfig
+    from test_orchestrator import FakeBroker, FakeClock, build, prices_of
+
+    started = build(
+        tmp_path,
+        RiskLimits.load(),
+        SignalsConfig.load(),
+        ResearchConfig.load(),
+        llm=RoutingLLM(
+            **{
+                "submit_research": structured(
+                    {**REPORT, "priced_in_analysis": "measured"}
+                )
+            }
+        ),
+        fetcher=congressional_feed(
+            disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")
+        ),
+        prices=prices_of(NUE="140.00", SGOV="100.40"),
+        broker=FakeBroker(),
+        clock=FakeClock(),
+    )
+    started.loop.tick()
+    traded = [
+        d
+        for d in started.audit.decisions()
+        if d.sizing.strategy not in ("mechanical", "cash_sweep")
+    ]
+    assert traded
+    stamp = traded[0].convergence
+    assert stamp is not None
+    assert stamp.symbol == "NUE"
+    assert "congressional_filings" in stamp.families
+    # And it survives the file round trip.
+    from audit.log import AuditLog
+
+    replayed = AuditLog(path=started.audit.path).decisions()
+    judged_replayed = [
+        d for d in replayed if d.sizing.strategy not in ("mechanical", "cash_sweep")
+    ]
+    assert judged_replayed[0].convergence == stamp
+
+
+def test_the_loop_writes_the_iv_watch_file(tmp_path):
+    import json
+
+    from risk_gate import RiskLimits
+    from research.config import ResearchConfig
+    from signals import SignalsConfig
+    from test_exits import enter_position
+
+    started, _, _ = enter_position(
+        tmp_path, RiskLimits.load(), SignalsConfig.load(), ResearchConfig.load()
+    )
+    payload = json.loads((tmp_path / "iv_watch.json").read_text(encoding="utf-8"))
+    assert "NUE" in payload["symbols"]  # held first, funnel names behind
+    assert len(payload["symbols"]) <= 60
+
+
+# ================================================================================
 # Dispatch ordering, end to end: the bonus moves the queue, never a cap
 # ================================================================================
 

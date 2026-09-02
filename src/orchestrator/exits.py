@@ -80,7 +80,7 @@ from decimal import ROUND_DOWN, Decimal
 from typing import Collection, Iterable, Optional
 
 from audit.log import AuditLog
-from audit.records import AuditTrail, ExitReason, ReviewOutcome
+from audit.records import AuditTrail, ExitReason, ReviewOutcome, long_term_boundary
 from execution.base import BrokerAdapter, BrokerError
 from research.exit_review import ExitReview, ExitReviewPass, PositionUnderReview
 from risk_gate.gate import ApprovedOrder, RiskGate
@@ -101,6 +101,11 @@ from orchestrator.pipeline import PriceSource, WorkingOrder
 
 ZERO = Decimal("0")
 CENTS = Decimal("0.01")
+
+#: How far ahead of the long-term tax boundary the review is told about it
+#: (ruling 2026-09-02). Only positions with an unrealised gain inside this
+#: window carry the factor — a loss has nothing to defer.
+TAX_FACTOR_WINDOW_DAYS = 45
 
 logger = logging.getLogger("orchestrator.exits")
 
@@ -838,6 +843,20 @@ class ExitEngine:
 
             price = self._mark_for(position)
             bounds = self._config.leash_bounds.for_horizon(position.time_horizon)
+            # Tax timing factor (2026-09-02): stated only when the boundary is
+            # ahead, near, and there is a gain to defer. Options excluded — a
+            # long option approaching a year of holding is deep in its theta
+            # endgame and the pre-expiry close owns that decision.
+            boundary = long_term_boundary(position.opened_at.date())
+            days_to_boundary = (boundary - moment.date()).days
+            tax_boundary = None
+            if (
+                not position.is_option
+                and 0 < days_to_boundary <= TAX_FACTOR_WINDOW_DAYS
+                and price is not None
+                and price > position.entry_price
+            ):
+                tax_boundary = boundary
             outcome = self._reviews.run(
                 PositionUnderReview(
                     symbol=position.symbol,
@@ -856,6 +875,7 @@ class ExitEngine:
                     leash_ceiling_days=bounds.ceiling,
                     trigger_reason=trigger_reason,
                     trigger_kind=trigger_kind,
+                    long_term_boundary=tax_boundary,
                 )
             )
             position.last_review_at = moment

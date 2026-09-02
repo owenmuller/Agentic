@@ -20,6 +20,7 @@ that merely does not.
 
 from __future__ import annotations
 
+import json
 import logging
 import statistics
 import sys
@@ -85,6 +86,21 @@ def shadow_pass() -> int:
                 return value
         return None
 
+    # IV-watch widening (ruling 2026-09-02): the trading loop writes the names
+    # it holds or recently funnelled to data/iv_watch.json; the logger snapshots
+    # their ATM IV alongside its own universe. A file, never an import — this
+    # package stays a leaf. Unreadable or absent = the configured universe only.
+    extra_iv: tuple[str, ...] = ()
+    watch_path = data_dir() / "iv_watch.json"
+    try:
+        if watch_path.exists():
+            payload = json.loads(watch_path.read_text(encoding="utf-8"))
+            extra_iv = tuple(
+                str(s).upper() for s in payload.get("symbols", []) if str(s).strip()
+            )
+    except (ValueError, OSError) as error:
+        logger.warning("iv_watch.json unreadable (%s); configured universe only", error)
+
     try:
         observer = ShadowObserver(
             config=config,
@@ -93,6 +109,7 @@ def shadow_pass() -> int:
             bars=bars,
             spot=spot,
             log=log,
+            extra_iv_symbols=extra_iv,
         )
         report = observer.run()
     finally:
