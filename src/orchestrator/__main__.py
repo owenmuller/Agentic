@@ -56,10 +56,14 @@ from signals import (
     XRecentSearchFetcher,
 )
 
+from execution.alerts import Alerter
 from execution.atr import AtrSource
+from execution.environment import load_environment
 from execution.vix import CboeVixSource
 
 from orchestrator.bootstrap import preflight, start
+from orchestrator.exits import unmanaged_exposure
+from orchestrator.recovery import pending_settlement
 from orchestrator.ops import (
     InstanceLock,
     RunLog,
@@ -135,7 +139,39 @@ def attribution() -> int:
     except Exception as error:  # noqa: BLE001
         print(f"ATTRIBUTION FAILED: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
+    print(_attribution_text(checks))
+    return 0
 
+
+def weekly() -> int:
+    """Friday delivery (ruling 2026-09-02): the attribution + forward report,
+    emailed on the DAILY tier. Falls back to stdout when alerting is not
+    configured, so the report is never lost to a missing credential."""
+    logging.basicConfig(level=logging.WARNING)
+    try:
+        checks = preflight()
+    except Exception as error:  # noqa: BLE001
+        print(f"WEEKLY REPORT FAILED: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
+    text = _attribution_text(checks)
+    alerter = Alerter()
+    if alerter.enabled:
+        sent = alerter.daily(
+            f"weekly-{checks.clock().date()}", "Friday report", text
+        )
+        alerter.close()
+        print("weekly report emailed" if sent else "weekly report NOT sent "
+              "(rate-limited or queue refused); printing instead")
+        if sent:
+            return 0
+    print(text)
+    return 0
+
+
+def _attribution_text(checks) -> str:
+    """The full report text — attribution plus forward returns — for the
+    ``attribution`` command's stdout and the ``weekly`` command's email."""
+    sections: list[str] = []
     generated_at = checks.clock()
     window_start = generated_at - timedelta(days=DEFAULT_WINDOW_DAYS)
 
@@ -195,8 +231,10 @@ def attribution() -> int:
         mtd_research_cost=checks.audit.research_cost_between(month_start),
         feed_cost_detail=breakdown,
         price_on=price_on,
+        # Execution fidelity (ruling 2026-09-02): paper P&L raw AND haircut.
+        haircut_bps=checks.orchestrator_config.slippage_haircut_bps,
     )
-    print(report.render())
+    sections.append(report.render())
 
     # Forward returns (ruling 2026-09-01): the funnel's counterfactual
     # scoreboard, computed lazily from bars and cached append-only. A data
@@ -223,16 +261,78 @@ def attribution() -> int:
                 for source in klass.sources
                 for name in source.spotlight_filers
             )
-            print()
-            print(render_forward_report(entries, rows, spotlight_filers=spotlight))
+            sections.append(
+                render_forward_report(entries, rows, spotlight_filers=spotlight)
+            )
         except Exception as error:  # noqa: BLE001 - a report without it beats no report
-            print(f"forward returns unavailable: {error}", file=sys.stderr)
+            sections.append(f"forward returns unavailable: {error}")
         bars.close()
     else:
+        sections.append("forward returns unavailable: no market data this run")
+    return "\n\n".join(sections)
+
+
+def replay() -> int:
+    """Config-replay harness (ruling 2026-09-02): what a candidate signals.yaml
+    and/or risk_limits.yaml would have changed, over the recorded funnel.
+    READ-ONLY AND OFFLINE — the audit log and forward cache are only read, no
+    LLM is called, no bars are fetched. Usage:
+
+        python -m orchestrator replay [--signals path] [--limits path]
+    """
+    logging.basicConfig(level=logging.WARNING)
+    from pathlib import Path
+
+    from audit import AuditLog
+    from orchestrator.whatif import load_cached_rows, render_whatif_report
+    from risk_gate.limits import RiskLimits
+    from signals import SignalsConfig
+
+    args = sys.argv[2:]
+    signals_path = limits_path = None
+    index = 0
+    while index < len(args):
+        flag = args[index]
+        if flag == "--signals" and index + 1 < len(args):
+            signals_path = Path(args[index + 1])
+            index += 2
+        elif flag == "--limits" and index + 1 < len(args):
+            limits_path = Path(args[index + 1])
+            index += 2
+        else:
+            print(f"unknown argument {flag!r}", file=sys.stderr)
+            return 2
+    if signals_path is None and limits_path is None:
         print(
-            "forward returns unavailable: no market data this run",
+            "nothing to replay: pass --signals and/or --limits with a "
+            "candidate config file",
             file=sys.stderr,
         )
+        return 2
+    try:
+        current_signals = SignalsConfig.load()
+        candidate_signals = (
+            SignalsConfig.load(signals_path) if signals_path else current_signals
+        )
+        current_limits = RiskLimits.load()
+        candidate_limits = (
+            RiskLimits.load(limits_path) if limits_path else current_limits
+        )
+        audit = AuditLog()
+        rows = load_cached_rows(audit.path.parent / "forward_returns.jsonl")
+        print(
+            render_whatif_report(
+                audit.records(),
+                current_signals,
+                candidate_signals,
+                current_limits,
+                candidate_limits,
+                rows,
+            )
+        )
+    except Exception as error:  # noqa: BLE001
+        print(f"REPLAY FAILED: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -248,7 +348,22 @@ def run() -> int:
             logging.FileHandler(data_dir / "orchestrator.log", encoding="utf-8"),
         ],
     )
-    run_log = RunLog(data_dir / "run.log")
+    # Alerting (ruling 2026-09-02): urgent/daily email tiers over Gmail SMTP.
+    # Built before the run log so run-log events can route through it; .env is
+    # loaded here (idempotently — preflight loads it again) so the credentials
+    # are visible. Unconfigured = disabled with one log line, nothing changes.
+    load_environment()
+    alerter = Alerter()
+
+    def observe(event: str, detail: str) -> None:
+        """Run-log events that must reach a phone: errors, cost tripwires,
+        billing anomalies, and a mechanical breaker trip riding a MECH line."""
+        if event in ("ERROR", "COST", "READS"):
+            alerter.urgent(f"{event}:{detail[:40]}", f"{event}: {detail[:120]}", detail)
+        elif event == "MECH" and "BREAKER" in detail.upper():
+            alerter.urgent("mech_breaker", "mechanical circuit breaker tripped", detail)
+
+    run_log = RunLog(data_dir / "run.log", observer=observe)
 
     # One instance per data directory: two runs would interleave one audit file,
     # double-spend a budget each replayed as unspent, and trade one account twice.
@@ -410,13 +525,70 @@ def run() -> int:
         )
         loop = startup.loop
 
+        # Startup conditions worth a phone buzz (ruling 2026-09-02): a broker
+        # position with no audit trail behind it has no stops armed, and an
+        # entry order still unresolved after settlement recovery means a crash
+        # left money in an unknown state.
+        unmanaged = unmanaged_exposure(startup.gate, startup.exits.tracked)
+        if unmanaged:
+            alerter.urgent(
+                "unmanaged",
+                f"UNMANAGED positions: {', '.join(sorted(unmanaged))}",
+                "Held at the broker with no audit trail and no stops armed: "
+                + ", ".join(f"{q} x {s}" for s, q in sorted(unmanaged.items())),
+            )
+        still_pending = pending_settlement(checks.audit)
+        if still_pending:
+            alerter.urgent(
+                "pending_settlement",
+                f"{len(still_pending)} orders still pending settlement after recovery",
+                "\n".join(str(item) for item in still_pending),
+            )
+
         while datetime.now(timezone.utc) < open_utc:
             time.sleep(min(30, (open_utc - datetime.now(timezone.utc)).total_seconds()))
         run_log.note("SESSION", f"open; trading until {close_utc.isoformat(timespec='seconds')}")
 
         interval = checks.orchestrator_config.tick_interval_seconds
+        kill_switch_alerted = startup.gate.kill_switch_tripped
+        first_judged_alerted = False
+        first_mechanical_alerted = False
         while datetime.now(timezone.utc) < close_utc:
-            loop.tick()
+            tick = loop.tick()
+            # The 10am tier, from this tick's own facts (ruling 2026-09-02).
+            if startup.gate.kill_switch_tripped and not kill_switch_alerted:
+                kill_switch_alerted = True
+                state = startup.gate.state
+                alerter.urgent(
+                    "kill_switch",
+                    "KILL SWITCH TRIPPED - opening orders halted",
+                    f"drawdown {state.drawdown():.2%} from high-water "
+                    f"{state.high_water_mark}; NAV {state.nav}. Reset is "
+                    f"manual-human-only.",
+                )
+            if tick.exits_started:
+                stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                alerter.urgent(
+                    f"exits-{stamp}",
+                    f"{tick.exits_started} exit order(s) started",
+                    f"stop/ratchet/leash/review exits this tick: "
+                    f"{tick.exits_started} started, {tick.positions_closed} "
+                    f"closed. Details: run.log and the audit trail.",
+                )
+            if tick.traded and not first_judged_alerted:
+                first_judged_alerted = True
+                alerter.daily(
+                    f"first-judged-{now.date()}",
+                    "first judged entry of the day",
+                    f"{tick.traded} judged order(s) approved this tick.",
+                )
+            if tick.mechanical_entries and not first_mechanical_alerted:
+                first_mechanical_alerted = True
+                alerter.daily(
+                    f"first-mechanical-{now.date()}",
+                    "first mechanical entry of the day",
+                    f"{tick.mechanical_entries} mechanical order(s) this tick.",
+                )
             remaining = (close_utc - datetime.now(timezone.utc)).total_seconds()
             if remaining <= 0:
                 break
@@ -429,6 +601,26 @@ def run() -> int:
             f"market close; settled_or_released={report.settled} "
             f"closed={report.positions_closed} "
             f"kill_switch={'TRIPPED' if report.halted else 'clear'}",
+        )
+        state = startup.gate.state
+        held = sorted(
+            f"{p.symbol} x{p.quantity}" for p in startup.exits.tracked
+        )
+        day_start = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        spend = checks.audit.research_cost_between(day_start)
+        alerter.daily(
+            f"close-{now.date()}",
+            "close summary",
+            f"NAV {state.nav} | drawdown {state.drawdown():.2%} "
+            f"(high-water {state.high_water_mark}) | kill switch "
+            f"{'TRIPPED' if report.halted else 'clear'}\n"
+            f"positions ({len(held)}): {', '.join(held) or 'none'}\n"
+            f"research spend today: ${spend or 0} (estimates; console bill is "
+            f"truth)\n"
+            f"session: settled_or_released={report.settled} "
+            f"closed={report.positions_closed}",
         )
         return 0
     except KeyboardInterrupt:
@@ -462,6 +654,9 @@ def run() -> int:
             quiver.close()
         if x_search is not None:
             x_search.close()
+        # Let queued alerts drain before the process exits — bounded, so a dead
+        # SMTP host cannot hold the shutdown hostage.
+        alerter.close()
         lock.release()
 
 
@@ -475,6 +670,10 @@ def main() -> int:
         return run()
     if command == "attribution":
         return attribution()
+    if command == "weekly":
+        return weekly()
+    if command == "replay":
+        return replay()
     print(
         f"unknown command {command!r}: expected 'check', 'health', 'run', or "
         f"'attribution'",

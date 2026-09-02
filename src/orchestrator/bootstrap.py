@@ -483,6 +483,9 @@ def start(
         # daily bars; a harness that wires nothing runs the fixed-15% regime.
         atr_fraction=atr_fraction,
         atr_config=checks.orchestrator_config.atr_sizing,
+        # Execution fidelity (ruling 2026-09-02): the production price source
+        # can quote a spread; a harness's stub usually cannot, and None is fine.
+        spread_pct=getattr(prices, "spread_pct", None),
         options_chain=options_chain,
         option_selector=option_selector,
         clock=checks.clock,

@@ -2157,6 +2157,78 @@ convergence per the family amendment). Evidence honestly weak-to-moderate:
 textbook PEAD is arbitraged away in liquid names; the day-1-reaction
 conditioning is the modern survivor. Expected 0–2%/yr, low end likely.
 
+## Operational hardening tier (human ruling 2026-09-02; sequence 2,1,3,5,4)
+
+None of it touches trading logic; suite grew to 1032.
+
+### 2. Off-box backups — Spaces push shipped, panel toggle recommended
+
+The audit log had NO off-box copy. Decision proposed and built: **nightly
+encrypted tarball push to a DO Spaces bucket as the primary layer** (RPO 24h
+matching the existing 01:07 UTC on-box job; client-side gpg AES256; targeted
+one-object restore; cents/month at our sizes) **plus enabling weekly DO
+droplet backups in the control panel as the belt** (one click, whole-box
+disaster recovery, but weekly RPO and no encryption control — insufficient
+alone). `ops/vps/push_backup.sh` + the updated `agentic-backup.service` run the
+push as a second ExecStart; **unconfigured = a no-op with one syslog line**, so
+nothing breaks before setup. RUNBOOK (human, one-time): create the Space +
+access key; on the droplet write /home/agentic/.backup_env (chmod 600 — vars in
+the script header), `apt install rclone gnupg`, then
+`sudo cp ops/vps/agentic-backup.service /etc/systemd/system/ && sudo install
+-m755 ops/vps/push_backup.sh /usr/local/bin/agentic-push-backup && sudo
+systemctl daemon-reload`. Restore drill in the script header — run it once.
+
+### 1. Alerting — execution/alerts.py, two tiers over Gmail SMTP
+
+`[AGENTIC URGENT]` / `[AGENTIC DAILY]` subject prefixes for mail filters.
+Credentials ALERT_SMTP_USER / ALERT_SMTP_PASSWORD (App Password) / ALERT_TO —
+already present in the droplet .env; missing = disabled with one log line.
+One daemon worker thread over a bounded queue (the loop's cost is a queue
+put), send failures logged never raised, same key rate-limited 4h. Wired in
+`__main__ run()`: run-log observer routes ERROR/COST/READS and a MECH line
+containing BREAKER to urgent; the tick loop alerts kill-switch trips (state
+transition), every tick with exits_started (unique key per tick — each exit
+event alerts, storms don't), first judged and first mechanical entry of the
+day (daily); startup alerts UNMANAGED positions and orders still pending
+settlement after recovery; the close writes one daily summary (NAV, drawdown,
+positions, research spend). The alerter lives in execution because
+orchestrator stays offline. Test message: sent at build from the droplet —
+set up the two filters on it.
+
+### 3. Execution fidelity — every fill now carries its own honesty
+
+FillRecord gained `intended_price` (the limit), `spread_pct_at_submission`
+(AlpacaPriceSource.spread_pct at order submission; None when unmeasurable,
+never zero; options use the chain spread already on the expression snapshot),
+and `seconds_to_fill` (broker acceptance → terminal settlement). Exit fills
+record intended_price; their spread/time stay None — exits re-submit every
+cycle until flat, and a per-order clock would misstate time-to-close. Old
+records parse with all three None. **Haircut:** `slippage_haircut_bps: 5` in
+orchestrator.yaml; the attribution report now renders judged P&L RAW and with
+bps x window fill notional deducted ("net live-ish"). Reporting only; the
+recorded spreads/fills will eventually argue the right number from our own data.
+
+### 5. Friday delivery — `python -m orchestrator weekly`
+
+Attribution + forward report emailed on the DAILY tier (stdout/journal
+fallback when alerting is unconfigured — the report is never silently lost).
+`ops/vps/agentic-weekly.{service,timer}`: Fri 17:00 ET, Persistent=true (a
+missed Friday sends Saturday). ENABLE (human):
+`sudo cp ops/vps/agentic-weekly.{service,timer} /etc/systemd/system/ && sudo
+systemctl daemon-reload && sudo systemctl enable --now agentic-weekly.timer`.
+
+### 4. Config-replay harness — `python -m orchestrator replay`
+
+`--signals candidate.yaml` and/or `--limits candidate.yaml` → replays the
+recorded judged funnel through both configs' deterministic stages
+(orchestrator/whatif.py) and reports prefilter flips (now-skipped /
+now-dispatched) and sizing-table flips on recorded confidence scores, each
+group with its cached 20d forward excess. READ-ONLY AND OFFLINE: audit log and
+forward cache opened for reading only, no LLM, no bars. Honest scope printed
+in the header: report-date staleness, unheld-sale, caps/budget ordering, and
+research verdicts do not replay. Smoke-tested against the local log (29
+entries, zero flips on an identical candidate — correct).
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

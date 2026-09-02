@@ -139,6 +139,33 @@ class AlpacaPriceSource:
             logger.warning("quote for %s has no priced side; treating as missing", symbol)
         return price
 
+    def spread_pct(self, symbol: str) -> Optional[Decimal]:
+        """Quoted spread at this moment, percent of mid (execution-fidelity
+        ruling 2026-09-02). None whenever either side is missing, non-positive,
+        crossed, or the quote is stale — a spread that cannot be measured is
+        absent, never zero."""
+        try:
+            response = self._client.get(
+                f"/v2/stocks/{quote(symbol)}/quotes/latest",
+                params={"feed": self._feed},
+            )
+            if response.status_code >= 400:
+                return None
+            quote_body = response.json().get("quote")
+            if not isinstance(quote_body, dict):
+                return None
+            age = self._age_of(quote_body.get("t"))
+            if age is None or age > self._max_age:
+                return None
+            bid = Decimal(str(quote_body.get("bp")))
+            ask = Decimal(str(quote_body.get("ap")))
+        except Exception:  # noqa: BLE001 - missing, never fabricated
+            return None
+        if bid <= 0 or ask <= 0 or ask < bid:
+            return None
+        mid = (bid + ask) / 2
+        return ((ask - bid) / mid * 100).quantize(Decimal("0.0001"))
+
     # -- internals -------------------------------------------------------------------
 
     def _age_of(self, raw: object) -> Optional[float]:

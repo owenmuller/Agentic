@@ -360,6 +360,9 @@ class AuditLog:
         fill_price: Decimal,
         filled_value: Optional[Decimal] = None,
         side: str = "buy",
+        intended_price: Optional[Decimal] = None,
+        spread_pct_at_submission: Optional[Decimal] = None,
+        seconds_to_fill: Optional[Decimal] = None,
     ) -> FillRecord:
         """Record a fill. Refused for a decision that was never approved."""
         decision = self._decision(decision_id)
@@ -380,6 +383,9 @@ class AuditLog:
                 if filled_value is not None
                 else filled_quantity * fill_price
             ),
+            intended_price=intended_price,
+            spread_pct_at_submission=spread_pct_at_submission,
+            seconds_to_fill=seconds_to_fill,
         )
         self._append(record)
         return record

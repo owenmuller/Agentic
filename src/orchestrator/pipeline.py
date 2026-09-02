@@ -80,7 +80,7 @@ def _combine_usage(
     )
 from risk_gate.gate import ApprovedOrder, BuyingPowerBreached, RiskGate
 from risk_gate.schema import EquityBuyOrder, LimitExecution, OptionBuyToOpenOrder
-from risk_gate.state import Sleeve, unit_multiplier, units_of
+from risk_gate.state import Sleeve, is_option, unit_multiplier, units_of
 from sizing.selection import (
     FallbackReason,
     OptionFallback,
@@ -122,6 +122,12 @@ class WorkingOrder:
     signal: Signal
     report: ResearchReport
     proposal: SizedProposal
+    #: Execution fidelity (ruling 2026-09-02): when the broker accepted the
+    #: order, and the quoted spread at that moment — the raw material for
+    #: intended-vs-fill and time-to-fill on the fill record. None on records
+    #: from before the ruling or when the quote was unavailable.
+    submitted_at: Optional[datetime] = None
+    spread_pct_at_submission: Optional[Decimal] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +199,7 @@ class SignalPipeline:
         scalars: Optional["SizingScalars"] = None,
         atr_fraction: Optional[Callable[[str], Optional[Decimal]]] = None,
         atr_config: Optional["AtrSizingConfig"] = None,
+        spread_pct: Optional[Callable[[str], Optional[Decimal]]] = None,
     ) -> None:
         self._research = research
         self._triage = triage
@@ -206,6 +213,9 @@ class SignalPipeline:
         #: absent = the fixed-15% regime, exactly as before the ruling.
         self._atr_fraction = atr_fraction
         self._atr_config = atr_config
+        #: Execution fidelity (ruling 2026-09-02): the quoted spread at order
+        #: submission, recorded on the fill. None = not measured, never zero.
+        self._spread_pct = spread_pct
         self._gate = gate
         self._adapter = adapter
         self._audit = audit
@@ -472,6 +482,16 @@ class SignalPipeline:
                 rejection=rejection,
             )
 
+        spread = None
+        if self._spread_pct is not None:
+            try:
+                # Equity orders quote the symbol itself; an option order's
+                # chain spread is already on the decision's expression
+                # snapshot, so it is not re-measured here.
+                if not is_option(approved.order):
+                    spread = self._spread_pct(approved.order.symbol)
+            except Exception:  # noqa: BLE001 - fidelity metadata, never blocking
+                spread = None
         self._working[receipt.broker_order_id] = WorkingOrder(
             decision_id=decision_id,
             approved=approved,
@@ -479,6 +499,8 @@ class SignalPipeline:
             signal=signal,
             report=report,
             proposal=proposal,
+            submitted_at=self._clock(),
+            spread_pct_at_submission=spread,
         )
         return PipelineResult(
             decision_id=decision_id,
@@ -792,6 +814,7 @@ class SignalPipeline:
         # May raise BuyingPowerBreached, which trips the kill switch and is meant to
         # reach a human immediately. The loop lets it out.
         self._gate.record_fill(working.approved, filled_avg_price, filled_units=filled)
+        execution = getattr(working.approved.order, "execution", None)
         self._audit.record_fill(
             working.decision_id,
             working.receipt.broker_order_id,
@@ -802,6 +825,19 @@ class SignalPipeline:
             filled_value=filled
             * filled_avg_price
             * unit_multiplier(working.approved.order),
+            # Execution fidelity (ruling 2026-09-02): what was intended, what
+            # the market looked like at submission, how long the fill took.
+            intended_price=getattr(execution, "limit_price", None),
+            spread_pct_at_submission=working.spread_pct_at_submission,
+            seconds_to_fill=(
+                Decimal(
+                    int(
+                        (self._clock() - working.submitted_at).total_seconds()
+                    )
+                )
+                if working.submitted_at is not None
+                else None
+            ),
         )
         if self._fill_sink is not None:
             self._fill_sink(working, filled, filled_avg_price)

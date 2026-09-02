@@ -346,6 +346,10 @@ class OrchestratorConfig(BaseModel):
     #: Volatility-adjusted sizing and stops (ruling 2026-09-02). The resize can
     #: only shrink below the band, so absent-section defaults are safe here too.
     atr_sizing: AtrSizingConfig = Field(default_factory=AtrSizingConfig)
+    #: Execution-fidelity haircut (ruling 2026-09-02): basis points per FILL
+    #: SIDE the attribution report subtracts to render paper P&L as live-ish
+    #: P&L alongside the raw number. Reporting only — nothing trades on it.
+    slippage_haircut_bps: Decimal = Field(default=Decimal("5"), ge=Decimal("0"))
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "OrchestratorConfig":

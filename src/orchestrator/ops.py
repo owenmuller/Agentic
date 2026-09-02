@@ -170,10 +170,17 @@ class RunLog:
     """
 
     def __init__(
-        self, path: Path, clock: Optional[Callable[[], datetime]] = None
+        self,
+        path: Path,
+        clock: Optional[Callable[[], datetime]] = None,
+        observer: Optional[Callable[[str, str], None]] = None,
     ) -> None:
         self._path = path
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        #: Sees every (event, detail) after the write (alerting, 2026-09-02).
+        #: Failures are swallowed — an observer must never kill the run it
+        #: observes, same rule as the log write itself.
+        self._observer = observer
 
     @property
     def path(self) -> Path:
@@ -189,6 +196,11 @@ class RunLog:
                 handle.write(line + "\n")
         except OSError as error:  # pragma: no cover - disk-full territory
             logger.error("could not write run log line %r: %s", line, error)
+        if self._observer is not None:
+            try:
+                self._observer(event, detail)
+            except Exception:  # noqa: BLE001
+                logger.exception("run log observer failed on %s", event)
 
     def tail(self, count: int = 5) -> list[str]:
         if not self._path.exists():

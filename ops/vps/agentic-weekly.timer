@@ -1,0 +1,13 @@
+# Friday 17:00 ET (ruling 2026-09-02): after the close and after the session
+# process has exited, so the report reads a finished week. Persistent=true
+# replays a missed Friday after a reboot — the report is idempotent and
+# read-only, so a Saturday catch-up sends Friday's numbers, which is the point.
+[Unit]
+Description=Agentic Friday report trigger (17:00 ET)
+
+[Timer]
+OnCalendar=Fri 17:00 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

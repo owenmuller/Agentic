@@ -1147,6 +1147,7 @@ class ExitEngine:
             return False
 
         self._gate.record_fill(working.approved, filled_avg_price, filled_units=filled)
+        execution_shape = getattr(working.approved.order, "execution", None)
         self._audit.record_fill(
             position.decision_id,
             working.broker_order_id,
@@ -1154,6 +1155,11 @@ class ExitEngine:
             filled_avg_price,
             filled_value=filled_avg_price * filled * position.multiplier,
             side="sell",
+            # Execution fidelity (ruling 2026-09-02): exit fills record the
+            # intended (limit) price too; spread/time-to-fill stay None here —
+            # exits re-submit every cycle until flat, so a per-order clock
+            # would misstate the position's true time-to-close.
+            intended_price=getattr(execution_shape, "limit_price", None),
         )
         position.quantity -= filled
         position.proceeds += filled_avg_price * filled * position.multiplier

@@ -465,6 +465,14 @@ class FillRecord(_Record):
     fill_price: Decimal
     #: Cash actually committed, as distinct from the worst case the gate reserved.
     filled_value: Decimal
+    #: Execution fidelity (ruling 2026-09-02). All None on records written
+    #: before the ruling, and each independently None when unmeasurable:
+    #: the order's own limit price (market orders carry none), the quoted
+    #: spread when the order was submitted (percent of mid), and the seconds
+    #: between broker acceptance and terminal settlement.
+    intended_price: Optional[Decimal] = None
+    spread_pct_at_submission: Optional[Decimal] = None
+    seconds_to_fill: Optional[Decimal] = None
 
 
 class OutcomeRecord(_Record):

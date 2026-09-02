@@ -181,6 +181,15 @@ risk_scalars:
       - { vix_at_or_above: 35, multiplier: 0.5 }
     max_age_days: 7
 
+# EXECUTION-FIDELITY HAIRCUT (ruling 2026-09-02). Paper fills are optimistic:
+# no queue position, no adverse selection, no real spread crossing. The weekly
+# report renders judged P&L both RAW and with this many basis points per fill
+# side subtracted from the window's judged fill notional - a live-ish reading
+# alongside the paper one. Reporting only; nothing trades on it. Fill records
+# now carry intended price / spread at submission / time-to-fill, so this
+# number can be argued from our own data once enough fills accumulate.
+slippage_haircut_bps: 5
+
 # MARKET DATA. Settings for the production PriceSource (execution.market_data.
 # AlpacaPriceSource) — the operator passes these when wiring orchestrator.start().
 market_data:

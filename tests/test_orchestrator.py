@@ -402,6 +402,12 @@ def test_a_signal_becomes_a_paper_order_and_a_complete_audit_trail(
     assert len(trail.fills) == 1
     assert trail.fills[0].fill_price == QUOTE
     assert trail.fills[0].filled_quantity == Decimal("13")
+    # Execution fidelity (ruling 2026-09-02): the fill knows what was intended
+    # and how long it took; spread is None because the harness's price stub has
+    # no spread_pct — missing, never zero.
+    assert trail.fills[0].intended_price == QUOTE
+    assert trail.fills[0].seconds_to_fill is not None
+    assert trail.fills[0].spread_pct_at_submission is None
     # Not yet complete: the position is open, and an outcome is what closing writes.
     assert not trail.is_complete
 

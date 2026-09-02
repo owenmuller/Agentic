@@ -413,6 +413,11 @@ class AttributionReport:
     #: entries they touched. The weekly forgone-size line.
     scalar_forgone: Decimal = ZERO
     scalar_scaled_entries: int = 0
+    #: Execution-fidelity haircut (ruling 2026-09-02): bps per fill side, the
+    #: judged fill notional it applies to, and the resulting deduction — so the
+    #: render shows paper P&L raw AND live-ish. None bps = line not rendered.
+    haircut_bps: Optional[Decimal] = None
+    haircut_notional: Decimal = ZERO
 
     @property
     def total_pnl(self) -> Decimal:
@@ -460,6 +465,16 @@ class AttributionReport:
             f"costs, {self.total_research_cost:.2f} research costs, "
             f"{self.total_net_pnl:+.2f} net",
         ]
+        if self.haircut_bps is not None:
+            deduction = (
+                self.haircut_notional * self.haircut_bps / Decimal("10000")
+            ).quantize(CENTS)
+            lines.append(
+                f"Live-slippage haircut ({self.haircut_bps}bps per fill side on "
+                f"${self.haircut_notional:.2f} judged fill notional): "
+                f"-{deduction:.2f} -> {self.total_net_pnl - deduction:+.2f} "
+                f"net live-ish (paper fills are optimistic; ruling 2026-09-02)"
+            )
         if self.mtd_research_cost is not None:
             lines.append(
                 f"Research cost month-to-date: ${self.mtd_research_cost:.2f} "
@@ -682,6 +697,7 @@ def build_attribution(
     mtd_research_cost: Optional[Decimal] = None,
     feed_cost_detail: tuple[str, ...] = (),
     price_on=None,
+    haircut_bps: Optional[Decimal] = None,
 ) -> AttributionReport:
     """Compute attribution from audit trails.
 
@@ -760,6 +776,9 @@ def build_attribution(
     # the mechanical arm or the sweep by construction.
     scalar_forgone = ZERO
     scalar_scaled_entries = 0
+    #: Judged fill notional in the window, both sides — what the live-slippage
+    #: haircut applies to (ruling 2026-09-02).
+    haircut_notional = ZERO
     for trail in trails:
         if trail.decision.recorded_at < window_start:
             continue
@@ -767,6 +786,7 @@ def build_attribution(
         if sizing.table_capital is not None and sizing.table_capital > sizing.capital:
             scalar_forgone += sizing.table_capital - sizing.capital
             scalar_scaled_entries += 1
+        haircut_notional += sum((f.filled_value for f in trail.fills), ZERO)
 
     mechanical = None
     windowed = [
@@ -886,4 +906,6 @@ def build_attribution(
         feed_cost_detail=feed_cost_detail,
         scalar_forgone=scalar_forgone,
         scalar_scaled_entries=scalar_scaled_entries,
+        haircut_bps=haircut_bps,
+        haircut_notional=haircut_notional,
     )

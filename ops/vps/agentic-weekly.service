@@ -1,0 +1,17 @@
+# Friday report delivery (human ruling 2026-09-02): attribution + forward
+# returns, emailed on the [AGENTIC DAILY] tier via the alerting credentials in
+# .env. Read-only against the audit log; falls back to stdout (journal) when
+# alerting is not configured, so the report is never silently lost.
+# Register with:
+#   sudo cp ops/vps/agentic-weekly.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now agentic-weekly.timer
+[Unit]
+Description=Agentic Friday attribution + forward report email
+
+[Service]
+Type=oneshot
+User=agentic
+WorkingDirectory=/home/agentic/Agentic
+Environment=PYTHONIOENCODING=utf-8
+ExecStart=/home/agentic/Agentic/.venv/bin/python -m orchestrator weekly

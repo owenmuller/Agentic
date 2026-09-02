@@ -1,8 +1,20 @@
-# Nightly on-box backup of data/ (audit log = the system of record).
-# Off-box layer: enable DigitalOcean droplet backups in the control panel.
+# Nightly backup of data/ (audit log = the system of record), two layers:
+#   1. On-box tarball, 14-day retention (always runs).
+#   2. Off-box push (ruling 2026-09-02): the newest tarball, gpg-encrypted
+#      client-side, to a DO Spaces bucket via ops/vps/push_backup.sh. Runs as
+#      a no-op with one syslog line until /home/agentic/.backup_env exists —
+#      see the script header for the setup and the restore drill.
+# Belt-and-braces: ALSO enable weekly DigitalOcean droplet backups in the
+# control panel (whole-disk disaster recovery; the Spaces push is the
+# fine-grained, encrypted, restore-testable layer).
+# Re-install after changes:
+#   sudo cp ops/vps/agentic-backup.service /etc/systemd/system/
+#   sudo install -m 755 ops/vps/push_backup.sh /usr/local/bin/agentic-push-backup
+#   sudo systemctl daemon-reload
 [Unit]
 Description=Agentic data/ nightly backup
 
 [Service]
 Type=oneshot
 ExecStart=/bin/bash -c 'mkdir -p /var/backups/agentic && tar -czf /var/backups/agentic/data-$(date +%%F).tar.gz -C /home/agentic/Agentic data && find /var/backups/agentic -name "data-*.tar.gz" -mtime +14 -delete'
+ExecStart=/usr/local/bin/agentic-push-backup
