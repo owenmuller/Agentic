@@ -160,7 +160,15 @@ def test_the_shipped_config_is_fully_pinned():
 
 def test_the_golden_set_loads_and_names_the_ruled_cases():
     cases = load_cases()
-    assert len(cases) == 20
+    entries = [case for case in cases if case.kind == "entry"]
+    reviews = [case for case in cases if case.kind == "review"]
+    assert len(entries) == 20
+    # Review cases (ruling 2026-09-02) grade the reasoning structure.
+    assert len(reviews) == 3
+    for case in reviews:
+        under = case.under_review()
+        assert under.symbol == "INTC" and under.stop_price is not None
+    cases = entries
     names = {case.name for case in cases}
     assert {
         "pelosi-be-calls-decline",

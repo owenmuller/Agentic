@@ -68,6 +68,21 @@ from orchestrator.state import (
 logger = logging.getLogger("orchestrator.bootstrap")
 
 
+def _opportunity_context(registry) -> str:
+    """One line for the review prompt's opportunity-cost weighing."""
+    symbols = tuple(registry.in_window_symbols())
+    if not symbols:
+        return (
+            "no other names carry active signals in the convergence window right "
+            "now"
+        )
+    shown = ", ".join(symbols[:15]) + (" …" if len(symbols) > 15 else "")
+    return (
+        f"{len(symbols)} name(s) carry active signals in the convergence window "
+        f"(candidates competing for capital and slots): {shown}"
+    )
+
+
 def _sleeve_label(weight) -> str:
     """A 0%-weight sleeve is INACTIVE, not a sleeve earning 0% — say so rather
     than letting an operator read dead capital into a deliberate ruling.
@@ -440,6 +455,9 @@ def start(
         # floor and reward:risk minimum the entry pipeline enforces.
         sizing_floor=checks.limits.sizing.no_trade_below,
         min_reward_risk=checks.orchestrator_config.reward_risk.min_ratio,
+        # Opportunity context for the review dialectic (ruling 2026-09-02):
+        # what else the convergence registry sees. Context, never a decision.
+        opportunity_context=lambda: _opportunity_context(registry),
     )
     # Positions opened by earlier runs, rebuilt from the log with stops re-armed. Part
     # of the replay step in spirit, but it needs the wired engine, so it runs here.

@@ -52,10 +52,18 @@ from test_orchestrator import (
     structured,
 )
 
+#: The dialectic (ruling 2026-09-02): every valid review argues both cases.
+CASES = {
+    "case_for_holding": "The thesis is intact, price sits above the stop with the expected move still ahead, and nothing since entry has changed the information the entry rested on.",
+    "case_for_selling": "The remaining reward to target against the current stop is modest, other candidates compete for the slot, and the spread is a real cost of staying.",
+    "verdict_reason": "the holding case wins: the thesis is intact and the timeline has not been tested yet.",
+}
+
 HOLD_REVIEW = {
     "assessment": "Tariff support unchanged; the thesis is still live.",
     "invalidation_triggered": False,
     "action": "hold",
+    **CASES,
 }
 
 CLOSE_REVIEW = {
@@ -63,6 +71,7 @@ CLOSE_REVIEW = {
     "condition has happened.",
     "invalidation_triggered": True,
     "action": "close",
+    **CASES,
 }
 
 #: Entry stop at the default 15%: 140 x 0.85.
@@ -397,6 +406,7 @@ def test_a_contradictory_review_resolves_toward_the_exit(
         "assessment": "The exemption happened, but momentum might carry it anyway.",
         "invalidation_triggered": True,
         "action": "hold",
+        **CASES,
     }
     started, _, clock = enter_position(
         tmp_path,
@@ -841,16 +851,22 @@ def test_the_review_tool_offers_exactly_these_fields_and_two_actions():
         "resolution",
         "revised_resolution_date",
         "continuation_thesis",
-        # The re-underwrite question (ruling 2026-09-02): a judgement field,
-        # not a size lever — it can only produce a full close or nothing.
+        # The re-underwrite question (ruling 2026-09-02): EVIDENCE for the
+        # case for selling, never a trigger by itself.
         "would_open_today",
         "would_open_today_reason",
+        # The dialectic (ruling 2026-09-02): both cases and the winner.
+        "case_for_holding",
+        "case_for_selling",
+        "verdict_reason",
     }
     assert schema["additionalProperties"] is False
     # Every field is asked of the model, including the ones python defaults.
     assert set(schema["required"]) == set(schema["properties"])
     definitions = schema.get("$defs", schema.get("definitions", {}))
-    assert set(definitions["ExitAction"]["enum"]) == {"hold", "close"}
+    # trim is the system-defined once-per-position partial sale; still no
+    # member for adds, reopening, flips, or moving a stop.
+    assert set(definitions["ExitAction"]["enum"]) == {"hold", "trim", "close"}
     assert set(definitions["ThesisValidity"]["enum"]) == {
         "intact",
         "invalidated",
@@ -883,14 +899,14 @@ def test_a_review_cannot_carry_resizing_vocabulary(extra):
 )
 def test_should_close_truth_table(action, triggered, should_close):
     review = ExitReview(
-        assessment="x", invalidation_triggered=triggered, action=action
+        assessment="x", invalidation_triggered=triggered, action=action, **CASES
     )
     assert review.should_close is should_close
 
 
 def test_the_system_prompt_denies_the_review_any_other_authority():
-    assert "hold or close" in EXIT_SYSTEM_PROMPT
-    assert "cannot resize" in EXIT_SYSTEM_PROMPT
+    assert "hold, trim, or close" in EXIT_SYSTEM_PROMPT
+    assert "cannot add to the position" in EXIT_SYSTEM_PROMPT
     assert "deterministic risk gate" in EXIT_SYSTEM_PROMPT
 
 

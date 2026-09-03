@@ -298,6 +298,52 @@ def test_swept_lots_survive_a_restart_in_their_own_sleeve(
     # phantom equity position.
     assert restarted.gate.state.position(("equity", "SGOV")) is None
     assert len(restarted.loop.sweeper.lots) == 1
+    # The exit engine never tracks the parked lot (2026-09-03: it used to fall
+    # through replay, look itself up under the JUDGED key, and log a false
+    # "broker does not hold" warning every startup).
+    assert restarted.exits.tracked == ()
+
+
+def test_the_exit_engine_ignores_sweep_lots_and_health_shows_parked_cash(
+    tmp_path, limits, signals_config, research_config, caplog
+):
+    import logging as _logging
+
+    from orchestrator.ops import RunLog, health_report
+
+    clock = FakeClock()
+    first, _, _ = quiet_build(
+        tmp_path, limits, signals_config, research_config, clock=clock
+    )
+    first.loop.tick()
+    first.loop.tick()  # settle: 821 shares at 100.40
+    first.loop.shutdown()
+
+    with caplog.at_level(_logging.WARNING, logger="orchestrator.exits"):
+        restarted = start(
+            fetcher=feed(),
+            prices=MutablePrices(SGOV="100.45"),  # 821 x 0.05 = 41.05 accrued
+            llm_client=RoutingLLM(),
+            adapter=FakeBroker(
+                cash=Decimal("17571.60"),
+                positions=[
+                    BrokerPosition(
+                        "SGOV", Decimal("821"), Decimal("82469.45"), Decimal("82428.40")
+                    )
+                ],
+            ),
+            id_factory=counter("b"),
+            **restart_kwargs(tmp_path, limits, signals_config, research_config, clock),
+        )
+    assert "broker does not" not in caplog.text
+    assert restarted.exits.tracked == ()
+
+    report = health_report(
+        restarted.preflight, restarted.exits.tracked, RunLog(tmp_path / "run.log")
+    )
+    assert "cash management (SGOV): 821 units parked" in report
+    assert "accrued +41.05" in report  # 82469.45 value - 82428.40 cost
+    assert "log agrees" in report
 
 
 # ================================================================================

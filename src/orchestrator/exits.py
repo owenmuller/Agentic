@@ -83,10 +83,10 @@ from audit.log import AuditLog
 from audit.records import AuditTrail, ExitReason, ReviewOutcome, long_term_boundary
 from execution.base import BrokerAdapter, BrokerError
 from research.exit_review import (
+    ExitAction,
     ExitReview,
     ExitReviewPass,
     PositionUnderReview,
-    ThesisResolution,
     ThesisValidity,
 )
 from risk_gate.gate import ApprovedOrder, RiskGate
@@ -252,6 +252,7 @@ class ExitEngine:
         trigger_down_of_stop: Decimal = Decimal("0.66"),
         sizing_floor: Optional[int] = None,
         min_reward_risk: Optional[Decimal] = None,
+        opportunity_context: Optional[Callable[[], Optional[str]]] = None,
     ) -> None:
         self._gate = gate
         self._adapter = adapter
@@ -282,6 +283,10 @@ class ExitEngine:
         #: that does not state them.
         self._sizing_floor = sizing_floor
         self._min_reward_risk = min_reward_risk
+        #: One line about what else the system is looking at (the convergence
+        #: registry's active names), for the review dialectic's opportunity-cost
+        #: weighing (ruling 2026-09-02). Context only; None = not wired.
+        self._opportunity_context = opportunity_context
         self._tracked: dict[str, TrackedPosition] = {}
         self._working: dict[str, _WorkingExit] = {}
         #: (decision_id, disclosure external_id) already recorded — unresearched
@@ -481,9 +486,13 @@ class ExitEngine:
         restored = 0
         for trail in trails:
             decision = trail.decision
-            if decision.sizing.strategy == "mechanical":
-                # The mechanical engine replays its own positions: it has no
-                # stops to arm and a different exit regime entirely.
+            if decision.sizing.strategy in ("mechanical", "cash_sweep"):
+                # Not this engine's: the mechanical engine replays its own
+                # positions (no stops, its own exit regime) and the cash sweeper
+                # owns its parked lots (sleeve cash_management, keyed apart from
+                # the judged sleeve). Before 2026-09-03 the sweep lot fell
+                # through here, looked itself up under the JUDGED key, and
+                # logged a false "broker does not hold" warning every startup.
                 continue
             if not decision.was_approved or trail.outcome is not None:
                 continue
@@ -954,6 +963,8 @@ class ExitEngine:
                     sizing_floor=self._sizing_floor,
                     min_reward_risk=self._min_reward_risk,
                     already_trimmed=position.review_trimmed,
+                    spread_pct=self._spread_for(position),
+                    opportunity_context=self._opportunity_summary(),
                 )
             )
             position.last_review_at = moment
@@ -992,9 +1003,15 @@ class ExitEngine:
 
             usage = self._reviews.last_usage
             leash_after = self._apply_revision(position, outcome)
+            if outcome.should_close:
+                recorded_outcome = ReviewOutcome.CLOSE
+            elif outcome.action is ExitAction.TRIM:
+                recorded_outcome = ReviewOutcome.TRIM
+            else:
+                recorded_outcome = ReviewOutcome.HOLD
             self._audit.record_thesis_review(
                 position.decision_id,
-                ReviewOutcome.CLOSE if outcome.should_close else ReviewOutcome.HOLD,
+                recorded_outcome,
                 assessment=outcome.assessment,
                 invalidation_triggered=outcome.invalidation_triggered,
                 usage=usage,
@@ -1008,6 +1025,9 @@ class ExitEngine:
                 leash_days_after=leash_after,
                 would_open_today=outcome.would_open_today,
                 would_open_today_reason=outcome.would_open_today_reason or None,
+                case_for_holding=outcome.case_for_holding,
+                case_for_selling=outcome.case_for_selling,
+                verdict_reason=outcome.verdict_reason,
             )
             if self._cost_sink is not None:
                 self._cost_sink(usage.cost_usd if usage else None)
@@ -1018,11 +1038,15 @@ class ExitEngine:
             position.last_review_resolution = str(outcome.resolution)
             position.last_review_would_open = outcome.would_open_today
             if not outcome.should_close:
-                # The trim half of scaling (ruling 2026-09-02): a partial
-                # resolution on a profitable position sells its configured
-                # fraction. A trim is an exit order, so it counts in the
-                # tick report's exits_started.
-                if self._maybe_trim(position, outcome, price, moment):
+                # The trim half of scaling (ruling 2026-09-02, revised same
+                # day): the review's own TRIM verdict — argued through both
+                # cases — sells the configured fraction, once, on a position
+                # in profit. A trim is an exit order, so it counts in the tick
+                # report's exits_started; one the engine cannot honour is
+                # recorded as the hold it effectively is.
+                if outcome.action is ExitAction.TRIM and self._maybe_trim(
+                    position, outcome, price, moment
+                ):
                     closes += 1
                 continue
 
@@ -1033,17 +1057,15 @@ class ExitEngine:
             # about this position is untouched: the stops, ratchet, leash, and
             # invalidation all retain authority, and a close on an invalidated
             # or displaced thesis falls through to execute exactly as before.
-            # A close born of the re-underwrite question (would_open_today=no on
-            # a position not ahead of its timeline, ruling 2026-09-02) is
-            # invalidation-adjacent — the position no longer clears the bar that
-            # admits positions — so it executes normally, never shadowed.
+            # The dialectical structure (ruling 2026-09-02) is exactly what the
+            # shadow period evaluates: a close argued through both cases on a
+            # profitable, intact position is still shadowed, not executed.
             probation = self._config.review_close_probation
             if (
                 probation is not None
                 and probation.active_on(moment.date())
                 and outcome.validity is ThesisValidity.INTACT
                 and not outcome.invalidation_triggered
-                and not outcome.reunderwrite_close
                 and price is not None
                 and price > position.entry_price
             ):
@@ -1086,23 +1108,35 @@ class ExitEngine:
         price: Optional[Decimal],
         moment: datetime,
     ) -> bool:
-        """The trim half of position scaling (ruling 2026-09-02).
+        """The trim half of position scaling (ruling 2026-09-02, revised same
+        day to a verdict).
 
-        A HOLD verdict reporting ``resolution=partial`` on a position in profit
-        sells the configured fraction of the position — whole units, rounded
-        down (Constraint #6: the smaller trade) — under its own exit reason,
-        at most once per position. Risk-reducing by construction, so it is
-        exempt from the exit-authority probation shadow; the ADD half of
-        scaling remains deferred as ruled. ``review_trimmed`` is set on the
-        trim FILL (in ``_settle``), so a trim the broker refused or that
-        expired unfilled is retried at the next partial verdict.
+        A TRIM verdict on a position in profit sells the configured fraction of
+        the position — whole units, rounded down (Constraint #6: the smaller
+        trade) — under its own exit reason, at most once per position.
+        Risk-reducing by construction, so it is exempt from the exit-authority
+        probation shadow; the ADD half of scaling remains deferred as ruled.
+        ``review_trimmed`` is set on the trim FILL (in ``_settle``), so a trim
+        the broker refused or that expired unfilled is retried at the next trim
+        verdict. A trim the engine cannot honour — already trimmed, not in
+        profit, trims disabled — is logged and stands as a hold.
         """
         fraction = self._config.review_trim_fraction
         if fraction <= ZERO or position.review_trimmed:
-            return False
-        if outcome.resolution is not ThesisResolution.PARTIAL:
+            logger.info(
+                "trim verdict on %s not honoured (%s); standing as a hold",
+                position.symbol,
+                "already trimmed" if position.review_trimmed else "trims disabled",
+            )
             return False
         if price is None or price <= position.entry_price:
+            logger.info(
+                "trim verdict on %s not honoured (not in profit at %s vs entry %s); "
+                "standing as a hold",
+                position.symbol,
+                price,
+                position.entry_price,
+            )
             return False
         if position.pending_exit is not None:
             return False
@@ -1116,10 +1150,9 @@ class ExitEngine:
             )
             return False
         detail = (
-            f"review trim ({fraction:%} on resolution=partial, position in "
-            f"profit at {price} vs entry {position.entry_price}, day "
-            f"{position.days_held(moment)}): selling {units} of "
-            f"{position.quantity} — {outcome.assessment[:200]}"
+            f"review trim verdict ({fraction:%}; position in profit at {price} "
+            f"vs entry {position.entry_price}, day {position.days_held(moment)}): "
+            f"selling {units} of {position.quantity} — {outcome.verdict_reason[:200]}"
         )
         return self._initiate_exit(
             position, ExitReason.REVIEW_TRIM, detail, price, quantity=units
@@ -1391,6 +1424,28 @@ class ExitEngine:
         return released
 
     # -- internals -------------------------------------------------------------------------
+
+    def _spread_for(self, position: TrackedPosition) -> Optional[Decimal]:
+        """The quoted spread as a percent of mid, when the price source can say
+        (AlpacaPriceSource.spread_pct); None otherwise. An exit-cost input."""
+        if position.is_option:
+            return None
+        spread = getattr(self._prices, "spread_pct", None)
+        if spread is None:
+            return None
+        try:
+            return spread(position.symbol)
+        except Exception:  # noqa: BLE001 - context, never a crash
+            return None
+
+    def _opportunity_summary(self) -> Optional[str]:
+        if self._opportunity_context is None:
+            return None
+        try:
+            return self._opportunity_context()
+        except Exception:  # noqa: BLE001 - context, never a crash
+            logger.exception("opportunity context failed")
+            return None
 
     def _mark_for(self, position: TrackedPosition) -> Optional[Decimal]:
         """Per-unit mark: premium mid for options, the price source for equity."""

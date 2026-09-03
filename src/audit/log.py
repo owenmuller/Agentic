@@ -288,6 +288,9 @@ class AuditLog:
         leash_days_after: Optional[int] = None,
         would_open_today: Optional[bool] = None,
         would_open_today_reason: Optional[str] = None,
+        case_for_holding: Optional[str] = None,
+        case_for_selling: Optional[str] = None,
+        verdict_reason: Optional[str] = None,
     ) -> ThesisReviewRecord:
         """Record one thesis review of an open position.
 
@@ -315,6 +318,9 @@ class AuditLog:
             leash_days_after=leash_days_after,
             would_open_today=would_open_today,
             would_open_today_reason=would_open_today_reason,
+            case_for_holding=case_for_holding,
+            case_for_selling=case_for_selling,
+            verdict_reason=verdict_reason,
             code=code,
             message=message,
             est_input_tokens=usage.input_tokens if usage else None,

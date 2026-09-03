@@ -64,6 +64,9 @@ PROFIT_TAKING_CLOSE = {
     "action": "close",
     "validity": "intact",
     "progress": "ahead",
+    "case_for_holding": "The thesis is intact and ahead of schedule; the trailing stop already protects most of the gain.",
+    "case_for_selling": "The run is extended relative to the catalyst, and the remaining upside to target is small against the stop.",
+    "verdict_reason": "the selling case wins on a stretched risk:reward.",
 }
 
 

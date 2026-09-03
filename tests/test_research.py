@@ -736,7 +736,10 @@ def test_the_report_phase_forces_the_callers_tool_not_a_hardcoded_one():
     from research.exit_review import EXIT_REVIEW_TOOL_NAME, exit_review_tool_definition
 
     verdict = {"assessment": "still live", "invalidation_triggered": False,
-               "action": "hold"}
+               "action": "hold",
+               "case_for_holding": "the thesis is intact and the catalyst has not yet been tested by the market",
+               "case_for_selling": "the position has drifted and a fresher candidate competes for the slot",
+               "verdict_reason": "holding wins: the thesis stands"}
     client = client_with(
         Response(Block("text", text="searching"), stop_reason="end_turn"),
         Response(Block("tool_use", name=EXIT_REVIEW_TOOL_NAME, input_=verdict)),

@@ -511,6 +511,32 @@ def _mechanical_line(checks, state) -> str:
     )
 
 
+def _cash_management_line(checks) -> str:
+    """Parked cash made visible (2026-09-03): what the gate holds in the
+    cash-management sleeve against what the audit log says the sweeper owns.
+    Accrued = market value minus cost — mark-to-market; the ETF distributes
+    monthly, so between distributions this is the accrual estimate."""
+    symbol = checks.gate.limits.cash_management.symbol
+    position = checks.gate.state.position(("cash_management", symbol))
+    logged = checks.audit.strategy_open_positions("cash_sweep").get(symbol)
+    log_units = logged[0] if logged else Decimal("0")
+    if position is None or position.quantity <= 0:
+        line = f"cash management ({symbol}): nothing parked"
+        if log_units > 0:
+            line += f"  [LOG SAYS {log_units} units — MISMATCH, needs a human]"
+        return line
+    accrued = position.market_value - position.cost_basis
+    if abs(log_units - position.quantity) <= Decimal("0.000001"):
+        match = "log agrees"
+    else:
+        match = f"LOG SAYS {log_units} units — MISMATCH, needs a human"
+    return (
+        f"cash management ({symbol}): {position.quantity} units parked, value "
+        f"{position.market_value:.2f}, cost {position.cost_basis:.2f}, accrued "
+        f"{accrued:+.2f} (mark-to-market; distributions monthly)  [{match}]"
+    )
+
+
 def health_report(
     checks: Preflight,
     positions: Iterable[TrackedPosition],
@@ -538,6 +564,7 @@ def health_report(
         f"mechanical {_sleeve_label(checks.gate.limits.portfolio.sleeves.mechanical)}, "
         f"prediction {_sleeve_label(checks.gate.limits.portfolio.sleeves.prediction)}",
         _mechanical_line(checks, state),
+        _cash_management_line(checks),
         f"deployed today: {state.deployed_today}  |  research budget: "
         f"{checks.budget.spent} of {checks.budget.max_per_day} spent for "
         f"{checks.budget.day}",

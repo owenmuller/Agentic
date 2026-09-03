@@ -652,6 +652,9 @@ class ExitReason(StrEnum):
 class ReviewOutcome(StrEnum):
     HOLD = "hold"
     CLOSE = "close"
+    #: The review's TRIM verdict (ruling 2026-09-02): a partial, once-per-
+    #: position sale the engine sizes from config. Never a close.
+    TRIM = "trim"
     #: The review call failed or returned something malformed. Treated as HOLD by the
     #: caller — a close on bad data is a trade on bad data — but recorded as its own
     #: outcome, because "the model held" and "the model could not answer" are
@@ -689,6 +692,11 @@ class ThesisReviewRecord(_Record):
     #: records written before the field existed.
     would_open_today: Optional[bool] = None
     would_open_today_reason: Optional[str] = None
+    #: The dialectic (ruling 2026-09-02): both cases and the one-line reason
+    #: naming which won. Absent on failed reviews and pre-ruling records.
+    case_for_holding: Optional[str] = None
+    case_for_selling: Optional[str] = None
+    verdict_reason: Optional[str] = None
     #: Why this review ran out of cadence, when it did — the price move that
     #: forced it. None on an ordinary cadence review.
     trigger_reason: Optional[str] = None

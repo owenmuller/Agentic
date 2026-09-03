@@ -421,6 +421,7 @@ def golden() -> int:
     )
     from research.client import AnthropicResearchClient
     from research.config import ResearchConfig
+    from research.exit_review import ExitReviewPass
     from research.research_pass import ResearchPass
     from signals import SignalsConfig
 
@@ -449,16 +450,17 @@ def golden() -> int:
         if limit is not None:
             cases = cases[:limit]
         config = ResearchConfig.load()
+        client = AnthropicResearchClient(config)
         research = ResearchPass(
-            AnthropicResearchClient(config),
-            source_tiers=build_source_tiers(SignalsConfig.load()),
+            client, source_tiers=build_source_tiers(SignalsConfig.load())
         )
+        reviews = sum(1 for case in cases if case.kind == "review")
         print(
-            f"replaying {len(cases)} golden cases through the production pass "
-            f"(model {config.model}, screen "
+            f"replaying {len(cases)} golden cases ({reviews} review) through the "
+            f"production passes (model {config.model}, screen "
             f"{config.screen.model if config.screen else 'off'}) — real API spend"
         )
-        results = run_golden(research, cases)
+        results = run_golden(research, cases, review_pass=ExitReviewPass(client))
         print(render_summary(results))
         return 0 if all(result.passed for result in results) else 3
     except Exception as error:  # noqa: BLE001

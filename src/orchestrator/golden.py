@@ -26,11 +26,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
+from research.exit_review import ExitReview, PositionUnderReview
 from research.reports import ResearchReport, is_manipulation_flagged
 from signals import SignalClass, SignalsConfig
 from signals.records import Classification, Priority, Signal, signal_id_for
@@ -65,6 +66,51 @@ class GoldenCase:
     #: case say "a decline at any confidence grades; a long grades only weak"
     #: without conflating decline confidence (calibration) with position size.
     traded_confidence_band: Optional[tuple[int, int]] = None
+    #: "entry" (the research pass) or "review" (the exit review, ruling
+    #: 2026-09-02): review cases replay a frozen PositionUnderReview and are
+    #: graded on the REASONING STRUCTURE — both cases argued, a verdict reason
+    #: naming the winner, would_open_today answered — not only the outcome.
+    kind: str = "entry"
+    position: Optional[dict[str, Any]] = None
+    #: Review cases: the verdicts a correct review may reach.
+    actions: tuple[str, ...] = ()
+    #: Review cases: the structural bar each case must clear, in characters.
+    min_case_chars: int = 120
+    expect_would_open: Optional[bool] = None
+
+    def under_review(self) -> PositionUnderReview:
+        """The frozen position a review case replays."""
+        raw = dict(self.position or {})
+
+        def dec(key):
+            return Decimal(str(raw[key])) if raw.get(key) is not None else None
+
+        return PositionUnderReview(
+            symbol=raw["symbol"],
+            entry_price=dec("entry_price"),
+            current_price=dec("current_price"),
+            opened_at=datetime.fromisoformat(raw["opened_at"].replace("Z", "+00:00")),
+            days_held=int(raw["days_held"]),
+            time_horizon=raw["time_horizon"],
+            confidence_at_entry=int(raw["confidence_at_entry"]),
+            source_id=raw["source_id"],
+            thesis=raw["thesis"],
+            invalidation_condition=raw["invalidation_condition"],
+            original_content=raw["original_content"],
+            expected_resolution_date=(
+                date.fromisoformat(raw["expected_resolution_date"])
+                if raw.get("expected_resolution_date")
+                else None
+            ),
+            leash_days=raw.get("leash_days"),
+            leash_ceiling_days=raw.get("leash_ceiling_days"),
+            stop_price=dec("stop_price"),
+            sizing_floor=raw.get("sizing_floor"),
+            min_reward_risk=dec("min_reward_risk"),
+            already_trimmed=bool(raw.get("already_trimmed", False)),
+            spread_pct=dec("spread_pct"),
+            opportunity_context=raw.get("opportunity_context"),
+        )
 
     def signal(self, now: datetime) -> Signal:
         classification = None
@@ -93,6 +139,31 @@ def load_cases(path: Optional[Path] = None) -> list[GoldenCase]:
                 continue
             raw = json.loads(line)
             expect = raw["expect"]
+            if raw.get("kind") == "review":
+                position = raw["position"]
+                cases.append(
+                    GoldenCase(
+                        name=raw["name"],
+                        origin=raw.get("origin", ""),
+                        source_id=position["source_id"],
+                        signal_class=SignalClass(raw.get("signal_class", "class_2")),
+                        content=position["original_content"],
+                        external_id=raw.get("external_id", raw["name"]),
+                        classification=None,
+                        metadata={},
+                        directions=(),
+                        confidence_band=(0, 100),
+                        must_flag_manipulation=False,
+                        note=expect.get("note", ""),
+                        recorded_verdict=raw.get("recorded_verdict", ""),
+                        kind="review",
+                        position=position,
+                        actions=tuple(expect.get("actions", ("hold", "trim", "close"))),
+                        min_case_chars=int(expect.get("min_case_chars", 120)),
+                        expect_would_open=expect.get("would_open_today"),
+                    )
+                )
+                continue
             cases.append(
                 GoldenCase(
                     name=raw["name"],
@@ -184,16 +255,86 @@ def grade(case: GoldenCase, outcome, usage) -> GoldenResult:
     )
 
 
+def grade_review(case: GoldenCase, outcome, usage) -> GoldenResult:
+    """Grade a review case on its REASONING STRUCTURE (ruling 2026-09-02): the
+    verdict must be one the case allows, both cases must be argued past the
+    structural bar and differ from each other, the verdict reason must name a
+    winner, and would_open_today must carry its arithmetic."""
+    cost = usage.cost_usd if usage else None
+    if not isinstance(outcome, ExitReview):
+        return GoldenResult(
+            case,
+            passed=False,
+            verdict=f"REJECTION {getattr(outcome, 'code', '?')}",
+            problems=(f"no verdict: {getattr(outcome, 'message', outcome)}",),
+            cost=cost,
+        )
+    problems: list[str] = []
+    action = str(outcome.action)
+    if case.actions and action not in case.actions:
+        problems.append(f"verdict {action} not in graded set {list(case.actions)}")
+    holding = outcome.case_for_holding.strip()
+    selling = outcome.case_for_selling.strip()
+    if len(holding) < case.min_case_chars:
+        problems.append(
+            f"case_for_holding argued in {len(holding)} chars, below the "
+            f"{case.min_case_chars} structural bar"
+        )
+    if len(selling) < case.min_case_chars:
+        problems.append(
+            f"case_for_selling argued in {len(selling)} chars, below the "
+            f"{case.min_case_chars} structural bar"
+        )
+    if holding and holding == selling:
+        problems.append("the two cases are identical text — one side was not argued")
+    if not outcome.verdict_reason.strip():
+        problems.append("verdict_reason blank")
+    if not outcome.would_open_today_reason.strip():
+        problems.append("would_open_today answered without its arithmetic")
+    if (
+        case.expect_would_open is not None
+        and outcome.would_open_today is not case.expect_would_open
+    ):
+        problems.append(
+            f"would_open_today={outcome.would_open_today}, expected "
+            f"{case.expect_would_open}"
+        )
+    verdict = (
+        f"{action} would_open={outcome.would_open_today} | hold-case {len(holding)}c, "
+        f"sell-case {len(selling)}c | {outcome.verdict_reason.strip()[:90]}"
+    )
+    return GoldenResult(
+        case, passed=not problems, verdict=verdict, problems=tuple(problems), cost=cost
+    )
+
+
 def run_golden(
     research_pass,
     cases: list[GoldenCase],
     now: Optional[datetime] = None,
     echo=print,
+    review_pass=None,
 ) -> list[GoldenResult]:
-    """Replay each case through the given (production) pass, grading as we go."""
+    """Replay each case through the given (production) passes, grading as we go.
+    Review cases need ``review_pass``; without one they grade as drift, loudly."""
     moment = now or datetime.now(timezone.utc)
     results: list[GoldenResult] = []
     for case in cases:
+        if case.kind == "review":
+            if review_pass is None:
+                result = GoldenResult(
+                    case, False, "not run", ("no review pass wired",), None
+                )
+            else:
+                outcome = review_pass.run(case.under_review())
+                result = grade_review(case, outcome, review_pass.last_usage)
+            results.append(result)
+            status = "PASS " if result.passed else "DRIFT"
+            cost = f" ${result.cost}" if result.cost is not None else ""
+            echo(f"{status} {case.name}: {result.verdict}{cost}")
+            for problem in result.problems:
+                echo(f"      {problem}")
+            continue
         outcome = research_pass.run(case.signal(moment))
         result = grade(case, outcome, research_pass.last_usage)
         results.append(result)
@@ -216,6 +357,14 @@ def render_summary(results: list[GoldenResult]) -> str:
     if drifted:
         lines.append("DRIFT — a human reviews each before any change ships:")
         for result in drifted:
+            if result.case.kind == "review":
+                lines.append(
+                    f"  {result.case.name}: got {result.verdict}; expected a "
+                    f"verdict in {list(result.case.actions)} with both cases "
+                    f"argued (>= {result.case.min_case_chars} chars each) — "
+                    f"{result.case.note}"
+                )
+                continue
             lines.append(
                 f"  {result.case.name}: got {result.verdict}; expected "
                 f"{list(result.case.directions)} in "

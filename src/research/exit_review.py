@@ -9,23 +9,41 @@ schema, one attempt, malformed output as a typed rejection.
 What a verdict can and cannot do
 --------------------------------
 The verdict says whether the thesis is still VALID, whether it is PROGRESSING, whether
-it has RESOLVED, and when it now expects to resolve (ruling 2026-08-31) — plus the
-assessment prose and the two-member action enum, ``hold`` or ``close``. There is still
-no field for resizing, averaging down, reopening, flipping direction, or moving a
-stop, so a review has no vocabulary in which to ask for any of them. A close is
-expressed as intent; the order it produces still passes through ``RiskGate``
-sell-to-close validation like every other order in the system.
+it has RESOLVED, when it now expects to resolve (ruling 2026-08-31), whether the
+position would be OPENED under today's entry rules (ruling 2026-09-02) — and then,
+having argued the strongest honest case for holding AND for selling, concludes
+``hold``, ``trim``, or ``close`` (ruling 2026-09-02, the dialectic). There is still no
+field for resizing beyond the system-defined trim, averaging down, reopening,
+flipping direction, or moving a stop, so a review has no vocabulary in which to ask
+for any of them. A close is expressed as intent; the order it produces still passes
+through ``RiskGate`` sell-to-close validation like every other order in the system.
+A trim is the once-per-position partial sale the engine sizes from config; the
+review may only ask for it.
 
-The one new lever is the clock, and it is bounded in one direction only. A revised
+The one other lever is the clock, and it is bounded in one direction only. A revised
 resolution date SHORTENS freely; it lengthens only as far as the per-horizon ceiling
 in ``config/orchestrator.yaml`` allows, measured from ENTRY rather than from the
 review asking — and only when the review reports the thesis intact and not stalled.
 A stalled thesis buying itself more time is the exact failure the leash exists to
 prevent.
 
+The dialectic (ruling 2026-09-02)
+---------------------------------
+``would_open_today`` is EVIDENCE, not a trigger. An earlier same-day design closed a
+position on "would not open today" + "not ahead"; it was revised the same day because
+the entry bar is stricter than the exit bar by design, and a threshold difference is
+not a thesis problem. Instead every review must populate ``case_for_holding`` and
+``case_for_selling`` — each the strongest honest version of its side, weighing
+expected return to target against risk to the current stop, what has CHANGED since
+entry (information, not price), opportunity cost against the registry's other
+candidates, exit costs (spread, tax boundary), and whether a "no" on
+would_open_today is a thesis problem or a selection-threshold difference — and then
+say in ``verdict_reason`` which argument won. A verdict without both cases populated
+fails the schema, which makes it a rejection, which makes it a HOLD.
+
 The contradiction rules
 -----------------------
-Four readings contradict a hold. Each resolves toward the exit (Constraint #6), and
+Three readings contradict a hold. Each resolves toward the exit (Constraint #6), and
 each preserves the contradiction verbatim in the audit record for whoever wants to
 know why the model hedged:
 
@@ -37,25 +55,21 @@ know why the model hedged:
 3. ``resolution=substantial`` with hold and no ``continuation_thesis`` — a resolved
    winner held on is a NEW bet. The review may hold it, but only by writing down what
    the new bet is; an empty continuation closes the position.
-4. ``would_open_today=False`` with hold on a position whose ``progress`` is not
-   ``ahead`` (ruling 2026-09-02) — a position that would not be opened under
-   TODAY's entry rules and is not beating its own timeline is capital parked in a
-   stale idea. This close is invalidation-adjacent: it executes normally and is
-   never shadowed by the exit-authority probation.
 
 These are DERIVED properties, never schema validation, and the distinction is
 load-bearing. A validation failure becomes an ``ExitReviewRejection``, and a rejection
 means HOLD — so enforcing "resolved must carry a continuation" in pydantic would
-produce exactly the outcome it exists to prevent.
+produce exactly the outcome it exists to prevent. (The two cases ARE schema-enforced,
+deliberately: there, "did not argue both sides" SHOULD mean hold.)
 
 Failure means hold — and hold is safe to mean
 ---------------------------------------------
 A failed or malformed review is a rejection the caller treats as HOLD, never as a
 close: closing a position on bad data is trading on bad data. That is only an
 acceptable default because this layer is not the position's last line of defence — the
-deterministic guardrails (max-loss stop, time stop, and the trailing ratchet beneath
-them) run every cycle regardless of whether this module works, so a position can never
-become unexitable because the LLM layer is down.
+deterministic guardrails (max-loss stop, time stop, the trailing ratchet, and the kill
+switch) run every cycle regardless of whether this module works, so a position can
+never become unexitable because the LLM layer is down.
 """
 
 from __future__ import annotations
@@ -66,7 +80,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Callable, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from research.client import LLMClient, ResearchUsage
 from research.reports import (
@@ -77,9 +91,15 @@ from signals import as_data_block
 
 
 class ExitAction(StrEnum):
-    """The only two things a review can say. There is deliberately no third member."""
+    """What a review may conclude (ruling 2026-09-02): hold, trim, or close.
+
+    TRIM is the once-per-position partial sale the SYSTEM defines — the review
+    asks for it, the engine sizes it from config and refuses it on a position
+    not in profit or already trimmed (recorded as a hold). Still no member for
+    adds, reopening, direction flips, or moving a stop."""
 
     HOLD = "hold"
+    TRIM = "trim"
     CLOSE = "close"
 
 
@@ -116,6 +136,11 @@ class ThesisResolution(StrEnum):
     SUBSTANTIAL = "substantial"
 
 
+#: The two cases must be argued, not gestured at. Below this many characters a
+#: "case" is a label, and the schema rejects it — which is a hold.
+MIN_CASE_CHARS = 40
+
+
 class ExitReview(BaseModel):
     """A structured review verdict. The model fills exactly these fields."""
 
@@ -143,18 +168,35 @@ class ExitReview(BaseModel):
     #: The re-underwrite question (ruling 2026-09-02): under TODAY's entry rules —
     #: the confidence floor with its boundary confirmation, and the reward:risk
     #: minimum measured from the CURRENT price to the target against the CURRENT
-    #: stop — would this position be opened now? Not a size lever: the schema
-    #: stays closed to resizing, and this field can only ever produce a full
-    #: close (rule 4) or nothing. Defaults to True because a rejected review is
-    #: a HOLD, and the default must not manufacture a close the model never gave.
+    #: stop — would this position be opened now? EVIDENCE feeding the case for
+    #: selling, never a trigger by itself. Defaults to True because a rejected
+    #: review is a HOLD, and the default must not manufacture a close.
     would_open_today: bool = True
     would_open_today_reason: str = ""
+    #: The dialectic (ruling 2026-09-02): the strongest honest case each way.
+    #: BOTH are required of the model and argued by schema — a verdict that did
+    #: not engage both sides is a rejection, which is a HOLD. validate_default
+    #: is load-bearing: pydantic skips validators on omitted fields otherwise,
+    #: and an OMITTED case is exactly the failure this must catch.
+    case_for_holding: str = Field(default="", validate_default=True)
+    case_for_selling: str = Field(default="", validate_default=True)
+    #: One line: WHICH argument won and why.
+    verdict_reason: str = Field(default="", validate_default=True)
 
-    @field_validator("assessment")
+    @field_validator("assessment", "verdict_reason")
     @classmethod
     def _no_blank_prose(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("must not be blank")
+        return value
+
+    @field_validator("case_for_holding", "case_for_selling")
+    @classmethod
+    def _cases_are_argued(cls, value: str) -> str:
+        if len(value.strip()) < MIN_CASE_CHARS:
+            raise ValueError(
+                f"each case must be argued in at least {MIN_CASE_CHARS} characters"
+            )
         return value
 
     @property
@@ -163,7 +205,7 @@ class ExitReview(BaseModel):
 
     @property
     def close_contradiction(self) -> Optional[str]:
-        """Which contradiction rule forces this hold to a close, if any.
+        """Which contradiction rule forces this hold (or trim) to a close, if any.
 
         Named rather than boolean so the audit record can say WHICH reading of the
         verdict overrode the model's own action.
@@ -171,36 +213,22 @@ class ExitReview(BaseModel):
         if self.action is ExitAction.CLOSE:
             return None
         if self.invalidation_triggered:
-            return "invalidation_triggered with action=hold"
+            return f"invalidation_triggered with action={self.action}"
         if self.validity is ThesisValidity.INVALIDATED:
-            return "validity=invalidated with action=hold"
+            return f"validity=invalidated with action={self.action}"
         if self.validity is ThesisValidity.DISPLACED:
             return (
-                "validity=displaced with action=hold: the move did not come from "
-                "the thesis, so the holding is not the position that was approved"
+                f"validity=displaced with action={self.action}: the move did not "
+                "come from the thesis, so the holding is not the position that was "
+                "approved"
             )
         if self.resolution is ThesisResolution.SUBSTANTIAL and not self.has_continuation:
             return (
-                "resolution=substantial with action=hold and no continuation_thesis: "
-                "holding a resolved thesis is a new bet, and no new bet was stated"
-            )
-        if self.reunderwrite_close:
-            return (
-                "would_open_today=false with progress != ahead and action=hold: a "
-                "position that would not be opened under today's entry rules and is "
-                "not ahead of its own timeline is capital parked in a stale idea"
+                f"resolution=substantial with action={self.action} and no "
+                "continuation_thesis: holding a resolved thesis is a new bet, and no "
+                "new bet was stated"
             )
         return None
-
-    @property
-    def reunderwrite_close(self) -> bool:
-        """A failed re-underwrite on a position not beating its timeline.
-
-        This is the one close class the exit-authority probation never shadows
-        (ruling 2026-09-02): it is invalidation-adjacent — the position no longer
-        clears the bar that admits positions — not the shadowed
-        profitable-and-intact profit-taking class."""
-        return not self.would_open_today and self.progress is not ThesisProgress.AHEAD
 
     @property
     def should_close(self) -> bool:
@@ -208,7 +236,7 @@ class ExitReview(BaseModel):
 
         See the module docstring. Every contradiction resolves toward the exit,
         because between two readings of a hedged verdict that is the one with less
-        risk in it (Constraint #6).
+        risk in it (Constraint #6). ``would_open_today`` is deliberately NOT here.
         """
         return self.action is ExitAction.CLOSE or self.close_contradiction is not None
 
@@ -296,9 +324,14 @@ class PositionUnderReview:
     sizing_floor: Optional[int] = None
     min_reward_risk: Optional[Decimal] = None
     #: The once-per-position trim has already been taken (ruling 2026-09-02):
-    #: a further partial resolution is to be answered with close, never a
-    #: second trim — the prompt says so when this is set.
+    #: a trim verdict is no longer available and the prompt says so.
     already_trimmed: bool = False
+    #: Exit-cost and opportunity-cost inputs for the dialectic (ruling
+    #: 2026-09-02): the quoted spread as a percent of mid at review time, and a
+    #: one-line summary of what else the system is looking at (the convergence
+    #: registry's active names). Context for the two cases, never a decision.
+    spread_pct: Optional[Decimal] = None
+    opportunity_context: Optional[str] = None
 
 
 #: Name of the tool the model must call to deliver a review.
@@ -316,37 +349,36 @@ def exit_review_tool_definition() -> dict[str, Any]:
         "name": EXIT_REVIEW_TOOL_NAME,
         "description": (
             "Submit your review of the open position. Call this exactly once, after "
-            "any searching you need. hold and close are the only actions that exist: "
-            "you cannot resize, add to, reopen, or restructure a position, and there "
-            "is no field through which to ask. Set invalidation_triggered honestly — "
-            "if the invalidation condition has happened, the position closes whatever "
-            "the action field says. validity: intact if the thesis still stands, "
-            "invalidated if it is dead, displaced if the position moved for reasons "
-            "the thesis did not predict (right for the wrong reasons is not the bet "
-            "that was approved, and it closes). progress: is the thesis tracking its "
-            "own expected timeline — ahead, on_track, or stalled. resolution: how "
-            "much of the expected move has actually happened; substantial means it "
-            "has played out. revised_resolution_date: when you now expect resolution, "
-            "as YYYY-MM-DD, or null to leave the clock alone — it shortens freely and "
-            "lengthens only inside limits this system owns, and only when the thesis "
-            "is intact and not stalled. Null is only meaningful when a date is "
-            "already on record: if the position shows no expected resolution date, "
-            "its time stop is a generic fallback, and an analysis that names a "
-            "horizon must supply the date rather than null. "
-            "continuation_thesis: required in one case — "
-            "if you report resolution=substantial and still want to hold, write the "
-            "NEW bet here, because holding a thesis that has played out is a new "
-            "position and it needs a stated reason. Leave it null otherwise; a "
-            "resolved hold with no continuation closes. "
-            "would_open_today: the re-underwrite question — under TODAY's entry "
-            "rules as stated in the position facts (the confidence floor and its "
-            "boundary confirmation, and the reward:risk minimum measured from the "
-            "CURRENT price to your target against the CURRENT stop), would this "
-            "position be opened now? Answer honestly and put the arithmetic in "
-            "would_open_today_reason. A no on a position that is not ahead of its "
-            "own timeline closes it, whatever the action field says; a no on a "
-            "position running ahead is recorded but does not close. This is not a "
-            "resize lever — it can only produce a full close or nothing."
+            "any searching you need. hold, trim and close are the only verdicts: "
+            "trim sells a fixed, human-configured fraction of the position (once "
+            "over its life — the system records a trim it cannot honour as a hold); "
+            "close sells all of it. You cannot add, reopen, restructure, or move a "
+            "stop, and there is no field through which to ask. Set "
+            "invalidation_triggered honestly — if the invalidation condition has "
+            "happened, the position closes whatever the action field says. "
+            "validity: intact if the thesis still stands, invalidated if it is "
+            "dead, displaced if the position moved for reasons the thesis did not "
+            "predict (right for the wrong reasons is not the bet that was approved, "
+            "and it closes). progress: is the thesis tracking its own expected "
+            "timeline — ahead, on_track, or stalled. resolution: how much of the "
+            "expected move has actually happened; substantial means it has played "
+            "out. revised_resolution_date: when you now expect resolution, as "
+            "YYYY-MM-DD, or null to leave the clock alone — it shortens freely and "
+            "lengthens only inside limits this system owns, and only when the "
+            "thesis is intact and not stalled. Null is only meaningful when a date "
+            "is already on record: if the position shows no expected resolution "
+            "date, its time stop is a generic fallback, and an analysis that names "
+            "a horizon must supply the date rather than null. continuation_thesis: "
+            "required in one case — if you report resolution=substantial and still "
+            "want to hold, write the NEW bet here; a resolved hold with no "
+            "continuation closes. would_open_today: under TODAY's entry rules as "
+            "stated in the position facts, would this position be opened now, with "
+            "the arithmetic in would_open_today_reason — this is EVIDENCE for the "
+            "case for selling, never a trigger by itself. case_for_holding and "
+            "case_for_selling: the strongest honest version of EACH side, both "
+            "required and each argued in prose (a review missing either is "
+            "rejected and the position holds by default). verdict_reason: one line "
+            "naming WHICH argument won and why."
         ),
         "strict": True,
         "input_schema": schema,
@@ -357,25 +389,30 @@ EXIT_SYSTEM_PROMPT = """\
 You are reviewing an OPEN POSITION held by an automated trading system. The position \
 was opened on a thesis produced by an earlier research pass, and that thesis named an \
 invalidation condition: the thing which, if it happened, would kill the thesis. Your \
-job is to decide whether the thesis still stands.
+job is to decide whether the thesis still justifies the position today — by arguing \
+both sides honestly and then choosing.
 
 WHAT YOUR OUTPUT DOES
 
-You return exactly one of two actions: hold or close. Those are the only actions that \
-exist. You cannot resize the position, add to it, reopen it later, flip its direction, \
-or adjust any stop — there is no field for any of that and no downstream code that \
-would read one. A close verdict produces a sell-to-close order that still passes \
-through the same deterministic risk gate as every other order. Deterministic stop-loss, \
-time-stop and trailing guardrails run on this position regardless of what you decide; \
-you are the judgement layer, not the safety layer.
+You return exactly one of three verdicts: hold, trim, or close. trim sells a fixed, \
+human-configured fraction of the position and is available at most once over its \
+life; the system records a trim it cannot honour — a second trim, or a trim on a \
+position not in profit — as a hold. close produces a sell-to-close order for the whole \
+position. You cannot add to the position, reopen it later, flip its direction, or \
+adjust any stop — there is no field for any of that and no downstream code that would \
+read one. Every order you cause still passes through the same deterministic risk \
+gate as every other order. Deterministic stop-loss, time-stop and trailing guardrails \
+and the account kill switch run on this position regardless of what you decide; they \
+are the backstop, not the decision — you are the judgement layer, not the safety \
+layer.
 
-The one thing you do control beyond hold/close is the CLOCK. This position has a \
-deterministic time stop, and revised_resolution_date moves it. Moving it EARLIER \
-always works. Moving it LATER is bounded: the system clamps any date to a ceiling a \
-human configured, measured from the day the position was opened, and it ignores a \
-later date entirely if you report the thesis invalidated, displaced, or stalled. You \
-cannot buy an underwater thesis more time by naming a distant date, so do not try; \
-report what you actually believe and let the clamp do its job.
+The one other thing you control is the CLOCK. This position has a deterministic time \
+stop, and revised_resolution_date moves it. Moving it EARLIER always works. Moving it \
+LATER is bounded: the system clamps any date to a ceiling a human configured, measured \
+from the day the position was opened, and it ignores a later date entirely if you \
+report the thesis invalidated, displaced, or stalled. You cannot buy an underwater \
+thesis more time by naming a distant date, so do not try; report what you actually \
+believe and let the clamp do its job.
 
 HOW TO REVIEW
 
@@ -385,8 +422,8 @@ describes has happened, report invalidation_triggered as true and close. Do not 
 rescue a dead thesis by reinterpreting its invalidation condition more charitably \
 than it was written.
 
-If the invalidation condition has not triggered, answer five questions, and let the \
-answers drive the action:
+If the invalidation condition has not triggered, make five assessments, then argue \
+the two cases, then decide.
 
 VALIDITY. Is the thesis still the reason to hold this? Report "displaced" — not \
 "intact" — when the position has moved for reasons the thesis did not predict. Being \
@@ -404,25 +441,7 @@ the thesis has essentially played out. Be honest here even when the position is 
 attractive — if the move you underwrote has arrived, that is a resolution, and \
 continuing to hold is a NEW bet. You may still hold it, but only by writing the new \
 bet into continuation_thesis. A resolved position held with no continuation stated \
-will be closed. One deterministic consequence you should know about: on a position \
-currently in profit, reporting "partial" causes the system to TRIM a fixed, \
-human-configured fraction of the position, at most once over its life. That is a \
-system rule, not something you can request, size, or prevent through any field — \
-report the resolution you actually observe. When the position facts say the trim \
-has ALREADY been taken, there is no second trim: a position that keeps resolving \
-only partially after its trim is not earning its remaining capital, and the right \
-answer is action=close, not another partial.
-
-RE-UNDERWRITE. Would this position be opened TODAY, as a fresh entry, under the \
-entry rules stated in the position facts — a research confidence at or above the \
-floor (with a verdict near the floor needing to survive a second independent pass), \
-and a reward:risk from the CURRENT price to your target against the CURRENT stop \
-meeting the stated minimum? Answer in would_open_today with the arithmetic in \
-would_open_today_reason. A "no" on a position that is not ahead of its own timeline \
-is a close signal and the position will close whatever the action field says; a \
-"no" on a position running ahead of its timeline is recorded but does not close. \
-Answer the question as asked — the honest "no" on a stale position is exactly the \
-answer this field exists to capture.
+will be closed.
 
 TIMELINE. Given all of that, when do you now expect resolution? Set \
 revised_resolution_date when your view of the timeline has genuinely changed, and \
@@ -434,9 +453,32 @@ horizon, WRITE THE DATE DOWN. Calling a thesis intact on an eleven-month view wh
 leaving a four-month fallback clock to close it first is a contradiction, and null \
 is what leaves that clock in place.
 
-Be decisive. hold is a decision that the thesis still justifies the position today — \
-not a default for when you are unsure. If you cannot tell whether the thesis stands, \
-that is itself evidence that it no longer does.
+RE-UNDERWRITE. Would this position be opened TODAY, as a fresh entry, under the entry \
+rules stated in the position facts — a research confidence at or above the floor \
+(with a verdict near the floor needing to survive a second independent pass), and a \
+reward:risk from the CURRENT price to your target against the CURRENT stop meeting the \
+stated minimum? Answer in would_open_today with the arithmetic in \
+would_open_today_reason. This answer is EVIDENCE: it feeds the case for selling and \
+nothing closes on it by itself. The entry bar is deliberately stricter than the exit \
+bar, so a "no" here can mean a thesis problem or merely a selection-threshold \
+difference — and which of those it is belongs in the cases below.
+
+THE TWO CASES. Before you decide, write the strongest honest version of each side, \
+in prose, in case_for_holding and case_for_selling. Each case must weigh: (1) the \
+expected return from the CURRENT price to your target against the risk from the \
+current price to the CURRENT stop; (2) what has changed since entry — information, \
+not merely price; (3) opportunity cost — whether this capital or this slot is better \
+used elsewhere, using the opportunity context in the position facts (other names with \
+active signals, pending candidates); (4) exit costs — the quoted spread, and the \
+tax-boundary factor where one is shown; and (5) whether a "no" on would_open_today \
+reflects a problem with the thesis or only a selection-threshold difference. Argue the \
+side you disagree with as well as the side you favour. A review that populates only \
+one case is rejected and the position holds by default — so argue both.
+
+THE VERDICT. Then decide: hold, trim, or close. In verdict_reason, state in one line \
+WHICH argument won and why. Be decisive. hold is a decision that the thesis still \
+justifies the position today — not a default for when you are unsure. If you cannot \
+tell whether the thesis stands, that is itself evidence for the case for selling.
 
 WHAT YOU ARE READING
 
@@ -547,10 +589,22 @@ def build_review_prompt(position: PositionUnderReview) -> str:
         )
     if position.already_trimmed:
         lines.append(
-            "- already trimmed: YES — the once-per-position trim has been taken. "
-            "There is no second trim: if you find the thesis still resolving only "
-            "partially, answer action=close rather than expecting another trim."
+            "- already trimmed: YES — the once-per-position trim has been taken, so "
+            "a trim verdict is not available (the system would record it as a "
+            "hold). Choose between hold and close."
         )
+    if position.spread_pct is not None:
+        lines.append(
+            f"- quoted spread at review: {position.spread_pct:.2f}% of mid (an "
+            f"exit cost for the case for selling)"
+        )
+    lines.append(
+        "- opportunity context (for the opportunity-cost weighing): "
+        + (
+            position.opportunity_context
+            or "no information about other candidates is available at this review"
+        )
+    )
     if position.expected_resolution_date is not None:
         lines.append(
             f"- resolution expected by: "
