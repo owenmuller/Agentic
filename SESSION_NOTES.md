@@ -2924,6 +2924,69 @@ universe revert at all", core answers "where we would act". If step 3 ever
 ships: ~1–3 non-fundamental core candidates/month — a low-frequency overlay,
 not a book.
 
+## Rulings on the post-ship results (2026-09-03) — RECORDED
+
+1. **T=0 stays as shipped, honestly labelled:** harmless, not the stability
+   lever it appeared to be. No search-phase arm — live web results vary
+   regardless of temperature, and band-20 boundary confirmation is the
+   operative guard. Revisit only if production shows floor-band verdicts
+   sizing unconfirmed.
+2. **Code-execution 400 (opus search phase): accepted as an intermittent
+   typed rejection.** Its production frequency is now a line in the weekly
+   report (upstream errors in window; code-execution 400s among them —
+   currently zero). No request-path change during the freeze; if it recurs in
+   production, the submit_research-in-search-phase design is the fix.
+
+**Freeze holds:** no research-layer changes and no non-production API runs
+until the paper period has data on the shipped config.
+
+## Overreaction-fade — RULINGS (2026-09-03): measurement half BUILT, LLM half DEFERRED, carve-out RECORDED
+
+**1. Measurement half — built, and this is the source's approval.** Source
+`overreaction_screen` (registered in orchestrator.yaml as a market-data screen,
+not a fetched feed: no scanner, no research tier, outside convergence), code
+`overreaction_candidate`, class 2, measurement-only rows that never seal the
+underlying name (their external id is `SYMBOL:SESSION` under their own
+source). `python -m orchestrator overreaction` scans completed SIP daily bars:
+CORE = held judged positions + names with a research verdict in a 60-day
+window; BROAD = every other purchase-side active registry name (raw Form 4
+singles included — the control). Event = close-to-close drop reaching the
+lowest flag (6%) AND volume ≥ 1.5× the prior 20-day average; the ruled X = 7%
+and 6%/8% ride the row as flags; SPY's same-day return, market-day flag (SPY
+≤ −2%), sector, tier and held are stamped as labelled content lines the
+funnel parses back. Idempotent per (name, session). The registry now ignores
+measurement-only rows on both paths (note_signals and seed) — this also takes
+the Form 4 sell-cluster measurement rows out of convergence, where they never
+belonged. Forward report: "Overreaction candidates" with 1/5/20/60d excess
+(POSITIVE = reverted) for all events and the four slices — core/broad,
+market/idiosyncratic day, held/signalled, ≥7%/≥8%. Timer:
+ops/vps/agentic-overreaction.timer, weekdays 16:45 ET (after the earnings
+shadow). No LLM, no prompt, no API spend beyond Alpaca bars — consistent with
+the freeze. Backfill from 2026-08-17 and across the three stress windows:
+results below.
+
+**2. LLM half — DEFERRED** until the freeze lifts AND step 2 shows 5/20d
+reversion. **Golden classifier test set, recorded now for then:**
+(a) a fabricated-headline drop — a real name, a −8% session on a rumour later
+denied, cause NON-FUNDAMENTAL (fade candidate); (b) a real guidance cut — a
+−9% session on lowered full-year guidance, cause FUNDAMENTAL (drift, do not
+fade; and it is the invalidation condition's territory); (c) a
+sector-sympathy day — a −7% session when the name's sector ETF fell −6% on a
+peer's print with no company-specific news, cause NON-FUNDAMENTAL (fade
+candidate, market/sector day). Each graded on the classification, the
+must-cite evidence, and a structural bar like the review cases.
+
+**3. Averaging-down carve-out — RECORDED, NOT BUILT,** bounded as designed:
+one add per position lifetime; non-fundamental classification required AND
+the same-cycle dialectical review concluded hold with **would_open_today = yes
+at the post-drop price — the condition that matters**; price above the stop
+with R:R ≥ 1.5 recomputed from the new price; no add under the drawdown
+ladder (<×1.0) or any halt; total position ≤ the band cap for current
+confidence (an add fills room the table already allows, never enlarges it),
+through the gate, liquidity check and daily deployment like any entry; tagged
+`fade_add` for separable attribution and killed if it fails to beat the
+un-added counterfactual over 60d; mechanical arm excluded.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

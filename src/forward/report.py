@@ -107,6 +107,28 @@ def _stat_line(label: str, values: list[float], suffix: str = "") -> str:
     )
 
 
+_OVERREACTION_HORIZONS = (1, 5, 20, 60)
+
+
+def _overreaction_line(
+    label: str,
+    entries: list[FunnelEntry],
+    rows: dict[tuple[str, date], ForwardRow],
+) -> str:
+    """One compact line: n events, then mean excess at 1/5/20/60d with each
+    horizon's own n (they resolve as the calendar catches up)."""
+    if not entries:
+        return f"  {label}: no events"
+    parts = []
+    for horizon in _OVERREACTION_HORIZONS:
+        values = _excess_values(entries, rows, horizon)
+        if values:
+            parts.append(f"{horizon}d {statistics.mean(values):+.2f}% (n={len(values)})")
+        else:
+            parts.append(f"{horizon}d —")
+    return f"  {label}: {len(entries)} events | " + "  ".join(parts)
+
+
 def render_forward_report(
     entries: list[FunnelEntry],
     rows: dict[tuple[str, date], ForwardRow],
@@ -311,6 +333,34 @@ def render_forward_report(
                 ),
             ]
         )
+    # Overreaction candidates (ruling 2026-09-03): measurement-only rows from
+    # the deterministic screen. POSITIVE excess means the drop reverted. Four
+    # slices so the prior question is answered where it matters.
+    overreaction = [e for e in with_ticker if e.code == "overreaction_candidate"]
+    if overreaction:
+        lines.extend(
+            [
+                "",
+                "Overreaction candidates (measurement only — POSITIVE excess means "
+                "the drop reverted; sharp single-session drops on >=1.5x volume in "
+                "our signal universe):",
+                _overreaction_line("all (>=6% flag)", overreaction, rows),
+            ]
+        )
+        facts = lambda e: e.overreaction  # noqa: E731 - local alias
+        slices = [
+            ("core (held or researched)", [e for e in overreaction if facts(e) and facts(e).tier == "core"]),
+            ("broad (unresearched signal flow)", [e for e in overreaction if facts(e) and facts(e).tier == "broad"]),
+            ("market day (SPY <= -2%)", [e for e in overreaction if facts(e) and facts(e).market_day is True]),
+            ("idiosyncratic day", [e for e in overreaction if facts(e) and facts(e).market_day is False]),
+            ("held positions", [e for e in overreaction if facts(e) and facts(e).held]),
+            ("signalled, not held", [e for e in overreaction if facts(e) and not facts(e).held]),
+            (">=7% (the ruled X)", [e for e in overreaction if facts(e) and 7 in facts(e).flags]),
+            (">=8%", [e for e in overreaction if facts(e) and 8 in facts(e).flags]),
+        ]
+        for label, members in slices:
+            lines.append(_overreaction_line(label, members, rows))
+
     thirteen_d = sorted(
         (
             e

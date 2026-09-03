@@ -55,7 +55,8 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Optional, Union
 
@@ -196,6 +197,52 @@ def snapshot_amount_range(snapshot: "SignalSnapshot") -> str:
 
 
 _CONTENT_STAKE = re.compile(r"^stake:\s*([\d.]+)% of class", re.MULTILINE)
+
+#: The overreaction screen's labelled lines (ruling 2026-09-03), parsed back by
+#: the forward funnel the same way stake and lag are.
+_CONTENT_DROP = re.compile(r"^drop:\s*([+-]?[\d.]+)%", re.MULTILINE)
+_CONTENT_TIER = re.compile(r"^tier:\s*(core|broad)\s*$", re.MULTILINE)
+_CONTENT_HELD = re.compile(r"^held:\s*(yes|no)\s*$", re.MULTILINE)
+_CONTENT_MARKET_DAY = re.compile(r"^market day:\s*(yes|no|n/a)\s*$", re.MULTILINE)
+_CONTENT_FLAGS = re.compile(r"^flags:\s*([\d,\s]*)$", re.MULTILINE)
+
+
+@dataclass(frozen=True, slots=True)
+class OverreactionFacts:
+    """What an overreaction_candidate row says about its event."""
+
+    drop_pct: Decimal
+    tier: str
+    held: bool
+    #: None when SPY had no same-day mark.
+    market_day: Optional[bool]
+    flags: tuple[int, ...]
+
+
+def snapshot_overreaction(snapshot: "SignalSnapshot") -> Optional["OverreactionFacts"]:
+    """The screen's facts from a snapshot's content, or None for any other row."""
+    drop = _CONTENT_DROP.search(snapshot.content)
+    tier = _CONTENT_TIER.search(snapshot.content)
+    if drop is None or tier is None:
+        return None
+    held = _CONTENT_HELD.search(snapshot.content)
+    market = _CONTENT_MARKET_DAY.search(snapshot.content)
+    flags = _CONTENT_FLAGS.search(snapshot.content)
+    try:
+        drop_pct = Decimal(drop.group(1))
+    except InvalidOperation:
+        return None
+    return OverreactionFacts(
+        drop_pct=drop_pct,
+        tier=tier.group(1),
+        held=bool(held and held.group(1) == "yes"),
+        market_day=(
+            None if market is None or market.group(1) == "n/a" else market.group(1) == "yes"
+        ),
+        flags=tuple(
+            int(part) for part in (flags.group(1) if flags else "").split(",") if part.strip()
+        ),
+    )
 
 
 def snapshot_stake_percent(snapshot: "SignalSnapshot") -> Optional[Decimal]:

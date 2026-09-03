@@ -394,6 +394,32 @@ class StressWindow(BaseModel):
         return self
 
 
+class OverreactionScreenConfig(BaseModel):
+    """Overreaction-fade MEASUREMENT half (human ruling 2026-09-03). A
+    deterministic screen over completed SIP daily bars writing measurement-only
+    rows (source overreaction_screen, code overreaction_candidate) for the
+    forward engine to grade — the registered home of that source, which is a
+    market-data screen, not a fetched feed (no scanner, no research tier, outside
+    convergence). Nothing here trades or sizes."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = True
+    #: The ruled X: a row's "candidate" flag. Fractions of price.
+    drop_threshold: Decimal = Field(default=Decimal("0.07"), gt=Decimal("0"), lt=Decimal("1"))
+    #: Also stamped on the row so X can be tuned from the data, not re-run.
+    flag_thresholds: tuple[Decimal, ...] = (Decimal("0.06"), Decimal("0.08"))
+    #: Session volume over the prior adv_days average must reach this.
+    volume_ratio_min: Decimal = Field(default=Decimal("1.5"), gt=Decimal("0"))
+    adv_days: int = Field(default=20, gt=0)
+    #: SPY same-day return at or below -this marks a "market day" event.
+    market_day_threshold: Decimal = Field(default=Decimal("0.02"), gt=Decimal("0"))
+    #: How far back the universe looks for researched / active names when the
+    #: screen runs — wider than the convergence window so a backfill sees the
+    #: names that were live at the time. Days.
+    universe_window_days: int = Field(default=60, gt=0)
+
+
 class MarketDataConfig(BaseModel):
     """Settings for the production price source. Consumed at wiring time —
     ``AlpacaPriceSource(feed=..., max_quote_age_seconds=...)`` — because the
@@ -430,6 +456,10 @@ class OrchestratorConfig(BaseModel):
     #: Historical windows for `orchestrator stress` (ruling 2026-09-02).
     #: Report-only, so an absent section is an empty report, not an error.
     stress_windows: tuple[StressWindow, ...] = ()
+    #: The overreaction-fade measurement screen (ruling 2026-09-03).
+    overreaction_screen: OverreactionScreenConfig = Field(
+        default_factory=OverreactionScreenConfig
+    )
     #: Signal convergence (ruling 2026-09-01). Defaults apply when the yaml has
     #: no section — the registry is context and ordering, not a risk control, so
     #: an absent section means the shipped defaults rather than a startup error.

@@ -68,6 +68,11 @@ def family_of(source_id: str, signal_class: SignalClass) -> str:
 
 logger = logging.getLogger("orchestrator.registry")
 
+#: Prefilter codes of measurement-only rows: outside convergence by ruling.
+MEASUREMENT_CODES: frozenset[str] = frozenset(
+    {"bearish_measurement", "overreaction_candidate"}
+)
+
 
 @dataclass(slots=True)
 class _Active:
@@ -134,6 +139,8 @@ class SignalRegistry:
                 continue
             if record.recorded_at < horizon:
                 continue
+            if isinstance(record, StageRejectionRecord) and record.code in MEASUREMENT_CODES:
+                continue  # measurement rows are graded, never converged on
             snapshot = record.signal
             if isinstance(record, DecisionRecord):
                 if record.sizing.strategy in ("mechanical", "cash_sweep"):
@@ -185,9 +192,13 @@ class SignalRegistry:
         return seeded
 
     def note_signals(self, signals: Iterable[Signal]) -> None:
-        """Register drained signals. Idempotent per (source, external id, ticker)."""
+        """Register drained signals. Idempotent per (source, external id, ticker).
+        Measurement-only rows (sell clusters, overreaction candidates) are NOT
+        signals and never enter the window (rulings 2026-09-02/03)."""
         for signal in signals:
             meta = signal.metadata
+            if meta.get("measurement_only") == "true":
+                continue
             identity = meta.get("credibility_key") or signal.source_id
             filer = (meta.get("representative") or meta.get("fund") or "").strip()
             key = f"{signal.source_id}\x00{signal.external_id or signal.signal_id}"
@@ -344,6 +355,11 @@ class SignalRegistry:
         for symbol, verdict in sorted(latest.items()):
             grouped.setdefault(verdict.outcome, []).append(symbol)
         return {outcome: tuple(symbols) for outcome, symbols in grouped.items()}
+
+    def purchase_symbols(self) -> tuple[str, ...]:
+        """Names with a purchase-side active signal in the window — the
+        overreaction screen's BROAD universe (ruling 2026-09-03)."""
+        return tuple(sorted({e.symbol for e in self._in_window() if e.is_purchase}))
 
     def in_window_symbols(self) -> tuple[str, ...]:
         """Symbols with any active signal in the window — the IV-watch feed

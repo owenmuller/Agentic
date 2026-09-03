@@ -291,6 +291,34 @@ def _attribution_text(checks) -> str:
     )
     sections.append(report.render())
 
+    # Research upstream errors (ruling 2026-09-03): the code-execution 400 on
+    # the opus search phase is accepted as an intermittent typed rejection and
+    # its production frequency is tracked here; the submit_research-in-search-
+    # phase design is the fix if it recurs.
+    try:
+        from audit.records import StageRejectionRecord as _SRR
+
+        upstream = [
+            r
+            for r in checks.audit.records()
+            if isinstance(r, _SRR)
+            and r.code == "upstream_error"
+            and r.recorded_at >= window_start
+        ]
+        code_exec = [
+            r for r in upstream
+            if "Code execution requested a client tool" in (r.message or "")
+        ]
+        sections.append(
+            f"Research upstream errors in window: {len(upstream)}; code-execution "
+            f"400s (\"client tool not in request\", opus search phase): "
+            f"{len(code_exec)} — accepted as intermittent typed rejections "
+            f"(ruling 2026-09-03); recurrence in production reopens the "
+            f"submit_research-in-search-phase design."
+        )
+    except Exception as error:  # noqa: BLE001 - a count, never blocking
+        sections.append(f"upstream error count unavailable: {error}")
+
     # Forward returns (ruling 2026-09-01): the funnel's counterfactual
     # scoreboard, computed lazily from bars and cached append-only. A data
     # outage degrades to a sentence — the attribution above never waits on it.
@@ -967,6 +995,111 @@ def stress() -> int:
     return 0
 
 
+def overreaction() -> int:
+    """Overreaction-fade MEASUREMENT screen (ruling 2026-09-03). No LLM, no
+    trade, no API spend beyond Alpaca bars. Writes measurement-only audit rows.
+
+        python -m orchestrator overreaction                  # last completed session
+        python -m orchestrator overreaction --session YYYY-MM-DD
+        python -m orchestrator overreaction --backfill FROM TO
+        python -m orchestrator overreaction --windows        # the stress windows
+    """
+    import time as _time
+    import uuid as _uuid
+    from datetime import date as _date
+
+    from orchestrator.config import ConvergenceConfig
+    from orchestrator.exits import ExitEngine
+    from orchestrator.overreaction import (
+        build_universe,
+        last_completed_session,
+        run_screen,
+        weekdays_between,
+    )
+    from orchestrator.registry import SignalRegistry
+    from risk_gate.sectors import SectorMap
+
+    logging.basicConfig(level=logging.WARNING)
+    args = sys.argv[2:]
+    sessions: list[_date] = []
+    mode = "latest"
+    index = 0
+    while index < len(args):
+        flag = args[index]
+        if flag == "--session" and index + 1 < len(args):
+            sessions = [_date.fromisoformat(args[index + 1])]
+            mode = "session"
+            index += 2
+        elif flag == "--backfill" and index + 2 < len(args):
+            sessions = weekdays_between(
+                _date.fromisoformat(args[index + 1]), _date.fromisoformat(args[index + 2])
+            )
+            mode = "backfill"
+            index += 3
+        elif flag == "--windows":
+            mode = "windows"
+            index += 1
+        else:
+            print(f"unknown argument {flag!r}", file=sys.stderr)
+            return 2
+    try:
+        checks = preflight()
+    except Exception as error:  # noqa: BLE001
+        print(f"OVERREACTION SCREEN FAILED: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
+    config = checks.orchestrator_config.overreaction_screen
+    if not config.enabled:
+        print("overreaction screen disabled in orchestrator.yaml")
+        return 0
+    now = checks.clock()
+    if mode == "latest":
+        sessions = [last_completed_session(now)]
+    elif mode == "windows":
+        sessions = [
+            day
+            for window in checks.orchestrator_config.stress_windows
+            for day in weekdays_between(window.start, window.end)
+        ]
+
+    # Universe: a registry seeded over a WIDER window than convergence uses, so
+    # a backfill sees the names that were live at the time; held = judged.
+    wide = checks.orchestrator_config.convergence.model_copy(
+        update={"window_days": max(config.universe_window_days,
+                                   checks.orchestrator_config.convergence.window_days)}
+    )
+    registry = SignalRegistry(wide, checks.clock)
+    registry.seed(checks.audit.records())
+    engine = ExitEngine(
+        gate=checks.gate, adapter=checks.adapter, audit=checks.audit,
+        prices=lambda symbol: None, review_pass=None, budget=checks.budget,
+        config=checks.orchestrator_config.exits, clock=checks.clock,
+    )
+    engine.replay(checks.audit.trails())
+    held = [p.symbol for p in engine.tracked if not p.is_option]
+    researched = [s for symbols in registry.verdict_summary().values() for s in symbols]
+    universe = build_universe(held, researched, registry.purchase_symbols())
+    sectors = SectorMap.load()
+    bars = AlpacaDailyBars(feed="sip")
+    try:
+        report = run_screen(
+            sessions=sessions,
+            universe=universe,
+            bars=bars.bars,
+            sector_of=lambda symbol: sectors.sector_of(symbol) or "",
+            config=config,
+            audit=checks.audit,
+            id_factory=lambda: _uuid.uuid4().hex[:16],
+            pace=lambda: _time.sleep(0.35),
+        )
+    finally:
+        bars.close()
+    core = sum(1 for m in universe.values() if m.tier == "core")
+    print(f"universe: {len(universe)} names ({core} core, {len(universe) - core} broad); "
+          f"mode {mode}")
+    print(report.render())
+    return 0
+
+
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "check"
     if command == "check":
@@ -989,9 +1122,11 @@ def main() -> int:
         return resume()
     if command == "stress":
         return stress()
+    if command == "overreaction":
+        return overreaction()
     print(
         f"unknown command {command!r}: expected check, health, run, attribution, "
-        f"weekly, replay, golden, halt, resume, or stress",
+        f"weekly, replay, golden, halt, resume, stress, or overreaction",
         file=sys.stderr,
     )
     return 2

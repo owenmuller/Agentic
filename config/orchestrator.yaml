@@ -269,3 +269,24 @@ stress_windows:
   - { name: covid_crash_2020, start: 2020-02-19, end: 2020-03-23 }
   - { name: rates_selloff_2022, start: 2022-01-03, end: 2022-06-16 }
   - { name: q4_2018, start: 2018-10-01, end: 2018-12-24 }
+
+# OVERREACTION-FADE, MEASUREMENT HALF (human ruling 2026-09-03; the source's
+# approval). `python -m orchestrator overreaction` scans completed SIP daily
+# bars for every name in the universe - CORE = held judged positions + names
+# the system researched in the window; BROAD = every other purchase-side active
+# registry name (the control) - and writes a measurement-only row (source
+# overreaction_screen, code overreaction_candidate) for each session where the
+# close-to-close drop reached the lowest flag AND volume was >= volume_ratio_min
+# x the prior adv_days average. The ruled X is 7%; 6% and 8% ride the row as
+# flags. SPY's same-day return and the mapped sector are stamped. No LLM, no
+# prompt, no trade, no API spend, outside convergence, never seals the name.
+# The forward report grades 1/5/20/60d by tier, market/idiosyncratic day,
+# held/signalled, and threshold flag. Timer: ops/vps/agentic-overreaction.timer.
+overreaction_screen:
+  enabled: true
+  drop_threshold: 0.07
+  flag_thresholds: [0.06, 0.08]
+  volume_ratio_min: 1.5
+  adv_days: 20
+  market_day_threshold: 0.02
+  universe_window_days: 60

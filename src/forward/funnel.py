@@ -36,6 +36,7 @@ from audit.records import (
     StageRejectionRecord,
     snapshot_amount_range,
     snapshot_lag_days,
+    snapshot_overreaction,
     snapshot_stake_percent,
     snapshot_tickers,
     snapshot_transaction,
@@ -76,6 +77,9 @@ class FunnelEntry:
     #: filings by the same activist on a name turn into increase/reduction
     #: events the report grades. None on every other source.
     stake_percent: Optional[Decimal] = None
+    #: The overreaction screen's facts (ruling 2026-09-03); None on every
+    #: other row. Slices: tier, market day, held, threshold flags.
+    overreaction: Optional[object] = None
 
     @property
     def primary_ticker(self) -> Optional[str]:
@@ -145,6 +149,7 @@ def funnel_entries(records: Iterable[AuditRecord]) -> list[FunnelEntry]:
                     transaction=snapshot_transaction(record.signal),
                     amount_range=snapshot_amount_range(record.signal),
                     stake_percent=snapshot_stake_percent(record.signal),
+                    overreaction=snapshot_overreaction(record.signal),
                 )
             )
     return out

@@ -1,0 +1,23 @@
+# Overreaction-fade MEASUREMENT screen (human ruling 2026-09-03), weekdays
+# 16:45 ET — after the close and after the earnings shadow's 16:30 run, so the
+# session's SIP daily bar is complete and the two post-close jobs do not share
+# the Alpaca data window.
+#
+# Places no orders, calls no LLM, spends nothing but Alpaca bars: it writes
+# measurement-only audit rows (code overreaction_candidate) that the weekly
+# forward report grades. Idempotent per (name, session), so Persistent=true is
+# safe — a catch-up run after a reboot writes only what the missed run would.
+#
+# Register with:
+#   sudo cp ops/vps/agentic-overreaction.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now agentic-overreaction.timer
+[Unit]
+Description=Agentic overreaction-fade measurement screen (weekdays 16:45 ET)
+
+[Timer]
+OnCalendar=Mon..Fri 16:45 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

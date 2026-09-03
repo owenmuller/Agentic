@@ -1,0 +1,10 @@
+[Unit]
+Description=Agentic overreaction-fade measurement screen (last completed session)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=agentic
+WorkingDirectory=/home/agentic/Agentic
+ExecStart=/home/agentic/Agentic/.venv/bin/python -m orchestrator overreaction
