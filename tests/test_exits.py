@@ -841,6 +841,10 @@ def test_the_review_tool_offers_exactly_these_fields_and_two_actions():
         "resolution",
         "revised_resolution_date",
         "continuation_thesis",
+        # The re-underwrite question (ruling 2026-09-02): a judgement field,
+        # not a size lever — it can only produce a full close or nothing.
+        "would_open_today",
+        "would_open_today_reason",
     }
     assert schema["additionalProperties"] is False
     # Every field is asked of the model, including the ones python defaults.

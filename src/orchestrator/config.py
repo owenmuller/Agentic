@@ -160,6 +160,16 @@ class ExitsConfig(BaseModel):
     ratchet: RatchetConfig
     #: None = no probation (pre-ruling behavior: every close verdict executes).
     review_close_probation: Optional[ReviewCloseProbation] = None
+    #: The trim half of position scaling (ruling 2026-09-02): a review verdict
+    #: of resolution=partial on a position in profit sells this fraction of the
+    #: position, at most once per position ("the lot" reads as the entry lot —
+    #: repeated halving on every partial verdict is the other reading, and
+    #: once-per-position is the fewer-trades side of that ambiguity, surfaced
+    #: for a ruling). 0 disables trims. Risk-reducing; never shadowed. Adds
+    #: remain deferred.
+    review_trim_fraction: Decimal = Field(
+        default=Decimal("0.5"), ge=Decimal("0"), lt=Decimal("1")
+    )
 
     @model_validator(mode="after")
     def _fallbacks_sit_inside_their_bounds(self) -> "ExitsConfig":

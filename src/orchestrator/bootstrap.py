@@ -428,6 +428,11 @@ def start(
         trigger_down_of_stop=(
             checks.orchestrator_config.atr_sizing.trigger_down_of_stop
         ),
+        # Today's entry rules, stated to every review so the re-underwrite
+        # question (ruling 2026-09-02) is asked against the real bar: the same
+        # floor and reward:risk minimum the entry pipeline enforces.
+        sizing_floor=checks.limits.sizing.no_trade_below,
+        min_reward_risk=checks.orchestrator_config.reward_risk.min_ratio,
     )
     # Positions opened by earlier runs, rebuilt from the log with stops re-armed. Part
     # of the replay step in spirit, but it needs the wired engine, so it runs here.

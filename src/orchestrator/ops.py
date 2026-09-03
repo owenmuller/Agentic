@@ -363,11 +363,40 @@ def _fmt_position(position: TrackedPosition, now: datetime) -> str:
         flags = "  CLOSE VERDICT PENDING"
     if position.pending_exit:
         flags += f"  exiting ({position.pending_exit})"
+    if position.review_trimmed:
+        flags += "  trimmed"
     return (
         f"  {position.decision_id}  {position.symbol:<6} {position.quantity:>6} "
         f"@ {position.entry_price}  stop {position.stop_price}  "
         f"leash {position.days_held(now)}/{position.leash_days}d "
-        f"({position.time_horizon})  reviewed {reviewed}{flags}"
+        f"({position.time_horizon})  reviewed {reviewed}{flags}\n"
+        f"{_fmt_management(position, now)}"
+    )
+
+
+def _fmt_management(position: TrackedPosition, now: datetime) -> str:
+    """The management-state line (ruling 2026-09-02): what the last review
+    actually said, so active management is VISIBLE rather than inferred from a
+    stop price."""
+    if not position.last_review_validity:
+        verdict = "unreviewed" if position.last_review_at is None else (
+            "last review returned no verdict (held on guardrails)"
+        )
+        return f"           managed: {verdict}"
+    would_open = {True: "yes", False: "NO", None: "n/a"}[
+        position.last_review_would_open
+    ]
+    resolution_date = (
+        position.resolution_date.isoformat()
+        if position.resolution_date is not None
+        else "unstated"
+    )
+    days_left = position.leash_days - position.days_held(now)
+    return (
+        f"           managed: {position.last_review_validity}/"
+        f"{position.last_review_progress}/{position.last_review_resolution}  "
+        f"would_open_today {would_open}  resolution {resolution_date}  "
+        f"{days_left}d to leash"
     )
 
 

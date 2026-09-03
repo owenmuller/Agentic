@@ -25,7 +25,7 @@ prevent.
 
 The contradiction rules
 -----------------------
-Three readings contradict a hold. Each resolves toward the exit (Constraint #6), and
+Four readings contradict a hold. Each resolves toward the exit (Constraint #6), and
 each preserves the contradiction verbatim in the audit record for whoever wants to
 know why the model hedged:
 
@@ -37,6 +37,11 @@ know why the model hedged:
 3. ``resolution=substantial`` with hold and no ``continuation_thesis`` — a resolved
    winner held on is a NEW bet. The review may hold it, but only by writing down what
    the new bet is; an empty continuation closes the position.
+4. ``would_open_today=False`` with hold on a position whose ``progress`` is not
+   ``ahead`` (ruling 2026-09-02) — a position that would not be opened under
+   TODAY's entry rules and is not beating its own timeline is capital parked in a
+   stale idea. This close is invalidation-adjacent: it executes normally and is
+   never shadowed by the exit-authority probation.
 
 These are DERIVED properties, never schema validation, and the distinction is
 load-bearing. A validation failure becomes an ``ExitReviewRejection``, and a rejection
@@ -135,6 +140,15 @@ class ExitReview(BaseModel):
     #: resolved position means close: holding a thesis that has played out without
     #: saying why is a position nobody underwrote.
     continuation_thesis: Optional[str] = None
+    #: The re-underwrite question (ruling 2026-09-02): under TODAY's entry rules —
+    #: the confidence floor with its boundary confirmation, and the reward:risk
+    #: minimum measured from the CURRENT price to the target against the CURRENT
+    #: stop — would this position be opened now? Not a size lever: the schema
+    #: stays closed to resizing, and this field can only ever produce a full
+    #: close (rule 4) or nothing. Defaults to True because a rejected review is
+    #: a HOLD, and the default must not manufacture a close the model never gave.
+    would_open_today: bool = True
+    would_open_today_reason: str = ""
 
     @field_validator("assessment")
     @classmethod
@@ -170,7 +184,23 @@ class ExitReview(BaseModel):
                 "resolution=substantial with action=hold and no continuation_thesis: "
                 "holding a resolved thesis is a new bet, and no new bet was stated"
             )
+        if self.reunderwrite_close:
+            return (
+                "would_open_today=false with progress != ahead and action=hold: a "
+                "position that would not be opened under today's entry rules and is "
+                "not ahead of its own timeline is capital parked in a stale idea"
+            )
         return None
+
+    @property
+    def reunderwrite_close(self) -> bool:
+        """A failed re-underwrite on a position not beating its timeline.
+
+        This is the one close class the exit-authority probation never shadows
+        (ruling 2026-09-02): it is invalidation-adjacent — the position no longer
+        clears the bar that admits positions — not the shadowed
+        profitable-and-intact profit-taking class."""
+        return not self.would_open_today and self.progress is not ThesisProgress.AHEAD
 
     @property
     def should_close(self) -> bool:
@@ -256,6 +286,15 @@ class PositionUnderReview:
     #: judgement only — the prompt says explicitly that it never overrides
     #: invalidation, the stops, or the leash ceiling. None otherwise.
     long_term_boundary: Optional[date] = None
+    #: Today's entry rules, for the re-underwrite question (ruling 2026-09-02):
+    #: the position's CURRENT stop price, the sizing floor below which nothing
+    #: trades, and the reward:risk minimum the entry pipeline enforces now.
+    #: Stated so the question is asked against the real rules rather than the
+    #: model's memory of them. All None degrades to asking the question against
+    #: whatever the prompt does state.
+    stop_price: Optional[Decimal] = None
+    sizing_floor: Optional[int] = None
+    min_reward_risk: Optional[Decimal] = None
 
 
 #: Name of the tool the model must call to deliver a review.
@@ -294,7 +333,16 @@ def exit_review_tool_definition() -> dict[str, Any]:
             "if you report resolution=substantial and still want to hold, write the "
             "NEW bet here, because holding a thesis that has played out is a new "
             "position and it needs a stated reason. Leave it null otherwise; a "
-            "resolved hold with no continuation closes."
+            "resolved hold with no continuation closes. "
+            "would_open_today: the re-underwrite question — under TODAY's entry "
+            "rules as stated in the position facts (the confidence floor and its "
+            "boundary confirmation, and the reward:risk minimum measured from the "
+            "CURRENT price to your target against the CURRENT stop), would this "
+            "position be opened now? Answer honestly and put the arithmetic in "
+            "would_open_today_reason. A no on a position that is not ahead of its "
+            "own timeline closes it, whatever the action field says; a no on a "
+            "position running ahead is recorded but does not close. This is not a "
+            "resize lever — it can only produce a full close or nothing."
         ),
         "strict": True,
         "input_schema": schema,
@@ -333,7 +381,7 @@ describes has happened, report invalidation_triggered as true and close. Do not 
 rescue a dead thesis by reinterpreting its invalidation condition more charitably \
 than it was written.
 
-If the invalidation condition has not triggered, answer four questions, and let the \
+If the invalidation condition has not triggered, answer five questions, and let the \
 answers drive the action:
 
 VALIDITY. Is the thesis still the reason to hold this? Report "displaced" — not \
@@ -352,7 +400,22 @@ the thesis has essentially played out. Be honest here even when the position is 
 attractive — if the move you underwrote has arrived, that is a resolution, and \
 continuing to hold is a NEW bet. You may still hold it, but only by writing the new \
 bet into continuation_thesis. A resolved position held with no continuation stated \
-will be closed.
+will be closed. One deterministic consequence you should know about: on a position \
+currently in profit, reporting "partial" causes the system to TRIM a fixed, \
+human-configured fraction of the position, at most once over its life. That is a \
+system rule, not something you can request, size, or prevent through any field — \
+report the resolution you actually observe.
+
+RE-UNDERWRITE. Would this position be opened TODAY, as a fresh entry, under the \
+entry rules stated in the position facts — a research confidence at or above the \
+floor (with a verdict near the floor needing to survive a second independent pass), \
+and a reward:risk from the CURRENT price to your target against the CURRENT stop \
+meeting the stated minimum? Answer in would_open_today with the arithmetic in \
+would_open_today_reason. A "no" on a position that is not ahead of its own timeline \
+is a close signal and the position will close whatever the action field says; a \
+"no" on a position running ahead of its timeline is recorded but does not close. \
+Answer the question as asked — the honest "no" on a stale position is exactly the \
+answer this field exists to capture.
 
 TIMELINE. Given all of that, when do you now expect resolution? Set \
 revised_resolution_date when your view of the timeline has genuinely changed, and \
@@ -452,6 +515,29 @@ def build_review_prompt(position: PositionUnderReview) -> str:
             f"- source of the original signal: {position.source_id}",
         ]
     )
+    if position.stop_price is not None:
+        lines.append(
+            f"- current stop price: {position.stop_price} (the deterministic stop "
+            f"in force right now — the denominator of the re-underwrite "
+            f"reward:risk)"
+        )
+    rules: list[str] = []
+    if position.sizing_floor is not None:
+        rules.append(
+            f"research confidence below {position.sizing_floor} does not trade, "
+            f"and a tradeable verdict near that floor must survive a second "
+            f"independent pass before it sizes"
+        )
+    if position.min_reward_risk is not None:
+        rules.append(
+            f"reward:risk of at least {position.min_reward_risk}, measured from "
+            f"the CURRENT price to the target against the CURRENT stop"
+        )
+    if rules:
+        lines.append(
+            "- today's entry rules (for the would_open_today question): "
+            + "; ".join(rules)
+        )
     if position.expected_resolution_date is not None:
         lines.append(
             f"- resolution expected by: "

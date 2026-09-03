@@ -2440,6 +2440,52 @@ request shape is identical at any band): first pass long/62 → the REAL
 `_confirm_boundary` bought the second production pass → CONFIRMED, sizes on
 the lower confidence (62). ~$0.30.
 
+## Position management — re-underwrite, trim, visible state (ruling 2026-09-02)
+
+Closing the gap between "reviewed daily" and "actively managed". Three pieces,
+one ruling.
+
+**Re-underwrite (`would_open_today`):** every thesis review now answers a
+fifth question — under TODAY's entry rules (the sizing floor with its boundary
+confirmation, and the reward:risk minimum measured from the CURRENT price to
+the target against the CURRENT stop, all stated in the prompt from the live
+config, never from the model's memory), would this position be opened now? —
+in two new schema fields, `would_open_today` + reason. Contradiction rule 4:
+a "no" on a position whose progress is not `ahead` closes it whatever the
+action field says, and that close is INVALIDATION-ADJACENT — it executes
+normally and is exempt from the probation shadow (the position no longer
+clears the bar that admits positions; it is not the profit-taking class the
+shadow measures). A "no" on a position running ahead is recorded, visible in
+health, and does not close. The field defaults to True so a rejected review
+stays a HOLD and old fixtures cannot manufacture a close.
+
+**Trim (the TRIM half of scaling; ADDs stay deferred as ruled):** a HOLD
+verdict reporting `resolution=partial` on a position in profit sells
+`review_trim_fraction` (0.5 shipped) of the position — whole units rounded
+down, own `ExitReason.REVIEW_TRIM`, sell-to-close through the gate like every
+order, risk-reducing so exempt from the probation shadow — AT MOST ONCE per
+position. **Stated ambiguity for a ruling:** "sell a configured fraction of
+the lot" was read as once-per-position (the fewer-trades reading); the other
+reading re-trims on every partial verdict, halving toward dust. The latch
+arms on the trim FILL and is restored at replay from the trail's submitted
+review_trim exits (a submitted-but-unfilled trim under-trims after a restart —
+stated, not silent). The system prompt discloses the trim consequence to the
+reviewer so its "partial" means what it thinks it means.
+
+**Visible management state:** `orchestrator health` now renders a second line
+per position — last verdict (validity/progress/resolution), would_open_today,
+the expected resolution date, days to leash, and a `trimmed` flag — restored
+across restarts from the trail, so active management is read, not inferred.
+
+**Golden replay (§ LLM Request-Path Changes):** the change touches only the
+exit-review path (exit_review.py; the entry pass files are untouched), and the
+variance experiment running this same day provides three full golden replays
+of the production entry path at this code. The exit-review prompt change's own
+live round trip ran on the droplet's real INTC position — the first
+`would_open_today` answer on record (see the ruling report).
+
+Suite 1074 passed / 3 skipped.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

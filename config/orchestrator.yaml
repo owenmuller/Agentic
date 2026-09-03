@@ -114,6 +114,15 @@ exits:
     start_date: 2026-09-02
     days: 90
 
+  # The TRIM half of position scaling (ruling 2026-09-02): a review verdict of
+  # resolution=partial on a position in profit sells this fraction, AT MOST ONCE
+  # per position (once-per-position is the fewer-trades reading of "the lot";
+  # re-trimming on every partial verdict is the other — flagged for a ruling).
+  # Whole units, rounded down; a trim that rounds to zero is skipped. Own exit
+  # reason review_trim; risk-reducing, so exempt from the probation shadow.
+  # Adds remain deferred as ruled. 0 disables.
+  review_trim_fraction: 0.5
+
 # SIGNAL CONVERGENCE (ruling 2026-09-01). A registry of active signals per symbol
 # over a rolling window, feeding two things and only two things:
 #

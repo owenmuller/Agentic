@@ -641,6 +641,11 @@ class ExitReason(StrEnum):
     #: T-bill ETF to restore the liquidity buffer. Risk-reducing by nature,
     #: permitted under a kill-switch halt like every close.
     CASH_UNSWEEP = "cash_unsweep"
+    #: The trim half of position scaling (ruling 2026-09-02): a review verdict
+    #: of resolution=partial on a position in profit sells a human-configured
+    #: fraction of the lot, at most once per position. Risk-reducing, so exempt
+    #: from the exit-authority probation shadow; adds remain deferred.
+    REVIEW_TRIM = "review_trim"
 
 
 class ReviewOutcome(StrEnum):
@@ -678,6 +683,11 @@ class ThesisReviewRecord(_Record):
     #: than inferred: "the model said hold and the position closed" is exactly the
     #: kind of thing a reader should never have to reconstruct.
     close_contradiction: Optional[str] = None
+    #: The re-underwrite answer (ruling 2026-09-02): under today's entry rules,
+    #: would this position be opened now? Absent on failed reviews and on
+    #: records written before the field existed.
+    would_open_today: Optional[bool] = None
+    would_open_today_reason: Optional[str] = None
     #: Why this review ran out of cadence, when it did — the price move that
     #: forced it. None on an ordinary cadence review.
     trigger_reason: Optional[str] = None

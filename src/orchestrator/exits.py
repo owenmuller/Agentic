@@ -86,6 +86,7 @@ from research.exit_review import (
     ExitReview,
     ExitReviewPass,
     PositionUnderReview,
+    ThesisResolution,
     ThesisValidity,
 )
 from risk_gate.gate import ApprovedOrder, RiskGate
@@ -184,6 +185,18 @@ class TrackedPosition:
     #: flat, and restored from the audit trail after a restart.
     close_verdict: bool = False
     close_detail: str = ""
+    #: The trim half of scaling (ruling 2026-09-02) has fired: a partial-resolution
+    #: verdict on a profitable position sold its configured fraction. At most once
+    #: per position; set on the trim FILL and restored from the trail's submitted
+    #: review_trim exits at replay.
+    review_trimmed: bool = False
+    #: The last review's verdict, kept on the position so active management is
+    #: VISIBLE in health rather than inferred from a stop price (ruling
+    #: 2026-09-02). Empty/None until the first review; restored at replay.
+    last_review_validity: str = ""
+    last_review_progress: str = ""
+    last_review_resolution: str = ""
+    last_review_would_open: Optional[bool] = None
     #: Broker id of a working exit order, if one is out. Blocks duplicate exits.
     pending_exit: Optional[str] = None
     #: "equity" or "option" — options carry an expiration and a share multiplier,
@@ -237,6 +250,8 @@ class ExitEngine:
         option_prices=None,
         close_before_expiry_days: Optional[int] = None,
         trigger_down_of_stop: Decimal = Decimal("0.66"),
+        sizing_floor: Optional[int] = None,
+        min_reward_risk: Optional[Decimal] = None,
     ) -> None:
         self._gate = gate
         self._adapter = adapter
@@ -261,6 +276,12 @@ class ExitEngine:
         #: stop. Positions without a stop_fraction keep the config's
         #: down_fraction exactly as before.
         self._trigger_down_of_stop = trigger_down_of_stop
+        #: Today's entry rules, stated to every review for the re-underwrite
+        #: question (ruling 2026-09-02): the sizing floor and the reward:risk
+        #: minimum the ENTRY pipeline enforces now. None degrades to a prompt
+        #: that does not state them.
+        self._sizing_floor = sizing_floor
+        self._min_reward_risk = min_reward_risk
         self._tracked: dict[str, TrackedPosition] = {}
         self._working: dict[str, _WorkingExit] = {}
         #: (decision_id, disclosure external_id) already recorded — unresearched
@@ -578,6 +599,26 @@ class ExitEngine:
             if trailing is not None and trailing > restored_position.stop_price:
                 restored_position.stop_price = trailing
                 restored_position.stop_is_trailing = True
+            # The trim latch survives the restart from the trail (ruling
+            # 2026-09-02): any SUBMITTED review_trim exit counts as spent. A
+            # submitted trim that later expired unfilled under-trims here — the
+            # fewer-trades side of that ambiguity, stated rather than silent.
+            restored_position.review_trimmed = any(
+                exit_record.reason is ExitReason.REVIEW_TRIM
+                and bool(exit_record.submitted)
+                for exit_record in trail.exits
+            )
+            # The last verdict's management state, so health shows it after a
+            # bounce instead of "unreviewed until the next cadence slot".
+            if last_review is not None and last_review.validity is not None:
+                restored_position.last_review_validity = last_review.validity
+                restored_position.last_review_progress = last_review.progress or ""
+                restored_position.last_review_resolution = (
+                    last_review.resolution or ""
+                )
+                restored_position.last_review_would_open = (
+                    last_review.would_open_today
+                )
             # A filer event recorded after the last review is a review still
             # owed. Unlike a price trigger — recomputed from marks every cycle —
             # a filing arrives exactly once, so a restart between the event and
@@ -909,6 +950,9 @@ class ExitEngine:
                     trigger_reason=trigger_reason,
                     trigger_kind=trigger_kind,
                     long_term_boundary=tax_boundary,
+                    stop_price=position.stop_price,
+                    sizing_floor=self._sizing_floor,
+                    min_reward_risk=self._min_reward_risk,
                 )
             )
             position.last_review_at = moment
@@ -961,10 +1005,24 @@ class ExitEngine:
                 close_contradiction=outcome.close_contradiction,
                 trigger_reason=trigger_reason,
                 leash_days_after=leash_after,
+                would_open_today=outcome.would_open_today,
+                would_open_today_reason=outcome.would_open_today_reason or None,
             )
             if self._cost_sink is not None:
                 self._cost_sink(usage.cost_usd if usage else None)
+            # Kept on the position so health can SHOW the management state
+            # (ruling 2026-09-02) instead of leaving it to be inferred.
+            position.last_review_validity = str(outcome.validity)
+            position.last_review_progress = str(outcome.progress)
+            position.last_review_resolution = str(outcome.resolution)
+            position.last_review_would_open = outcome.would_open_today
             if not outcome.should_close:
+                # The trim half of scaling (ruling 2026-09-02): a partial
+                # resolution on a profitable position sells its configured
+                # fraction. A trim is an exit order, so it counts in the
+                # tick report's exits_started.
+                if self._maybe_trim(position, outcome, price, moment):
+                    closes += 1
                 continue
 
             # Exit-authority probation (ruling 2026-09-02): a close verdict on a
@@ -974,12 +1032,17 @@ class ExitEngine:
             # about this position is untouched: the stops, ratchet, leash, and
             # invalidation all retain authority, and a close on an invalidated
             # or displaced thesis falls through to execute exactly as before.
+            # A close born of the re-underwrite question (would_open_today=no on
+            # a position not ahead of its timeline, ruling 2026-09-02) is
+            # invalidation-adjacent — the position no longer clears the bar that
+            # admits positions — so it executes normally, never shadowed.
             probation = self._config.review_close_probation
             if (
                 probation is not None
                 and probation.active_on(moment.date())
                 and outcome.validity is ThesisValidity.INTACT
                 and not outcome.invalidation_triggered
+                and not outcome.reunderwrite_close
                 and price is not None
                 and price > position.entry_price
             ):
@@ -1015,6 +1078,52 @@ class ExitEngine:
                 closes += 1
         return reviews_run, closes
 
+    def _maybe_trim(
+        self,
+        position: TrackedPosition,
+        outcome: ExitReview,
+        price: Optional[Decimal],
+        moment: datetime,
+    ) -> bool:
+        """The trim half of position scaling (ruling 2026-09-02).
+
+        A HOLD verdict reporting ``resolution=partial`` on a position in profit
+        sells the configured fraction of the position — whole units, rounded
+        down (Constraint #6: the smaller trade) — under its own exit reason,
+        at most once per position. Risk-reducing by construction, so it is
+        exempt from the exit-authority probation shadow; the ADD half of
+        scaling remains deferred as ruled. ``review_trimmed`` is set on the
+        trim FILL (in ``_settle``), so a trim the broker refused or that
+        expired unfilled is retried at the next partial verdict.
+        """
+        fraction = self._config.review_trim_fraction
+        if fraction <= ZERO or position.review_trimmed:
+            return False
+        if outcome.resolution is not ThesisResolution.PARTIAL:
+            return False
+        if price is None or price <= position.entry_price:
+            return False
+        if position.pending_exit is not None:
+            return False
+        units = Decimal(int(position.quantity * fraction))
+        if units < 1:
+            logger.info(
+                "review trim of %s skipped: %s x %s rounds to zero units",
+                position.symbol,
+                position.quantity,
+                fraction,
+            )
+            return False
+        detail = (
+            f"review trim ({fraction:%} on resolution=partial, position in "
+            f"profit at {price} vs entry {position.entry_price}, day "
+            f"{position.days_held(moment)}): selling {units} of "
+            f"{position.quantity} — {outcome.assessment[:200]}"
+        )
+        return self._initiate_exit(
+            position, ExitReason.REVIEW_TRIM, detail, price, quantity=units
+        )
+
     # -- placing and settling exits ------------------------------------------------------
 
     def _initiate_exit(
@@ -1023,6 +1132,7 @@ class ExitEngine:
         reason: ExitReason,
         detail: str,
         price: Optional[Decimal],
+        quantity: Optional[Decimal] = None,
     ) -> bool:
         """Build and submit one sell-to-close. True if the broker accepted it."""
         if price is None:
@@ -1038,7 +1148,8 @@ class ExitEngine:
 
         gate_position = self._gate.state.position(position.key)
         available = gate_position.available_to_close if gate_position else ZERO
-        quantity = min(position.quantity, available)
+        wanted = quantity if quantity is not None else position.quantity
+        quantity = min(wanted, position.quantity, available)
         if quantity <= ZERO:
             logger.error(
                 "wanted to exit %s but the gate shows %s units available for %s; "
@@ -1203,8 +1314,25 @@ class ExitEngine:
         )
         position.quantity -= filled
         position.proceeds += filled_avg_price * filled * position.multiplier
+        if working.reason is ExitReason.REVIEW_TRIM:
+            # The once-per-position latch arms on the FILL, not the submission:
+            # a trim that terminated unfilled may try again at the next partial
+            # verdict; a trim that printed anything is spent.
+            position.review_trimmed = True
 
         if position.quantity > 0:
+            if working.reason is ExitReason.REVIEW_TRIM:
+                # The remainder is the point of a trim: still held, still
+                # tracked, still stopped — and NOT re-closed next cycle.
+                logger.info(
+                    "review trim of %s filled %s at %s; %s intentionally "
+                    "still held",
+                    position.decision_id,
+                    filled,
+                    filled_avg_price,
+                    position.quantity,
+                )
+                return False
             # Partial: the remainder is still held, still tracked, still stopped.
             logger.info(
                 "exit of %s filled %s, %s still held; will re-close next cycle",
