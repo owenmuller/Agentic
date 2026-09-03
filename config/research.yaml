@@ -27,8 +27,28 @@ model: claude-opus-5
 # Output ceiling for a single research call.
 max_tokens: 8000
 
-# Thinking depth / token spend: low | medium | high | xhigh | max.
+# Effort: low | medium | high | xhigh | max. On claude-opus-5 (thinking on by
+# default) this steers thinking depth AND token spend. On the sonnet-4-6 tiers
+# below it steers token spend and tool terseness ONLY: sonnet-4-6 defaults
+# thinking OFF and this client sends no `thinking` parameter, so no sonnet
+# verdict has ever carried a thinking pass (checked against the docs 2026-09-02
+# after the yaml had described effort as "thinking depth" for every tier).
 effort: high
+
+# REPORT-PHASE SAMPLING (human ruling 2026-09-03, from the verdict-variance
+# experiment: 20 golden cases x 3 identical runs x 3 arms). A fixed temperature
+# on the forced-tool REPORT call for the listed models ONLY - never the search
+# phase, never a model that rejects non-default sampling (opus-5 400s on any
+# temperature; the config validator refuses such a listing at preflight).
+# Evidence: T=0 on the sonnet report phase cut the noisy 60-70 bucket's
+# confidence spread 17.2 -> 4.8 and removed every direction split at identical
+# cost. CAVEAT carried by ruling: T=0 SHIFTS verdict distributions rather than
+# centring them (INTC entry long/58,no/58,no/65 -> no/42,52,38) - calibration
+# watches it. Legal only while no `thinking` parameter is sent.
+sampling:
+  report_temperature: 0.0
+  report_temperature_models:
+    - claude-sonnet-4-6
 
 web_search:
   # CLAUDE.md § Research: "Research may use web search to pressure-test the thesis."
@@ -61,7 +81,12 @@ triage:
   max_tokens: 200
 
 # Two-stage research (cost architecture 2026-08-25): every full pass screens on
-# Sonnet first. no_position or confidence < 55 ends there (rejections get
+# Sonnet first. The sonnet tiers stay THINKING-OFF by ruling (2026-09-03): the
+# variance experiment's thinking arm - adaptive thinking on the sonnet report
+# phase at effort medium - was a THROTTLED test (the tokens show it barely
+# thought), not a test of reasoning depth, and it widened the spread and
+# drifted five gradings at no cost change. Revisit only if calibration shows a
+# sonnet judgment-quality problem. no_position or confidence < 55 ends there (rejections get
 # cheap); an actionable report graduates to the source-tier verification pass
 # with the screen draft as context. No trade sizes on a single unverified pass.
 screen:

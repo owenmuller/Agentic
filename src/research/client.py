@@ -293,7 +293,7 @@ class AnthropicResearchClient:
                 }
             ]
 
-        response = self._client.messages.create(
+        request: dict[str, Any] = dict(
             model=resolved.model,
             max_tokens=self._config.max_tokens,
             system=_cached_system(system),
@@ -302,6 +302,15 @@ class AnthropicResearchClient:
             tools=[tool],
             tool_choice={"type": "tool", "name": tool_name},
         )
+        # Report-phase sampling (ruling 2026-09-03): a fixed temperature on the
+        # forced-tool verdict call, for the configured models only. The config
+        # validator guarantees the model accepts it; the search phase above is
+        # never touched. Legal only because no `thinking` parameter is sent —
+        # if one is ever added, temperature must go.
+        temperature = self._config.sampling.temperature_for(resolved.model)
+        if temperature is not None:
+            request["temperature"] = temperature
+        response = self._client.messages.create(**request)
         self._track_usage(response, usage)
         return self._to_result(
             response,

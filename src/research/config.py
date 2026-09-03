@@ -87,6 +87,51 @@ class ModelPricing(_Strict):
     output_per_mtok: Decimal = Field(ge=Decimal("0"))
 
 
+#: Models documented to return 400 on ANY non-default temperature/top_p/top_k,
+#: thinking or not (thinking docs, verified 2026-09-02). A temperature setting
+#: aimed at one of these is a startup failure, never a request.
+REJECTS_NON_DEFAULT_SAMPLING: frozenset[str] = frozenset(
+    {
+        "claude-opus-5",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-sonnet-5",
+        "claude-fable-5",
+        "claude-fable-5-1",
+        "claude-mythos-5",
+        "claude-mythos-5-1",
+        "claude-mythos-preview",
+    }
+)
+
+
+def rejects_non_default_sampling(model: str) -> bool:
+    return any(
+        model == known or model.startswith(known + "-")
+        for known in REJECTS_NON_DEFAULT_SAMPLING
+    )
+
+
+class SamplingConfig(_Strict):
+    """Report-phase sampling (human ruling 2026-09-03, from the variance
+    experiment): a fixed temperature on the forced-tool REPORT call for the
+    listed models only. The experiment showed T=0 on the sonnet report phase
+    cut the noisy-bucket confidence spread ~⅔ and removed every direction split
+    at identical cost — and that it SHIFTS distributions rather than centring
+    them, which calibration watches. Never applied to the search phase, never
+    to a model that rejects non-default sampling, and only legal because the
+    client sends no ``thinking`` parameter (temperature is incompatible with
+    thinking on the models that allow it at all)."""
+
+    report_temperature: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    report_temperature_models: tuple[str, ...] = ()
+
+    def temperature_for(self, model: str) -> Optional[float]:
+        if self.report_temperature is None or model not in self.report_temperature_models:
+            return None
+        return self.report_temperature
+
+
 class ResearchConfig(_Strict):
     version: int
     model: str
@@ -111,6 +156,35 @@ class ResearchConfig(_Strict):
     triage: Optional[TriageConfig] = None
     #: The two-stage screen. None disables it (single pass at the source tier).
     screen: Optional[ScreenStage] = None
+    #: Report-phase sampling (ruling 2026-09-03). Defaults to "send nothing".
+    sampling: SamplingConfig = Field(default_factory=SamplingConfig)
+
+    @model_validator(mode="after")
+    def _sampling_is_legal(self) -> "ResearchConfig":
+        """Preflight hard-fail: a temperature aimed at a model that rejects
+        non-default sampling, or at a model outside the pin list, never reaches
+        a request (ruling 2026-09-03)."""
+        sampling = self.sampling
+        if sampling.report_temperature is None:
+            return self
+        if not sampling.report_temperature_models:
+            raise ValueError(
+                "sampling.report_temperature is set but report_temperature_models "
+                "is empty; name the models it applies to explicitly"
+            )
+        for model in sampling.report_temperature_models:
+            if rejects_non_default_sampling(model):
+                raise ValueError(
+                    f"sampling.report_temperature_models lists {model!r}, which "
+                    f"rejects non-default sampling on every request (400); it must "
+                    f"never receive a temperature"
+                )
+            if self.pinned_models and model not in self.pinned_models:
+                raise ValueError(
+                    f"sampling.report_temperature_models lists {model!r}, which is "
+                    f"not in pinned_models"
+                )
+        return self
 
     @model_validator(mode="after")
     def _models_are_pinned(self) -> "ResearchConfig":

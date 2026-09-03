@@ -214,9 +214,13 @@ risk_scalars:
 # a failed second pass = typed rejection unconfirmed_boundary (Constraint #6:
 # a verdict that does not replicate is not sized). Only floor-band candidates
 # pay the extra pass. The floor itself comes from risk_limits.yaml sizing.
+# band_width 10 -> 20 (human ruling 2026-09-03): the variance experiment put
+# the noise in the 60-70 mean-confidence bucket (spread 17.2, the one
+# direction split), not [50, 60) - a case running 52/72/75 landed in the old
+# band once in three. >=70 was stable (spread 4.4) and stays unconfirmed.
 boundary_confirmation:
   enabled: true
-  band_width: 10
+  band_width: 20
 
 # REWARD:RISK GATE (ruling 2026-09-02, from live LLM-agent trading evidence:
 # expectancy discipline beats verdict accuracy). A judged EQUITY LONG must clear

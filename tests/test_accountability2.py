@@ -154,6 +154,40 @@ def test_the_shipped_config_is_fully_pinned():
 
 
 # ================================================================================
+# Report-phase sampling (ruling 2026-09-03)
+# ================================================================================
+
+
+def test_the_shipped_sampling_applies_to_sonnet_report_phase_only():
+    config = ResearchConfig.load()
+    assert config.sampling.temperature_for("claude-sonnet-4-6") == 0.0
+    assert config.sampling.temperature_for("claude-opus-5") is None
+    assert config.sampling.temperature_for("claude-haiku-4-5-20251001") is None
+
+
+@pytest.mark.parametrize(
+    "models,fragment",
+    [
+        (["claude-opus-5"], "rejects non-default sampling"),
+        (["claude-sonnet-4-5"], "not in pinned_models"),
+        ([], "is empty"),
+    ],
+)
+def test_sampling_aimed_at_the_wrong_model_fails_preflight(models, fragment):
+    raw = ResearchConfig.load().model_dump()
+    raw["sampling"] = {"report_temperature": 0.0, "report_temperature_models": models}
+    with pytest.raises(ValueError, match=fragment):
+        ResearchConfig.model_validate(raw)
+
+
+def test_the_boundary_band_is_twenty_and_seventy_plus_stays_unconfirmed():
+    from orchestrator.config import OrchestratorConfig
+
+    boundary = OrchestratorConfig.load().boundary_confirmation
+    assert boundary.enabled and boundary.band_width == 20
+
+
+# ================================================================================
 # Golden set
 # ================================================================================
 

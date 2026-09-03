@@ -2773,6 +2773,37 @@ Spend: baseline $11.2, temp0 $11.0, thinking $12.8 (includes ~$1.5 of the
 three review cases that joined the golden set mid-experiment and were run as
 entry signals — excluded from every table above), diagnosis $0.15.
 
+## Variance proposal — ALL FOUR RULED AND BUILT (2026-09-03)
+
+1. **`sampling.report_temperature: 0.0` on claude-sonnet-4-6 report-phase
+   calls ONLY.** `research.yaml sampling` block; `SamplingConfig` with the
+   model list explicit; `_sampling_is_legal` runs at config load (= preflight,
+   like pinning) and hard-fails on a listed model that rejects non-default
+   sampling (the documented set: opus-5, opus-4.7/4.8, sonnet-5, the
+   fable/mythos family — `REJECTS_NON_DEFAULT_SAMPLING`) or that is not
+   pinned. The client adds `temperature` to the forced-tool REPORT request
+   for the configured model and nothing else — never the search phase, never
+   opus. Legal only because the client sends no `thinking` parameter; the
+   comment at the injection point says temperature must go if one is ever
+   added. **CAVEAT carried by ruling:** T=0 SHIFTS verdict distributions
+   rather than centring them (INTC entry long/58,no/58,no/65 → no/42,52,38;
+   UBER 42/72/72 → 80/82/82). Determinism is not accuracy; calibration
+   watches it.
+2. **Sonnet tiers stay thinking-OFF.** research.yaml's effort comment
+   corrected: on opus-5 effort steers thinking depth and spend; on the
+   sonnet-4-6 tiers it steers spend and tool terseness only, because thinking
+   is off there. **Recorded:** the thinking arm at effort medium was a
+   THROTTLED test — the tokens show the adaptive thinker barely thought — not
+   a test of reasoning depth. Revisit only if calibration shows a sonnet
+   judgment-quality problem.
+3. **`boundary_confirmation.band_width` 10 → 20.** The noise lived in the
+   60–70 mean-confidence bucket, not [50, 60); ≥70 was stable and stays
+   unconfirmed. The code default stays 10 (test harnesses); the shipped yaml
+   is 20 and a test pins it.
+4. **After shipping, in order:** golden replay (required), live round trip on
+   the sonnet report path, then the baseline variance arm re-run (~$11) so the
+   partition is measured. Results below.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

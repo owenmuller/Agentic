@@ -728,6 +728,59 @@ def client_with(*responses):
     )
 
 
+def test_temperature_reaches_only_the_sonnet_report_phase():
+    """Ruling 2026-09-03: the configured report temperature rides the forced-
+    tool REPORT call on the listed model; the search phase and every other
+    model send no temperature at all."""
+    from research.client import AnthropicResearchClient
+    from research.config import ResearchConfig, SamplingConfig
+    from research.reports import report_tool_definition
+
+    config = ResearchConfig.load().model_copy(
+        update={
+            "sampling": SamplingConfig(
+                report_temperature=0.0,
+                report_temperature_models=("claude-sonnet-4-6",),
+            )
+        }
+    )
+    calls: list[dict] = []
+
+    class Recording:
+        def __init__(self, responses):
+            self._responses = list(responses)
+
+        @property
+        def messages(self):
+            return self
+
+        def create(self, **kw):
+            calls.append(kw)
+            return self._responses.pop(0)
+
+    def run(tier):
+        calls.clear()
+        client = AnthropicResearchClient(
+            config,
+            client=Recording([
+                Response(Block("text", text="searching"), stop_reason="end_turn"),
+                Response(Block("tool_use", name=REPORT_TOOL_NAME, input_={})),
+            ]),
+        )
+        client.research(system="s", user="u", tool=report_tool_definition(), tier=tier)
+        return calls
+
+    sonnet_calls = run("class_2")  # sonnet tier: search then report
+    assert [c["model"] for c in sonnet_calls] == ["claude-sonnet-4-6"] * 2
+    assert "temperature" not in sonnet_calls[0]  # search phase untouched
+    assert sonnet_calls[1]["temperature"] == 0.0  # the forced-tool report
+    assert "tool_choice" in sonnet_calls[1]
+
+    opus_calls = run("class_1")  # opus: rejects sampling; never sent
+    assert all(c["model"] == "claude-opus-5" for c in opus_calls)
+    assert all("temperature" not in c for c in opus_calls)
+
+
 def test_the_report_phase_forces_the_callers_tool_not_a_hardcoded_one():
     """The bug the live round trip found: phase 2 forced submit_research on every
     structured pass, so an exit review sent a tool_choice naming a tool that was not
