@@ -250,6 +250,9 @@ class ScreenReport:
     events: list[Event] = field(default_factory=list)
     recorded: int = 0
     skipped_existing: int = 0
+    #: Names whose bars fetch returned nothing. All of them = a data failure
+    #: masquerading as a quiet market; the render says so.
+    empty_symbols: int = 0
 
     def render(self) -> str:
         span = (
@@ -267,6 +270,13 @@ class ScreenReport:
         for event in self.events:
             by_tier[event.tier] = by_tier.get(event.tier, 0) + 1
         lines.append(f"  by tier: core {by_tier.get('core', 0)}, broad {by_tier.get('broad', 0)}")
+        if self.empty_symbols:
+            lines.append(
+                f"  WARNING: {self.empty_symbols} of {self.symbols_scanned} names "
+                f"returned NO bars"
+                + (" — every fetch failed; this run measured nothing"
+                   if self.empty_symbols == self.symbols_scanned else "")
+            )
         for event in sorted(self.events, key=lambda e: (e.session, e.symbol))[-25:]:
             lines.append(
                 f"  {event.session} {event.symbol:<6} {event.drop_pct:+.2f}% on "
@@ -288,17 +298,33 @@ def run_screen(
     audit,
     id_factory: Callable[[], str],
     pace: Callable[[], None] = lambda: None,
+    now: Optional[datetime] = None,
 ) -> ScreenReport:
     """Scan every universe name over ``sessions``; record new events. One bars
-    fetch per name covers every session, plus one for SPY."""
+    fetch per name covers every session, plus one for SPY. The fetch end never
+    reaches into the last hour: the free data plan refuses SIP queries into the
+    most recent 15 minutes (probed 2026-09-03 — the first backfill silently
+    scanned 404 names against empty bar lists), and a completed session's bar
+    is all this screen ever reads."""
     report = ScreenReport(sessions=tuple(sorted(sessions)))
     if not sessions or not universe:
         return report
+    moment = now or datetime.now(timezone.utc)
     start = datetime.combine(
         min(sessions) - timedelta(days=config.adv_days * 2 + 15), time.min, tzinfo=timezone.utc
     )
-    end = datetime.combine(max(sessions) + timedelta(days=1), time.max, tzinfo=timezone.utc)
+    end = min(
+        datetime.combine(max(sessions) + timedelta(days=1), time.max, tzinfo=timezone.utc),
+        moment - timedelta(hours=1),
+    )
     spy_rows = rows_of(bars("SPY", start, end))
+    if not spy_rows:
+        logger.warning(
+            "no SPY bars for %s → %s: market-day stamps will be n/a this run",
+            start.date(),
+            end.date(),
+        )
+    empty_symbols = 0
     spy_by_session = {
         session: session_return_pct(spy_rows, session) for session in sessions
     }
@@ -313,6 +339,8 @@ def run_screen(
             logger.warning("bars for %s unavailable: %s", symbol, error)
             rows = []
         report.symbols_scanned += 1
+        if not rows:
+            empty_symbols += 1
         sector = sector_of(symbol) or ""
         for session in sessions:
             if not any(row[0] == session for row in rows):
@@ -341,6 +369,13 @@ def run_screen(
             )
             seen.add(event.external_id)
             report.recorded += 1
+    report.empty_symbols = empty_symbols
+    if empty_symbols and empty_symbols == report.symbols_scanned:
+        logger.error(
+            "every one of %d bar fetches returned nothing — a data-plan or "
+            "connectivity failure, not a quiet market; nothing was measured",
+            empty_symbols,
+        )
     return report
 
 

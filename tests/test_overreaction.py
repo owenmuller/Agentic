@@ -11,7 +11,7 @@ slices; and the shipped config carries the ruled thresholds.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -262,6 +262,26 @@ def test_last_completed_session_respects_the_bar_completion_time():
     assert weekdays_between(date(2026, 8, 28), date(2026, 9, 1)) == [
         date(2026, 8, 28), date(2026, 8, 31), date(2026, 9, 1)
     ]
+
+
+def test_the_screen_never_asks_for_bars_newer_than_an_hour_ago(tmp_path):
+    """The free data plan refuses SIP queries into the last 15 minutes; the
+    first backfill silently scanned 404 names against empty lists."""
+    audit = AuditLog(path=tmp_path / "audit.jsonl", clock=lambda: NOW)
+    asked = []
+
+    def fake_bars(symbol, start, end):
+        asked.append(end)
+        return []
+
+    report = run_screen(
+        sessions=[NOW.date()], universe={"TEST": CORE}, bars=fake_bars,
+        sector_of=lambda s: "", config=CONFIG, audit=audit,
+        id_factory=lambda: "x", now=NOW,
+    )
+    assert asked and all(end <= NOW - timedelta(hours=1) for end in asked)
+    assert report.empty_symbols == 1
+    assert "returned NO bars" in report.render() and "measured nothing" in report.render()
 
 
 def test_shipped_config_carries_the_ruled_thresholds():

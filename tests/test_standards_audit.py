@@ -110,9 +110,11 @@ def test_dollar_adv_is_absent_below_the_window_and_skips_junk():
 def test_adv_source_caches_per_day_and_never_raises():
     class Bars:
         calls = 0
+        ends = []
 
         def bars(self, symbol, start, end):
             Bars.calls += 1
+            Bars.ends.append(end)
             if symbol == "BOOM":
                 raise RuntimeError("api down")
             return bars(20)
@@ -123,6 +125,9 @@ def test_adv_source_caches_per_day_and_never_raises():
     assert source("AAPL") == Decimal("10000000")
     assert Bars.calls == 1
     assert source("BOOM") is None  # missing, never fabricated
+    # Completed sessions only: the fetch ends yesterday, never "now" (the free
+    # data plan refuses SIP queries into the last 15 minutes).
+    assert all(end <= NOW - timedelta(days=1) for end in Bars.ends)
 
 
 # ================================================================================

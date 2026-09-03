@@ -85,7 +85,13 @@ class AdvSource:
             return self._cache[key]
         try:
             now = self._clock()
-            bars = self._bars.bars(symbol, now - self._lookback, now)
+            # Completed sessions only: the free data plan refuses SIP queries
+            # that reach into the last 15 minutes (probed 2026-09-03 — the
+            # request returns an error and bars() honestly returns []), and a
+            # 20-day average has no business including a half-finished day
+            # anyway. End yesterday.
+            end = now - timedelta(days=1)
+            bars = self._bars.bars(symbol, end - self._lookback, end)
             value = dollar_adv_from_bars(bars, self._days)
         except Exception as error:  # noqa: BLE001 - missing, never fabricated
             logger.warning("ADV for %s unavailable: %s", symbol, error)

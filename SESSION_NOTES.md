@@ -2987,6 +2987,27 @@ through the gate, liquidity check and daily deployment like any entry; tagged
 `fade_add` for separable attribution and killed if it fails to beat the
 un-added counterfactual over 60d; mechanical arm excluded.
 
+## INCIDENT AVERTED (2026-09-03): SIP bars refuse queries into the last 15 minutes
+
+The overreaction backfill's first run scanned 404 names over 14 sessions and
+found ZERO events with zero unmeasurable name-sessions - not a quiet market, an
+empty bar list for every name. Probed: Alpaca's free data plan returns HTTP 403
+for a SIP daily-bars query whose end is inside the last 15 minutes (end=now ->
+403 and 0 bars; end=now-20min -> 22 bars). AlpacaDailyBars honestly returns []
+on any error, so the failure was silent.
+
+THE SAME PATTERN WAS LIVE IN THE LIQUIDITY GATE: AdvSource fetched
+bars(symbol, now - lookback, now) on the SIP feed, so at the next session every
+ADV would have come back None and the gate - which fails CLOSED by ruling -
+would have rejected EVERY opening order as illiquid_position (both arms; the
+sweep is exempt). Caught before the 2026-09-03 session opened, by the screen's
+implausible zero. Fix: AdvSource ends its window YESTERDAY (a 20-day average is
+a completed-sessions fact) and the screen clamps its fetch end to now - 1h;
+both pinned by tests; the screen now counts and shouts when every fetch returns
+nothing ("this run measured nothing"). Lesson recorded: a SIP request's end
+must never be "now"; and a data source that returns [] on error needs its
+consumers to distinguish "quiet" from "blind".
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in
