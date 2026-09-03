@@ -2499,7 +2499,11 @@ boundary band; the model went to action=close outright (validity intact,
 progress on_track, invalidation not triggered). The first would_open_today
 answer on record. The already-trimmed prompt line was exercised in a second
 round trip on the same real position facts with the latch forced on (no
-trimmed position exists yet); result recorded below.
+trimmed position exists yet): the model cited the rule verbatim — "the
+once-per-position trim has already been taken. System rules are explicit: a
+further partial resolution calls for close, not another trim" — and returned
+action=close, resolution=partial, would_open_today=False ($0.14). The prompt
+line lands.
 
 **RULING (2026-09-02): let the production loop close INTC on its next review.**
 The re-underwrite is working as designed and the human wants the LIVE proof
@@ -2524,6 +2528,103 @@ with zero reasoning in thinking blocks. That is the pricing/quality assumption
 that was wrong: the sonnet tiers were priced and judged as "cheap thinking"
 and were in fact "no thinking". The variance experiment's third arm (adaptive
 thinking on the sonnet report phase) measures what that reasoning is worth.
+
+## Standards audit — liquidity gate, panic button, stress test, restore drill (ruling 2026-09-02)
+
+**1. Liquidity gate — BUILT, 1% PROPOSED (awaiting confirmation).** The
+resulting position (held + order) may not exceed `liquidity.max_position_fraction_of_adv`
+(0.01) of the name's 20-day average DOLLAR volume; both arms, opening equity
+orders only; options and the sweep ETF exempt with the other alpha caps; a
+missing ADV FAILS CLOSED (`illiquid_position`) — a name whose volume cannot be
+read is the name this exists to keep out. Gate stays offline: it receives an
+`adv(symbol)` callable; the production one (execution/liquidity.py) reads the
+**SIP feed** — probed 2026-09-02, IEX bars carry IEX-venue volume only (AAPL
+~1M vs ~34M consolidated), so an IEX-derived ADV would understate liquidity
+~30x and block nearly everything. A gate built without a source (offline
+tests, read-only commands) skips the check.
+**Retrospective (droplet, 13 approved equity entries on record, 1 judged / 12
+mechanical): the gate would have blocked NONE.** Every entry sits at
+0.000–0.001% of its name's ADV — the largest footprint is ESAB, $833 against
+$63.5M/day. At $100K paper NAV the gate binds nothing today; it is armour for
+the two cases it was asked for — mechanical slices landing in microcaps, and
+the NAV this is meant to scale to.
+
+**2. Panic button — BUILT.** `orchestrator halt [reason]` / `orchestrator
+resume "<name>: I CONFIRM MANUAL RESET"`; runbook ops/EMERGENCY.md. Design
+point worth recording: the live session owns session_state.json and rewrites
+it every tick, so an outside edit of `kill_switch_tripped` would be clobbered —
+the durable channel is a `data/HALT` marker the loop reads at the top of every
+tick (trips its own gate via the new safe-direction `RiskGate.trip_kill_switch`,
+cancels every working order, persists, logs HALT → urgent alert). `halt` also
+cancels every open order at the broker directly (immediate, loop or no loop),
+edits the session file itself only when no session is live (the instance lock
+says), writes an `operator_action` audit record, emails the urgent tier and
+prints state. `resume` refuses while a session is live and without the exact
+phrase, then calls the gate's own documented operator reset (re-basing the
+high-water mark so the reset is not inert), persists, clears the marker, and
+records the acknowledgement — the name-on-every-reset the gate's docstring has
+promised since it was written and never actually had a record kind for.
+`reset_kill_switch` itself is unchanged and reachable only through the human's
+command.
+
+**3. Stress test — BUILT, first run recorded (droplet, 2026-09-03 02:03 UTC,
+today's book: INTC judged + 12 mechanical names, SIP bars):**
+- covid_crash_2020 (2020-02-19 → 03-23): total NAV −2.33%; judged −0.25%;
+  mechanical −9.42% (ESAB, TOST held flat — no history). Ladder not reached.
+- rates_selloff_2022 (2022-01-03 → 06-16): total NAV **−4.17% → ladder ×0.75
+  would have engaged**; judged −0.21%; mechanical **−15.90%** (breaker at 25%
+  not reached).
+- q4_2018: total −1.70%; judged −0.07%; mechanical −7.23% (ESAB, TOST flat).
+Kill switch: not reached in any window. Reading: the book is ~75% cash-and-
+one-name on the judged side, so total-NAV drawdown is dominated by the
+mechanical sleeve's 12 equal slices — and that sleeve would have given back
+16% in 2022 without touching its 25% breaker. The judged sleeve's numbers are
+not reassurance; they are a statement that it holds one position.
+
+**4. Restore drill — RUNBOOK + SCRIPTS WRITTEN, DRILL BLOCKED.**
+ops/RESTORE_DRILL.md, ops/vps/restore_drill.sh, ops/vps/restore_verify.py.
+`/home/agentic/.backup_env` does not exist on the droplet (checked 2026-09-03),
+so no encrypted tarball has ever left the box and there is nothing off-box to
+restore. The script's `--local` mode can exercise restore+verify against an
+on-box nightly tarball today; that proves the tarball, not the off-box path.
+Drill to be run ONCE and recorded here once the human creates the bucket, keys
+and passphrase.
+
+**5. Legal-disclosure roadmap — DESIGN REVIEW ONLY (nothing built):**
+- **8-K item filtering.** Value: the only one of the three that hands the
+  judged arm a dated CATALYST, which the catalyst gate and options path are
+  built around. Volume: hundreds of 8-Ks a day — unusable unfiltered; a
+  whitelist of items with documented post-filing drift makes it tractable:
+  5.02 (unscheduled CEO/CFO departure), 4.02 (non-reliance on prior
+  financials — restatement; strongly negative drift), 2.05 (restructuring),
+  1.01 (material definitive agreement), 1.05 (cybersecurity incident). Lag:
+  filed within 4 business days, usually same-day; the announcement pop is
+  forfeit by design, the claim is item-specific drift. Cost: $0 (shared EDGAR
+  base), plus research passes — needs its own daily cap and triage.
+  Bearish items (4.02, 1.05) are measurement-only until a bearish path exists.
+- **Government contract awards.** Value: known mover of small/mid-cap defense
+  and government-services names; a clean catalyst with a public timestamp.
+  Sources: DoD daily contract announcements (defense.gov, ~5pm ET, awards
+  >$7.5M, 10–30/day) — same-day, tradeable next open; USAspending/SAM.gov
+  APIs are complete but lag weeks and are noisy. Cost: $0. The real cost is
+  the contractor→ticker mapping: awards name subsidiaries and JVs, so a
+  curated, human-editable mapping table (like sectors.yaml) is the build.
+- **Form 144.** Value: the bearish mirror to Form 4 P — a notice of PROPOSED
+  affiliate sale, filed when the sell order is placed, so it LEADS the Form 4
+  S by up to two business days; electronic and full-text searchable on EDGAR
+  since 2023. Volume: high, dominated by 10b5-1 plan sales (the same
+  exclusion Form 4 uses applies). Cost: $0, shares the EDGAR base and the
+  sell-cluster recipe. But there is no bearish trading path (ruled), so today
+  it can only feed the measurement rows; its case is entirely conditional on
+  the Form 4 sell-cluster forward returns showing signal.
+- **Recommended order once Form 4 has a month of data:** (1) 8-K item
+  filtering — the judged arm's catalyst supply, volume controlled by the
+  whitelist; (2) DoD contract awards — narrow, dated, needs the mapping
+  table; (3) Form 144 — only if the sell-cluster measurements earn a bearish
+  path. Each is a new signal source and therefore its own human approval.
+
+Suite 1100 passed / 3 skipped; shipped as 44d9b69, verified on all three,
+droplet pulled and green.
 
 ## Standing reminders
 
