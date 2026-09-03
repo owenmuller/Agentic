@@ -2464,13 +2464,16 @@ verdict reporting `resolution=partial` on a position in profit sells
 `review_trim_fraction` (0.5 shipped) of the position — whole units rounded
 down, own `ExitReason.REVIEW_TRIM`, sell-to-close through the gate like every
 order, risk-reducing so exempt from the probation shadow — AT MOST ONCE per
-position. **Stated ambiguity for a ruling:** "sell a configured fraction of
-the lot" was read as once-per-position (the fewer-trades reading); the other
-reading re-trims on every partial verdict, halving toward dust. The latch
-arms on the trim FILL and is restored at replay from the trail's submitted
-review_trim exits (a submitted-but-unfilled trim under-trims after a restart —
-stated, not silent). The system prompt discloses the trim consequence to the
-reviewer so its "partial" means what it thinks it means.
+position. **Ambiguity RULED same day: once per position.** "Sell a configured
+fraction of the lot" was read as once-per-position (the fewer-trades reading);
+the human confirmed it, adding that a position re-triggering partial AFTER its
+trim is to be asked to close, not re-trimmed — the review prompt now says so
+(system prompt rule + an "already trimmed: YES" fact line built from the
+position's latch). The latch arms on the trim FILL and is restored at replay
+from the trail's submitted review_trim exits (a submitted-but-unfilled trim
+under-trims after a restart — stated, not silent). The system prompt discloses
+the trim consequence to the reviewer so its "partial" means what it thinks it
+means.
 
 **Visible management state:** `orchestrator health` now renders a second line
 per position — last verdict (validity/progress/resolution), would_open_today,
@@ -2485,6 +2488,42 @@ live round trip ran on the droplet's real INTC position — the first
 `would_open_today` answer on record (see the ruling report).
 
 Suite 1074 passed / 3 skipped.
+
+**Live round trip of the exit-review prompt (2026-09-02, droplet, production
+`ExitReviewPass`, real INTC position, read-only, $0.13):** entry 90.75, stop
+77.14, day 3/274, entry confidence 54; quote 5.5h stale so the prompt said
+UNAVAILABLE and the model used entry as its proxy. Verdict: **would_open_today
+= False** — R:R to a conservative $110 target = (110 − 90.75)/(90.75 − 77.14)
+= 1.41 < 1.5 (target would need ≥ ~$111.53), and confidence 54 sits in the
+boundary band; the model went to action=close outright (validity intact,
+progress on_track, invalidation not triggered). The first would_open_today
+answer on record. The already-trimmed prompt line was exercised in a second
+round trip on the same real position facts with the latch forced on (no
+trimmed position exists yet); result recorded below.
+
+**RULING (2026-09-02): let the production loop close INTC on its next review.**
+The re-underwrite is working as designed and the human wants the LIVE proof
+that the management layer exits for "not good enough", not only for "wrong".
+**Overlap consequence, recorded:** the mechanical arm still holds INTC to day
+367 — this becomes the two-arm overlap comparison's FIRST data point: the same
+name, one arm exited by judgment on day ~4, the other holding mechanically to
+its clock. Attribution should be read with that pairing in mind.
+
+**Effort on the sonnet tiers — assumption checked (ruling 4, 2026-09-02):**
+docs (effort page, verified 2026-09-02): "The effort parameter affects ALL
+tokens in the response ... it works whether or not thinking is enabled. Lower
+effort also means fewer and terser tool calls." So `effort: medium` on the
+sonnet tiers is NOT inert — my same-day aside that it was "likely inert" was
+wrong and is withdrawn. What WAS wrong in the config's framing: research.yaml
+describes effort as "Thinking depth / token spend", and on claude-sonnet-4-6
+thinking defaults OFF (per-model table) and the client sends no `thinking`
+parameter — so on every sonnet tier (screen, class_2, class_3, exit_review)
+effort has been buying token economy and tool terseness, never thinking depth.
+Every sonnet verdict to date, the ten noisy INTC runs included, was produced
+with zero reasoning in thinking blocks. That is the pricing/quality assumption
+that was wrong: the sonnet tiers were priced and judged as "cheap thinking"
+and were in fact "no thinking". The variance experiment's third arm (adaptive
+thinking on the sonnet report phase) measures what that reasoning is worth.
 
 ## Standing reminders
 

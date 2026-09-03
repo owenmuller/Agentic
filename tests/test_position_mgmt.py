@@ -370,6 +370,34 @@ def test_the_system_prompt_asks_the_reunderwrite_and_discloses_the_trim():
     assert "RE-UNDERWRITE" in EXIT_SYSTEM_PROMPT
     assert "would_open_today" in EXIT_SYSTEM_PROMPT
     assert "TRIM" in EXIT_SYSTEM_PROMPT
+    # Ruling 2026-09-02: after the once-per-position trim, a further partial
+    # resolution is answered with close, never a second trim.
+    assert "no second trim" in EXIT_SYSTEM_PROMPT
+
+
+def _under_review(**overrides) -> PositionUnderReview:
+    base = dict(
+        symbol="INTC",
+        entry_price=Decimal("24.00"),
+        current_price=Decimal("25.10"),
+        opened_at=PROBATION_NOW,
+        days_held=8,
+        time_horizon="months",
+        confidence_at_entry=54,
+        source_id="congressional_disclosures",
+        thesis="Foundry momentum.",
+        invalidation_condition="Guidance cut.",
+        original_content="filing text",
+    )
+    base.update(overrides)
+    return PositionUnderReview(**base)
+
+
+def test_the_prompt_states_a_taken_trim_and_asks_for_close_not_a_second():
+    assert "already trimmed: YES" in build_review_prompt(
+        _under_review(already_trimmed=True)
+    )
+    assert "already trimmed" not in build_review_prompt(_under_review())
 
 
 def _tracked(**overrides) -> TrackedPosition:

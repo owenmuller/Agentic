@@ -295,6 +295,10 @@ class PositionUnderReview:
     stop_price: Optional[Decimal] = None
     sizing_floor: Optional[int] = None
     min_reward_risk: Optional[Decimal] = None
+    #: The once-per-position trim has already been taken (ruling 2026-09-02):
+    #: a further partial resolution is to be answered with close, never a
+    #: second trim — the prompt says so when this is set.
+    already_trimmed: bool = False
 
 
 #: Name of the tool the model must call to deliver a review.
@@ -404,7 +408,10 @@ will be closed. One deterministic consequence you should know about: on a positi
 currently in profit, reporting "partial" causes the system to TRIM a fixed, \
 human-configured fraction of the position, at most once over its life. That is a \
 system rule, not something you can request, size, or prevent through any field — \
-report the resolution you actually observe.
+report the resolution you actually observe. When the position facts say the trim \
+has ALREADY been taken, there is no second trim: a position that keeps resolving \
+only partially after its trim is not earning its remaining capital, and the right \
+answer is action=close, not another partial.
 
 RE-UNDERWRITE. Would this position be opened TODAY, as a fresh entry, under the \
 entry rules stated in the position facts — a research confidence at or above the \
@@ -537,6 +544,12 @@ def build_review_prompt(position: PositionUnderReview) -> str:
         lines.append(
             "- today's entry rules (for the would_open_today question): "
             + "; ".join(rules)
+        )
+    if position.already_trimmed:
+        lines.append(
+            "- already trimmed: YES — the once-per-position trim has been taken. "
+            "There is no second trim: if you find the thesis still resolving only "
+            "partially, answer action=close rather than expecting another trim."
         )
     if position.expected_resolution_date is not None:
         lines.append(

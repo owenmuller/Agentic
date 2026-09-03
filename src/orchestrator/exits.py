@@ -953,6 +953,7 @@ class ExitEngine:
                     stop_price=position.stop_price,
                     sizing_floor=self._sizing_floor,
                     min_reward_risk=self._min_reward_risk,
+                    already_trimmed=position.review_trimmed,
                 )
             )
             position.last_review_at = moment

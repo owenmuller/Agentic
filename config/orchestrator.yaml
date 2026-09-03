@@ -116,8 +116,8 @@ exits:
 
   # The TRIM half of position scaling (ruling 2026-09-02): a review verdict of
   # resolution=partial on a position in profit sells this fraction, AT MOST ONCE
-  # per position (once-per-position is the fewer-trades reading of "the lot";
-  # re-trimming on every partial verdict is the other — flagged for a ruling).
+  # per position (RULED 2026-09-02: once — a position re-triggering partial
+  # after its trim is asked to close, not re-trimmed; the review prompt says so).
   # Whole units, rounded down; a trim that rounds to zero is skipped. Own exit
   # reason review_trim; risk-reducing, so exempt from the probation shadow.
   # Adds remain deferred as ruled. 0 disables.
