@@ -2704,6 +2704,75 @@ it was built to do. ~$0.37.
 Suite 1102 passed / 3 skipped; shipped as 638c6ee, verified on all three,
 droplet pulled and green.
 
+## Verdict-variance experiment — three arms, RESULTS (2026-09-02/03; ~$35)
+
+The golden set's 20 entry cases, 3 identical-input runs each, through the
+PRODUCTION ResearchPass, in three arms: **baseline** (shipped shape — sonnet
+report phase with no thinking at T=1.0), **temp0** (sonnet report phase at
+temperature 0), **thinking** (sonnet report phase with adaptive thinking, effort
+honoured). Opus (class 1 verification) untouched in every arm — it rejects
+non-default sampling outright. Full per-case table:
+ops/experiments/verdict_variance_2026-09-02.txt.
+
+| arm | mean spread | max | unanimous | graded | $/pass |
+|---|---|---|---|---|---|
+| baseline | 8.2 | 30 | 19/20 | 60/60 | 0.186 |
+| temp0 | 5.8 | 14 | 20/20 | 54/60* | 0.184 |
+| thinking | 15.2 | 47 | 19/20 | 55/60 | 0.185 |
+
+*temp0's six "fails" are three runs each of injection-cashtag and
+mirror-fabricated-buyback returning upstream_error at the same wall-clock
+window. Reproduced clean afterwards: both are Class 1 cases that run entirely
+on opus — the requests never carried the temperature parameter — so the
+episode is a transient API failure, not the arm; every graded temp0 verdict
+passed (54/54).
+
+**Where the noise lives (baseline, by the case's mean confidence):** the ≥70
+bucket (14 cases) is stable — mean spread 4.4, max 10, 14/14 unanimous. The
+60–70 bucket (6 cases) is where the stochasticity is: mean spread 17.2, max
+30, and the one direction split (pelosi-intc-calls-entry: long/58, no/58,
+no/65). No case had a mean inside the [50, 60) boundary band — the noisy
+verdicts have means in the 60s and only LAND in the band some of the time.
+**Boundary confirmation's [floor, floor+10) band is therefore too narrow:**
+a case that runs 52/72/75 is caught once in three. The evidence supports
+widening to [50, 70) (band_width 20); it does NOT support confirming all
+tradeable verdicts — ≥70 is stable.
+
+**temp0 (the stability lever):** spread in the noisy bucket 17.2 → 4.8, max
+30 → 14, every case unanimous, identical cost. Determinism is not accuracy:
+T=0 SHIFTS distributions rather than centring them — the INTC entry went from
+long/58, no/58, no/65 to no/42, 52, 38; UBER from 42/72/72 to 80/82/82. The
+golden grades held (18/18 in the noisy bucket), so no quality regression is
+visible at n=60, but the shift is real and should be watched, not assumed
+away.
+
+**thinking (the reasoning lever):** worse on every axis that matters here —
+noisy-bucket spread 30.8, max 47 (taylor-ibp-small 28/25/72), a NEW direction
+split (pelosi-uber-priced-in: long/42, long/62, no/72), 5 graded drifts, and
+the same cost as no thinking (at effort medium the adaptive thinker spent
+almost nothing — the tokens show it barely thought). Reasoning did not buy
+stability or quality on these cases. The two levers are distinguishable:
+temperature stabilises; thinking at this effort destabilises.
+
+**PROPOSAL (not changed — an LLM request-path change; needs a ruling, the
+golden replay, and a live round trip before any of it ships):**
+1. `sampling.report_temperature: 0.0` applied ONLY to sonnet-4-6 report-phase
+   calls, validated at preflight so a model that rejects non-default sampling
+   (opus-5) can never receive it. Same cost, ~⅔ less spread, no splits.
+2. Keep the sonnet tiers thinking-OFF; correct research.yaml's "thinking
+   depth" comment on those tiers (effort there is token economy, not
+   reasoning).
+3. Widen `boundary_confirmation.band_width` 10 → 20 so the [50, 70) region
+   the data identifies as noisy buys the second pass — and keep boundary
+   confirmation even with T=0: opus cannot take temperature, and the residual
+   sonnet spread (~5) is not zero.
+4. Re-run the baseline arm after any of these ships (~$11) so the partition is
+   measured, not assumed.
+
+Spend: baseline $11.2, temp0 $11.0, thinking $12.8 (includes ~$1.5 of the
+three review cases that joined the golden set mid-experiment and were run as
+entry signals — excluded from every table above), diagnosis $0.15.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

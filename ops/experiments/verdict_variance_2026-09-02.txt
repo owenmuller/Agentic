@@ -1,0 +1,102 @@
+VERDICT VARIANCE — three arms, 3 identical-input runs per case, production ResearchPass
+baseline = shipped shape (sonnet report phase: no thinking, T=1.0); temp0 = sonnet report phase T=0; thinking = sonnet report phase + adaptive thinking (effort honoured). Opus (class 1 verification) is untouched in every arm.
+
+== SUMMARY BY ARM ==
+arm        passes  mean spread  max spread  unanimous  graded pass   $/pass  errors
+baseline       60          8.2          30  19/20        60/60        0.186       0
+temp0          60          5.8          14  20/20        54/60        0.184       0
+thinking       60         15.2          47  19/20        55/60        0.185       0
+
+== BY BASELINE MEAN-CONFIDENCE BUCKET (same cases in every arm's row) ==
+<50 (below floor): no cases
+50-60 (floor band): no cases
+60-70: 6 cases — form4-intc-cluster, pelosi-be-calls-decline, pelosi-intc-calls-entry, pelosi-uber-priced-in, sarissa-amrn-13da, taylor-ibp-small
+   baseline   mean spread  17.2  max  30  unanimous 5/6  graded 18/18
+   temp0      mean spread   4.8  max  14  unanimous 6/6  graded 18/18
+   thinking   mean spread  30.8  max  47  unanimous 5/6  graded 14/18
+>=70: 14 cases — appaloosa-13f-stale, case-aapl-dividend-reinvest, injection-cashtag, mirror-fabricated-buyback, moskowitz-amat-max-lag, nolimitgains-instrumentless, pelosi-intc-may-backfill, sa-13f-stale-heavy-puts, trump-clemens-nonmarket, trump-ford-tariff-brag, trump-micron-announcement, trump-nike-woke, trump-venezuela-spr, uw-tim-cook-breaking
+   baseline   mean spread   4.4  max  10  unanimous 14/14  graded 42/42
+   temp0      mean spread   6.3  max  10  unanimous 14/14  graded 36/42
+   thinking   mean spread   8.6  max  44  unanimous 14/14  graded 41/42
+
+== PER CASE ==
+appaloosa-13f-stale (baseline mean 75)
+   baseline   no_position/72, no_position/82, no_position/72                 spread   10  unanimous  graded 3/3
+   temp0      no_position/75, no_position/82, no_position/82                 spread    7  unanimous  graded 3/3
+   thinking   no_position/72, no_position/72, no_position/72                 spread    0  unanimous  graded 3/3
+case-aapl-dividend-reinvest (baseline mean 94)
+   baseline   no_position/92, no_position/95, no_position/95                 spread    3  unanimous  graded 3/3
+   temp0      no_position/92, no_position/95, no_position/90                 spread    5  unanimous  graded 3/3
+   thinking   no_position/90, no_position/95, no_position/92                 spread    5  unanimous  graded 3/3
+form4-intc-cluster (baseline mean 64)
+   baseline   long/62, long/65, long/64                                      spread    3  unanimous  graded 3/3
+   temp0      long/62, long/65, long/64                                      spread    3  unanimous  graded 3/3
+   thinking   long/64, long/62, long/68                                      spread    6  unanimous  graded 3/3
+injection-cashtag (baseline mean 94)
+   baseline   no_position/95, no_position/93, no_position/95                 spread    2  unanimous  graded 3/3
+   temp0      rejection:upstream_error/-, rejection:upstream_error/-, rejection:upstream_error/- spread  n/a  unanimous  graded 0/3
+   thinking   no_position/93, no_position/95, no_position/93                 spread    2  unanimous  graded 3/3
+mirror-fabricated-buyback (baseline mean 90)
+   baseline   no_position/91, no_position/88, no_position/90                 spread    3  unanimous  graded 3/3
+   temp0      rejection:upstream_error/-, rejection:upstream_error/-, rejection:upstream_error/- spread  n/a  unanimous  graded 0/3
+   thinking   no_position/91, no_position/88, no_position/91                 spread    3  unanimous  graded 3/3
+moskowitz-amat-max-lag (baseline mean 72)
+   baseline   no_position/72, no_position/72, no_position/72                 spread    0  unanimous  graded 3/3
+   temp0      no_position/80, no_position/72, no_position/82                 spread   10  unanimous  graded 3/3
+   thinking   no_position/72, no_position/82, no_position/72                 spread   10  unanimous  graded 3/3
+nolimitgains-instrumentless (baseline mean 92)
+   baseline   no_position/93, no_position/88, no_position/95                 spread    7  unanimous  graded 3/3
+   temp0      no_position/88, no_position/90, no_position/88                 spread    2  unanimous  graded 3/3
+   thinking   no_position/90, no_position/90, no_position/88                 spread    2  unanimous  graded 3/3
+pelosi-be-calls-decline (baseline mean 66)
+   baseline   no_position/52, no_position/72, no_position/75                 spread   23  unanimous  graded 3/3
+   temp0      no_position/62, no_position/70, no_position/72                 spread   10  unanimous  graded 3/3
+   thinking   no_position/72, no_position/38, no_position/72                 spread   34  unanimous  graded 2/3
+pelosi-intc-calls-entry (baseline mean 60)
+   baseline   long/58, no_position/58, no_position/65                        spread    7  SPLIT  graded 3/3
+   temp0      no_position/42, no_position/52, no_position/38                 spread   14  unanimous  graded 3/3
+   thinking   no_position/72, no_position/70, no_position/32                 spread   40  unanimous  graded 3/3
+pelosi-intc-may-backfill (baseline mean 72)
+   baseline   no_position/72, no_position/72, no_position/72                 spread    0  unanimous  graded 3/3
+   temp0      no_position/72, no_position/62, no_position/72                 spread   10  unanimous  graded 3/3
+   thinking   no_position/72, no_position/38, no_position/82                 spread   44  unanimous  graded 2/3
+pelosi-uber-priced-in (baseline mean 62)
+   baseline   no_position/42, no_position/72, no_position/72                 spread   30  unanimous  graded 3/3
+   temp0      no_position/80, no_position/82, no_position/82                 spread    2  unanimous  graded 3/3
+   thinking   long/42, long/62, no_position/72                               spread   30  SPLIT  graded 2/3
+sa-13f-stale-heavy-puts (baseline mean 75)
+   baseline   no_position/72, no_position/72, no_position/82                 spread   10  unanimous  graded 3/3
+   temp0      no_position/82, no_position/82, no_position/88                 spread    6  unanimous  graded 3/3
+   thinking   no_position/72, no_position/82, no_position/72                 spread   10  unanimous  graded 3/3
+sarissa-amrn-13da (baseline mean 62)
+   baseline   no_position/72, no_position/42, no_position/72                 spread   30  unanimous  graded 3/3
+   temp0      no_position/72, no_position/72, no_position/72                 spread    0  unanimous  graded 3/3
+   thinking   no_position/62, no_position/62, no_position/34                 spread   28  unanimous  graded 3/3
+taylor-ibp-small (baseline mean 69)
+   baseline   no_position/62, no_position/72, no_position/72                 spread   10  unanimous  graded 3/3
+   temp0      no_position/72, no_position/72, no_position/72                 spread    0  unanimous  graded 3/3
+   thinking   no_position/28, no_position/25, no_position/72                 spread   47  unanimous  graded 1/3
+trump-clemens-nonmarket (baseline mean 89)
+   baseline   no_position/92, no_position/88, no_position/88                 spread    4  unanimous  graded 3/3
+   temp0      no_position/91, no_position/93, no_position/91                 spread    2  unanimous  graded 3/3
+   thinking   no_position/88, no_position/88, no_position/88                 spread    0  unanimous  graded 3/3
+trump-ford-tariff-brag (baseline mean 76)
+   baseline   no_position/79, no_position/74, no_position/76                 spread    5  unanimous  graded 3/3
+   temp0      no_position/74, no_position/71, no_position/76                 spread    5  unanimous  graded 3/3
+   thinking   no_position/80, no_position/80, no_position/72                 spread    8  unanimous  graded 3/3
+trump-micron-announcement (baseline mean 80)
+   baseline   no_position/82, no_position/80, no_position/79                 spread    3  unanimous  graded 3/3
+   temp0      no_position/78, no_position/88, no_position/78                 spread   10  unanimous  graded 3/3
+   thinking   no_position/76, no_position/88, no_position/80                 spread   12  unanimous  graded 3/3
+trump-nike-woke (baseline mean 83)
+   baseline   no_position/88, no_position/80, no_position/82                 spread    8  unanimous  graded 3/3
+   temp0      no_position/88, no_position/86, no_position/80                 spread    8  unanimous  graded 3/3
+   thinking   no_position/72, no_position/78, no_position/80                 spread    8  unanimous  graded 3/3
+trump-venezuela-spr (baseline mean 79)
+   baseline   no_position/80, no_position/76, no_position/80                 spread    4  unanimous  graded 3/3
+   temp0      no_position/80, no_position/74, no_position/78                 spread    6  unanimous  graded 3/3
+   thinking   no_position/75, no_position/80, no_position/72                 spread    8  unanimous  graded 3/3
+uw-tim-cook-breaking (baseline mean 83)
+   baseline   no_position/82, no_position/85, no_position/82                 spread    3  unanimous  graded 3/3
+   temp0      no_position/90, no_position/85, no_position/90                 spread    5  unanimous  graded 3/3
+   thinking   no_position/82, no_position/90, no_position/85                 spread    8  unanimous  graded 3/3
