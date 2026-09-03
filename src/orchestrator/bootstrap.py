@@ -189,8 +189,14 @@ def preflight(
     research_config: Optional[ResearchConfig] = None,
     orchestrator_config: Optional[OrchestratorConfig] = None,
     id_factory: Optional[Callable[[], str]] = None,
+    adv: Optional[Callable] = None,
 ) -> Preflight:
-    """Run the checks and the replay. Builds a gate; starts nothing."""
+    """Run the checks and the replay. Builds a gate; starts nothing.
+
+    ``adv`` is the liquidity gate's dollar-ADV source (ruling 2026-09-02);
+    the trading session wires the SIP-fed one, read-only commands pass none
+    and the gate skips the check — they never submit an order.
+    """
     # 1. Constraint #4, before anything else can happen. This raises rather than
     #    falling back to paper, and it raises before a config file has been opened.
     load_environment()
@@ -263,7 +269,7 @@ def preflight(
         today=today,
         account_type=orchestrator_config.account_type,
     )
-    gate = RiskGate(limits, account, now_fn)
+    gate = RiskGate(limits, account, now_fn, adv=adv)
     budget = ResearchBudget(
         orchestrator_config.max_research_passes_per_day,
         clock=now_fn,
@@ -306,6 +312,7 @@ def start(
     market_context: Optional[Callable] = None,
     cost_warn_sink: Optional[Callable[[str], None]] = None,
     error_sink: Optional[Callable[[str], None]] = None,
+    halt_sink: Optional[Callable[[str], None]] = None,
     classify_sink: Optional[Callable[[str], None]] = None,
     mechanical_sink: Optional[Callable[[str], None]] = None,
     options_chain=None,
@@ -582,6 +589,10 @@ def start(
         tick_interval_seconds=checks.orchestrator_config.tick_interval_seconds,
         clock=checks.clock,
         sleeper=sleeper,
+        # The panic button (ruling 2026-09-02): `orchestrator halt` writes this
+        # marker; the loop honours it at the top of every tick.
+        halt_marker=checks.audit.path.parent / "HALT",
+        halt_sink=halt_sink,
     )
     return Startup(
         loop=loop,

@@ -147,6 +147,20 @@ class CashManagementLimits(_Strict):
     min_order_notional_usd: Annotated[Decimal, Field(gt=Decimal("0"))]
 
 
+class LiquidityLimits(_Strict):
+    """The liquidity gate (human ruling 2026-09-02; 1% PROPOSED, awaiting
+    confirmation). The RESULTING position's notional — what is held plus what
+    the order would add — may not exceed this fraction of the name's
+    ``adv_days``-day average DOLLAR volume. Both arms, opening equity orders
+    only: options carry their own selection floors (open interest, spread),
+    and the cash-sweep ETF is exempt with the other alpha caps. Missing ADV
+    fails CLOSED: a name whose volume history cannot be read is the name this
+    exists to keep out — mechanical slices in microcaps are the exposure."""
+
+    max_position_fraction_of_adv: Fraction
+    adv_days: Annotated[int, Field(gt=0)]
+
+
 class KillSwitchLimits(_Strict):
     drawdown_from_high_water_mark: Fraction
     halts: str
@@ -332,6 +346,7 @@ class RiskLimits(_Strict):
     cash_management: CashManagementLimits
     options_selection: OptionsSelectionLimits
     execution: ExecutionLimits
+    liquidity: LiquidityLimits
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "RiskLimits":

@@ -58,6 +58,16 @@ kill_switch:
   halts: all_new_orders
   reset: manual_human_only
 
+# LIQUIDITY GATE (human ruling 2026-09-02; the 1% figure is the PROPOSED value,
+# shipped for confirmation). The resulting position — held exposure plus the
+# order — may not exceed this fraction of the name's 20-day average DOLLAR
+# volume (consolidated SIP volume; IEX-only volume would understate ADV ~30x).
+# Both arms, opening equity orders only: mechanical slices in microcaps are
+# the exposure this bounds. A missing ADV fails CLOSED (illiquid_position).
+liquidity:
+  max_position_fraction_of_adv: 0.01
+  adv_days: 20
+
 pdt:
   equity_threshold_usd: 25000
   enforce_day_trade_count_in_margin_account: true

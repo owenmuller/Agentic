@@ -41,6 +41,7 @@ from audit.records import (
     long_term_boundary,
     ResearchSnapshot,
     ReviewOutcome,
+    OperatorActionRecord,
     ShadowCloseRecord,
     SignalSnapshot,
     SizingSnapshot,
@@ -542,6 +543,28 @@ class AuditLog:
         )
         self._append(record)
         return record
+
+    def record_operator_action(
+        self,
+        *,
+        action: str,
+        operator: str,
+        acknowledgement: str = "",
+        detail: str = "",
+    ) -> OperatorActionRecord:
+        """A human's halt or reset (ruling 2026-09-02). Not tied to a decision."""
+        record = OperatorActionRecord(
+            recorded_at=self._clock(),
+            action=action,
+            operator=operator[:80],
+            acknowledgement=acknowledgement[:200],
+            detail=detail[:500],
+        )
+        self._append(record)
+        return record
+
+    def operator_actions(self) -> list[OperatorActionRecord]:
+        return [r for r in self.records() if isinstance(r, OperatorActionRecord)]
 
     def shadow_closes(self) -> list[ShadowCloseRecord]:
         """Every shadowed review close, in write order — the probation evidence

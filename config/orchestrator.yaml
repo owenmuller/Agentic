@@ -255,3 +255,13 @@ market_data:
   # An outage must surface as absence — never as a price of zero, which would fire
   # every max-loss stop in the book.
   max_quote_age_seconds: 300
+
+# STRESS TEST WINDOWS (human ruling 2026-09-02). `python -m orchestrator stress`
+# holds today's book at today's quantities through each window on SIP daily
+# bars and reports the worst peak-to-trough drawdown per sleeve and in total,
+# and whether the drawdown ladder, the kill switch, or the mechanical breaker
+# would have fired. REPORT-ONLY: nothing reads these to trade or size.
+stress_windows:
+  - { name: covid_crash_2020, start: 2020-02-19, end: 2020-03-23 }
+  - { name: rates_selloff_2022, start: 2022-01-03, end: 2022-06-16 }
+  - { name: q4_2018, start: 2018-10-01, end: 2018-12-24 }

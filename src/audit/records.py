@@ -425,6 +425,7 @@ class RecordKind(StrEnum):
     EXIT = "exit"
     FILER_EVENT = "filer_event"
     SHADOW_CLOSE = "shadow_close"
+    OPERATOR_ACTION = "operator_action"
 
 
 class DecisionRecord(_Record):
@@ -788,6 +789,22 @@ class ShadowCloseRecord(_Record):
     assessment: str
 
 
+class OperatorActionRecord(_Record):
+    """A human's hand on the system (ruling 2026-09-02): an operator halt or a
+    manual kill-switch reset, with the acknowledgement that authorised it — so
+    every reset has a name attached, as the gate's reset has always promised.
+    No decision_id: this is about the account, not an order."""
+
+    kind: Literal[RecordKind.OPERATOR_ACTION] = RecordKind.OPERATOR_ACTION
+    recorded_at: datetime
+    #: "halt" | "resume"
+    action: str
+    operator: str
+    acknowledgement: str = ""
+    detail: str = ""
+    decision_id: Optional[str] = None
+
+
 AuditRecord = Annotated[
     Union[
         DecisionRecord,
@@ -799,6 +816,7 @@ AuditRecord = Annotated[
         ExitRecord,
         FilerEventRecord,
         ShadowCloseRecord,
+        OperatorActionRecord,
     ],
     Field(discriminator="kind"),
 ]

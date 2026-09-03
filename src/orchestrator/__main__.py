@@ -43,7 +43,7 @@ import time
 from datetime import datetime, timezone, timedelta
 
 from audit.attribution import DEFAULT_WINDOW_DAYS, build_attribution
-from audit.log import default_data_dir
+from audit.log import AuditLog, default_data_dir
 from execution import AlpacaDailyBars, AlpacaPriceSource, MarketContextBuilder
 from execution.options_data import AlpacaOptionsChain
 from signals import (
@@ -58,6 +58,9 @@ from signals import (
 
 from execution.alerts import Alerter
 from execution.atr import AtrSource
+from execution.alpaca import AlpacaAdapter
+from risk_gate.limits import RiskLimits
+from execution.liquidity import AdvSource
 from execution.environment import load_environment
 from execution.vix import CboeVixSource
 
@@ -489,6 +492,8 @@ def run() -> int:
             alerter.urgent(f"{event}:{detail[:40]}", f"{event}: {detail[:120]}", detail)
         elif event == "MECH" and "BREAKER" in detail.upper():
             alerter.urgent("mech_breaker", "mechanical circuit breaker tripped", detail)
+        elif event == "HALT":
+            alerter.urgent("operator_halt_loop", "OPERATOR HALT honoured by the live session", detail)
 
     run_log = RunLog(data_dir / "run.log", observer=observe)
 
@@ -523,7 +528,13 @@ def run() -> int:
             return 0
 
         # Checks first — a misconfigured run should fail before it waits for a bell.
-        checks = preflight()
+        # The liquidity gate (ruling 2026-09-02) reads CONSOLIDATED volume: the
+        # SIP feed, not IEX (IEX-only volume understates ADV ~30x, probed
+        # 2026-09-02). Its own bars client; everything else stays on IEX.
+        sip_bars = AlpacaDailyBars(feed="sip")
+        checks = preflight(
+            adv=AdvSource(sip_bars, days=RiskLimits.load().liquidity.adv_days)
+        )
         logger.info("startup state:\n%s", checks.describe())
 
         # Dedup seeded from the log: research already paid for is never re-bought.
@@ -641,6 +652,7 @@ def run() -> int:
             error_sink=lambda message: run_log.note("ERROR", message),
             classify_sink=lambda message: run_log.note("CLASSIFY", message),
             mechanical_sink=lambda message: run_log.note("MECH", message),
+            halt_sink=lambda message: run_log.note("HALT", message),
             options_chain=options_chain,
             # Regime scalar (rulings 2026-09-01/02): last VIX close from CBOE's
             # public CSV, fetched at most once per UTC day, missing data loud
@@ -787,6 +799,172 @@ def run() -> int:
         lock.release()
 
 
+def _session_is_live(data_dir) -> bool:
+    """Probe the instance lock without holding it."""
+    lock = InstanceLock(data_dir / "orchestrator.lock")
+    if lock.acquire():
+        lock.release()
+        return False
+    return True
+
+
+def halt() -> int:
+    """The panic button (ruling 2026-09-02): trip the kill switch, cancel every
+    open order at the broker, alert, print state. See ops/EMERGENCY.md."""
+    import getpass
+
+    from orchestrator.halt import halt_marker_path, perform_halt
+
+    logging.basicConfig(level=logging.WARNING)
+    load_environment()
+    data_dir = default_data_dir()
+    reason = " ".join(sys.argv[2:]).strip() or "operator halt (no reason given)"
+    operator = os.environ.get("AGENTIC_OPERATOR") or getpass.getuser()
+    live = _session_is_live(data_dir)
+    adapter = None
+    try:
+        adapter = AlpacaAdapter()
+    except Exception as error:  # noqa: BLE001 - halt without the broker still halts
+        print(f"broker adapter unavailable ({error}); open orders NOT cancelled here")
+    alerter = Alerter()
+    report = perform_halt(
+        marker_path=halt_marker_path(data_dir),
+        session_path=data_dir / "session_state.json",
+        live_session=live,
+        reason=reason,
+        operator=operator,
+        adapter=adapter,
+        alert=alerter.urgent if alerter.enabled else None,
+        audit=AuditLog(path=data_dir / "audit.jsonl"),
+    )
+    RunLog(data_dir / "run.log").note("HALT", f"operator {operator}: {reason}")
+    print(report.render())
+    try:
+        print("")
+        print(preflight(adapter=adapter).describe())
+    except Exception as error:  # noqa: BLE001
+        print(f"state unavailable: {type(error).__name__}: {error}")
+    alerter.close()
+    return 0 if report.marker_written else 1
+
+
+def resume() -> int:
+    """The human's manual reset (ruling 2026-09-02). Refuses while a session
+    is live and without the exact acknowledgement. See ops/EMERGENCY.md."""
+    import getpass
+
+    from orchestrator.halt import RESUME_PHRASE, halt_marker_path, perform_resume
+
+    logging.basicConfig(level=logging.WARNING)
+    load_environment()
+    data_dir = default_data_dir()
+    acknowledgement = " ".join(sys.argv[2:]).strip()
+    operator = os.environ.get("AGENTIC_OPERATOR") or getpass.getuser()
+    try:
+        checks = preflight()
+        report = perform_resume(
+            gate=checks.gate,
+            session=checks.session,
+            audit=checks.audit,
+            marker_path=halt_marker_path(data_dir),
+            acknowledgement=acknowledgement,
+            operator=operator,
+            live_session=_session_is_live(data_dir),
+        )
+    except (ValueError, RuntimeError) as error:
+        print(f"RESUME REFUSED: {error}", file=sys.stderr)
+        print(f'usage: python -m orchestrator resume "<your name>: {RESUME_PHRASE}"',
+              file=sys.stderr)
+        return 2
+    except Exception as error:  # noqa: BLE001
+        print(f"RESUME FAILED: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
+    RunLog(data_dir / "run.log").note("RESUME", f"operator {operator}: {acknowledgement}")
+    print(report.render())
+    return 0
+
+
+def stress() -> int:
+    """Historical stress test of the current book (ruling 2026-09-02).
+    Report-only: SIP daily bars in, drawdowns out, nothing written."""
+    from datetime import date as _date
+
+    from orchestrator.stress import (
+        BookPosition,
+        StressWindowSpec,
+        render_stress_report,
+        stress_book,
+    )
+    from risk_gate.state import Sleeve
+
+    logging.basicConfig(level=logging.WARNING)
+    try:
+        checks = preflight()
+    except Exception as error:  # noqa: BLE001
+        print(f"STRESS TEST FAILED: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
+    state = checks.gate.state
+    positions = [
+        BookPosition(
+            sleeve=str(p.sleeve),
+            symbol=p.key[1],
+            quantity=p.quantity,
+            market_value=p.market_value,
+            is_option=p.is_option,
+        )
+        for p in state.positions.values()
+        if p.quantity > 0 and p.sleeve in (Sleeve.EQUITY, Sleeve.MECHANICAL)
+    ]
+    held = {
+        sleeve: sum((p.market_value for p in positions if p.sleeve == sleeve), Decimal("0"))
+        for sleeve in ("equity", "mechanical")
+    }
+    # Each sleeve's cash is its allotment less what it holds (floored at zero);
+    # the mechanical ledger is authoritative for its own sleeve when seeded.
+    equity_cash = max(Decimal("0"), checks.gate.sleeve_nav(Sleeve.EQUITY) - held["equity"])
+    mechanical_cash = checks.session.mechanical_virtual_cash
+    if mechanical_cash is None:
+        mechanical_cash = max(
+            Decimal("0"), checks.gate.sleeve_nav(Sleeve.MECHANICAL) - held["mechanical"]
+        )
+    # Whatever the sleeves do not account for — including the cash-sweep ETF,
+    # which is cash in another form — rides flat in the total.
+    other = state.nav - sum(held.values()) - equity_cash - mechanical_cash
+    bars = AlpacaDailyBars(feed="sip")
+
+    def closes(symbol: str, start: _date, end: _date):
+        rows = []
+        for bar in bars.bars(
+            symbol,
+            datetime.combine(start, datetime.min.time(), tzinfo=timezone.utc),
+            datetime.combine(end, datetime.max.time(), tzinfo=timezone.utc),
+        ):
+            try:
+                day = _date.fromisoformat(str(bar.get("t"))[:10])
+                close = Decimal(str(bar.get("c")))
+            except (InvalidOperation, ValueError, TypeError):
+                continue
+            rows.append((day, close))
+        return rows
+
+    windows = [
+        StressWindowSpec(name=w.name, start=w.start, end=w.end)
+        for w in checks.orchestrator_config.stress_windows
+    ]
+    try:
+        results = stress_book(
+            positions,
+            {"equity": equity_cash, "mechanical": mechanical_cash},
+            other,
+            closes,
+            windows,
+        )
+    finally:
+        bars.close()
+    print(render_stress_report(results, checks.clock()))
+    return 0
+
+
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "check"
     if command == "check":
@@ -803,9 +981,15 @@ def main() -> int:
         return replay()
     if command == "golden":
         return golden()
+    if command == "halt":
+        return halt()
+    if command == "resume":
+        return resume()
+    if command == "stress":
+        return stress()
     print(
-        f"unknown command {command!r}: expected 'check', 'health', 'run', or "
-        f"'attribution'",
+        f"unknown command {command!r}: expected check, health, run, attribution, "
+        f"weekly, replay, golden, halt, resume, or stress",
         file=sys.stderr,
     )
     return 2

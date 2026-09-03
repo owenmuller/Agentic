@@ -133,11 +133,19 @@ class RiskGate:
         state: AccountState,
         clock: Optional[Callable[[], datetime]] = None,
         sectors: Optional[SectorMap] = None,
+        adv: Optional[Callable[[str], Optional[Decimal]]] = None,
     ) -> None:
         self._limits = limits
         self._state = state
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._sectors = sectors if sectors is not None else SectorMap.load()
+        #: ``adv(symbol)`` -> the name's average DOLLAR volume, or None. The
+        #: liquidity gate (human ruling 2026-09-02) is deterministic arithmetic
+        #: over this number; the callable is the only network-adjacent thing
+        #: and it lives in ``execution`` — the gate never fetches. None here
+        #: means no source is wired (offline tests, read-only commands) and
+        #: the check is skipped; a wired source returning None fails CLOSED.
+        self._adv = adv
         self._sequence = 0
         self._evaluate_kill_switch()
 
@@ -372,6 +380,21 @@ class RiskGate:
                 limit=single_cap,
                 observed=resulting,
             )
+
+        # Liquidity (human ruling 2026-09-02): the resulting position against
+        # the name's average dollar volume. Both arms; opening equity orders
+        # only — options carry their own selection floors and the sweep ETF
+        # returned above with the other alpha caps. Fails CLOSED on a missing
+        # number: the name whose volume history cannot be read is the name this
+        # exists to keep out.
+        if (
+            self._adv is not None
+            and not is_option(order)
+            and sleeve in (Sleeve.EQUITY, Sleeve.MECHANICAL)
+        ):
+            liquidity_rejection = self._check_liquidity(key[1], resulting)
+            if liquidity_rejection is not None:
+                return liquidity_rejection
 
         # Sector concentration. Equity positions only: options carry their own
         # aggregate-premium cap, and mapping option symbols back to underlyings
@@ -645,6 +668,51 @@ class RiskGate:
         threshold = self._limits.kill_switch.drawdown_from_high_water_mark
         if self._state.drawdown() >= threshold:
             self._state.kill_switch_tripped = True
+
+    def trip_kill_switch(self, reason: str) -> None:
+        """Trip the halt by hand (operator halt, ruling 2026-09-02).
+
+        Tripping is the safe direction and needs no acknowledgement; it is what
+        ``orchestrator halt`` asks the live loop to do through the HALT marker.
+        Sticky like every other trip — only ``reset_kill_switch`` clears it.
+        """
+        if not reason.strip():
+            raise ValueError("a manual kill-switch trip requires a stated reason")
+        self._state.kill_switch_tripped = True
+
+    def _check_liquidity(self, symbol: str, resulting: Decimal) -> Optional[Rejection]:
+        """The liquidity gate's arithmetic. ``resulting`` is the position the
+        order would leave: held exposure plus the order's reserved cost."""
+        limits = self._limits.liquidity
+        try:
+            adv = self._adv(symbol)  # type: ignore[misc] - guarded by the caller
+        except Exception:  # noqa: BLE001 - a failing source is a missing number
+            adv = None
+        if adv is None or adv <= ZERO:
+            return Rejection(
+                code=RejectionCode.ILLIQUID_POSITION,
+                message=(
+                    f"{limits.adv_days}-day average dollar volume for {symbol} is "
+                    f"unavailable; the liquidity gate fails closed (a name whose "
+                    f"volume cannot be read is not a name to size into)"
+                ),
+                limit=None,
+                observed=resulting,
+            )
+        cap = adv * limits.max_position_fraction_of_adv
+        if resulting > cap:
+            return Rejection(
+                code=RejectionCode.ILLIQUID_POSITION,
+                message=(
+                    f"position in {symbol} would reach {resulting}, above "
+                    f"{limits.max_position_fraction_of_adv} of its "
+                    f"{limits.adv_days}-day average dollar volume {adv:.0f} "
+                    f"(cap {cap:.2f})"
+                ),
+                limit=cap,
+                observed=resulting,
+            )
+        return None
 
     def reset_kill_switch(self, operator_acknowledgement: str) -> None:
         """Clear the halt. FOR A HUMAN OPERATOR ONLY.

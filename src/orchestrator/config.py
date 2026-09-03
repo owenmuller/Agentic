@@ -377,6 +377,23 @@ class RiskScalarsConfig(BaseModel):
         return self
 
 
+class StressWindow(BaseModel):
+    """One historical window the stress test (ruling 2026-09-02) replays the
+    current book through. Report-only; nothing reads these to trade."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    start: date
+    end: date
+
+    @model_validator(mode="after")
+    def _start_before_end(self) -> "StressWindow":
+        if self.start >= self.end:
+            raise ValueError(f"stress window {self.name}: start must precede end")
+        return self
+
+
 class MarketDataConfig(BaseModel):
     """Settings for the production price source. Consumed at wiring time —
     ``AlpacaPriceSource(feed=..., max_quote_age_seconds=...)`` — because the
@@ -410,6 +427,9 @@ class OrchestratorConfig(BaseModel):
     account_type: AccountType
     exits: ExitsConfig
     market_data: MarketDataConfig
+    #: Historical windows for `orchestrator stress` (ruling 2026-09-02).
+    #: Report-only, so an absent section is an empty report, not an error.
+    stress_windows: tuple[StressWindow, ...] = ()
     #: Signal convergence (ruling 2026-09-01). Defaults apply when the yaml has
     #: no section — the registry is context and ordering, not a risk control, so
     #: an absent section means the shipped defaults rather than a startup error.

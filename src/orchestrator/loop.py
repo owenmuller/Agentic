@@ -32,6 +32,8 @@ claiming to be urgent is a post claiming something.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import json
 import logging
 import time
@@ -120,6 +122,8 @@ class TradingLoop:
         tick_interval_seconds: int,
         clock: Optional[Callable[[], datetime]] = None,
         sleeper: Optional[Callable[[float], None]] = None,
+        halt_marker: Optional[Path] = None,
+        halt_sink: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._scanners = tuple(scanners)
         self._queue = queue
@@ -131,6 +135,12 @@ class TradingLoop:
         self._registry = registry
         self._cost_meter = cost_meter
         self._error_sink = error_sink
+        #: The panic button (ruling 2026-09-02): a marker file `orchestrator
+        #: halt` writes from another process. Present at the top of a tick =
+        #: trip the kill switch, cancel every working order, say so. Sticky
+        #: through the session file; only `orchestrator resume` removes it.
+        self._halt_marker = halt_marker
+        self._halt_sink = halt_sink
         #: Per-source daily caps (2026-08-25): counts seed from the audit log at
         #: startup so a restart cannot reset a cap, and roll at the day boundary.
         self._source_caps = dict(source_caps or {})
@@ -189,6 +199,33 @@ class TradingLoop:
     def tick(self) -> TickReport:
         """Poll, research, trade, settle, persist. Never raises for a fetcher or a bug."""
         report = TickReport()
+
+        # Operator halt, before anything else this tick can do: the marker is
+        # the one channel another process has into this one.
+        if (
+            self._halt_marker is not None
+            and self._halt_marker.exists()
+            and not self._gate.kill_switch_tripped
+        ):
+            self._gate.trip_kill_switch("operator HALT marker present")
+            released = len(self._pipeline.cancel_working())
+            released += len(self._exits.cancel_working())
+            if self._mechanical is not None:
+                released += len(self._mechanical.cancel_working())
+            if self._sweeper is not None:
+                released += len(self._sweeper.cancel_working())
+            report.settled += released
+            self._session.persist(self._gate, self._clock())
+            message = (
+                f"operator HALT honoured: kill switch tripped, {released} working "
+                f"order(s) cancelled; risk-reducing closes keep running"
+            )
+            logger.error(message)
+            if self._halt_sink is not None:
+                try:
+                    self._halt_sink(message)
+                except Exception:  # noqa: BLE001 - a sink must not kill the halt
+                    logger.exception("halt sink failed")
 
         for scanner in self._scanners:
             try:

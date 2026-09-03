@@ -41,6 +41,10 @@ class RejectionCode(StrEnum):
     SLEEVE_ALLOCATION_EXCEEDED = "sleeve_allocation_exceeded"
     #: Pattern-day-trader limit reached in a sub-threshold margin account.
     PDT_LIMIT_REACHED = "pdt_limit_reached"
+    #: Liquidity gate (human ruling 2026-09-02): the resulting position would
+    #: exceed the configured fraction of the name's 20-day average dollar
+    #: volume — or that ADV could not be read at all, which fails CLOSED.
+    ILLIQUID_POSITION = "illiquid_position"
 
 
 @dataclass(frozen=True, slots=True)
