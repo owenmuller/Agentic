@@ -2804,6 +2804,68 @@ entry signals — excluded from every table above), diagnosis $0.15.
    the sonnet report path, then the baseline variance arm re-run (~$11) so the
    partition is measured. Results below.
 
+### Post-ship results (2026-09-03) — shipped as 5eb9e80, verified, droplet green
+
+**Live round trip, sonnet report path — OK.** Production pass on
+pelosi-be-calls-decline: two sonnet calls, the search phase WITHOUT
+temperature, the forced-tool report WITH T=0.0, accepted; no_position/82,
+graded PASS, $0.21.
+
+**Golden replay — 21/23, ~$4.20.** Two drifts, both reviewed:
+- `pelosi-be-calls-decline` → long/52 (graded set: no_position). The same
+  noisy case (post-ship arm: no/45, no/72, no/72); 52 sits inside the widened
+  [50, 70) confirmation band, so in production this verdict would have had to
+  replicate before sizing — the replay does not run confirmation. Not caused
+  by the change; it is the instability the band was widened for.
+- `nolimitgains-instrumentless` → REJECTION upstream_error, API 400: "Code
+  execution requested a client tool that is not included in this request's
+  code execution tool function definitions." OPUS class-1 SEARCH phase — no
+  temperature anywhere near it. Same failure class as the temp0 arm's six
+  upstream_errors on injection-cashtag / mirror-fabricated-buyback: the
+  web_search_20260209 dynamic-filtering machinery, during the search phase
+  (where only web_search is offered), tries to call a client tool that is not
+  in that request. It clusters on adversarial/synthetic content. In production
+  it is a typed rejection (no trade) plus an ERROR line and urgent alert — safe,
+  but a research pass lost. See the finding below.
+
+**Baseline variance arm re-run on the shipped shape — the temp0 arm's
+stability DID NOT REPLICATE.**
+
+| arm | all 20: spread mean/max, unanimous, graded | 60–70 bucket: spread mean/max, unanimous |
+|---|---|---|
+| baseline (pre-ship) | 8.2 / 30, 19/20, 60/60 | 17.2 / 30, 5/6 |
+| temp0 arm | 5.8 / 14, 20/20, 54/54 | 4.8 / 14, 6/6 |
+| **post-ship (T=0 live)** | **10.7 / 42, 18/20, 60/60** | **16.0 / 42, 4/6** |
+
+Same cost ($0.181), no errors, every verdict graded — and no stability gain:
+INTC entry no/47, no/63, long/58 (split); UBER long/38, no/72, no/30 (a new
+split, 42 points); BE 45/72/72. **Reading:** the temp0 arm's 4.8 was an
+18-pass sample that got lucky. T=0 makes the report call deterministic GIVEN
+its transcript, but the transcript comes from the search phase — still T=1.0
+over live web results — and that is where the variance originates. The
+report phase was never the noise source; the proposal overstated the lever.
+What survives: the change is harmless (no drift, no cost, no splits it
+caused), and boundary confirmation at band 20 is clearly the operative
+protection — two of the three splits sit in 55–63. Raw verdicts archived:
+ops/experiments/variance_baseline_post_T0_2026-09-03.jsonl.
+
+**Options for a ruling (nothing acted on):** (1) keep T=0 as shipped with
+the honest label — not a stability lever; rely on band-20 confirmation.
+(2) extend T=0 to the sonnet SEARCH phase (legal: no thinking on sonnet) —
+the untested lever; needs its own ~$11 arm before any claim. (3) revert T=0
+to keep the request shape minimal; nothing in the data argues for it.
+
+**Finding — the code-execution 400 (opus search phase):** seven occurrences
+today across the experiment and replay, all on class-1 cases with adversarial
+or synthetic content, none on class 2/3. Candidate mitigation is a
+request-path change and therefore a ruling: offer `submit_research` in the
+search phase too (tool_choice auto, phase 2 still forces it) so a model that
+reaches for the report tool mid-search has a legal target — OR accept the
+intermittent typed rejection as the cost of the two-phase design and watch
+its frequency in production: ZERO occurrences of this message in the
+production audit log to date (its 7 upstream_error records carry other
+messages; checked 2026-09-03).
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in
