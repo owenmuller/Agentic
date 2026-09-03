@@ -2866,6 +2866,64 @@ its frequency in production: ZERO occurrences of this message in the
 production audit log to date (its 7 upstream_error records carry other
 messages; checked 2026-09-03).
 
+## Overreaction-fade hypothesis — DESIGN REVIEW ONLY, nothing ships (2026-09-03)
+
+Staged so the free measurement answers the prior question before any prompt
+exists. Every step below is deferred; step 1 is itself a NEW SIGNAL SOURCE and
+needs explicit approval when it ships.
+
+**1. Deterministic detection (measurement-only).** Universe in two logged
+tiers: CORE = held judged positions + registry names with a research verdict
+in the window + names carrying a qualifying purchase signal (cluster-passing
+Form 4, prefilter-passing congressional purchases, 13D initial/increase,
+13F-family longs); BROAD = every purchase-side active registry name, raw
+Form 4 singles included (the control). Event = completed SIP daily bar with
+close-to-close return ≤ −7% (6% and 8% logged as flags for tuning) AND
+session volume ≥ 1.5× the 20-day average share volume; detection ~16:15 ET or
+at next start. Logged with SPY's same-day return and the mapped sector so
+market/sector days split from idiosyncratic days deterministically. Row:
+source `overreaction_screen`, code `overreaction_candidate`, class 2, OUTSIDE
+convergence (a market-data screen, like PEAD); rides the existing `measurement`
+prefilter rule and funnel exactly as bearish_measurement does; no research,
+no trade, no dispatch weight, no registry note, never seals the name.
+
+**2. Grading.** Forward engine at 1/5/20/60d excess (1d is a small addition).
+Slices: core vs broad, market-day (SPY ≤ −2%) vs idiosyncratic, held vs
+signalled, by threshold flag. No reversion anywhere = stop, free. Because
+detection is close-to-close on SIP bars the measurement can be BACKFILLED over
+every name that entered the registry since 2026-08-17 and over the stress
+windows — weeks instead of months to an answer.
+
+**3. The LLM half (only if reversion shows).** A classifier pass: fundamental
+cause (earnings/guidance/legal/contract loss — drift, don't fade; the same
+territory as the invalidation condition, which is why the step cannot be
+skipped) vs non-fundamental (sympathy, forced flows, headline noise — fade
+candidate). New prompt + new trade path → approval, golden cases (fabricated
+headline drop, real guidance cut, sector-sympathy day), live round trip; after
+the freeze lifts and only once step 2 earns it. Cost trivial; sample size is
+the constraint — 60d grading of the FADED subset reaches n≥20 in ~a year.
+
+**4. Averaging-down tension, stated.** On held names a fade add contradicts
+the into-strength scaling rule directly and lands inside the adverse-review
+trigger zone by construction. A carve-out, if the data ever justifies one:
+one add per position lifetime; non-fundamental classification required AND
+the same-cycle dialectical review concluded hold with would_open_today = yes
+at the post-drop price; price above the stop with R:R ≥ 1.5 recomputed from
+the new price; no add under the drawdown ladder (<×1.0) or any halt; total
+position ≤ the band cap for current confidence (an add fills room the table
+already allows, never enlarges it), through the gate, liquidity check and
+daily deployment like any entry; tagged `fade_add` for separable attribution
+and killed if it fails to beat the un-added counterfactual over 60d; mechanical
+arm excluded.
+
+**Expected volume.** ≤ −7% close-to-close base rate ~0.4–0.6% of stock-days
+(large cap), 1–2% (small/mid). Core (~20–40 names): ~0.1–0.3 events/day →
+2–6/month → 60d n≥20 in 4–8 months (backfill shortens it). Broad (~500 names
+with the Form 4 feed): ~2–5/day → n≥20 within a month; broad answers "does our
+universe revert at all", core answers "where we would act". If step 3 ever
+ships: ~1–3 non-fundamental core candidates/month — a low-frequency overlay,
+not a book.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in
