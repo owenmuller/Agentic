@@ -2965,6 +2965,44 @@ shadow). No LLM, no prompt, no API spend beyond Alpaca bars — consistent with
 the freeze. Backfill from 2026-08-17 and across the three stress windows:
 results below.
 
+### First read (2026-09-03, droplet): NO REVERSION — the prior question answers "stop"
+
+Universe 404 names (17 core, 387 broad). Live period 2026-08-17 → 09-03:
+17 events (1 core, 16 broad; 4 names returned no bars — dead tickers in the
+raw flow). Stress windows (today's universe replayed over 2018-Q4, 2020-02/03,
+2022-01/06; 204 sessions): 1,369 events (67 core), 76 unmeasurable
+name-sessions, 16 names without bars. Forward report, excess vs SPY,
+POSITIVE = reverted:
+
+| slice | n | 1d | 5d | 20d | 60d |
+|---|---|---|---|---|---|
+| all (≥6% flag) | 1,386 | +0.09 | −0.21 | −0.83 | −0.94 |
+| core (held or researched) | 68 | −0.01 | −0.46 | −1.42 | +0.33 |
+| broad | 1,318 | +0.09 | −0.20 | −0.80 | −1.00 |
+| market day (SPY ≤ −2%) | 971 | +0.30 | +0.13 | −0.40 | −0.29 |
+| **idiosyncratic day** | 415 | **−0.41** | **−1.03** | **−1.89** | **−2.56** |
+| held positions | 6 | −0.11 | −0.10 | −0.22 | −0.71 |
+| ≥7% (the ruled X) | 1,056 | +0.07 | −0.13 | −0.60 | −0.67 |
+| ≥8% | 801 | +0.01 | −0.27 | −0.56 | −0.53 |
+
+**Reading.** Sharp drops on volume in our universe do not revert; they DRIFT.
+The idiosyncratic-day drops — exactly the fade candidates the hypothesis cared
+about — are the worst slice at every horizon (−1.0% at 5d, −2.6% at 60d).
+Market-day drops show a faint 1–5d bounce (+0.3/+0.1%) that fades to
+negative by 20d; that is the market bouncing, not the name. Deeper drops do
+not revert more. By the ruling's own test — "if they don't revert, no
+materiality judgment saves the strategy and we stop here for free" — the LLM
+half's precondition (5/20d reversion) is NOT met.
+
+**Caveats, stated.** (1) The sample is dominated by crash regimes (2020-03,
+2022) where continuation is the norm; 971 of 1,386 events are market days and
+cluster on the same sessions, so they are far fewer independent observations
+than n suggests. (2) Today's universe on historical bars carries survivorship
+in the direction that would FAVOUR reversion — and there is still none.
+(3) The live, in-regime sample is 17 events with 1–5d marks only. The screen
+keeps running at zero cost; the question is re-asked when the live sample
+reaches n≥20 at 20d, and the answer would have to invert to reopen step 3.
+
 **2. LLM half — DEFERRED** until the freeze lifts AND step 2 shows 5/20d
 reversion. **Golden classifier test set, recorded now for then:**
 (a) a fabricated-headline drop — a real name, a −8% session on a rumour later
