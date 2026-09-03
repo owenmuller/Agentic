@@ -68,19 +68,47 @@ from orchestrator.state import (
 logger = logging.getLogger("orchestrator.bootstrap")
 
 
+_OUTCOME_LABELS = (
+    ("traded", "opened"),
+    ("declined", "researched and declined"),
+    ("gate_rejected", "approved by research but refused by the gate"),
+    ("triaged_out", "triaged out before research"),
+)
+
+
 def _opportunity_context(registry) -> str:
-    """One line for the review prompt's opportunity-cost weighing."""
-    symbols = tuple(registry.in_window_symbols())
-    if not symbols:
-        return (
-            "no other names carry active signals in the convergence window right "
-            "now"
+    """One line for the review prompt's opportunity-cost weighing.
+
+    Built from VERDICTS — names the system actually researched in the window —
+    with the raw active-signal count stated separately and labelled as raw
+    flow. The first live round trip (2026-09-03) fed the model "499 names carry
+    active signals", which it read as 499 vetted candidates; that was the
+    Form 4 market-wide feed's footprint, not a candidate pool.
+    """
+    summary = registry.verdict_summary()
+    researched = {symbol for symbols in summary.values() for symbol in symbols}
+    active = tuple(registry.in_window_symbols())
+    unresearched = sum(1 for symbol in active if symbol not in researched)
+    window = registry.window_days
+    if researched:
+        parts = []
+        for outcome, label in _OUTCOME_LABELS:
+            symbols = summary.get(outcome) or ()
+            if symbols:
+                shown = ", ".join(symbols[:8]) + (" …" if len(symbols) > 8 else "")
+                parts.append(f"{label} {len(symbols)}: {shown}")
+        head = (
+            f"in the last {window} days the system researched {len(researched)} "
+            f"other name(s) — " + "; ".join(parts)
         )
-    shown = ", ".join(symbols[:15]) + (" …" if len(symbols) > 15 else "")
-    return (
-        f"{len(symbols)} name(s) carry active signals in the convergence window "
-        f"(candidates competing for capital and slots): {shown}"
-    )
+    else:
+        head = f"in the last {window} days the system researched no other names"
+    if unresearched:
+        head += (
+            f"; {unresearched} further name(s) carry active but UNRESEARCHED "
+            f"signals (raw feed flow, not vetted candidates)"
+        )
+    return head
 
 
 def _sleeve_label(weight) -> str:

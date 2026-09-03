@@ -2626,6 +2626,84 @@ and passphrase.
 Suite 1100 passed / 3 skipped; shipped as 44d9b69, verified on all three,
 droplet pulled and green.
 
+## SGOV tracking mismatch after the first live sweep — DIAGNOSED AND FIXED (2026-09-03)
+
+Health after the first live sweep logged `audit log says 25c3dac81c9d4f8f
+holds 716.825 SGOV but the broker does not; not tracking` while cash had
+dropped 89,492 → 17,508 and NAV carried ~72K of ETF. **Cause:** the exit
+engine's replay skipped only `strategy == "mechanical"`, so the `cash_sweep`
+decision fell through, looked itself up under the JUDGED key
+`("equity", "SGOV")`, missed the gate's `("cash_management", "SGOV")` position
+(seeded correctly from the sweep ledger), and logged a false "broker does not
+hold". It never tracked the lot — correct by accident — and the message was
+wrong. **Fix:** replay skips every non-judged strategy. **The sweeper's own
+ledger was always right:** `CashSweeper.replay` looks under the
+cash-management key; health now proves it with a `cash management (SGOV)`
+line — 716.825021972 units parked, value 71,983.57, cost 71,983.57, accrued
++0.00 (mark-to-market; distributions monthly), `[log agrees]` — and the
+warning is gone from the droplet's health output.
+
+## Review layer revised to the dialectic (ruling 2026-09-02, revising the same day's re-underwrite)
+
+**would_open_today is EVIDENCE, not a trigger.** Contradiction rule 4 (no +
+not-ahead → close) lasted one day: the entry bar is stricter than the exit bar
+by design, and a selection-threshold difference is not a thesis problem. In
+its place every review must produce `case_for_holding` and
+`case_for_selling` — the strongest honest version of each, weighing expected
+return to target vs risk to the CURRENT stop, what has CHANGED since entry
+(information, not price), opportunity cost against the registry's other
+candidates, exit costs (quoted spread, tax boundary), and whether a "no" on
+would_open_today is a thesis problem or a threshold difference — then a
+verdict `hold / trim / close` with a one-line `verdict_reason` naming which
+argument won. Both cases are schema-required AND validated when omitted
+(pydantic skips validators on defaults unless told; `validate_default` is
+load-bearing) — a one-sided review is a rejection, which is a HOLD by the
+existing fail-safe. TRIM is now the review's own verdict (the
+resolution=partial auto-trigger is retired); the engine honours it once, in
+profit, and otherwise records it as given and stands as a hold. Deterministic
+layers untouched. Probation still shadows an argued close on a profitable,
+intact position — the dialectical structure is what the shadow period is
+evaluating.
+
+**Live round trip (droplet, production `ExitReviewPass`, the real INTC
+position, $0.19):** verdict **HOLD**; validity intact / on_track / unresolved;
+would_open_today = **False** — but for a different reason than the two
+pre-dialectic runs: R:R to a ~$115 target vs the 77.14 stop = **1.78, which
+clears 1.5**; the "no" rests entirely on the near-floor second-pass rule
+(confidence 54). Case for holding (1,354 chars): invalidation ~$17 away, T+3
+on a 9-month thesis, the disclosure's structure (50 deep-ITM calls to June
+2027) matches the resolution horizon, exit costs minimal, the "no" is a
+threshold rule not a thesis failure. Case for selling (1,385 chars):
+razor-edge confidence, a single lagged disclosure, structural headwinds, the
+quote unavailable at review, and opportunity cost against "499 competing
+signals". Verdict reason: "closing a months-horizon position at T+3 with no
+new adverse information would be premature capitulation — hold wins."
+**Consequence:** the ruled "let production close INTC" no longer follows —
+under the dialectic the same facts hold. Recorded as the ruling intended: the
+structure decides, and the shadow period grades it.
+
+**A finding from that round trip, fixed same session:** the opportunity line
+told the model "499 name(s) carry active signals in the convergence window
+(candidates competing for capital and slots)" — the Form 4 market-wide feed's
+footprint, not a candidate pool — and the selling case leaned on it. The line
+is now built from VERDICTS (names the system actually researched in the
+window: opened / declined / gate-refused / triaged out) with the raw active
+count stated separately and labelled "raw feed flow, not vetted candidates".
+
+**Golden set gains review cases** (kind `review`, replayed through the
+production ExitReviewPass, graded on STRUCTURE: both cases argued past a
+120-char bar and distinct, a verdict reason, the re-underwrite arithmetic):
+the real INTC day-3 facts, a synthetic resolved winner (+32%, day 90), a
+synthetic near-stop (78.50 vs 77.14, day 60). First replay, all three PASS:
+day-3 → hold (would_open False); resolved → **trim** ("the thesis has
+substantially resolved"); near-stop → **close** ("the stop is 1.7% from
+price, reducing this to a mechanical stop-wait"). Three different verdicts
+from three fact patterns, each argued both ways — the structure is doing what
+it was built to do. ~$0.37.
+
+Suite 1102 passed / 3 skipped; shipped as 638c6ee, verified on all three,
+droplet pulled and green.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

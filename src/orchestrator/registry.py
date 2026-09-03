@@ -322,6 +322,29 @@ class SignalRegistry:
                 best = candidate
         return best
 
+    @property
+    def window_days(self) -> int:
+        return self._config.window_days
+
+    def verdict_summary(self) -> dict[str, tuple[str, ...]]:
+        """outcome -> symbols, the LATEST research verdict per symbol inside the
+        window. The review dialectic's opportunity-cost input (2026-09-03):
+        names the system actually evaluated, not every ticker that crossed the
+        feed — the first live round trip showed 499 "active" names, which is
+        raw flow, not a candidate pool."""
+        horizon = self._clock() - timedelta(days=self._config.window_days)
+        latest: dict[str, _Verdict] = {}
+        for verdict in self._verdicts:
+            if verdict.recorded_at < horizon:
+                continue
+            current = latest.get(verdict.symbol)
+            if current is None or verdict.recorded_at > current.recorded_at:
+                latest[verdict.symbol] = verdict
+        grouped: dict[str, list[str]] = {}
+        for symbol, verdict in sorted(latest.items()):
+            grouped.setdefault(verdict.outcome, []).append(symbol)
+        return {outcome: tuple(symbols) for outcome, symbols in grouped.items()}
+
     def in_window_symbols(self) -> tuple[str, ...]:
         """Symbols with any active signal in the window — the IV-watch feed
         (ruling 2026-09-02): names the shadow logger should snapshot daily so

@@ -414,3 +414,68 @@ def test_health_renders_the_management_state():
 def test_health_says_unreviewed_before_the_first_review():
     text = _fmt_position(_tracked(), PROBATION_NOW)
     assert "managed: unreviewed" in text
+
+
+# ================================================================================
+# Opportunity context: verdicts, not raw flow
+# ================================================================================
+
+
+def _signal(source_id, external_id, tickers, observed_at):
+    from signals import SignalClass
+    from signals.records import Priority, Signal, signal_id_for
+
+    content = f"{source_id} {external_id}"
+    return Signal(
+        signal_id=signal_id_for(source_id, external_id, content),
+        source_id=source_id,
+        signal_class=SignalClass.CLASS_2_MOMENTUM,
+        observed_at=observed_at,
+        content=content,
+        raw_content=content,
+        priority=Priority.for_class(SignalClass.CLASS_2_MOMENTUM),
+        external_id=external_id,
+        classification=None,
+        metadata={"tickers": tickers},
+    )
+
+
+def test_opportunity_context_reads_verdicts_and_labels_raw_flow():
+    from orchestrator.bootstrap import _opportunity_context
+    from orchestrator.config import ConvergenceConfig
+    from orchestrator.registry import SignalRegistry
+
+    clock = FakeClock(PROBATION_NOW)
+    registry = SignalRegistry(ConvergenceConfig(), clock)
+    researched = [
+        _signal("congressional_disclosures", "a", "AMRN", PROBATION_NOW),
+        _signal("congressional_disclosures", "b", "BE", PROBATION_NOW),
+        _signal("form4_insiders", "c", "CLST", PROBATION_NOW),
+    ]
+    raw = [_signal("form4_insiders", f"r{i}", f"RAW{i}", PROBATION_NOW) for i in range(40)]
+    registry.note_signals(researched + raw)
+    registry.note_outcome(researched[0], "traded", 62)
+    registry.note_outcome(researched[1], "declined", 41)
+    registry.note_outcome(researched[2], "triaged_out", None, code="triage")
+
+    summary = registry.verdict_summary()
+    assert summary["traded"] == ("AMRN",)
+    assert summary["declined"] == ("BE",)
+    assert summary["triaged_out"] == ("CLST",)
+
+    line = _opportunity_context(registry)
+    assert "researched 3 other name(s)" in line
+    assert "opened 1: AMRN" in line and "researched and declined 1: BE" in line
+    assert "40 further name(s) carry active but UNRESEARCHED signals" in line
+    assert "raw feed flow, not vetted candidates" in line
+    # Never the old framing that presented raw flow as a candidate pool.
+    assert "candidates competing" not in line
+
+
+def test_opportunity_context_with_nothing_researched():
+    from orchestrator.bootstrap import _opportunity_context
+    from orchestrator.config import ConvergenceConfig
+    from orchestrator.registry import SignalRegistry
+
+    registry = SignalRegistry(ConvergenceConfig(), FakeClock(PROBATION_NOW))
+    assert "researched no other names" in _opportunity_context(registry)
