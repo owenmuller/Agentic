@@ -117,11 +117,11 @@ def test_thin_history_fails_closed():
 
 def test_universe_tiers_core_over_broad():
     universe = build_universe(
-        held=["intc"], researched=["AMRN", "INTC"], active_purchase=["AMRN", "RAW1", "raw2"]
+        held=["intc"], researched=["AMRN", "INTC"], active_purchase=["AMRN", "RAWA", "rawb"]
     )
     assert universe["INTC"].tier == "core" and universe["INTC"].held
     assert universe["AMRN"].tier == "core" and not universe["AMRN"].held
-    assert universe["RAW1"].tier == "broad" and universe["RAW2"].tier == "broad"
+    assert universe["RAWA"].tier == "broad" and universe["RAWB"].tier == "broad"
     assert len(universe) == 4
 
 

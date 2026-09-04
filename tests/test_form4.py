@@ -44,6 +44,7 @@ def form4_xml(
     plan: bool = False,
     officer_title: str = "Chief Financial Officer",
     extra_owner: Optional[tuple[str, str]] = None,
+    issuer_symbol: str = SYMBOL,
 ) -> str:
     owners = [
         f"""
@@ -83,7 +84,7 @@ def form4_xml(
     <issuer>
         <issuerCik>{ISSUER_CIK}</issuerCik>
         <issuerName>Cluster Corp</issuerName>
-        <issuerTradingSymbol>{SYMBOL}</issuerTradingSymbol>
+        <issuerTradingSymbol>{issuer_symbol}</issuerTradingSymbol>
     </issuer>{''.join(owners)}
     <aff10b5One>{1 if plan else 0}</aff10b5One>
     <nonDerivativeTable>

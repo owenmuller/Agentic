@@ -27,10 +27,12 @@ the limit is the bound either way.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import quote
 
@@ -204,12 +206,61 @@ class AlpacaPriceSource:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+#: HTTP statuses that mean "this venue does not serve this symbol" — permanent,
+#: so the symbol is memoised and never requested again. 403 (data plan), 429
+#: (rate) and 5xx are transient and are NOT memoised.
+_UNSERVED_STATUSES = frozenset({400, 404, 422})
+
+
+class UnservedSymbols:
+    """Symbols the data API has told us it does not serve (ruling 2026-09-04:
+    AXIA3 400ed on every weekly report). Memoised for the process and, when a
+    path is given, persisted as JSON so the next run does not ask again."""
+
+    def __init__(self, path: Optional[Path] = None) -> None:
+        self._path = path
+        self._symbols: dict[str, dict[str, Any]] = {}
+        if path is not None and path.exists():
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    self._symbols = {str(k).upper(): v for k, v in raw.items()}
+            except (OSError, ValueError):
+                self._symbols = {}
+
+    def __contains__(self, symbol: str) -> bool:
+        return symbol.upper() in self._symbols
+
+    def __len__(self) -> int:
+        return len(self._symbols)
+
+    def symbols(self) -> tuple[str, ...]:
+        return tuple(sorted(self._symbols))
+
+    def add(self, symbol: str, status: int) -> None:
+        self._symbols[symbol.upper()] = {
+            "status": status,
+            "first_seen": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        if self._path is not None:
+            try:
+                self._path.parent.mkdir(parents=True, exist_ok=True)
+                self._path.write_text(
+                    json.dumps(self._symbols, indent=2, sort_keys=True), encoding="utf-8"
+                )
+            except OSError as error:  # a memo that cannot persist still memoises
+                logger.warning("could not persist unserved symbols: %s", error)
+
+
 class AlpacaDailyBars:
     """Daily bars from the same data host — the deterministic raw material for
     market context and benchmark returns.
 
     Same failure philosophy as the quote source: every failure path returns an
     empty list, never a fabricated bar. Callers render "unavailable", not zero.
+    A symbol the API refuses with a permanent client error is memoised
+    (``UnservedSymbols``) and never requested again — one log line, not one per
+    run.
     """
 
     def __init__(
@@ -221,8 +272,10 @@ class AlpacaDailyBars:
         api_secret: Optional[str] = None,
         feed: str = "iex",
         timeout: float = 10.0,
+        unserved: Optional[UnservedSymbols] = None,
     ) -> None:
         self._feed = feed
+        self._unserved = unserved if unserved is not None else UnservedSymbols()
         if client is not None:
             self._client = client
         else:
@@ -241,6 +294,8 @@ class AlpacaDailyBars:
         self, symbol: str, start: datetime, end: datetime
     ) -> list[dict[str, Any]]:
         """Daily bars, oldest first. Empty on any failure — missing, never zero."""
+        if symbol in self._unserved:
+            return []
         try:
             response = self._client.get(
                 f"/v2/stocks/{quote(symbol)}/bars",
@@ -257,9 +312,18 @@ class AlpacaDailyBars:
             logger.warning("bars request for %s failed: %s", symbol, error)
             return []
         if response.status_code >= 400:
-            logger.warning(
-                "bars for %s returned HTTP %d", symbol, response.status_code
-            )
+            if response.status_code in _UNSERVED_STATUSES:
+                logger.warning(
+                    "bars for %s returned HTTP %d: the venue does not serve it; "
+                    "memoised, not requested again",
+                    symbol,
+                    response.status_code,
+                )
+                self._unserved.add(symbol, response.status_code)
+            else:
+                logger.warning(
+                    "bars for %s returned HTTP %d", symbol, response.status_code
+                )
             return []
         try:
             payload: Any = response.json()

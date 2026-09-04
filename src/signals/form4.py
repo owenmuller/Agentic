@@ -60,6 +60,7 @@ from typing import Any, Callable, Optional, Sequence
 import httpx
 
 from signals.config import SourceConfig
+from signals.classification import is_us_listed_symbol
 from signals.edgar import ARCHIVES_URL, FTS_URL, EdgarFetcherBase
 from signals.scanners import RawItem
 
@@ -432,6 +433,13 @@ class Form4InsiderFetcher(EdgarFetcherBase):
         if not parsed.symbol:
             tally["no_symbol"] += 1
             return None
+        if not is_us_listed_symbol(parsed.symbol):
+            # Foreign private issuers file Form 4s too (AXIA Energia S.A.,
+            # symbol AXIA3, 2026-09-03); their home-market symbols are not
+            # instruments this venue serves, and a funnel row for one is a
+            # bars request that 400s on every report.
+            tally["foreign_symbol"] += 1
+            return None
         if self._is_routine(parsed, user_agent):
             tally["routine"] += 1
             return None
@@ -483,6 +491,7 @@ class Form4InsiderFetcher(EdgarFetcherBase):
             or parsed.sale_shares <= 0
             or parsed.sale_amount < self._min_insider_usd
             or not parsed.symbol
+            or not is_us_listed_symbol(parsed.symbol)
         ):
             return None
         if self._is_routine_month_for(parsed.owner_cik, parsed.sale_date, user_agent):

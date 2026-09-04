@@ -37,6 +37,7 @@ from zoneinfo import ZoneInfo
 
 from audit.records import RejectedStage, StageRejectionRecord
 from signals import SignalClass
+from signals.classification import is_us_listed_symbol
 from signals.records import Priority, Signal, signal_id_for
 
 from orchestrator.config import OverreactionScreenConfig
@@ -67,15 +68,16 @@ def build_universe(
     researched: Iterable[str],
     active_purchase: Iterable[str],
 ) -> dict[str, UniverseMember]:
-    """Core = held ∪ researched; broad = purchase-side active names not in core."""
-    held_set = {s.upper() for s in held}
-    core = held_set | {s.upper() for s in researched}
+    """Core = held ∪ researched; broad = purchase-side active names not in core.
+    Symbols the venue cannot serve (foreign home-market shapes) never enter."""
+    held_set = {s.upper() for s in held if is_us_listed_symbol(s.upper())}
+    core = held_set | {s.upper() for s in researched if is_us_listed_symbol(s.upper())}
     out: dict[str, UniverseMember] = {
         symbol: UniverseMember(symbol, "core", symbol in held_set) for symbol in core
     }
     for symbol in active_purchase:
         symbol = symbol.upper()
-        if symbol not in out:
+        if symbol not in out and is_us_listed_symbol(symbol):
             out[symbol] = UniverseMember(symbol, "broad", False)
     return out
 

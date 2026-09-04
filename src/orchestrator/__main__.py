@@ -202,7 +202,7 @@ def _attribution_text(checks) -> str:
     bars = None
     price_on = None
     try:
-        bars = AlpacaDailyBars()
+        bars = AlpacaDailyBars(unserved=_unserved_memo())
         benchmark = bars.window_return_pct("SPY", window_start, generated_at)
 
         def price_on(symbol, when):
@@ -561,7 +561,7 @@ def run() -> int:
         # The liquidity gate (ruling 2026-09-02) reads CONSOLIDATED volume: the
         # SIP feed, not IEX (IEX-only volume understates ADV ~30x, probed
         # 2026-09-02). Its own bars client; everything else stays on IEX.
-        sip_bars = AlpacaDailyBars(feed="sip")
+        sip_bars = AlpacaDailyBars(feed="sip", unserved=_unserved_memo())
         checks = preflight(
             adv=AdvSource(sip_bars, days=RiskLimits.load().liquidity.adv_days)
         )
@@ -671,7 +671,7 @@ def run() -> int:
                 checks.orchestrator_config.market_data.max_quote_age_seconds
             ),
         )
-        daily_bars = AlpacaDailyBars()
+        daily_bars = AlpacaDailyBars(unserved=_unserved_memo())
         context_builder = MarketContextBuilder(daily_bars)
         startup = start(
             fetcher=fetcher,
@@ -829,6 +829,14 @@ def run() -> int:
         lock.release()
 
 
+def _unserved_memo():
+    """The cross-run memo of symbols the data API refuses (ruling 2026-09-04):
+    one 400 per symbol, ever, instead of one per report."""
+    from execution.market_data import UnservedSymbols
+
+    return UnservedSymbols(default_data_dir() / "unserved_symbols.json")
+
+
 def _session_is_live(data_dir) -> bool:
     """Probe the instance lock without holding it."""
     lock = InstanceLock(data_dir / "orchestrator.lock")
@@ -960,7 +968,7 @@ def stress() -> int:
     # Whatever the sleeves do not account for — including the cash-sweep ETF,
     # which is cash in another form — rides flat in the total.
     other = state.nav - sum(held.values()) - equity_cash - mechanical_cash
-    bars = AlpacaDailyBars(feed="sip")
+    bars = AlpacaDailyBars(feed="sip", unserved=_unserved_memo())
 
     def closes(symbol: str, start: _date, end: _date):
         rows = []
@@ -1079,7 +1087,7 @@ def overreaction() -> int:
     researched = [s for symbols in registry.verdict_summary().values() for s in symbols]
     universe = build_universe(held, researched, registry.purchase_symbols())
     sectors = SectorMap.load()
-    bars = AlpacaDailyBars(feed="sip")
+    bars = AlpacaDailyBars(feed="sip", unserved=_unserved_memo())
     try:
         report = run_screen(
             sessions=sessions,

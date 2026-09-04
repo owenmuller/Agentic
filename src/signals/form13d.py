@@ -32,6 +32,7 @@ from datetime import date, timedelta
 from typing import Optional, Sequence
 
 from signals.config import SourceConfig
+from signals.classification import is_us_listed_symbol
 from signals.edgar import ARCHIVES_URL, FTS_URL, EdgarFetcherBase
 from signals.scanners import RawItem
 
@@ -56,12 +57,15 @@ def _first_text(root: ET.Element, name: str) -> str:
 
 
 def tickers_from_display(display: str) -> tuple[str, ...]:
-    """Tickers from a subject company's display name; CIK parens don't match."""
+    """Tickers from a subject company's display name; CIK parens don't match,
+    and only US-listed symbol shapes survive (ruling 2026-09-04)."""
     for match in _DISPLAY_TICKERS.finditer(display):
         group = match.group(1)
         if group.startswith("CIK"):
             continue
-        return tuple(part.strip() for part in group.split(","))
+        return tuple(
+            part.strip() for part in group.split(",") if is_us_listed_symbol(part.strip())
+        )
     return ()
 
 

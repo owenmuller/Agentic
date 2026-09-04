@@ -136,6 +136,23 @@ def _matches(text: str, patterns: Iterable[tuple[str, str]]) -> tuple[str, ...]:
     )
 
 
+#: A US-listed equity symbol's shape: 1-5 letters, optionally a share-class
+#: suffix (BRK.B, BRK-B, RDS.A). Foreign home-market symbols carry digits
+#: (B3: AXIA3, PETR4; HK: 0700) or run longer, and Alpaca does not serve them.
+#: Deterministic and offline: a proxy for "the venue serves it", applied where
+#: symbols enter from structured filings; the broker's asset check remains the
+#: authority at the point of entry.
+_US_LISTED_SYMBOL = re.compile(r"^[A-Z]{1,5}(?:[.-][A-Z]{1,2})?$")
+
+
+def is_us_listed_symbol(symbol: str) -> bool:
+    """Shape test for a symbol Alpaca can plausibly serve (ruling 2026-09-04:
+    AXIA3, a B3 symbol from a Brazilian issuer's Form 4, entered the funnel and
+    400ed the bars API every run). Under-admitting is cheap; a foreign symbol
+    admitted costs a wasted request on every report forever."""
+    return bool(symbol) and _US_LISTED_SYMBOL.match(symbol) is not None
+
+
 def extract_tickers(text: str) -> tuple[str, ...]:
     """Cashtags, plus bare symbols that sit in an unmistakable trading context.
 
