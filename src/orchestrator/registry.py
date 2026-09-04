@@ -41,6 +41,7 @@ from audit.records import (
     snapshot_transaction,
 )
 from signals import Signal, SignalClass
+from signals.filers import canonical_credibility_key
 
 from orchestrator.config import ConvergenceConfig
 
@@ -157,7 +158,7 @@ class SignalRegistry:
                 confidence = (
                     record.research.confidence if record.research else None
                 )
-            identity = snapshot.credibility_key or snapshot.source_id
+            identity = canonical_credibility_key(snapshot.credibility_key or snapshot.source_id)
             key = f"{snapshot.source_id}\x00{snapshot.external_id or record.decision_id}"
             transaction = snapshot_transaction(snapshot)
             for ticker in snapshot_tickers(snapshot):
@@ -199,7 +200,7 @@ class SignalRegistry:
             meta = signal.metadata
             if meta.get("measurement_only") == "true":
                 continue
-            identity = meta.get("credibility_key") or signal.source_id
+            identity = canonical_credibility_key(meta.get("credibility_key") or signal.source_id)
             filer = (meta.get("representative") or meta.get("fund") or "").strip()
             key = f"{signal.source_id}\x00{signal.external_id or signal.signal_id}"
             transaction = meta.get("transaction", "")
@@ -222,7 +223,7 @@ class SignalRegistry:
     def note_outcome(self, signal: Signal, outcome: str, confidence, code: str = "") -> None:
         """Register a verdict produced this session, so a second source arriving
         an hour after a decline is shown that decline."""
-        identity = signal.metadata.get("credibility_key") or signal.source_id
+        identity = canonical_credibility_key(signal.metadata.get("credibility_key") or signal.source_id)
         for ticker in self._tickers_of(signal):
             self._verdicts.append(
                 _Verdict(

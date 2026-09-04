@@ -66,6 +66,7 @@ from typing import Callable, NamedTuple, Optional, Sequence
 import httpx
 
 from signals.config import SourceConfig
+from signals.filers import normalize_filer
 from signals.scanners import RawItem
 
 QUIVER_CONGRESS_URL = "https://api.quiverquant.com/beta/live/congresstrading"
@@ -171,7 +172,7 @@ class QuiverCongressFetcher:
                 _matches_name(representative, name) for name in names
             ):
                 continue
-            item = self._item_from_row(row)
+            item = self._item_from_row(row, source.filer_aliases)
             if item is not None:
                 items.append(item)
         return items
@@ -201,8 +202,11 @@ class QuiverCongressFetcher:
             )
         return payload
 
-    def _item_from_row(self, row: dict) -> Optional[RawItem]:
-        representative = str(row.get("Representative", "")).strip()
+    def _item_from_row(self, row: dict, aliases=None) -> Optional[RawItem]:
+        filed_as = str(row.get("Representative", "")).strip()
+        # One person, one key (ruling 2026-09-04): the feed's spelling of a
+        # member varies filing to filing; the credibility key must not.
+        representative = normalize_filer(filed_as, aliases) or filed_as
         ticker = str(row.get("Ticker", "")).strip().upper()
         transaction = str(row.get("Transaction", "")).strip()
         amount = str(
@@ -262,6 +266,8 @@ class QuiverCongressFetcher:
                 # research-context priors key on the member, not the firehose.
                 "credibility_key": f"congressional_disclosures/{representative}",
                 "representative": representative,
+                # The feed's own spelling, kept for the record when it differs.
+                "representative_filed_as": filed_as if filed_as != representative else "",
                 "chamber": chamber,
                 "ticker": ticker,
                 "transaction": transaction,

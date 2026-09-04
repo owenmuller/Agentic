@@ -108,6 +108,10 @@ class SourceConfig(_Strict):
     #: Named accounts/funds this source watches. Adding an entry requires human
     #: approval (CLAUDE.md); the fetchers read the list, they never extend it.
     watchlist: tuple[dict[str, str], ...] = ()
+    #: Filer-name aliases (ruling 2026-09-04): rule-normalised variant -> canonical
+    #: name, for the spellings the honorific/suffix/initial rule cannot see. Adds
+    #: to signals.filers.DEFAULT_FILER_ALIASES.
+    filer_aliases: dict[str, str] = {}
     #: Contact header for sources that require one (SEC EDGAR). Must name an email.
     user_agent: Optional[str] = None
     #: Source type. "mirror" marks an unofficial account that republishes another

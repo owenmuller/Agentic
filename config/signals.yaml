@@ -329,6 +329,15 @@ classes:
         # pre_filtered code source_cap. Survives restarts (seeded from audit).
         daily_research_cap: 5
 
+        # Filer-name normalisation (human ruling 2026-09-04): names are
+        # canonicalised at ingest (honorifics, suffixes and initials dropped,
+        # title-cased) and every congressional credibility key is canonicalised
+        # on read, so "John J Mr Mcguire Iii" and "John Mcguire" are one filer
+        # with one track record. These aliases cover the variants the rule cannot
+        # see; keys are the RULE-NORMALISED spelling.
+        filer_aliases:
+          "Mitchell Mcconnell": "Mitch Mcconnell"
+
       - id: form4_insiders
         # Human ruling 2026-09-02: Form 4 insider CLUSTER buying, market-wide on
         # SEC EDGAR (free). The deterministic recipe lives in the fetcher and is

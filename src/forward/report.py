@@ -209,11 +209,23 @@ def render_forward_report(
         lines.extend(
             ["", f"Congressional, by filer (excess at {KEY_HORIZON}d):"]
         )
+        unresolved: list[tuple[str, int]] = []
         for key in sorted({e.credibility_key for e in congressional}):
             members = [e for e in congressional if e.credibility_key == key]
             filer = key.split("/", 1)[1] if "/" in key else key
+            values = _excess_values(members, rows, KEY_HORIZON)
+            if values:
+                lines.append(_stat_line(filer, values))
+            else:
+                unresolved.append((filer, len(members)))
+        if unresolved:
+            # One line, not one per filer (ruling 2026-09-04): fifty-seven rows of
+            # "no resolved marks yet" hid the report.
+            shown = ", ".join(f"{name} ({n})" for name, n in unresolved[:8])
+            more = f", … {len(unresolved) - 8} more" if len(unresolved) > 8 else ""
             lines.append(
-                _stat_line(filer, _excess_values(members, rows, KEY_HORIZON))
+                f"  {len(unresolved)} filer(s) with no resolved {KEY_HORIZON}d marks "
+                f"yet ({sum(n for _, n in unresolved)} signals): {shown}{more}"
             )
 
         lines.extend(

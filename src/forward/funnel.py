@@ -38,6 +38,9 @@ from audit.records import (
     snapshot_lag_days,
     snapshot_overreaction,
     snapshot_stake_percent,
+)
+from signals.filers import canonical_credibility_key
+from audit.records import (  # noqa: E402 - keep the original import block intact
     snapshot_tickers,
     snapshot_transaction,
 )
@@ -86,11 +89,21 @@ class FunnelEntry:
         return self.tickers[0] if self.tickers else None
 
 
-def funnel_entries(records: Iterable[AuditRecord]) -> list[FunnelEntry]:
+def funnel_entries(
+    records: Iterable[AuditRecord], filer_aliases=None
+) -> list[FunnelEntry]:
     """Flatten the log. First record per decision_id wins; execution rejections
-    and later records against the same id never add a second entry."""
+    and later records against the same id never add a second entry. Congressional
+    credibility keys are canonicalised on read (ruling 2026-09-04) so records
+    written under a member's variant spellings group as one filer."""
     seen: set[str] = set()
     out: list[FunnelEntry] = []
+
+    def key_of(snapshot) -> str:
+        return canonical_credibility_key(
+            snapshot.credibility_key or snapshot.source_id, filer_aliases
+        )
+
     for record in records:
         if isinstance(record, DecisionRecord):
             if record.sizing.strategy in ("mechanical", "cash_sweep"):
@@ -102,9 +115,7 @@ def funnel_entries(records: Iterable[AuditRecord]) -> list[FunnelEntry]:
                 FunnelEntry(
                     decision_id=record.decision_id,
                     source_id=record.signal.source_id,
-                    credibility_key=(
-                        record.signal.credibility_key or record.signal.source_id
-                    ),
+                    credibility_key=key_of(record.signal),
                     signal_class=record.signal.signal_class,
                     observed_at=record.signal.observed_at,
                     tickers=snapshot_tickers(record.signal),
@@ -132,9 +143,7 @@ def funnel_entries(records: Iterable[AuditRecord]) -> list[FunnelEntry]:
                 FunnelEntry(
                     decision_id=record.decision_id,
                     source_id=record.signal.source_id,
-                    credibility_key=(
-                        record.signal.credibility_key or record.signal.source_id
-                    ),
+                    credibility_key=key_of(record.signal),
                     signal_class=record.signal.signal_class,
                     observed_at=record.signal.observed_at,
                     tickers=snapshot_tickers(record.signal),

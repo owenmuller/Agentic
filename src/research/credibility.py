@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
 from signals import CredibilityLog, Signal
+from signals.filers import canonical_credibility_key
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle guard
     from research.reports import ResearchReport
@@ -139,11 +140,16 @@ class CredibilityTracker:
         self._flags: dict[str, int] = {}
         self._notes: dict[str, list[str]] = {}
 
+    @staticmethod
+    def _key(source_id: str) -> str:
+        """Congressional per-member keys canonicalise on the way in (ruling
+        2026-09-04): one person, one record, whatever the feed's spelling."""
+        return canonical_credibility_key(source_id) or source_id
+
     def observe(self, signal: Signal) -> None:
         """Count an emitted signal. Only forward calls reach the queue at all."""
-        self._forward_calls[signal.source_id] = (
-            self._forward_calls.get(signal.source_id, 0) + 1
-        )
+        key = self._key(signal.source_id)
+        self._forward_calls[key] = self._forward_calls.get(key, 0) + 1
 
     def record_report(
         self,
@@ -163,6 +169,7 @@ class CredibilityTracker:
         and a leaky mirror must accumulate its own record. Both parties get the
         report in their denominator; only the responsible one gets the flag.
         """
+        source_id = self._key(source_id)
         self._reports[source_id] = self._reports.get(source_id, 0) + 1
         if delivered_by:
             self._reports[delivered_by] = self._reports.get(delivered_by, 0) + 1
@@ -180,6 +187,7 @@ class CredibilityTracker:
         Called by the audit layer once a position closes. Nothing calls it yet — see
         this module's docstring.
         """
+        source_id = self._key(source_id)
         self._resolved[source_id] = self._resolved.get(source_id, 0) + 1
         if won:
             self._wins[source_id] = self._wins.get(source_id, 0) + 1
@@ -190,6 +198,7 @@ class CredibilityTracker:
         return sum(1 for record in self._log.records if record.source_id == source_id)
 
     def summary_for(self, source_id: str) -> CredibilitySummary:
+        source_id = self._key(source_id)
         return CredibilitySummary(
             source_id=source_id,
             forward_calls_seen=self._forward_calls.get(source_id, 0),

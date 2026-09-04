@@ -331,7 +331,11 @@ def _attribution_text(checks) -> str:
                 wanted_pairs,
             )
 
-            entries = funnel_entries(checks.audit.records())
+            aliases = {}
+            for klass in checks.signals_config.classes.values():
+                for source in klass.sources:
+                    aliases.update(source.filer_aliases)
+            entries = funnel_entries(checks.audit.records(), filer_aliases=aliases)
             engine = ForwardReturns(
                 bars.bars,
                 checks.audit.path.parent / "forward_returns.jsonl",

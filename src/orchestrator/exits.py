@@ -100,6 +100,7 @@ from risk_gate.schema import (
     parse_order,
 )
 from signals import Signal, SignalClass
+from signals.filers import same_filer
 
 from orchestrator.budget import ResearchBudget
 from orchestrator.config import ExitsConfig
@@ -376,7 +377,7 @@ class ExitEngine:
                     held_name = position.entry_order.underlying
                 if held_name.upper() != ticker:
                     continue
-                if position.originating_filer.strip().lower() != filer.lower():
+                if not same_filer(position.originating_filer, filer):
                     continue
                 key = (position.decision_id, signal.external_id or signal.signal_id)
                 if key in self._filer_events_seen:

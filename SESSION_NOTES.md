@@ -3046,6 +3046,41 @@ nothing ("this run measured nothing"). Lesson recorded: a SIP request's end
 must never be "now"; and a data source that returns [] on error needs its
 consumers to distinguish "quiet" from "blind".
 
+## Funnel hygiene (2026-09-04): non-US symbols, unserved-symbol memo, filer-name normalisation
+
+**AXIA3.** A Brazilian foreign private issuer (AXIA Energia S.A.) filed a
+Form 4; `issuerTradingSymbol` = AXIA3 (a B3 symbol) entered the funnel as a
+no_cluster control row and the bars API returned HTTP 400 on every weekly
+report. It was the only non-US-shaped symbol in the funnel. Two layers, both
+deterministic: a US-listed symbol-shape rule (1–5 letters, optional .A/-A
+class suffix) at the structured-filing ingest points — Form 4 issuer symbols
+(purchase and sale paths; tallied `foreign_symbol`), 13D display-name tickers,
+the overreaction screen's universe — and `UnservedSymbols` in the bars client:
+a permanent client error (400/404/422) memoises the symbol for the process
+and persists it to `data/unserved_symbols.json` so no later run asks again
+(403 data-plan, 429 and 5xx stay transient). Verified on the droplet: one
+AXIA3 line, then the memo. The mechanical arm's broker `tradeable_equity`
+check at entry is unchanged and remains the authority at the point of entry.
+
+**Filer names.** "John J Mr Mcguire Iii" (8 records) and "John Mcguire" (6)
+were two credibility keys for one person — a split track record; the log also
+carried "A. Mitchell Jr. McConnell" and "Richard Dean Dr Mccormick". Rule
+(`signals.filers.normalize_filer`): drop honorifics and generational suffixes
+wherever they sit, drop single-letter initials, title-case, then a small alias
+table for what the rule cannot see (`filer_aliases` on the congressional
+source; default: "Mitchell Mcconnell" → "Mitch Mcconnell"). Applied at
+INGEST (Quiver keys and `representative` are canonical; the feed's spelling is
+kept as `representative_filed_as` when it differs) and ON READ everywhere a
+congressional key is grouped — the forward funnel, the convergence registry's
+identities, the credibility tracker, the filer-event match in the exit engine
+— because the audit log is append-only: existing records are re-keyed as they
+are read, never rewritten. Under-merging is the chosen failure mode: two keys
+for one person split a record; one key for two people corrupts two.
+
+**Report legibility.** By-filer rows with no resolved marks collapse into one
+count line ("N filer(s) with no resolved 20d marks yet (M signals): …") instead
+of 57 rows of "no resolved marks yet".
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in
