@@ -595,6 +595,7 @@ def start(
             adapter=checks.adapter,
             audit=checks.audit,
             prices=prices,
+            bids=getattr(prices, "bid", None),
             config=checks.limits.cash_management,
             clock=checks.clock,
             id_factory=id_factory or (lambda: _uuid.uuid4().hex[:16]),

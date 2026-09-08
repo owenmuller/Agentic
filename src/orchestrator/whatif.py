@@ -29,6 +29,7 @@ from typing import Iterable, Optional
 from audit.records import (
     DecisionRecord,
     SignalSnapshot,
+    RejectedStage,
     StageRejectionRecord,
     snapshot_amount_range,
     snapshot_lag_days,
@@ -169,6 +170,8 @@ def render_whatif_report(
             snapshot, research = record.signal, record.research
             decision_id = record.decision_id
         elif isinstance(record, StageRejectionRecord):
+            if record.stage is RejectedStage.EXECUTION:
+                continue  # an order's fate, not a signal's; its decision is examined
             snapshot, research = record.signal, record.research
             decision_id = record.decision_id
         else:

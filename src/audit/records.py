@@ -659,6 +659,11 @@ class StageRejectionRecord(_Record):
     est_input_tokens: Optional[int] = None
     est_output_tokens: Optional[int] = None
     est_cost_usd: Optional[Decimal] = None
+    #: Set when this record closes the book on ONE submitted order that terminated
+    #: without filling (2026-09-08): settlement can then tell "that attempt is
+    #: over" from "that attempt is still unknown", instead of listing the order
+    #: as pending on every health run until the end of time.
+    broker_order_id: Optional[str] = None
 
 
 class ExitReason(StrEnum):

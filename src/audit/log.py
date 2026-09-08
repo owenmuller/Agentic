@@ -232,6 +232,7 @@ class AuditLog:
         expression: Optional["ExpressionSnapshot"] = None,
         screen_report: Optional[ResearchReport] = None,
         screen_usage: Optional[ResearchUsage] = None,
+        broker_order_id: Optional[str] = None,
     ) -> StageRejectionRecord:
         """Record a signal that stopped before the gate, or an order the broker refused.
 
@@ -265,9 +266,35 @@ class AuditLog:
             est_input_tokens=usage.input_tokens if usage else None,
             est_output_tokens=usage.output_tokens if usage else None,
             est_cost_usd=usage.cost_usd if usage else None,
+            broker_order_id=broker_order_id,
         )
         self._append(record)
         return record
+
+    def record_unfilled_order(
+        self,
+        decision_id: str,
+        broker_order_id: str,
+        status: str,
+        message: str,
+    ) -> StageRejectionRecord:
+        """Close the book on a submitted order that terminated without filling.
+
+        An execution-stage rejection naming the broker order. Written by whoever
+        learns the order is over — the engine that placed it, or startup
+        recovery — so an exit (or a sweep buy) the venue cancelled at the close
+        stops reading as "submitted, fate unknown". The 2026-09-04/08 unsweeps
+        sat in health as pending for four days because nothing wrote this.
+        """
+        decision = self._decision(decision_id)
+        return self.record_stage_rejection(
+            decision_id,
+            RejectedStage.EXECUTION,
+            status,
+            message,
+            signal_snapshot=decision.signal,
+            broker_order_id=broker_order_id,
+        )
 
     def record_thesis_review(
         self,

@@ -34,6 +34,23 @@ captured yield. Attribution reads the accrual off these trails as its own line
 One working order at a time, by design: sweeping is a slow correction loop,
 and a second order racing the first is how a buffer overshoots.
 
+Pricing sides (incident 2026-09-04/08)
+--------------------------------------
+A sweep BUY limits at the ask rounded up; an unsweep SELL limits at the BID
+rounded down. Both are marketable — they cross the spread and print. The first
+two live unsweeps limited at the ask: on a T-bill ETF quoted a cent wide that
+moves a cent a day, a sell resting at the ask never trades, and Alpaca
+cancelled both at the 16:00 close unfilled. Cash sat below the buffer for
+four days while health showed two orders "pending settlement". When no bid is
+quoted the sell limits one cent under the ask — the bid in practice on the
+cent-wide names this sleeve may hold, and only ever a floor: a marketable
+limit fills at the best available price, so pricing under the bid costs
+nothing and pricing at the ask costs the fill.
+
+Every terminal-unfilled order — a sell cancelled at the close, a buy that never
+printed — writes an execution-stage release record naming the broker order, so
+the audit log knows the attempt is over and settlement stops listing it.
+
 PDT note: a sweep buy and an unsweep sell of the merged position on the same
 day counts a day trade in the gate's ledger. In the preferred cash account the
 count is not enforced; the buffer's margin exists partly to make same-day
@@ -95,11 +112,15 @@ class CashSweeper:
         clock: Callable[[], datetime],
         id_factory: Callable[[], str],
         note: Optional[Callable[[str], None]] = None,
+        bids: Optional[Callable[[str], Optional[Decimal]]] = None,
     ) -> None:
         self._gate = gate
         self._adapter = adapter
         self._audit = audit
         self._prices = prices
+        #: The bid side, for unsweep sells. Optional: a price source without
+        #: one (the test doubles) sells a cent under the ask instead.
+        self._bids = bids
         self._config = config
         self._clock = clock
         self._id_factory = id_factory
@@ -236,7 +257,11 @@ class CashSweeper:
             self._note(f"SWEEP gate rejected: {decision.code} — recorded")
             return 0
         try:
-            receipt = self._adapter.submit_order(decision)
+            # Named by its decision id so startup recovery can ask the broker
+            # about it by name if this process dies before it settles.
+            receipt = self._adapter.submit_order(
+                decision, client_reference=record.decision_id
+            )
         except BrokerError as error:
             self._gate.cancel(decision)
             logger.warning("broker refused sweep buy: %s; retrying next tick", error)
@@ -251,8 +276,7 @@ class CashSweeper:
         # spans lots resolves over the next few ticks rather than in one racing
         # batch of orders.
         lot = min(self._lots.values(), key=lambda item: item.opened_at)
-        limit = quote.quantize(CENTS, rounding=ROUND_DOWN)
-        limit = max(limit, CENTS)
+        limit = self._sell_limit(quote)
         step = self._adapter.equity_quantity_step
         wanted = (deficit / limit).quantize(step, rounding=ROUND_UP)
         quantity = min(lot.quantity, wanted)
@@ -313,7 +337,19 @@ class CashSweeper:
             price = status.filled_avg_price
             if filled <= 0 or price is None:
                 self._gate.cancel(working.approved)
-                continue  # the buffer imbalance is still there; next tick retries
+                # Close the attempt in the log too: without this the record
+                # stays "submitted, no fill" forever and health lists it as
+                # pending settlement on every run. The buffer imbalance is
+                # re-measured this same tick and retried.
+                self._audit.record_unfilled_order(
+                    working.decision_id,
+                    order_id,
+                    status.status,
+                    f"{working.side} order {order_id} terminated {status.status} "
+                    f"without filling; reservation released, buffer re-measured "
+                    f"next pass",
+                )
+                continue
             self._gate.record_fill(working.approved, price, filled_units=filled)
             value = filled * price
             self._audit.record_fill(
@@ -373,6 +409,28 @@ class CashSweeper:
         return released
 
     # -- internals ---------------------------------------------------------------------
+
+    def _sell_limit(self, quote: Decimal) -> Decimal:
+        """A marketable sell limit: the bid rounded down, else a cent under the
+        ask. Never below one cent."""
+        bid = self._bid()
+        if bid is not None:
+            limit = bid.quantize(CENTS, rounding=ROUND_DOWN)
+        else:
+            limit = quote.quantize(CENTS, rounding=ROUND_DOWN) - CENTS
+        return max(limit, CENTS)
+
+    def _bid(self) -> Optional[Decimal]:
+        if self._bids is None:
+            return None
+        try:
+            bid = self._bids(self._config.symbol)
+        except Exception:  # noqa: BLE001 - a price bug must not kill the loop
+            logger.exception("sweep bid failed for %s", self._config.symbol)
+            return None
+        if bid is None or bid <= ZERO:
+            return None
+        return bid
 
     def _quote(self) -> Optional[Decimal]:
         try:

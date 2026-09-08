@@ -69,6 +69,26 @@ def test_a_fresh_two_sided_quote_returns_the_ask():
     assert request.url.params["feed"] == "iex"
 
 
+def test_bid_returns_the_bid_side_under_the_same_freshness_rules():
+    source, _ = source_for(quote_response(bp="100.47", ap="100.48", t=FRESH))
+    assert source.bid("SGOV") == Decimal("100.47")
+    assert source("SGOV") == Decimal("100.48")  # the ask, unchanged
+
+    stale = (NOW - timedelta(seconds=301)).isoformat().replace("+00:00", "Z")
+    source, _ = source_for(quote_response(bp="100.47", ap="100.48", t=stale))
+    assert source.bid("SGOV") is None
+
+
+def test_bid_never_substitutes_the_ask():
+    """A sell that must print cannot be priced off the ask (2026-09-08)."""
+    source, _ = source_for(quote_response(bp=0, ap="100.48", t=FRESH))
+    assert source.bid("SGOV") is None
+    source, _ = source_for(quote_response(ap="100.48", t=FRESH))
+    assert source.bid("SGOV") is None
+    source, _ = source_for(httpx.Response(500))
+    assert source.bid("SGOV") is None
+
+
 def test_a_one_sided_quote_falls_back_to_the_bid():
     """IEX quotes legitimately carry ap=0 when no ask is on record. A bid still
     bounds a buy safely — a limit at the bid cannot fill above the bid."""

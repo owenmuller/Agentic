@@ -3081,6 +3081,80 @@ for one person split a record; one key for two people corrupts two.
 count line ("N filer(s) with no resolved 20d marks yet (M signals): …") instead
 of 57 rows of "no resolved marks yet".
 
+## INCIDENT (2026-09-04 → 09-08): first live unsweeps never filled — DIAGNOSED AND FIXED
+
+**What health showed.** After five mechanical entries took cash to $13,960
+(buffer ≈ $17.5K), the sweeper correctly triggered an unsweep, and health
+listed two orders "pending settlement": `25c3dac81c9d4f8f sell 0 SGOV`, twice.
+
+**What actually happened, from the audit log and the venue.**
+
+| attempt | deficit | units asked | limit | venue outcome |
+|---|---|---|---|---|
+| 2026-09-04 17:20Z | $870.14 | 8.660669726 | 100.47 (the ask) | `canceled` 20:00:00Z, filled 0 |
+| 2026-09-08 13:40Z | $4,046.29 | 40.269611249 | 100.48 (the ask) | `canceled` 20:00:00Z, filled 0 |
+
+Three separate defects, none of them the sizing arithmetic:
+
+1. **"sell 0" was a rendering bug.** `pending_settlement` hard-coded
+   `quantity=ZERO` for exit rows. The orders asked for 8.66 and 40.27 units —
+   deficit ÷ limit, rounded UP at the venue's 1e-9 step, capped at the lot.
+   That math was and is correct. (A $4,046 hole is a ~$3.4K deficit, not
+   $4K: the buffer is NAV-scaled and moves with the cash, so the ~35-unit
+   estimate was right for the deficit the sweeper actually measured.)
+2. **The sells rested at the ask and never printed.** The price source
+   returns the ASK (the correct bound for buys; the sweep buy at
+   `ROUND_UP(ask)` filled in five minutes). An unsweep sell limited at the
+   ask on a T-bill ETF quoted a cent wide that moves a cent a day sits on
+   the book all session; Alpaca cancels day orders at the 16:00 close. Both
+   day sells died that way, zero filled, and cash stayed below the buffer for
+   four days.
+3. **Nothing closed the attempt in the log.** On a terminal-unfilled order
+   the sweeper (and the judged exit engine) released the gate reservation
+   and moved on; the `ExitRecord` stayed "submitted, no fill" forever, so
+   health listed it as pending on every run — and startup recovery, seeing
+   `canceled / 0`, wrote nothing either ("nothing sold" was silently
+   returned as "nothing to record").
+
+**Fixes.**
+
+- **Unsweep sells price at the BID**, rounded down (`AlpacaPriceSource.bid`,
+  same staleness rules as the ask, never substituted by the ask; wired via
+  `CashSweeper(bids=…)`). With no bid quoted: one cent under the ask. Either
+  way the limit is a floor — a marketable limit fills at the best available
+  price, so pricing under the bid costs nothing and pricing at the ask cost
+  the fill.
+- **Release records.** `AuditLog.record_unfilled_order` writes an
+  execution-stage rejection naming the broker order id (new optional
+  `StageRejectionRecord.broker_order_id`) whenever an order terminates
+  unfilled — from the sweeper's settle, the exit engine's settle, and
+  startup recovery. `pending_settlement` treats a released order as
+  settled, renders the quantity the order ASKED for, and carries the
+  broker order id so a human can look it up at the venue. Release records
+  are an order's fate, not a signal: funnel (no bucket for EXECUTION),
+  registry and what-if skip them explicitly.
+- **Sweep buys are named** (`client_reference=decision_id`) so recovery can
+  ask the venue about one by name if the process dies mid-flight.
+- **Zero-quantity orders were already unrepresentable** — `ShareQuantity`
+  is `gt=0`, ≤9 dp — and the sweeper never constructed one. A test now
+  pins that the sweeper's order types refuse 0, negatives and sub-step
+  quantities, alongside the existing `test_share_quantity_refuses_zero_and_negative`.
+
+**Tests** (7 new): deficit → units at the bid (35 units on the whole-share
+venue for the test's $3.4K deficit, `qty × limit ≥ deficit`); no-bid
+fallback; zero/negative/sub-step quantities refused by the schema; a sell
+cancelled unfilled at the close is released, disappears from pending, and
+the same pass retries at the bid; startup recovery clears the droplet's
+exact state and the first pass retries; sweep buys carry the decision id;
+`bid()` freshness and never-the-ask; the judged exit engine's unfilled exit
+is released and re-fires.
+
+**Confirmation still owed.** The droplet's two dead orders are released by
+recovery on the next `health`/startup (both venue answers are `canceled / 0`).
+Cash returning to the buffer needs a market session: the retry prices at the
+bid at the next tick after 09:30 ET on 2026-09-09 and should print like the
+buy did. Check health then — `cash management` line and no pending rows.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

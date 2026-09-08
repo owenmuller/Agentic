@@ -67,12 +67,18 @@ class PendingSettlement:
     side: str
     quantity: Decimal
     sleeve: str
+    #: The venue's id for the order, when the log has it (exits record theirs at
+    #: submission), so a human can look the order up where it actually lives.
+    broker_order_id: Optional[str] = None
 
     def describe(self) -> str:
-        return (
+        text = (
             f"{self.decision_id} {self.side} {self.quantity} {self.symbol} "
             f"({self.sleeve} sleeve)"
         )
+        if self.broker_order_id:
+            text += f" order {self.broker_order_id}"
+        return text
 
 
 def _entry_needs_settlement(trail: AuditTrail) -> bool:
@@ -92,9 +98,25 @@ def _entry_needs_settlement(trail: AuditTrail) -> bool:
     )
 
 
+def _released_order_ids(trail: AuditTrail) -> set[str]:
+    """Broker orders the log already knows terminated unfilled."""
+    return {
+        rejection.broker_order_id
+        for rejection in trail.stage_rejections
+        if rejection.broker_order_id
+    }
+
+
+def _ordered_quantity(order_payload: dict) -> Decimal:
+    raw = order_payload.get("quantity", order_payload.get("contracts", "0"))
+    return Decimal(str(raw or 0))
+
+
 def _unsettled_exits(trail: AuditTrail) -> list:
-    """Exits submitted to the broker with no sell fill recorded against them."""
+    """Exits submitted to the broker with no sell fill recorded against them,
+    and no release record saying they terminated unfilled."""
     settled = {fill.broker_order_id for fill in trail.fills if fill.side == "sell"}
+    settled |= _released_order_ids(trail)
     return [
         exit_record
         for exit_record in trail.exits
@@ -121,18 +143,22 @@ def pending_settlement(audit: AuditLog) -> list[PendingSettlement]:
                     decision_id=decision.decision_id,
                     symbol=symbol,
                     side="buy",
-                    quantity=Decimal(str(order_payload.get("quantity", "0") or 0)),
+                    quantity=_ordered_quantity(order_payload),
                     sleeve=sleeve,
                 )
             )
         for exit_record in _unsettled_exits(trail):
+            # The quantity the sell-to-close ASKED for (2026-09-08: this used to
+            # be hard-coded zero, and health rendered a 40-unit unsweep as
+            # "sell 0 SGOV").
             pending.append(
                 PendingSettlement(
                     decision_id=decision.decision_id,
                     symbol=symbol,
                     side="sell",
-                    quantity=ZERO,
+                    quantity=_ordered_quantity(exit_record.gate.order or {}),
                     sleeve=sleeve,
+                    broker_order_id=exit_record.broker_order_id,
                 )
             )
     return pending
@@ -242,10 +268,24 @@ def _recover_exit(
     status = _status_for(adapter, exit_record.broker_order_id, by_id=True)
     if status is None or not status.is_terminal:
         return None
-    if status.filled_quantity <= 0 or status.filled_avg_price is None:
-        return None  # nothing sold; the position is still held and still tracked
-
     order = parse_order(decision.gate.order)
+    symbol = getattr(order, "symbol", "?")
+    if status.filled_quantity <= 0 or status.filled_avg_price is None:
+        # Nothing sold: the position is still held and still tracked. Say so in
+        # the log, or this exit reads as pending settlement on every run.
+        audit.record_unfilled_order(
+            decision.decision_id,
+            exit_record.broker_order_id,
+            status.status,
+            f"recovered at startup: exit order {exit_record.broker_order_id} "
+            f"terminated {status.status} without filling; the position is still "
+            f"held and still tracked",
+        )
+        return (
+            f"{decision.decision_id} {symbol}: exit order terminated "
+            f"{status.status} unfilled — release recorded"
+        )
+
     multiplier = unit_multiplier(order)
     audit.record_fill(
         decision.decision_id,

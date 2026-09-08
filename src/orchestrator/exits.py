@@ -1323,8 +1323,18 @@ class ExitEngine:
 
         if filled <= 0 or filled_avg_price is None:
             # Nothing printed. Release the close reservation; the breach (or the
-            # close verdict) is still standing, so the next cycle re-fires.
+            # close verdict) is still standing, so the next cycle re-fires. The
+            # release is written down (2026-09-08) so the attempt stops reading
+            # as pending settlement.
             self._gate.cancel(working.approved)
+            self._audit.record_unfilled_order(
+                position.decision_id,
+                working.broker_order_id,
+                status,
+                f"exit order {working.broker_order_id} terminated {status} "
+                f"without filling; reservation released, the exit re-fires next "
+                f"cycle",
+            )
             logger.info(
                 "exit order for %s terminated %s unfilled; retrying next cycle",
                 position.decision_id,

@@ -22,7 +22,8 @@ Which side: the ask when one is priced, else the bid. The ask is the correct bou
 for a buy (it is what the gate cash-secures against); for the exit engine's sell
 limits it is a marginally conservative floor on tight-spread names. A one-sided
 quote falls back to the bid, which for a buy can only under-fill, never over-spend —
-the limit is the bound either way.
+the limit is the bound either way. ``bid()`` exposes the other side for sells that
+must be marketable (the cash sweep's unsweeps, 2026-09-08).
 """
 
 from __future__ import annotations
@@ -94,6 +95,34 @@ class AlpacaPriceSource:
 
     def __call__(self, symbol: str) -> Optional[Decimal]:
         """The latest usable quote for ``symbol``, or None. Never raises, never zero."""
+        quote_body = self._fresh_quote(symbol)
+        if quote_body is None:
+            return None
+        price = self._usable_side(quote_body)
+        if price is None:
+            logger.warning("quote for %s has no priced side; treating as missing", symbol)
+        return price
+
+    def bid(self, symbol: str) -> Optional[Decimal]:
+        """The bid side of a fresh quote, or None: the marketable floor for a
+        SELL, under the same staleness rules as the ask. A quote with no bid is
+        missing here, never substituted by the ask — a sell resting at the ask
+        on a quiet name does not print (the 2026-09-04/08 unsweeps)."""
+        quote_body = self._fresh_quote(symbol)
+        if quote_body is None:
+            return None
+        raw = quote_body.get("bp")
+        try:
+            price = Decimal(str(raw)) if raw is not None else None
+        except (InvalidOperation, ValueError):
+            price = None
+        if price is None or price <= ZERO:
+            logger.warning("quote for %s has no priced bid; treating as missing", symbol)
+            return None
+        return price
+
+    def _fresh_quote(self, symbol: str) -> Optional[dict]:
+        """The latest quote body if it is fresh and well-formed, else None."""
         try:
             response = self._client.get(
                 f"/v2/stocks/{quote(symbol)}/quotes/latest",
@@ -135,11 +164,7 @@ class AlpacaPriceSource:
                 self._max_age,
             )
             return None
-
-        price = self._usable_side(quote_body)
-        if price is None:
-            logger.warning("quote for %s has no priced side; treating as missing", symbol)
-        return price
+        return quote_body
 
     def spread_pct(self, symbol: str) -> Optional[Decimal]:
         """Quoted spread at this moment, percent of mid (execution-fidelity

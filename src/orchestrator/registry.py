@@ -142,6 +142,8 @@ class SignalRegistry:
                 continue
             if isinstance(record, StageRejectionRecord) and record.code in MEASUREMENT_CODES:
                 continue  # measurement rows are graded, never converged on
+            if isinstance(record, StageRejectionRecord) and record.stage is RejectedStage.EXECUTION:
+                continue  # shares its decision's id: the decision already seeded it
             snapshot = record.signal
             if isinstance(record, DecisionRecord):
                 if record.sizing.strategy in ("mechanical", "cash_sweep"):

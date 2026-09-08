@@ -1793,3 +1793,38 @@ def test_a_review_may_spend_the_entry_share_nobody_claimed():
     budget = ResearchBudget(4, review_reserve_fraction=Decimal("0.25"))
     assert [budget.try_spend(for_review=True) for _ in range(4)] == [True] * 4
     assert budget.try_spend(for_review=True) is False
+
+
+def test_an_exit_that_terminates_unfilled_is_released_in_the_log(
+    tmp_path, limits, signals_config, research_config
+):
+    """A day sell the venue cancels at the close with nothing filled writes a
+    release naming the order (2026-09-08), so it stops reading as pending
+    settlement; the breach still stands and the next cycle re-fires."""
+    from audit.records import RejectedStage
+    from orchestrator.recovery import pending_settlement
+
+    started, prices, _ = enter_position(
+        tmp_path, limits, signals_config, research_config
+    )
+    broker = started.adapter
+    prices.set("NUE", "119.00")
+    broker.fill = "new"
+    started.loop.tick()
+    exit_id = started.exits.working_exits[0]
+    pending = [p for p in pending_settlement(started.audit) if p.side == "sell"]
+    assert [p.quantity for p in pending] == [Decimal("13")]  # what it asked for
+
+    broker.set_status(exit_id, OrderStatus(exit_id, "canceled", Decimal("0"), None))
+    broker.fill = "filled"
+    report = started.loop.tick()
+    assert report.exits_started == 1  # re-fired the same cycle
+    trail = started.audit.trail("dec-1")
+    release = [r for r in trail.stage_rejections if r.broker_order_id == exit_id]
+    assert len(release) == 1 and release[0].stage is RejectedStage.EXECUTION
+    assert trail.never_executed is False  # the ENTRY filled; only the exit attempt died
+    still = [p.broker_order_id for p in pending_settlement(started.audit) if p.side == "sell"]
+    assert exit_id not in still and len(still) == 1  # only the re-fire is pending
+
+    assert started.loop.tick().positions_closed == 1
+    assert [p for p in pending_settlement(started.audit) if p.side == "sell"] == []

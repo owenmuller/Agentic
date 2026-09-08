@@ -13,10 +13,10 @@ reads the long-term boundary correctly.
 from __future__ import annotations
 
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_UP, Decimal
 
-from audit.records import ExitReason, long_term_boundary
-from execution.base import BrokerPosition
+from audit.records import ExitReason, RejectedStage, long_term_boundary
+from execution.base import BrokerPosition, OrderStatus
 from execution.environment import LIVE_CONFIRMATION_VARIABLE
 from orchestrator import start
 from risk_gate.gate import RiskGate
@@ -71,6 +71,14 @@ def sgov_buy(quantity="800", price="100.40"):
         execution=LimitExecution(limit_price=Decimal(price)),
         sleeve="cash_management",
     )
+
+
+class TwoSidedPrices(MutablePrices):
+    """Ask from the table, bid one cent under: a cent-wide T-bill ETF."""
+
+    def bid(self, symbol):
+        ask = self.table.get(symbol)
+        return None if ask is None else ask - Decimal("0.01")
 
 
 def quiet_build(tmp_path, limits, signals_config, research_config, **kwargs):
@@ -417,3 +425,201 @@ def test_the_long_term_boundary_is_anniversary_plus_one_day():
     acquired = date(2026, 9, 2)
     assert acquired + timedelta(days=365) < long_term_boundary(acquired)
     assert acquired + timedelta(days=367) >= long_term_boundary(acquired)
+
+
+# ================================================================================
+# The unsweep incident (2026-09-04/08): sizing, pricing side, release records
+# ================================================================================
+
+
+def _withdraw(started, amount):
+    """A hole in cash below the buffer, as five mechanical entries opened one."""
+    started.gate.state.cash -= Decimal(amount)
+
+
+def test_an_unsweep_sizes_to_the_deficit_and_limits_at_the_bid(
+    tmp_path, limits, signals_config, research_config
+):
+    """A $4,046 hole in cash is a ~$3.4K deficit once the NAV-scaled buffer
+    moves with it: 35 whole units at a 100.47 bid on this venue (34.2 rounded
+    UP so the fill covers the deficit), priced at the BID so it prints."""
+    broker = FakeBroker()
+    started, _, _ = quiet_build(
+        tmp_path, limits, signals_config, research_config,
+        broker=broker, prices=TwoSidedPrices(SGOV="100.48"),
+    )
+    started.loop.tick()
+    started.loop.tick()  # the sweep buy (at the 100.48 ask) settles
+    sweeper = started.loop.sweeper
+    assert broker.payloads[-1]["limit_price"] == Decimal("100.48")
+
+    _withdraw(started, "4046.29")
+    deficit = sweeper.buffer() - started.gate.state.cash
+    assert deficit > 0
+    assert started.loop.tick().sweep_orders == 1
+    payload = broker.payloads[-1]
+    assert payload["limit_price"] == Decimal("100.47")  # the bid, not the ask
+    assert payload["qty"] == (deficit / Decimal("100.47")).quantize(
+        Decimal("1"), rounding=ROUND_UP
+    )
+    assert payload["qty"] == Decimal("35")
+    assert payload["qty"] * payload["limit_price"] >= deficit
+
+    started.loop.tick()  # the sell settles
+    assert started.gate.state.cash >= sweeper.buffer()
+    trail = started.audit.trail(sweeper.lots[0].decision_id)
+    assert [f.side for f in trail.fills] == ["buy", "sell"]
+    assert trail.fills[-1].filled_quantity == Decimal("35")
+
+
+def test_without_a_bid_the_unsweep_limits_a_cent_under_the_ask(
+    tmp_path, limits, signals_config, research_config
+):
+    broker = FakeBroker()
+    started, _, _ = quiet_build(
+        tmp_path, limits, signals_config, research_config,
+        broker=broker, prices=MutablePrices(SGOV="100.48"),
+    )
+    started.loop.tick()
+    started.loop.tick()
+    _withdraw(started, "4046.29")
+    assert started.loop.tick().sweep_orders == 1
+    assert broker.payloads[-1]["limit_price"] == Decimal("100.47")
+
+
+def test_a_zero_quantity_order_is_unrepresentable():
+    """The schema, not the sweeper's arithmetic, is what makes "sell 0 SGOV"
+    impossible: ShareQuantity is strictly positive and no finer than 1e-9."""
+    from pydantic import ValidationError
+
+    for bad in ("0", "0.000000000", "-1", "0.0000000001"):
+        with pytest.raises(ValidationError):
+            EquitySellToCloseOrder(
+                symbol="SGOV",
+                quantity=Decimal(bad),
+                execution=LimitExecution(limit_price=Decimal("100.47")),
+                sleeve="cash_management",
+            )
+        with pytest.raises(ValidationError):
+            sgov_buy(quantity=bad)
+
+
+def test_an_unsweep_cancelled_unfilled_at_the_close_is_released_and_retried(
+    tmp_path, limits, signals_config, research_config
+):
+    """What happened live: the venue cancelled the day sell at 16:00 with
+    nothing filled. The release is written down, the pending row disappears,
+    and the same pass retries at the bid."""
+    from forward import funnel_entries
+    from orchestrator.recovery import pending_settlement
+
+    broker = FakeBroker()
+    started, _, _ = quiet_build(
+        tmp_path, limits, signals_config, research_config,
+        broker=broker, prices=TwoSidedPrices(SGOV="100.48"),
+    )
+    started.loop.tick()
+    started.loop.tick()
+    sweeper = started.loop.sweeper
+    lot_id = sweeper.lots[0].decision_id
+
+    broker.fill = "new"  # the sell will rest
+    _withdraw(started, "4046.29")
+    assert started.loop.tick().sweep_orders == 1
+    exit_id = broker.submitted[-1].broker_order_id
+    asked = broker.payloads[-1]["qty"]
+    assert asked == Decimal("35")
+    # While it works, health shows the quantity the order ASKED for, never 0.
+    pending = [p for p in pending_settlement(started.audit) if p.side == "sell"]
+    assert [(p.quantity, p.broker_order_id) for p in pending] == [(asked, exit_id)]
+    assert f"sell 35 SGOV (cash_management sleeve) order {exit_id}" in pending[0].describe()
+
+    broker.set_status(exit_id, OrderStatus(exit_id, "canceled", ZERO, None))
+    broker.fill = "filled"
+    report = started.loop.tick()  # settles the cancel, retries in the same pass
+    assert report.sweep_orders == 1
+    assert broker.payloads[-1]["limit_price"] == Decimal("100.47")
+
+    trail = started.audit.trail(lot_id)
+    release = [r for r in trail.stage_rejections if r.broker_order_id == exit_id]
+    assert len(release) == 1
+    assert release[0].stage is RejectedStage.EXECUTION
+    assert release[0].code == "canceled"
+    # The cancelled attempt is gone from pending; the retry is pending until it settles.
+    still = [p.broker_order_id for p in pending_settlement(started.audit) if p.side == "sell"]
+    assert exit_id not in still and len(still) == 1
+    assert sweeper.lots[0].quantity == Decimal("821")  # nothing sold, still held
+    assert started.gate.state.reserved_cash == ZERO  # nothing left reserved
+
+    started.loop.tick()  # the retry settles
+    assert started.gate.state.cash >= sweeper.buffer()
+    assert [p for p in pending_settlement(started.audit) if p.side == "sell"] == []
+    assert len(started.audit.trail(lot_id).exits) == 2  # two attempts, both recorded
+    # The release record is an order's fate, not a signal: it reaches neither
+    # the funnel nor the convergence registry.
+    assert funnel_entries(started.audit.records()) == []
+
+
+def test_startup_recovery_clears_an_unsweep_the_venue_cancelled(
+    tmp_path, limits, signals_config, research_config
+):
+    """The droplet's state on 2026-09-08: two unsweep exits submitted, both
+    cancelled unfilled at the close, the process gone before it noticed. The
+    next startup asks the venue, writes the releases, and health is clean."""
+    from orchestrator.recovery import pending_settlement
+
+    clock = FakeClock()
+    broker = FakeBroker()
+    first, _, _ = quiet_build(
+        tmp_path, limits, signals_config, research_config,
+        broker=broker, prices=TwoSidedPrices(SGOV="100.48"), clock=clock,
+    )
+    first.loop.tick()
+    first.loop.tick()
+    lot_id = first.loop.sweeper.lots[0].decision_id
+    broker.fill = "new"
+    _withdraw(first, "4046.29")
+    first.loop.tick()
+    exit_id = broker.submitted[-1].broker_order_id
+    first.loop.sweeper._working.clear()  # the process died holding the order
+    assert [p.side for p in pending_settlement(first.audit)] == ["sell"]
+
+    venue = FakeBroker(
+        cash=Decimal("13459.63"),
+        positions=[
+            BrokerPosition(
+                "SGOV", Decimal("821"), Decimal("82494.08"), Decimal("82494.08")
+            )
+        ],
+    )
+    venue.set_status(exit_id, OrderStatus(exit_id, "canceled", ZERO, None))
+    restarted = start(
+        fetcher=feed(),
+        prices=TwoSidedPrices(SGOV="100.48"),
+        llm_client=RoutingLLM(),
+        adapter=venue,
+        id_factory=counter("b"),
+        **restart_kwargs(tmp_path, limits, signals_config, research_config, clock),
+    )
+    trail = restarted.audit.trail(lot_id)
+    release = [r for r in trail.stage_rejections if r.broker_order_id == exit_id]
+    assert len(release) == 1 and "recovered at startup" in release[0].message
+    assert pending_settlement(restarted.audit) == []
+    assert restarted.loop.sweeper.lots[0].quantity == Decimal("821")
+    # And the deficit is still there, so the first pass retries — at the bid.
+    assert restarted.loop.tick().sweep_orders == 1
+    assert venue.payloads[-1]["limit_price"] == Decimal("100.47")
+
+
+def test_a_sweep_buy_is_named_so_recovery_can_ask_about_it(
+    tmp_path, limits, signals_config, research_config
+):
+    broker = FakeBroker()
+    started, _, _ = quiet_build(
+        tmp_path, limits, signals_config, research_config, broker=broker
+    )
+    started.loop.tick()
+    trail = next(
+        t for t in started.audit.trails() if t.decision.sizing.strategy == "cash_sweep"
+    )
+    assert trail.decision.decision_id in broker.by_client_reference
