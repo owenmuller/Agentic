@@ -3328,6 +3328,26 @@ expression tag"; `FunnelEntry.expression_tag`.
 run on the droplet. `python -m orchestrator golden` exit 3 = drift for human
 review.
 
+### Step 3 — Form 4 C-suite singles (shipped this entry)
+
+A single code-P open-market purchase of **>= $250,000** by an insider whose
+structured `officerTitle` names the **CEO, CFO, COO or President** qualifies
+for research WITHOUT a cluster. `signals.form4.is_c_suite_title` is the rule:
+the title is split on its separators and any part naming one of the four
+offices qualifies unless it carries vice / VP / assistant / deputy / interim,
+and a divisional / regional / subsidiary president never qualifies — so
+"Executive Vice President and Chief Financial Officer" passes on the CFO part
+and "Senior Vice President" does not. The filer's OWN purchase must clear the
+floor (not the window aggregate). Items carry `c_suite_single: true` and
+`qualifies: cluster | c_suite_single | single`; the content gets a "C-SUITE
+SINGLE:" line. The prefilter's `require_cluster` honours the mark; singles
+below the floor stay the `no_cluster` control group exactly as before. Prompt
+guidance for Form 4 now describes both doors and says a single, however
+senior, is one person's judgment. Forward report: "Form 4 doors" grades
+clustered / C-suite singles / control singles apart (older records grade too:
+the door is parsed from the content the fetcher wrote). Floor
+`c_suite_single_min_usd` lives in the fetcher as part of the recipe.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

@@ -41,6 +41,7 @@ from audit.records import (
 )
 from signals.filers import canonical_credibility_key
 from audit.records import (  # noqa: E402 - keep the original import block intact
+    snapshot_form4_qualification,
     snapshot_tickers,
     snapshot_transaction,
 )
@@ -86,6 +87,9 @@ class FunnelEntry:
     #: Options-door / theme->ETF measurement tag (ruling 2026-09-15), traded
     #: rows only; "" elsewhere.
     expression_tag: str = ""
+    #: Form 4 door (ruling 2026-09-15): "cluster", "c_suite_single", "single";
+    #: "" on every other source. Parsed from the content the fetcher wrote.
+    form4_qualification: str = ""
 
     @property
     def primary_ticker(self) -> Optional[str]:
@@ -122,6 +126,7 @@ def funnel_entries(
                     signal_class=record.signal.signal_class,
                     observed_at=record.signal.observed_at,
                     tickers=snapshot_tickers(record.signal),
+                    form4_qualification=snapshot_form4_qualification(record.signal),
                     bucket="traded" if record.was_approved else "gate_rejected",
                     code="" if record.was_approved else (record.gate.rejection_code or ""),
                     expression_tag=(
@@ -153,6 +158,7 @@ def funnel_entries(
                     signal_class=record.signal.signal_class,
                     observed_at=record.signal.observed_at,
                     tickers=snapshot_tickers(record.signal),
+                    form4_qualification=snapshot_form4_qualification(record.signal),
                     bucket=bucket,
                     code=record.code,
                     confidence=(

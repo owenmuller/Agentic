@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import asdict, dataclass
@@ -130,6 +131,37 @@ class _ParsedFiling:
     sale_date: Optional[str] = None
     sale_shares: float = 0.0
     sale_amount: float = 0.0
+    #: Any reporting owner holds a C-suite officer title (CEO / CFO / COO /
+    #: President, not a vice/assistant/divisional variant) — ruling 2026-09-15.
+    c_suite: bool = False
+
+
+_C_SUITE_TITLE = re.compile(
+    r"\b(chief executive officer|chief financial officer|chief operating officer"
+    r"|ceo|cfo|coo|president)\b",
+    re.IGNORECASE,
+)
+_NOT_TOP = re.compile(r"\b(vice|vp|assistant|deputy|interim)\b", re.IGNORECASE)
+_DIVISIONAL = re.compile(r"\b(division|divisional|segment|regional|region|subsidiary|unit)\b", re.IGNORECASE)
+_TITLE_SPLIT = re.compile(r"\s*(?:,|;|/|&|\band\b)\s*", re.IGNORECASE)
+
+
+def is_c_suite_title(title: str) -> bool:
+    """CEO / CFO / COO / President (ruling 2026-09-15), read from the structured
+    officerTitle. Deterministic and deliberately narrow: a title is split on its
+    separators and qualifies if any PART names one of the four offices without
+    a vice/assistant/deputy/interim qualifier — so "Executive Vice President and
+    Chief Financial Officer" qualifies (the CFO part) while "Senior Vice
+    President" does not. A divisional or regional president is not the top
+    office and does not qualify."""
+    if not title or _DIVISIONAL.search(title):
+        return False
+    for part in _TITLE_SPLIT.split(title):
+        if not part or _NOT_TOP.search(part):
+            continue
+        if _C_SUITE_TITLE.search(part):
+            return True
+    return False
 
 
 def parse_ownership_document(xml_text: str) -> Optional[_ParsedFiling]:
@@ -148,6 +180,7 @@ def parse_ownership_document(xml_text: str) -> Optional[_ParsedFiling]:
     owner_ciks: list[str] = []
     owner_names: list[str] = []
     role_bits: list[str] = []
+    c_suite = False
     for owner in root.iter():
         if _local(owner.tag) != "reportingOwner":
             continue
@@ -163,6 +196,7 @@ def parse_ownership_document(xml_text: str) -> Optional[_ParsedFiling]:
         if _text(_find(owner, "isOfficer")) in ("1", "true"):
             title = _text(_find(owner, "officerTitle"))
             roles.append(f"officer ({title})" if title else "officer")
+            c_suite = c_suite or is_c_suite_title(title)
         if _text(_find(owner, "isTenPercentOwner")) in ("1", "true"):
             roles.append("10% owner")
         if roles:
@@ -218,6 +252,7 @@ def parse_ownership_document(xml_text: str) -> Optional[_ParsedFiling]:
         purchase_date=earliest,
         shares=shares_total,
         amount=amount_total,
+        c_suite=c_suite,
         sale_date=earliest_sale,
         sale_shares=sale_shares_total,
         sale_amount=sale_amount_total,
@@ -252,6 +287,7 @@ class Form4InsiderFetcher(EdgarFetcherBase):
         min_insider_usd: float = 50_000,
         min_cluster_usd: float = 150_000,
         min_insiders: int = 2,
+        c_suite_single_min_usd: float = 250_000,
         fetch_budget_per_poll: int = 150,
         max_list_pages: int = 40,
         min_request_interval: float = 0.25,
@@ -277,6 +313,10 @@ class Form4InsiderFetcher(EdgarFetcherBase):
         self._min_insider_usd = min_insider_usd
         self._min_cluster_usd = min_cluster_usd
         self._min_insiders = min_insiders
+        #: C-suite single door (ruling 2026-09-15): one code-P purchase of at
+        #: least this by the CEO/CFO/COO/President qualifies WITHOUT a cluster.
+        #: Singles below stay the no_cluster control group.
+        self._c_suite_single_min_usd = c_suite_single_min_usd
         self._fetch_budget = fetch_budget_per_poll
         self._max_list_pages = max_list_pages
 
@@ -470,8 +510,17 @@ class Form4InsiderFetcher(EdgarFetcherBase):
             len(insiders) >= self._min_insiders
             and aggregate >= self._min_cluster_usd
         )
-        tally["cluster" if clustered else "single"] += 1
-        return self._item(purchase, cluster, clustered, aggregate, insiders)
+        # C-suite single (ruling 2026-09-15): the filer's OWN purchase, not the
+        # window aggregate, must clear the floor — one person's conviction.
+        c_suite_single = (
+            not clustered
+            and parsed.c_suite
+            and purchase.amount >= self._c_suite_single_min_usd
+        )
+        tally[
+            "cluster" if clustered else ("c_suite_single" if c_suite_single else "single")
+        ] += 1
+        return self._item(purchase, cluster, clustered, aggregate, insiders, c_suite_single)
 
     def _process_sale(
         self,
@@ -649,6 +698,7 @@ class Form4InsiderFetcher(EdgarFetcherBase):
         clustered: bool,
         aggregate: float,
         insiders: set[str],
+        c_suite_single: bool = False,
     ) -> RawItem:
         ordered = sorted(cluster, key=lambda event: event.transaction_date)
         earliest = ordered[0].transaction_date
@@ -667,6 +717,13 @@ class Form4InsiderFetcher(EdgarFetcherBase):
                 "single qualifying purchase — no cluster in the "
                 f"{self._window_days}-day window "
                 f"({len(insiders)} insider(s), aggregate ${aggregate:,.0f})"
+            )
+        if c_suite_single:
+            lines.append(
+                f"C-SUITE SINGLE: {purchase.owner_name} [{purchase.roles}] bought "
+                f"${purchase.amount:,.0f} open-market — qualifies for research "
+                f"without a cluster (>= ${self._c_suite_single_min_usd:,.0f} by the "
+                f"CEO/CFO/COO/President, ruling 2026-09-15)"
             )
         lines.append(
             "all transactions are code P (open-market purchase); Rule 10b5-1 "
@@ -708,6 +765,11 @@ class Form4InsiderFetcher(EdgarFetcherBase):
                 sorted({event.owner_name for event in cluster})
             ),
             "roles": purchase.roles,
+            # Ruling 2026-09-15: which door the filing qualified through.
+            "c_suite_single": "true" if c_suite_single else "false",
+            "qualifies": (
+                "cluster" if clustered else ("c_suite_single" if c_suite_single else "single")
+            ),
         }
         if detail:
             fields["cluster_detail"] = detail

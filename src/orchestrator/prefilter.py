@@ -245,14 +245,21 @@ class ResearchPreFilter:
                 "never traded — no bearish path exists"
             ), "measurement"
 
-        if rules.require_cluster and meta.get("cluster") != "true":
+        if (
+            rules.require_cluster
+            and meta.get("cluster") != "true"
+            # C-suite single door (ruling 2026-09-15): a CEO/CFO/COO/President
+            # purchase at or above the fetcher's floor is researched without a
+            # cluster; the fetcher marks it, this rule honours the mark.
+            and meta.get("c_suite_single") != "true"
+        ):
             detail = meta.get("cluster_detail") or "no qualifying cluster"
             return (
                 f"single-insider Form 4 purchase, recorded for measurement and "
                 f"not researched: {detail} (signals.yaml "
                 f"prefilter.require_cluster, ruling 2026-09-02 — the "
                 f"prefiltered singles are the control group that tests the "
-                f"cluster rule)"
+                f"cluster rule; C-suite singles >= $250K pass since 2026-09-15)"
             ), "cluster"
 
         if rules.min_amount_max is not None:

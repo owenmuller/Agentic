@@ -24,7 +24,7 @@ from orchestrator import ResearchPreFilter
 from orchestrator.registry import family_of
 from research.prompts import build_user_prompt
 from signals import Form4InsiderFetcher, SignalClass, SignalQueue, SignalsConfig
-from signals.form4 import is_routine_month, parse_ownership_document
+from signals.form4 import is_c_suite_title, is_routine_month, parse_ownership_document
 from signals.scanners import Class2CongressionalScanner, RawItem
 
 NOW = datetime(2026, 9, 2, 14, 30, tzinfo=timezone.utc)
@@ -493,6 +493,136 @@ def test_the_forward_report_slices_the_cluster_rule():
     report = render_forward_report(
         [entry("d1", ""), entry("d2", "no_cluster")], rows={}
     )
-    assert "Form 4 cluster rule" in report
+    assert "Form 4 doors" in report
     assert "clustered (researched)" in report
     assert "singles (prefiltered control)" in report
+
+
+# ================================================================================
+# The C-suite single door (human ruling 2026-09-15)
+# ================================================================================
+
+
+@pytest.mark.parametrize(
+    "title,expected",
+    [
+        ("Chief Executive Officer", True),
+        ("CEO", True),
+        ("President and CEO", True),
+        ("President", True),
+        ("Chief Financial Officer", True),
+        ("Executive Vice President and Chief Financial Officer", True),
+        ("EVP, Chief Operating Officer", True),
+        ("Senior Vice President, Sales", False),
+        ("Vice President", False),
+        ("Executive Vice President", False),
+        ("President, Consumer Division", False),
+        ("Interim Chief Executive Officer", False),
+        ("Assistant Treasurer", False),
+        ("Chief Accounting Officer", False),
+        ("", False),
+    ],
+)
+def test_the_c_suite_title_rule(title, expected):
+    assert is_c_suite_title(title) is expected
+
+
+FILING_CEO_300K = (
+    "0003333333-26-000001",
+    "0003333333",
+    "2026-09-01",
+    form4_xml("0003333333", "Casey Ceo", shares=10_000, price=30.0,
+              officer_title="Chief Executive Officer"),  # $300K
+)
+FILING_CEO_200K = (
+    "0004444444-26-000001",
+    "0004444444",
+    "2026-09-01",
+    form4_xml("0004444444", "Dana Ceo", shares=6_000, price=33.0,
+              officer_title="President and Chief Executive Officer"),  # $198K
+)
+FILING_SVP_300K = (
+    "0005555555-26-000001",
+    "0005555555",
+    "2026-09-01",
+    form4_xml("0005555555", "Evan Svp", shares=10_000, price=30.0,
+              officer_title="Senior Vice President, Operations"),  # $300K
+)
+
+
+def test_a_c_suite_single_at_the_floor_qualifies_without_a_cluster(source):
+    fetcher, _ = fetcher_with([FILING_CEO_300K])
+    items = fetcher(source)
+    assert len(items) == 1
+    fields = items[0].fields
+    assert fields["cluster"] == "false"  # it is still not a cluster...
+    assert fields["c_suite_single"] == "true"  # ...but it qualifies through its own door
+    assert fields["qualifies"] == "c_suite_single"
+    assert "C-SUITE SINGLE: Casey Ceo" in items[0].content
+    assert "$300,000" in items[0].content
+    parsed = parse_ownership_document(FILING_CEO_300K[3])
+    assert parsed.c_suite is True
+
+
+def test_a_c_suite_single_below_the_floor_stays_the_control_group(source):
+    fetcher, _ = fetcher_with([FILING_CEO_200K])
+    items = fetcher(source)
+    fields = items[0].fields
+    assert (fields["cluster"], fields["c_suite_single"], fields["qualifies"]) == (
+        "false", "false", "single"
+    )
+    assert "C-SUITE SINGLE" not in items[0].content
+
+
+def test_a_large_purchase_by_a_non_c_suite_officer_is_a_plain_single(source):
+    fetcher, _ = fetcher_with([FILING_SVP_300K])
+    items = fetcher(source)
+    fields = items[0].fields
+    assert (fields["c_suite_single"], fields["qualifies"]) == ("false", "single")
+    assert parse_ownership_document(FILING_SVP_300K[3]).c_suite is False
+
+
+def test_c_suite_singles_pass_the_cluster_prefilter_and_others_do_not(signals_config):
+    prefilter = ResearchPreFilter.from_config(signals_config)
+    item = form4_item(cluster=False)
+    item.fields["c_suite_single"] = "true"
+    item.fields["qualifies"] = "c_suite_single"
+    passed = scanner_signal(signals_config, item)
+    assert prefilter.skip_verdict(passed, now=NOW) is None
+
+    control = form4_item(cluster=False)
+    control.fields["c_suite_single"] = "false"
+    verdict = prefilter.skip_verdict(scanner_signal(signals_config, control), now=NOW)
+    assert verdict is not None and verdict[1] == "cluster"
+    assert "C-suite singles" in verdict[0]
+
+
+def test_the_prompt_describes_both_form4_doors(signals_config):
+    signal = scanner_signal(signals_config, form4_item(cluster=True))
+    prompt = build_user_prompt(signal)
+    assert "C-SUITE SINGLE" in prompt and "at least $250,000" in prompt
+    assert "one person's judgment" in prompt
+
+
+def test_the_forward_funnel_reads_the_form4_door_from_the_content():
+    from audit.records import SignalSnapshot, snapshot_form4_qualification
+
+    def snap(content):
+        return SignalSnapshot(
+            signal_id="x", source_id="form4_insiders",
+            signal_class=SignalClass.CLASS_2_MOMENTUM, observed_at=NOW,
+            content=content, raw_content=content,
+        )
+
+    assert snapshot_form4_qualification(snap(
+        "Form 4 insider filing (SEC EDGAR, structured XML)\nissuer: X (X)\n"
+        "CLUSTER: 2 distinct insiders made open-market purchases"
+    )) == "cluster"
+    assert snapshot_form4_qualification(snap(
+        "Form 4 insider filing\nissuer: X (X)\nsingle qualifying purchase — no cluster\n"
+        "C-SUITE SINGLE: Casey Ceo [officer (Chief Executive Officer)] bought $300,000"
+    )) == "c_suite_single"
+    assert snapshot_form4_qualification(snap(
+        "Form 4 insider filing\nissuer: X (X)\nsingle qualifying purchase — no cluster"
+    )) == "single"
+    assert snapshot_form4_qualification(snap("Congressional trading disclosure")) == ""

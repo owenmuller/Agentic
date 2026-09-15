@@ -178,6 +178,20 @@ def snapshot_tickers(snapshot: "SignalSnapshot") -> tuple[str, ...]:
     return extract_tickers(snapshot.content)
 
 
+def snapshot_form4_qualification(snapshot: "SignalSnapshot") -> str:
+    """Which Form 4 door a filing came through (ruling 2026-09-15), read from
+    the content the fetcher wrote so records before the field grade too:
+    "cluster", "c_suite_single", "single", or "" for every other source."""
+    content = snapshot.content or ""
+    if "\nCLUSTER:" in content or content.startswith("CLUSTER:"):
+        return "cluster"
+    if "C-SUITE SINGLE:" in content:
+        return "c_suite_single"
+    if "single qualifying purchase" in content:
+        return "single"
+    return ""
+
+
 def snapshot_transaction(snapshot: "SignalSnapshot") -> str:
     """The disclosure's transaction ("Purchase", "Sale (Full)", ...) or ""."""
     match = _CONTENT_TRANSACTION.search(snapshot.content)

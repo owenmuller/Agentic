@@ -363,6 +363,14 @@ classes:
         # choice). Singles failing only the cluster test are emitted and
         # recorded with code no_cluster — the control group that lets the
         # forward-return report test the cluster rule itself.
+        # C-SUITE SINGLE DOOR (human ruling 2026-09-15): one code-P purchase of
+        # >= $250,000 by the CEO / CFO / COO / President (structured
+        # officerTitle; vice / assistant / deputy / interim / divisional
+        # variants excluded) qualifies for research WITHOUT a cluster, marked
+        # c_suite_single in the fields and "C-SUITE SINGLE" in the content.
+        # Singles below the floor stay the control group. The floor lives in
+        # the fetcher (c_suite_single_min_usd) as part of the recipe. Forward
+        # report grades the three doors apart; hard review 2026-10-15.
         # Latency: the filing deadline is 2 business days after the trade, so
         # priced-in analysis anchors to the TRANSACTION date, never the 45-day
         # congressional framing (the prompt branch carries that).

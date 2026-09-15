@@ -313,16 +313,24 @@ def render_forward_report(
     # requirement is filtering noise-free signal and a human should hear it.
     form4 = [e for e in with_ticker if e.source_id == "form4_insiders"]
     if form4:
-        clustered = [e for e in form4 if e.code != "no_cluster"]
+        c_suite = [e for e in form4 if e.form4_qualification == "c_suite_single"]
         singles = [e for e in form4 if e.code == "no_cluster"]
+        clustered = [
+            e for e in form4 if e.code != "no_cluster" and e not in c_suite
+        ]
         lines.extend(
             [
                 "",
-                f"Form 4 cluster rule (excess at {KEY_HORIZON}d — does "
-                f"requiring >=2 insiders earn its keep?):",
+                f"Form 4 doors (excess at {KEY_HORIZON}d — does requiring >=2 "
+                f"insiders earn its keep, and do C-suite singles (ruling "
+                f"2026-09-15) earn theirs? Review 2026-10-15):",
                 _stat_line(
                     "clustered (researched)",
                     _excess_values(clustered, rows, KEY_HORIZON),
+                ),
+                _stat_line(
+                    "C-suite singles >= $250K (researched)",
+                    _excess_values(c_suite, rows, KEY_HORIZON),
                 ),
                 _stat_line(
                     "singles (prefiltered control)",
