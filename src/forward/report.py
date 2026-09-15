@@ -185,6 +185,16 @@ def render_forward_report(
                 _stat_line(bucket, _excess_values(members, rows, KEY_HORIZON))
             )
 
+    # -- options doors / theme->ETF (ruling 2026-09-15) -------------------------------
+    tagged = [e for e in with_ticker if e.expression_tag]
+    if tagged:
+        lines.extend(
+            ["", f"By expression tag (options doors, theme->ETF), excess at {KEY_HORIZON}d:"]
+        )
+        for tag in sorted({e.expression_tag for e in tagged}):
+            members = [e for e in tagged if e.expression_tag == tag]
+            lines.append(_stat_line(tag, _excess_values(members, rows, KEY_HORIZON)))
+
     # -- per-source decay curves -------------------------------------------------------
     lines.extend(
         ["", "By source, mean excess across the horizons (the decay curve):"]

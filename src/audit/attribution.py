@@ -518,6 +518,10 @@ class AttributionReport:
     cash_management: Optional[CashManagementAttribution] = None
     #: Judged-sleeve P&L grouped by exit reason (2026-08-31).
     by_exit_reason: tuple["ExitReasonAttribution", ...] = ()
+    #: The options doors and theme->ETF expressions (ruling 2026-09-15), since
+    #: inception: own rows by tag with exit reasons and the counterfactual-equity
+    #: line per contract. Review 2026-10-30 or n>=10 resolved short-dated.
+    by_expression_tag: tuple["ExpressionTagAttribution", ...] = ()
     #: Hit rate per sizing-table confidence band, since inception (2026-09-01).
     calibration: tuple["ConfidenceBandCalibration", ...] = ()
     #: Expectancy per source, since inception (2026-09-02): (source_id, stats).
@@ -613,6 +617,17 @@ class AttributionReport:
                     *(f"  {row.summary()}" for row in self.by_exit_reason),
                 ]
             )
+        if self.by_expression_tag:
+            lines.extend(
+                [
+                    "",
+                    "Options doors and theme->ETF expressions (ruling 2026-09-15; "
+                    "since inception; keep/widen/kill on the same-thesis-as-stock line):",
+                ]
+            )
+            for row in self.by_expression_tag:
+                lines.append(f"  {row.summary()}")
+                lines.extend(f"    - {c.summary()}" for c in row.contracts)
         if self.calibration:
             lines.extend(
                 [
@@ -757,6 +772,123 @@ class AttributionReport:
         else:
             lines.extend(["", "No signal class is net-negative over the window."])
         return "\n".join(lines)
+
+
+@dataclass(frozen=True, slots=True)
+class ContractCounterfactual:
+    """One tagged option position against the same thesis held as stock
+    (ruling 2026-09-15): the premium P&L versus what the SAME dollars in the
+    underlying would have made between the contract's entry and exit quotes."""
+
+    decision_id: str
+    contract: str
+    exit_reason: str
+    option_pnl: Optional[Decimal]
+    equity_pnl: Optional[Decimal]
+
+    def summary(self) -> str:
+        pnl = f"{self.option_pnl:+.2f}" if self.option_pnl is not None else "open"
+        if self.equity_pnl is None:
+            return f"{self.contract} ({self.exit_reason}): option {pnl}, same-thesis stock unavailable"
+        return (
+            f"{self.contract} ({self.exit_reason}): option {pnl}, same-thesis stock "
+            f"{self.equity_pnl:+.2f}, option edge {(self.option_pnl or ZERO) - self.equity_pnl:+.2f}"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ExpressionTagAttribution:
+    """One measurement tag's row (ruling 2026-09-15): short_dated_option,
+    conviction_option, theme_etf. Closed positions by exit reason, plus the
+    counterfactual-equity line per contract."""
+
+    tag: str
+    open: int
+    closed: int
+    wins: int
+    realised_pnl: Decimal
+    deployed: Decimal
+    by_reason: tuple[tuple[str, int, Decimal], ...]
+    counterfactual_equity_pnl: Optional[Decimal]
+    contracts: tuple[ContractCounterfactual, ...]
+
+    def summary(self) -> str:
+        reasons = ", ".join(
+            f"{reason} {n} ({pnl:+.2f})" for reason, n, pnl in self.by_reason
+        ) or "none closed"
+        equity = (
+            f"; same dollars as stock {self.counterfactual_equity_pnl:+.2f}"
+            if self.counterfactual_equity_pnl is not None
+            else ""
+        )
+        return (
+            f"{self.tag}: {self.closed} closed ({self.wins} won) {self.realised_pnl:+.2f} "
+            f"on {self.deployed:.2f} deployed, {self.open} open; by exit reason: "
+            f"{reasons}{equity}"
+        )
+
+
+def _contract_counterfactual(trail: AuditTrail) -> ContractCounterfactual:
+    expression = trail.decision.expression
+    buys = [f for f in trail.fills if f.side == "buy"]
+    sells = [f for f in trail.fills if f.side == "sell"]
+    deployed = sum((f.filled_value for f in buys), ZERO)
+    entry = expression.underlying_price if expression is not None else None
+    exit_prices = [f.underlying_price for f in sells if f.underlying_price is not None]
+    equity = None
+    if entry and entry > ZERO and exit_prices and deployed > ZERO:
+        # Exit leg weighted by sold value; one fill in the common case.
+        exit_price = exit_prices[-1]
+        equity = (deployed * (exit_price / entry - 1)).quantize(CENTS)
+    return ContractCounterfactual(
+        decision_id=trail.decision.decision_id,
+        contract=(expression.contract_symbol if expression and expression.contract_symbol else _symbol_of(trail)),
+        exit_reason=_closing_reason(trail) if trail.outcome is not None else "open",
+        option_pnl=trail.outcome.realised_pnl if trail.outcome is not None else None,
+        equity_pnl=equity,
+    )
+
+
+def _symbol_of(trail: AuditTrail) -> str:
+    order = trail.decision.gate.order or {}
+    return str(order.get("underlying") or order.get("symbol") or "?")
+
+
+def _by_expression_tag(trails: list[AuditTrail]) -> tuple[ExpressionTagAttribution, ...]:
+    tagged: dict[str, list[AuditTrail]] = {}
+    for trail in trails:
+        expression = trail.decision.expression
+        if expression is None or not expression.tag or not trail.decision.was_approved:
+            continue
+        if not any(f.side == "buy" for f in trail.fills):
+            continue
+        tagged.setdefault(expression.tag, []).append(trail)
+    rows = []
+    for tag, members in sorted(tagged.items()):
+        closed = [t for t in members if t.outcome is not None]
+        reasons: dict[str, list[Decimal]] = {}
+        for trail in closed:
+            reasons.setdefault(_closing_reason(trail), []).append(trail.outcome.realised_pnl)
+        contracts = tuple(_contract_counterfactual(t) for t in members)
+        equity_values = [c.equity_pnl for c in contracts if c.equity_pnl is not None and c.option_pnl is not None]
+        rows.append(
+            ExpressionTagAttribution(
+                tag=tag,
+                open=len(members) - len(closed),
+                closed=len(closed),
+                wins=sum(1 for t in closed if t.outcome.won),
+                realised_pnl=sum((t.outcome.realised_pnl for t in closed), ZERO),
+                deployed=sum(
+                    (f.filled_value for t in members for f in t.fills if f.side == "buy"), ZERO
+                ),
+                by_reason=tuple(
+                    (reason, len(pnls), sum(pnls, ZERO)) for reason, pnls in sorted(reasons.items())
+                ),
+                counterfactual_equity_pnl=(sum(equity_values, ZERO) if equity_values else None),
+                contracts=contracts,
+            )
+        )
+    return tuple(rows)
 
 
 #: The mechanical sleeve's holding period, and the counterfactual's horizon.
@@ -1078,6 +1210,7 @@ def build_attribution(
 
     return AttributionReport(
         by_exit_reason=_by_exit_reason(judged_closed),
+        by_expression_tag=_by_expression_tag(trails),
         # Since inception on purpose: calibration measures the scorer, not the
         # quarter, and windowing it would reset the sample every 90 days.
         calibration=_calibration(trails),

@@ -51,7 +51,7 @@ from the same account.
 WHAT YOUR OUTPUT DOES
 
 Your confidence score feeds a fixed table that maps it to a position size, with a hard \
-5% cap that applies at every confidence level including 100. You cannot request a size, \
+10% cap that applies at every confidence level including 100. You cannot request a size, \
 lift a cap, change the risk gate's behaviour, or mark an order as exempt from anything — \
 there is no field for it and no downstream code that would read one. Report what you \
 believe; the system decides what to do about it.
@@ -72,8 +72,23 @@ a lagged signal is declined for demonstrated priced-in movement, not for elapsed
 time per se.
 
 Be calibrated rather than agreeable. Most signals do not justify a trade, and a low \
-confidence score is a useful, correct answer. Confidence below 55 results in no \
+confidence score is a useful, correct answer. Confidence below 50 results in no \
 position at all, which is the right outcome for the majority of what you will read.
+
+HOW A VERDICT IS EXPRESSED
+
+A deterministic layer downstream chooses stock or a long option from your report; you \
+never pick a contract, and nothing you write can widen a size. Three doors lead to \
+options, each through the same liquidity and delta gates, halved sizing, and a forced \
+close before expiry:
+- Catalyst door: catalyst_within_horizon.present is true with a specific, dated event.
+- Conviction door: confidence 80 or above with a stated time_horizon, catalyst or not.
+- Short-dated (days horizon only): contracts down to 7 days to expiry, with a named \
+catalyst inside the window at any tradeable confidence, or without one only at \
+confidence 80 or above; below 80 with no catalyst the thesis is stock. Contracts under \
+21 days to expiry at entry are closed the day before expiry.
+State time_horizon and the catalyst honestly: they route the expression and do not \
+change the size table. Never inflate confidence or invent a catalyst to reach an option.
 
 When your conclusion is that nothing should be traded on a signal, say so \
 directly: set direction to "no_position". That is not a failure to reach a \
@@ -154,6 +169,23 @@ def build_verification_prompt(user_prompt: str, screen_report) -> str:
     return user_prompt + "\n\n" + "\n".join(draft_lines)
 
 
+def _theme_lines(signal: Signal) -> list[str]:
+    """The theme->ETF proposal (ruling 2026-09-15), when the system made one."""
+    etf = signal.metadata.get("theme_etf")
+    if not etf:
+        return []
+    theme = signal.metadata.get("theme") or "unnamed"
+    return [
+        f"- theme -> ETF proposal (system mapping): the scanner extracted no ticker; "
+        f"the post matched the policy theme \"{theme}\", which this system maps to "
+        f"the liquid ETF {etf}. If the theme genuinely fits the post, express the "
+        f"thesis through {etf}: analyse the ETF as the instrument and return "
+        f"tickers [\"{etf}\"]. If the theme does not fit, DECLINE the mapping — "
+        f"return no_position, or name the specific instrument the post actually "
+        f"implies. The mapping is a proposal, never a directive.",
+    ]
+
+
 def _disclosed_instrument_lines(signal: Signal) -> list[str]:
     """The instrument a disclosure names, and how to weigh it (2026-08-27).
 
@@ -229,6 +261,7 @@ def build_user_prompt(
     tickers = signal.metadata.get("tickers")
     if tickers:
         lines.append(f"- tickers extracted by the scanner: {tickers}")
+    lines.extend(_theme_lines(signal))
 
     guidance = _CLASS_GUIDANCE[signal.signal_class]
     if signal.signal_class is SignalClass.CLASS_2_MOMENTUM and signal.metadata.get(

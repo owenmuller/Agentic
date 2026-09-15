@@ -210,6 +210,9 @@ class TrackedPosition:
     instrument_kind: str = "equity"
     expiration: Optional[date] = None
     multiplier: int = 1
+    #: Bought under short_dated_dte days to expiry (ruling 2026-09-15): closes
+    #: at the short-dated T-1 window. Rebuilt at replay from expiry and entry.
+    short_dated: bool = False
     #: The parsed opening order, kept so an option close can be built with the
     #: exact contract identity the entry carried. None for equity.
     entry_order: Optional[object] = None
@@ -280,6 +283,8 @@ class ExitEngine:
         cost_sink=None,
         option_prices=None,
         close_before_expiry_days: Optional[int] = None,
+        short_dated_dte: Optional[int] = None,
+        short_dated_close_before_expiry_days: Optional[int] = None,
         trigger_down_of_stop: Decimal = Decimal("0.66"),
         sizing_floor: Optional[int] = None,
         min_reward_risk: Optional[Decimal] = None,
@@ -302,6 +307,10 @@ class ExitEngine:
         #: run without a current price — degraded, never invented.
         self._option_prices = option_prices
         self._close_before_expiry_days = close_before_expiry_days
+        #: Short-dated test (ruling 2026-09-15): a contract bought under
+        #: short_dated_dte days to expiry closes at T-1, not the standard window.
+        self._short_dated_dte = short_dated_dte
+        self._short_dated_close_before_expiry_days = short_dated_close_before_expiry_days
         #: The adverse review trigger for ATR-stopped positions, as a fraction
         #: of the position's own stop distance (ruling 2026-09-02) — the
         #: trigger must fire while a decision is still makeable, whatever the
@@ -503,6 +512,9 @@ class ExitEngine:
             expiration=order.expiration if is_option else None,
             multiplier=multiplier,
             entry_order=order if is_option else None,
+            short_dated=(
+                is_option and self._is_short_dated(order.expiration, self._clock().date())
+            ),
         )
 
     def replay(self, trails: Iterable[AuditTrail]) -> int:
@@ -622,6 +634,13 @@ class ExitEngine:
                 instrument_kind=kind,
                 expiration=(
                     date.fromisoformat(str(order["expiration"])) if is_option else None
+                ),
+                short_dated=(
+                    is_option
+                    and self._is_short_dated(
+                        date.fromisoformat(str(order["expiration"])),
+                        buys[0].recorded_at.date(),
+                    )
                 ),
                 multiplier=multiplier,
                 entry_order=parse_order(order) if is_option else None,
@@ -832,17 +851,18 @@ class ExitEngine:
                     )
             elif (
                 position.expiration is not None
-                and self._close_before_expiry_days is not None
+                and self._expiry_window(position) is not None
                 and (position.expiration - moment.date()).days
-                <= self._close_before_expiry_days
+                <= self._expiry_window(position)
             ):
                 # Deliberately quote-independent: an option this close to expiry
                 # exits whether or not a mark arrived this cycle.
                 reason = ExitReason.EXPIRY_CLOSE
                 detail = (
                     f"{position.symbol} expires {position.expiration}, inside the "
-                    f"{self._close_before_expiry_days}-day pre-expiry window; theta "
-                    f"endgame is not a place this system holds"
+                    f"{self._expiry_window(position)}-day pre-expiry window"
+                    f"{' (short-dated, T-1 rule 2026-09-15)' if position.short_dated else ''}; "
+                    f"theta endgame is not a place this system holds"
                 )
             elif position.days_held(moment) >= position.leash_days:
                 reason = ExitReason.TIME_STOP
@@ -1402,6 +1422,7 @@ class ExitEngine:
             # exits re-submit every cycle until flat, so a per-order clock
             # would misstate the position's true time-to-close.
             intended_price=getattr(execution_shape, "limit_price", None),
+            underlying_price=self._underlying_price(position),
         )
         position.quantity -= filled
         position.proceeds += filled_avg_price * filled * position.multiplier
@@ -1503,6 +1524,26 @@ class ExitEngine:
         except Exception:  # noqa: BLE001 - context, never a crash
             logger.exception("opportunity context failed")
             return None
+
+    def _is_short_dated(self, expiration: Optional[date], entered: date) -> bool:
+        if expiration is None or self._short_dated_dte is None:
+            return False
+        return (expiration - entered).days < self._short_dated_dte
+
+    def _expiry_window(self, position: TrackedPosition) -> Optional[int]:
+        """Days before expiry at which this option must close: the short-dated
+        T-1 window for contracts bought inside short_dated_dte, else the standard."""
+        if position.short_dated and self._short_dated_close_before_expiry_days is not None:
+            return self._short_dated_close_before_expiry_days
+        return self._close_before_expiry_days
+
+    def _underlying_price(self, position: TrackedPosition) -> Optional[Decimal]:
+        """The underlying's quote at an option exit — the counterfactual-equity
+        exit leg (ruling 2026-09-15). None for equity or when unquoted."""
+        if not position.is_option or position.entry_order is None:
+            return None
+        underlying = getattr(position.entry_order, "underlying", None)
+        return self._price_for(underlying) if underlying else None
 
     def _mark_for(self, position: TrackedPosition) -> Optional[Decimal]:
         """Per-unit mark: premium mid for options, the price source for equity."""

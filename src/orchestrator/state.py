@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -234,7 +235,27 @@ def position_from_broker(
         unit_multiplier=OPTION_CONTRACT_MULTIPLIER if option else 1,
         is_option=option,
         last_open_date=today,
+        # The short-dated sub-cap (2026-09-15) needs the expiry; the OCC symbol
+        # carries it. Entry timing is unknown after a restart (None), which the
+        # gate resolves toward counting the contract.
+        expiration=occ_expiration(holding.symbol) if option else None,
     )
+
+
+_OCC = re.compile(r"^[A-Z]{1,6}(\d{2})(\d{2})(\d{2})[CP]\d{8}$")
+
+
+def occ_expiration(symbol: str) -> Optional[date]:
+    """The expiry encoded in an OCC option symbol (ROOT + YYMMDD + C/P + strike),
+    or None when the symbol is not OCC-shaped."""
+    match = _OCC.match(symbol or "")
+    if match is None:
+        return None
+    year, month, day = (int(group) for group in match.groups())
+    try:
+        return date(2000 + year, month, day)
+    except ValueError:
+        return None
 
 
 def replay_mechanical_deployed_today(

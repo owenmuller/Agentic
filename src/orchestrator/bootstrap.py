@@ -58,6 +58,7 @@ from orchestrator.recovery import recover_unsettled_orders
 from orchestrator.registry import SignalRegistry
 from orchestrator.scalars import SizingScalars
 from orchestrator.sweep import CashSweeper
+from signals.themes import ThemeEtfMap
 from orchestrator.state import (
     SessionState,
     replay_deployed_today,
@@ -473,6 +474,12 @@ def start(
         close_before_expiry_days=(
             checks.gate.limits.options_selection.close_before_expiry_days
         ),
+        # Short-dated test (ruling 2026-09-15): contracts bought under
+        # short_dated_dte close at T-1, not T-5.
+        short_dated_dte=checks.gate.limits.options_selection.short_dated_dte,
+        short_dated_close_before_expiry_days=(
+            checks.gate.limits.options_selection.short_dated_close_before_expiry_days
+        ),
         # ATR-stopped positions trigger their adverse review at this fraction
         # of their OWN stop distance (ruling 2026-09-02).
         trigger_down_of_stop=(
@@ -552,6 +559,7 @@ def start(
         sizing_floor=checks.limits.sizing.no_trade_below,
         options_chain=options_chain,
         option_selector=option_selector,
+        themes=ThemeEtfMap.from_config(checks.signals_config),
         clock=checks.clock,
         probation_sources={
             source.id

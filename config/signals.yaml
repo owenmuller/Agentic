@@ -76,6 +76,20 @@ classes:
           # economy/economic/economics (human ruling 2026-08-20).
           - econom
 
+        # THEME -> ETF EXPRESSION (human ruling 2026-09-15; ETF list PROPOSED,
+        # awaiting the human's confirmation). A post with no extracted ticker
+        # matching exactly ONE theme is researched with the ETF proposed as its
+        # instrument; the research pass may decline. Two themes = ambiguous =
+        # no mapping. Stems are word-prefix, case-insensitive.
+        theme_etf_map:
+          tariffs: { etf: XLI, stems: [tariff, trade deal, trade war, import dut] }
+          energy: { etf: XLE, stems: [energy, oil, gas, drill, opec, pipeline] }
+          defense: { etf: ITA, stems: [defense, defence, military, pentagon, nato] }
+          financials: { etf: XLF, stems: [bank, banks, financial, wall street] }
+          rates: { etf: TLT, stems: [interest rate, rate cut, rate hike, fed, federal reserve, treasur, yield] }
+          semis: { etf: SMH, stems: [chip, chips, semiconductor] }
+          broad: { etf: SPY, stems: [stock market, economy, gdp, recession, jobs report] }
+          tech: { etf: QQQ, stems: [big tech, tech stock, nasdaq] }
       # --- Mirrors of trump_posts (human-approved 2026-08-18) -------------------
       # Decision: ride X mirror accounts, not the Truth API; the upgrade decision
       # belongs to attribution data. Signals from these attribute to trump_posts

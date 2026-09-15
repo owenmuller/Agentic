@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
 from enum import StrEnum
-from typing import Mapping
+from typing import Mapping, Optional
 
 from risk_gate.schema import (
     EquityBuyOrder,
@@ -128,6 +128,13 @@ class Position:
     market_value: Decimal = ZERO
     unit_multiplier: int = 1
     is_option: bool = False
+    #: Options only (2026-09-15): the contract's expiry, and whether it was
+    #: bought inside the short-dated window. ``short_dated_at_entry`` is None on
+    #: positions seeded from the broker (entry unknown), which the sub-cap
+    #: resolves toward MORE counting: a seeded contract inside the window today
+    #: counts as short-dated (Constraint #6).
+    expiration: Optional[date] = None
+    short_dated_at_entry: Optional[bool] = None
     #: Units promised to approved-but-unfilled close orders.
     reserved_close: Decimal = ZERO
     #: Units and cash promised to approved-but-unfilled open orders.
@@ -201,6 +208,21 @@ class AccountState:
         """Aggregate open long-option premium, including unfilled approvals."""
         return sum((p.exposure for p in self.positions.values() if p.is_option), ZERO)
 
+    def short_dated_premium_at_risk(self, today: date, dte: int) -> Decimal:
+        """Premium at risk in contracts bought under ``dte`` days to expiry
+        (ruling 2026-09-15). A seeded contract whose entry is unknown counts when
+        it is inside the window TODAY — over-counting is the safe error."""
+        total = ZERO
+        for position in self.positions.values():
+            if not position.is_option:
+                continue
+            short = position.short_dated_at_entry
+            if short is None and position.expiration is not None:
+                short = (position.expiration - today).days < dte
+            if short:
+                total += position.exposure
+        return total
+
     def drawdown(self) -> Decimal:
         """Fractional drawdown from the high-water mark. Zero if at or above it."""
         if self.high_water_mark <= ZERO:
@@ -216,13 +238,24 @@ class AccountState:
         return self.positions.get(key)
 
     def ensure_position(
-        self, key: PositionKey, sleeve: Sleeve, multiplier: int, option: bool
+        self,
+        key: PositionKey,
+        sleeve: Sleeve,
+        multiplier: int,
+        option: bool,
+        expiration: Optional[date] = None,
+        short_dated: Optional[bool] = None,
     ) -> Position:
         existing = self.positions.get(key)
         if existing is not None:
             return existing
         created = Position(
-            key=key, sleeve=sleeve, unit_multiplier=multiplier, is_option=option
+            key=key,
+            sleeve=sleeve,
+            unit_multiplier=multiplier,
+            is_option=option,
+            expiration=expiration,
+            short_dated_at_entry=short_dated,
         )
         self.positions[key] = created
         return created

@@ -96,6 +96,17 @@ class PrefilterConfig(_Strict):
     require_cluster: bool = False
 
 
+class ThemeEtfConfig(_Strict):
+    """One policy theme's ETF expression (human ruling 2026-09-15)."""
+
+    #: The liquid ETF a no-ticker post on this theme may be researched against.
+    etf: str
+    #: Word-prefix stems, case-insensitive, matched against the post's content
+    #: ("tariff" covers tariffs/tariffed) — the same rule as
+    #: research_prefilter_themes.
+    stems: tuple[str, ...]
+
+
 class SourceConfig(_Strict):
     id: str
     platforms: tuple[str, ...] = ()
@@ -136,6 +147,12 @@ class SourceConfig(_Strict):
     #: stems. Everything else is recorded as a pre_filter stage rejection instead of
     #: spending a research pass. Human-approved 2026-08-18 for trump_posts.
     research_prefilter_themes: tuple[str, ...] = ()
+    #: THEME -> ETF EXPRESSION (human ruling 2026-09-15). A post from this source
+    #: with NO extracted ticker whose content matches exactly one theme here is
+    #: researched with the mapped ETF proposed as its instrument; the research
+    #: pass may decline the mapping. Two themes matching = ambiguous = no mapping
+    #: (Constraint #6). Human-edited; the ETF list is a ruling.
+    theme_etf_map: dict[str, ThemeEtfConfig] = {}
     #: Deterministic pre-filter thresholds for this source (class 2/3 rules).
     prefilter: Optional[PrefilterConfig] = None
     #: When true, a forward_call from this source is researched ONLY if the

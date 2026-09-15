@@ -83,6 +83,9 @@ class FunnelEntry:
     #: The overreaction screen's facts (ruling 2026-09-03); None on every
     #: other row. Slices: tier, market day, held, threshold flags.
     overreaction: Optional[object] = None
+    #: Options-door / theme->ETF measurement tag (ruling 2026-09-15), traded
+    #: rows only; "" elsewhere.
+    expression_tag: str = ""
 
     @property
     def primary_ticker(self) -> Optional[str]:
@@ -121,6 +124,9 @@ def funnel_entries(
                     tickers=snapshot_tickers(record.signal),
                     bucket="traded" if record.was_approved else "gate_rejected",
                     code="" if record.was_approved else (record.gate.rejection_code or ""),
+                    expression_tag=(
+                        (record.expression.tag or "") if record.expression is not None else ""
+                    ),
                     confidence=(
                         record.research.confidence
                         if record.research is not None

@@ -320,6 +320,18 @@ class OptionsSelectionLimits(_Strict):
     max_iv_percentile: Fraction
     #: Close any long option this many days before expiry, thesis or no thesis.
     close_before_expiry_days: int
+    #: CONVICTION DOOR (human ruling 2026-09-15): a report at or above this
+    #: confidence with a stated time_horizon qualifies for options expression
+    #: WITHOUT catalyst_present, through the same selector, gates, halved sizing
+    #: and expiry-close rules. The catalyst door is unchanged.
+    conviction_min_confidence: int = 80
+    #: SHORT-DATED TEST (human ruling 2026-09-15): a contract with fewer than
+    #: this many days to expiry AT ENTRY is tagged short_dated_option, counts
+    #: toward equity_sleeve.max_short_dated_premium_at_risk (inside the 0.20
+    #: aggregate), and closes at short_dated_close_before_expiry_days (T-1)
+    #: instead of close_before_expiry_days. Review 2026-10-30 or n>=10 resolved.
+    short_dated_dte: int = 21
+    short_dated_close_before_expiry_days: int = 1
 
     def band_for(self, confidence: int) -> Optional[DeltaBand]:
         for band in self.delta_bands:
@@ -338,6 +350,14 @@ class OptionsSelectionLimits(_Strict):
                 )
         if self.close_before_expiry_days < 1:
             raise ValueError("close_before_expiry_days must be at least 1")
+        if self.short_dated_close_before_expiry_days < 1:
+            raise ValueError("short_dated_close_before_expiry_days must be at least 1")
+        if self.short_dated_close_before_expiry_days >= self.short_dated_dte:
+            raise ValueError(
+                "short_dated_close_before_expiry_days must sit inside short_dated_dte"
+            )
+        if not 0 <= self.conviction_min_confidence <= 100:
+            raise ValueError("conviction_min_confidence must be a confidence (0-100)")
         return self
 
 

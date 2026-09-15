@@ -35,6 +35,9 @@ class RejectionCode(StrEnum):
     MAX_DAILY_DEPLOYMENT_EXCEEDED = "max_daily_deployment_exceeded"
     #: Aggregate open long-option premium would exceed the cap.
     MAX_OPTIONS_PREMIUM_EXCEEDED = "max_options_premium_exceeded"
+    #: Premium at risk in contracts bought under short_dated_dte would exceed the
+    #: short-dated sub-cap (ruling 2026-09-15), inside the aggregate above.
+    MAX_SHORT_DATED_PREMIUM_EXCEEDED = "max_short_dated_premium_exceeded"
     #: Aggregate equity exposure in one sector would exceed the per-sector cap.
     SECTOR_CONCENTRATION = "sector_concentration"
     #: Order would push a sleeve outside its target weight plus drift tolerance.

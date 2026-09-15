@@ -52,6 +52,7 @@ from audit.records import (
 )
 from execution.base import BrokerAdapter, BrokerError, OrderReceipt
 from research.reports import Direction, ResearchReport, ResearchUsage
+from signals.themes import THEME_ETF_KEY, THEME_KEY
 from research.research_pass import ResearchPass
 from research.triage import TriagePass
 
@@ -156,7 +157,12 @@ class PipelineResult:
     receipt: Optional[OrderReceipt] = None
 
 
-def _selected_snapshot(selection: SelectedOption) -> ExpressionSnapshot:
+def _selected_snapshot(
+    selection: SelectedOption,
+    door: Optional[str] = None,
+    tag: Optional[str] = None,
+    underlying_price: Optional[Decimal] = None,
+) -> ExpressionSnapshot:
     quote = selection.quote
     return ExpressionSnapshot(
         considered=True,
@@ -167,6 +173,9 @@ def _selected_snapshot(selection: SelectedOption) -> ExpressionSnapshot:
         expiration=quote.expiration.isoformat(),
         open_interest=quote.open_interest,
         spread_pct=quote.spread_pct,
+        door=door,
+        tag=tag,
+        underlying_price=underlying_price,
     )
 
 
@@ -207,6 +216,7 @@ class SignalPipeline:
         convergence_snapshot: Optional[Callable] = None,
         options_chain=None,
         option_selector: Optional[OptionSelector] = None,
+        themes: Optional[object] = None,
         clock: Optional[Callable[[], datetime]] = None,
         probation_sources: Collection[str] = (),
         scalars: Optional["SizingScalars"] = None,
@@ -250,6 +260,8 @@ class SignalPipeline:
         #: every harness without a chain gets.
         self._options_chain = options_chain
         self._option_selector = option_selector
+        #: Theme -> ETF map (ruling 2026-09-15); None when no source configures one.
+        self._themes = themes
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         #: Probation sources (human ruling 2026-08-25): researched and
         #: credibility-tracked as normal, sized to zero at this stage.
@@ -350,6 +362,11 @@ class SignalPipeline:
             )
 
     def _process(self, decision_id: str, signal: Signal) -> PipelineResult:
+        # 0. Theme -> ETF proposal (ruling 2026-09-15): a no-ticker Class 1 post
+        # matching exactly one configured theme carries its mapped ETF into the
+        # prompt. Deterministic; the model may decline.
+        if self._themes is not None:
+            signal = self._themes.apply(signal)
         # 1. Research.
         outcome = self._research.run(signal)
         usage = _combine_usage(self._pending_triage_usage, self._research.last_usage)
@@ -378,7 +395,8 @@ class SignalPipeline:
         sleeve_nav = self._gate.sleeve_nav(Sleeve.EQUITY)
         wants_puts = report.direction is Direction.SHORT_VIA_PUTS
         intends_option = self._option_selector is not None and (
-            wants_puts or (report.direction is Direction.LONG and report.has_catalyst)
+            wants_puts
+            or (report.direction is Direction.LONG and self._option_door(report) is not None)
         )
         # 2a-0. Boundary confirmation (ruling 2026-09-02, post-diagnosis): a
         # tradeable verdict in the sizing floor's noise band must be confirmed
@@ -467,6 +485,8 @@ class SignalPipeline:
         order, problem, proposal, expression = self._build_order(
             signal, report, proposal
         )
+        if order is not None:
+            expression = self._with_theme(signal, report, expression)
         if order is None:
             code, message = problem  # type: ignore[misc]
             return self._stopped(
@@ -617,7 +637,8 @@ class SignalPipeline:
             return self._build_equity_order(signal, report, proposal, expression=None)
 
         # -- expression routing ---------------------------------------------------
-        if not report.has_catalyst:
+        door = self._option_door(report)
+        if door is None:
             if wants_puts:
                 fallback = OptionFallback(
                     FallbackReason.NO_CATALYST_FOR_PUTS,
@@ -631,8 +652,9 @@ class SignalPipeline:
                 ), proposal, _fallback_snapshot(fallback, chosen="none")
             fallback = OptionFallback(
                 FallbackReason.NO_CATALYST,
-                "directional-but-patient thesis: no catalyst inside the horizon, "
-                "so the position expresses as stock",
+                "directional-but-patient thesis: no catalyst inside the horizon "
+                "and confidence below the conviction door, so the position "
+                "expresses as stock",
             )
             proposal = self._propose_equity(report, proposal.sleeve_nav)
             return self._build_equity_order(
@@ -640,7 +662,8 @@ class SignalPipeline:
                 expression=_fallback_snapshot(fallback, chosen="equity"),
             )
 
-        # Catalyst present: fetch the chain and select.
+        # A door is open (catalyst, or conviction — ruling 2026-09-15): fetch
+        # the chain and select. The same gates apply whichever door it was.
         symbol = report.tickers[0]
         today = self._clock().date()
         config = self._option_selector._config  # noqa: SLF001 - same package seam
@@ -681,7 +704,18 @@ class SignalPipeline:
                     signal_id=signal.signal_id,
                     confidence=report.confidence,
                 )
-                return order, None, proposal, _selected_snapshot(selection)
+                # Measurement tags (ruling 2026-09-15): short-dated wins the
+                # tag when both apply; the door is recorded either way.
+                short_dated = (quote.expiration - today).days < config.short_dated_dte
+                tag = (
+                    "short_dated_option"
+                    if short_dated
+                    else ("conviction_option" if door == "conviction" else None)
+                )
+                return order, None, proposal, _selected_snapshot(
+                    selection, door=door, tag=tag,
+                    underlying_price=self._safe_price(symbol),
+                )
             selection = OptionFallback(
                 FallbackReason.PREMIUM_EXCEEDS_SIZE,
                 f"{proposal.capital} premium at risk buys no whole contract of "
@@ -706,6 +740,48 @@ class SignalPipeline:
         return self._build_equity_order(
             signal, report, proposal,
             expression=_fallback_snapshot(fallback, chosen="equity"),
+        )
+
+    def _option_door(self, report: ResearchReport) -> Optional[str]:
+        """Which door, if any, admits this report to an options expression
+        (ruling 2026-09-15): "catalyst" (unchanged) or "conviction" (confidence at
+        or above the configured floor; every report states a time_horizon by
+        schema). None = stock. Requires a wired selector."""
+        if self._option_selector is None:
+            return None
+        if report.has_catalyst:
+            return "catalyst"
+        config = self._option_selector._config  # noqa: SLF001 - same package seam
+        if report.confidence >= config.conviction_min_confidence:
+            return "conviction"
+        return None
+
+    def _safe_price(self, symbol: str) -> Optional[Decimal]:
+        try:
+            price = self._prices(symbol)
+        except Exception:  # noqa: BLE001 - a quote outage is not a verdict
+            return None
+        return price if price is not None and price > ZERO else None
+
+    def _with_theme(
+        self, signal: Signal, report: ResearchReport, expression: Optional[ExpressionSnapshot]
+    ) -> Optional[ExpressionSnapshot]:
+        """Tag a decision that expressed a no-ticker post through its mapped ETF
+        (ruling 2026-09-15). Only when the report actually named the ETF."""
+        etf = signal.metadata.get(THEME_ETF_KEY)
+        if not etf or list(report.tickers) != [etf]:
+            return expression
+        theme = signal.metadata.get(THEME_KEY)
+        if expression is None:
+            return ExpressionSnapshot(
+                considered=False,
+                chosen="equity",
+                tag="theme_etf",
+                theme=theme,
+                underlying_price=self._safe_price(etf),
+            )
+        return expression.model_copy(
+            update={"tag": expression.tag or "theme_etf", "theme": theme}
         )
 
     def _confirm_boundary(self, signal: Signal, report: ResearchReport) -> _Confirmation:

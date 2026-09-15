@@ -480,6 +480,26 @@ class RiskGate:
                     limit=premium_cap,
                     observed=premium,
                 )
+            # Short-dated sub-cap (ruling 2026-09-15): contracts bought under
+            # short_dated_dte share their own, smaller pool inside the aggregate.
+            short_dte = limits.options_selection.short_dated_dte
+            if (order.expiration - today).days < short_dte:
+                short = state.short_dated_premium_at_risk(today, short_dte) + cost
+                short_cap = (
+                    self.sleeve_nav(Sleeve.EQUITY)
+                    * limits.equity_sleeve.max_short_dated_premium_at_risk
+                )
+                if short > short_cap:
+                    return Rejection(
+                        code=RejectionCode.MAX_SHORT_DATED_PREMIUM_EXCEEDED,
+                        message=(
+                            f"short-dated option premium at risk would reach {short}, "
+                            f"above the {limits.equity_sleeve.max_short_dated_premium_at_risk} "
+                            f"sub-cap for contracts under {short_dte} days to expiry"
+                        ),
+                        limit=short_cap,
+                        observed=short,
+                    )
 
         # 90/10 split, upper side only. Being under-weight is a rebalance concern,
         # not a risk breach, so it does not block an order.
@@ -506,7 +526,17 @@ class RiskGate:
 
         # Approved: reserve cash and exposure.
         target_position = state.ensure_position(
-            key, sleeve, unit_multiplier(order), is_option(order)
+            key,
+            sleeve,
+            unit_multiplier(order),
+            is_option(order),
+            expiration=getattr(order, "expiration", None) if is_option(order) else None,
+            short_dated=(
+                (order.expiration - today).days
+                < limits.options_selection.short_dated_dte
+                if is_option(order)
+                else None
+            ),
         )
         state.reserved_cash += cost
         target_position.pending_open_units += units_of(order)

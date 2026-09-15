@@ -112,24 +112,24 @@ def equity_sell(
     )
 
 
-def option_buy(contracts: int = 1, price: str = "1.00", symbol: str = "AAPL260117C00250000"):
+def option_buy(contracts: int = 1, price: str = "1.00", symbol: str = "AAPL270115C00250000"):
     return OptionBuyToOpenOrder(
         symbol=symbol,
         underlying="AAPL",
         right="call",
-        expiration=date(2026, 1, 17),
+        expiration=date(2027, 1, 15),
         strike=Decimal("250.00"),
         contracts=contracts,
         execution=LimitExecution(limit_price=Decimal(price)),
     )
 
 
-def option_sell(contracts: int = 1, price: str = "1.00", symbol: str = "AAPL260117C00250000"):
+def option_sell(contracts: int = 1, price: str = "1.00", symbol: str = "AAPL270115C00250000"):
     return OptionSellToCloseOrder(
         symbol=symbol,
         underlying="AAPL",
         right="call",
-        expiration=date(2026, 1, 17),
+        expiration=date(2027, 1, 15),
         strike=Decimal("250.00"),
         contracts=contracts,
         execution=LimitExecution(limit_price=Decimal(price)),
@@ -670,7 +670,7 @@ def test_gate_refuses_to_start_on_a_config_that_permits_writing(limits):
 # ================================================================================
 
 SYMBOLS = ["AAA", "BBB", "CCC"]
-OPTION_SYMBOLS = ["AAPL260117C00250000", "AAPL260117P00200000"]
+OPTION_SYMBOLS = ["AAPL270115C00250000", "AAPL260117P00200000"]
 
 #: Two machine symbols share a sector so generated sequences can actually
 #: approach the sector cap; the third stays unmapped (its own singleton).

@@ -166,11 +166,26 @@ prediction_sleeve:
 # Options instrument selection (human ruling 2026-08-24): deterministic contract
 # choice for catalyst-backed theses. Leverage is earned by timing specificity;
 # every threshold here fails toward the equity expression.
+# TWO NEW DOORS (human ruling 2026-09-15; the prompt tells the model both exist):
+#   conviction door  confidence >= conviction_min_confidence with a stated
+#                    time_horizon qualifies WITHOUT catalyst_present — same
+#                    selector, gates, halved sizing, expiry-close rules.
+#   short-dated test days-horizon theses may buy down to 7 DTE (days: 14 -> 7):
+#                    with a named catalyst inside the window at any tradeable
+#                    confidence, or without one only through the conviction
+#                    door. Contracts under short_dated_dte at entry are tagged
+#                    short_dated_option, capped by equity_sleeve.
+#                    max_short_dated_premium_at_risk, and close at T-1
+#                    (short_dated_close_before_expiry_days), not T-5.
+# Selector gates (delta >= 0.45, OI >= 500, spread <= 10%, IV pct <= 90) unchanged.
 options_selection:
   min_expiry_days: # shortest expiry >= this, by report time horizon (~2x rule)
-    days: 14
+    days: 7
     weeks: 60
     months: 180
+  conviction_min_confidence: 80
+  short_dated_dte: 21
+  short_dated_close_before_expiry_days: 1
   delta_bands: # confidence -> |delta| range; boundaries take the deeper-ITM band
     - { min: 55, max: 70, delta_min: 0.70, delta_max: 0.85, lower_inclusive: true }
     - { min: 70, max: 85, delta_min: 0.60, delta_max: 0.75 }

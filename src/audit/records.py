@@ -381,6 +381,19 @@ class ExpressionSnapshot(_Record):
     open_interest: Optional[int] = None
     spread_pct: Optional[Decimal] = None
     near_miss: Optional[NearMissSnapshot] = None
+    #: Which door admitted an options expression (ruling 2026-09-15): "catalyst"
+    #: or "conviction". None on equity expressions and on records before the field.
+    door: Optional[str] = None
+    #: Measurement tag: "short_dated_option" (under short_dated_dte at entry),
+    #: "conviction_option" (conviction door, not short-dated), "theme_etf" (a
+    #: no-ticker Class 1 post expressed through its mapped ETF). Own rows in
+    #: attribution, exit reasons, and forward returns. None otherwise.
+    tag: Optional[str] = None
+    #: The policy theme a theme->ETF expression matched; None otherwise.
+    theme: Optional[str] = None
+    #: The underlying's quote when the expression was chosen — the entry leg of
+    #: the counterfactual-equity line (same thesis as stock) per contract.
+    underlying_price: Optional[Decimal] = None
 
 
 class SizingSnapshot(_Record):
@@ -564,6 +577,9 @@ class FillRecord(_Record):
     intended_price: Optional[Decimal] = None
     spread_pct_at_submission: Optional[Decimal] = None
     seconds_to_fill: Optional[Decimal] = None
+    #: Option exits (2026-09-15): the underlying's quote when the contract sold,
+    #: the exit leg of the counterfactual-equity line. None elsewhere.
+    underlying_price: Optional[Decimal] = None
 
 
 class OutcomeRecord(_Record):

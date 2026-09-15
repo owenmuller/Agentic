@@ -3277,6 +3277,57 @@ sleeve, 747-unit sweep under the $25K buffer, 7 contracts on the halved 5%
 band, sector-cap and single-cap boundaries at 25%/10%); the ladder default in
 code mirrors the ruling.
 
+### Step 2 — options doors, theme→ETF, prompt (shipped this entry)
+
+**Conviction door.** `options_selection.conviction_min_confidence: 80`. A report
+at or above it with a stated `time_horizon` (every report states one by schema)
+reaches the option selector WITHOUT a catalyst — same chain fetch, same delta /
+OI / spread / IV gates, same halved table, same expiry close. Recorded as
+`expression.door = "conviction"`, tagged `conviction_option`. The catalyst door
+is unchanged and now records `door = "catalyst"`.
+
+**Short-dated test.** `min_expiry_days.days` 14 → 7 (weeks 60 / months 180
+unchanged). A contract under `short_dated_dte` (21) days to expiry AT ENTRY is
+tagged `short_dated_option` (the tag wins over `conviction_option` when both
+apply; the door stays on the record), closes at
+`short_dated_close_before_expiry_days` (1, T-1) instead of the standard 5, and
+draws on `equity_sleeve.max_short_dated_premium_at_risk` 0.05 of sleeve NAV
+inside the 0.20 aggregate — new gate rejection
+`max_short_dated_premium_exceeded`. Gate positions now carry `expiration` and
+`short_dated_at_entry`; a contract seeded from the broker after a restart has
+unknown entry timing and COUNTS toward the pool when inside the window today
+(Constraint #6: over-counting is the safe error). The exit engine rebuilds the
+flag at replay from expiry and entry date.
+
+**Theme → ETF expression.** `signals.yaml trump_posts.theme_etf_map` (PROPOSED
+list, awaiting confirmation): tariffs XLI, energy XLE, defense ITA, financials
+XLF, rates TLT, semis SMH, broad SPY, tech QQQ (the ruling's "SPY/QQQ" split
+into broad-market and big-tech stems). A no-ticker post from a configured source
+matching exactly ONE theme is stamped `theme`/`theme_etf` in metadata before
+research (`signals.themes.ThemeEtfMap`, deterministic, applied in the pipeline);
+the prompt carries a "theme -> ETF proposal" line saying the model may DECLINE;
+a decision whose report named the ETF is tagged `theme_etf`. Two matching
+themes = ambiguous = no mapping. Posts that name a ticker are never mapped.
+
+**Prompt (research-layer change, freeze lifted for this bundle).** SYSTEM_PROMPT
+gained "HOW A VERDICT IS EXPRESSED" naming the three doors and the T-1 rule,
+with the instruction not to inflate confidence or invent a catalyst to reach an
+option. Two stale numbers corrected in the same pass: "hard 5% cap" → 10%
+(the table has been 7% since 2026-08-28 and is 10% since step 1), "confidence
+below 55" → 50 (floor since 2026-08-28).
+
+**Measurement.** `ExpressionSnapshot` gained `door`, `tag`, `theme`,
+`underlying_price` (the underlying's quote when the expression was chosen);
+option exit fills record `underlying_price`. Attribution renders "Options doors
+and theme->ETF expressions" — one row per tag (open/closed/won/P&L/deployed, by
+exit reason) plus a line per contract: option P&L vs the SAME dollars in the
+underlying between the entry and exit quotes. The forward report gains "By
+expression tag"; `FunnelEntry.expression_tag`.
+
+**Validation.** Golden replay and live round trip: results recorded below once
+run on the droplet. `python -m orchestrator golden` exit 3 = drift for human
+review.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in
