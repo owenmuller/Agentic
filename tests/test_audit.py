@@ -1293,6 +1293,7 @@ def test_judged_pnl_is_grouped_by_why_the_position_closed(tmp_path, limits):
     closed_position(log, limits, gate, clock, ExitReason.TRAILING_STOP, "-20", "AAPL")
     closed_position(log, limits, gate, clock, ExitReason.THESIS_DISPLACED, "102", "INTC")
     closed_position(log, limits, gate, clock, ExitReason.THESIS_RESOLVED, "40", "AMD")
+    closed_position(log, limits, gate, clock, ExitReason.REVIEW_CLOSE, "-15", "NVDA")
 
     report = build_attribution(log.trails(), generated_at=clock.now)
     rows = {row.reason: row for row in report.by_exit_reason}
@@ -1306,6 +1307,9 @@ def test_judged_pnl_is_grouped_by_why_the_position_closed(tmp_path, limits):
     assert rows["thesis_displaced"].closed == 1
     assert rows["thesis_displaced"].realised_pnl == Decimal("102")
     assert rows["thesis_resolved"].closed == 1
+    # The model's own close (ruling 2026-09-15): the row the probation grades.
+    assert rows["review_close"].closed == 1
+    assert rows["review_close"].realised_pnl == Decimal("-15")
     assert rows["trailing_stop"].realised_pnl == Decimal("60")
     assert rows["trailing_stop"].wins == 1
     rendered = report.render()

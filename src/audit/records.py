@@ -703,11 +703,15 @@ class ExitReason(StrEnum):
     #: The thesis review concluded the position should close because the thesis
     #: is DEAD: the invalidation condition happened, or validity=invalidated (either
     #: closes whatever the action field said; the contradiction resolves toward the
-    #: exit). Also the reason for an explicit close verdict on a thesis the review
-    #: still calls intact and unresolved — the model's own judgment, not a rule —
-    #: which is the one remaining conflation under this name (noted 2026-09-15,
-    #: unruled).
+    #: exit). Records written before 2026-09-15 also carry this name for every
+    #: other review-driven close; from that date the three below split them out.
     THESIS_INVALIDATED = "thesis_invalidated"
+    #: Ruling 2026-09-15: an EXPLICIT action=close on a thesis the review still
+    #: calls intact and unresolved — the model's own judgment, no contradiction
+    #: rule involved. This is exactly the category the exit-authority probation
+    #: (ruling 2026-09-02) grades, so attribution must be able to read it apart
+    #: from the rule-forced reasons.
+    REVIEW_CLOSE = "review_close"
     #: Contradiction rule 2 (2026-09-15, from INTC's 2026-09-09 close): the review
     #: said validity=displaced — the position moved for reasons the thesis never
     #: predicted, so what is held is not the bet that was approved. Its own reason

@@ -3181,10 +3181,14 @@ after a broker refusal or a restart records the same reason the review earned
 record is NOT rewritten (append-only); the golden case below carries the
 correction.
 
-**Residual conflation, unruled:** an EXPLICIT `action=close` on a thesis the
-review still calls intact and unresolved — the model's own judgment, no rule —
-still records as `thesis_invalidated`. Left as is pending a ruling on whether
-it deserves its own name (e.g. `review_close`).
+**Ruled the same day: `ExitReason.REVIEW_CLOSE`.** An EXPLICIT `action=close`
+on a thesis the review still calls intact and unresolved — the model's own
+judgment, no contradiction rule — is its own reason, because it is exactly the
+category the exit-authority probation (ruling 2026-09-02) grades, and
+attribution must read it apart from the rule-forced reasons. Four review-driven
+reasons now: `thesis_invalidated` (dead thesis), `thesis_displaced` (rule 2),
+`thesis_resolved` (rule 3), `review_close` (judgment). Records before
+2026-09-15 carry `thesis_invalidated` for all four.
 
 ### 2. Golden review case: `review-intc-day9-post-blowout-real`
 
@@ -3231,6 +3235,10 @@ the record stamped only the sized report. Two visibility gaps, both closed:
   /home/agentic/Agentic still needs its `git pull` — the bare repo alone is not
   what the service runs.
 
+- **Research cost estimates 2026-09-02 → 2026-09-15 UNDERSTATE** by about one
+  full pass per floor-band entry: the boundary confirmation's second pass was
+  not folded into the decision's estimate until 8cc2e4c. Month-to-date and
+  weekly lines over that window are low; the console bill is the truth.
 - `PAPER_MODE=true`. Live needs two variables, both set by a human, and the agent must
   never set, suggest setting, or write code that sets either.
 - The kill switch resets manually or not at all.

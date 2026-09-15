@@ -1909,9 +1909,26 @@ def test_review_close_reason_precedence():
     assert review_close_reason(False, "displaced", "partial", None) is ExitReason.THESIS_DISPLACED
     assert review_close_reason(False, "intact", "substantial", "") is ExitReason.THESIS_RESOLVED
     # A resolved thesis WITH a continuation is a hold, but if the model closed
-    # anyway, the thesis was intact and the close is its own judgment.
-    assert review_close_reason(False, "intact", "substantial", "second leg") is ExitReason.THESIS_INVALIDATED
-    assert review_close_reason(False, "intact", "unresolved", None) is ExitReason.THESIS_INVALIDATED
+    # anyway, the thesis was intact and the close is its own judgment: REVIEW_CLOSE
+    # (ruling 2026-09-15), the category the exit-authority probation grades.
+    assert review_close_reason(False, "intact", "substantial", "second leg") is ExitReason.REVIEW_CLOSE
+    assert review_close_reason(False, "intact", "unresolved", None) is ExitReason.REVIEW_CLOSE
+
+
+def test_an_explicit_close_on_an_intact_thesis_records_review_close(
+    tmp_path, limits, signals_config, research_config
+):
+    """No rule fired: invalidation untriggered, validity intact, unresolved. The
+    model simply said close. That is its own judgment and its own reason."""
+    started, _, clock = enter_position(
+        tmp_path, limits, signals_config, research_config, config=review_config(),
+        llm=review_llm(action="close"),
+    )
+    clock.advance(hours=2)
+    assert started.loop.tick().exits_started == 1
+    trail = started.audit.trail("dec-1")
+    assert trail.reviews[-1].close_contradiction is None
+    assert trail.exits[-1].reason is ExitReason.REVIEW_CLOSE
 
 
 # ================================================================================

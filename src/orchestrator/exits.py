@@ -247,9 +247,10 @@ def review_close_reason(
     (2026-09-15). Precedence follows the contradiction rules: a dead thesis is
     an invalidation; a displaced one is rule 2; a resolved one with no new bet
     written down is rule 3; anything else is an explicit close on a thesis the
-    review still calls intact, which keeps the historical name. Takes the raw
-    fields rather than an ExitReview so startup replay can rebuild the reason
-    from a ThesisReviewRecord the same way."""
+    review still calls intact — the model's own judgment, REVIEW_CLOSE (ruled
+    the same day), the category the exit-authority probation grades. Takes the
+    raw fields rather than an ExitReview so startup replay can rebuild the
+    reason from a ThesisReviewRecord the same way."""
     if invalidation_triggered or validity == str(ThesisValidity.INVALIDATED):
         return ExitReason.THESIS_INVALIDATED
     if validity == str(ThesisValidity.DISPLACED):
@@ -258,7 +259,7 @@ def review_close_reason(
         continuation_thesis or ""
     ).strip():
         return ExitReason.THESIS_RESOLVED
-    return ExitReason.THESIS_INVALIDATED
+    return ExitReason.REVIEW_CLOSE
 
 
 class ExitEngine:
