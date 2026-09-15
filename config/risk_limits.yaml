@@ -41,13 +41,21 @@ equity_sleeve:
   # with the sizing table's top band. The two must move together — a 7% band
   # under a 5% gate cap does not produce a 5% position, it produces a rejected
   # order on the highest-conviction signals the system finds.
-  max_single_position: 0.07 # of sleeve NAV
-  max_daily_deployment: 0.15 # of sleeve NAV, per trading day
+  # RISK-ON RECALIBRATION (human ruling 2026-09-15): 0.07 -> 0.10 with the top
+  # band, daily deployment 0.15 -> 0.25, sector 0.15 -> 0.25. Dated so
+  # attribution partitions before/after. Never-negative, no margin, the 12%
+  # kill switch, and the mechanical arm's caps are unchanged.
+  max_single_position: 0.10 # of sleeve NAV
+  max_daily_deployment: 0.25 # of sleeve NAV, per trading day
   max_options_premium_at_risk: 0.20 # aggregate open premium, of equity sleeve
+  # Short-dated options test (ruling 2026-09-15): premium at risk in contracts
+  # bought under 21 DTE, INSIDE the 0.20 aggregate above. Enforced from step 2
+  # of the bundle (the doors); stated here so the cap table is complete.
+  max_short_dated_premium_at_risk: 0.05
   # Concentration guard (2026-08-19): aggregate equity exposure per sector, of
   # sleeve NAV. Sector membership comes from the static human-editable table in
   # config/sectors.yaml; an unmapped ticker is its own singleton sector.
-  max_sector_exposure: 0.15
+  max_sector_exposure: 0.25
   # Fractional shares (2026-08-20): smallest opening equity order, in dollars. A
   # computed position below this floor is a typed rejection (below_min_notional),
   # not a dust order. Opening equity orders only — closes are never floor-blocked.
@@ -82,10 +90,15 @@ sizing:
   # margin, long-options-only, the 12% kill switch, sector and deployment caps.
   # Dated so attribution can partition before/after.
   #
+  # RISK-ON RECALIBRATION (human ruling 2026-09-15): 1/2.5/7% -> 2/5/10%,
+  # hard cap 0.10, gate single-position cap moved with it. Floor 50, boundary
+  # confirmation [50, 70), ATR stops and the options halving all unchanged.
+  # Dated for attribution partitioning.
+  #
   # BOUNDARY RULE: CLAUDE.md lists the bands as "50-70 / 70-85 / 85+", which overlaps
   # at 70 and at 85. Resolved per Inviolable Constraint #6 (ambiguity resolves toward
   # less risk): bands are (lower, upper], so a confidence landing exactly on a boundary
-  # takes the SMALLER size. Exactly 70 -> 1.0%, exactly 85 -> 2.5%.
+  # takes the SMALLER size. Exactly 70 -> 2%, exactly 85 -> 5%.
   #
   # The one exception is the floor: "< 50 | No trade" is explicit, not ambiguous, so
   # 50 itself trades at 1.0% and the first band alone is lower-inclusive. Constraint #6
@@ -94,10 +107,10 @@ sizing:
   no_trade_below: 50
   bounds: lower_exclusive_upper_inclusive
   bands:
-    - { min: 50, max: 70, size: 0.010, lower_inclusive: true }
-    - { min: 70, max: 85, size: 0.025 }
-    - { min: 85, max: 100, size: 0.070 }
-  hard_cap: 0.07 # confidence 100 is still 7% max
+    - { min: 50, max: 70, size: 0.020, lower_inclusive: true }
+    - { min: 70, max: 85, size: 0.050 }
+    - { min: 85, max: 100, size: 0.100 }
+  hard_cap: 0.10 # confidence 100 is still 10% max
   options:
     basis: premium_at_risk
     multiplier: 0.5 # table size halved: options already carry embedded leverage

@@ -56,9 +56,10 @@ def report(confidence=72):
 
 def test_ladder_boundaries_are_inclusive_toward_less_risk():
     cases = {
-        "0": "1", "0.0399": "1",
-        "0.04": "0.75", "0.079": "0.75",
-        "0.08": "0.5", "0.119": "0.5",
+        # Rungs 0.06/0.10 (recalibration 2026-09-15; were 0.04/0.08).
+        "0": "1", "0.0599": "1",
+        "0.06": "0.75", "0.099": "0.75",
+        "0.10": "0.5", "0.119": "0.5",
         # Beyond the last rung the ladder stays at its floor — the 12% kill
         # switch is the gate's own halt, deliberately not reimplemented here.
         "0.12": "0.5", "0.5": "0.5",
@@ -78,14 +79,14 @@ def test_regime_boundaries_are_inclusive_toward_less_risk():
 
 
 def test_the_two_scalars_compose_multiplicatively():
-    reading = scalars(drawdown="0.05", vix="27").current()
+    reading = scalars(drawdown="0.07", vix="27").current()
     assert reading.drawdown_multiplier == Decimal("0.75")
     assert reading.regime_multiplier == Decimal("0.75")
     assert reading.multiplier == Decimal("0.5625")
 
 
 def test_recovery_restores_statelessly():
-    state = {"drawdown": Decimal("0.09")}
+    state = {"drawdown": Decimal("0.11")}
     ladder = SizingScalars(
         CONFIG, drawdown=lambda: state["drawdown"], clock=lambda: NOW
     )
@@ -115,7 +116,7 @@ def test_stale_or_missing_vix_runs_at_one_and_says_so():
 def test_scale_shrinks_capital_and_preserves_the_tables_dollars():
     engine = SizingEngine(LIMITS)
     proposal = engine.propose_equity(report(72), Decimal("75000"))
-    scaled = scalars(drawdown="0.04").scale(proposal)
+    scaled = scalars(drawdown="0.06").scale(proposal)
 
     assert scaled.table_capital == proposal.capital
     assert scaled.capital == (proposal.capital * Decimal("0.75")).quantize(
@@ -200,8 +201,8 @@ def test_the_shipped_yaml_arms_both_scalars():
     config = OrchestratorConfig.load().risk_scalars
     assert config.enabled and config.regime.enabled
     assert [(s.at, s.multiplier) for s in config.drawdown_steps] == [
-        (Decimal("0.04"), Decimal("0.75")),
-        (Decimal("0.08"), Decimal("0.5")),
+        (Decimal("0.06"), Decimal("0.75")),  # 0.04/0.08 -> 0.06/0.10 (2026-09-15)
+        (Decimal("0.10"), Decimal("0.5")),
     ]
     assert [(s.vix_at_or_above, s.multiplier) for s in config.regime.thresholds] == [
         (Decimal("25"), Decimal("0.75")),
@@ -218,7 +219,7 @@ def test_the_weekly_line_prices_forgone_size(tmp_path):
     table = SizingEngine(LIMITS).propose_equity(
         research, gate.sleeve_nav(Sleeve.EQUITY)
     )
-    scaled = scalars(drawdown="0.04").scale(table)
+    scaled = scalars(drawdown="0.06").scale(table)
     log.record_decision(make_signal(), research, scaled, gate.submit(equity_order()))
 
     attribution = build_attribution(

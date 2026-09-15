@@ -633,16 +633,17 @@ def test_reset_rebaselines_the_high_water_mark(limits):
 
 
 def test_confidence_bands_resolve_boundaries_toward_less_risk(limits):
-    """Constraint #6: exactly-70 takes 1%, exactly-85 takes 2.5%."""
+    """Constraint #6: exactly-70 takes 2%, exactly-85 takes 5% (table 2/5/10%,
+    recalibration 2026-09-15)."""
     sizing = limits.sizing
     assert sizing.size_for(49) == Decimal("0")  # floor 55 -> 50 (2026-08-28)
-    assert sizing.size_for(50) == Decimal("0.010")
-    assert sizing.size_for(54) == Decimal("0.010")  # the band the ruling opened
-    assert sizing.size_for(70) == Decimal("0.010")
-    assert sizing.size_for(71) == Decimal("0.025")
-    assert sizing.size_for(85) == Decimal("0.025")
-    assert sizing.size_for(86) == Decimal("0.070")  # top band 5% -> 7%
-    assert sizing.size_for(100) == Decimal("0.070")
+    assert sizing.size_for(50) == Decimal("0.020")
+    assert sizing.size_for(54) == Decimal("0.020")  # the band the ruling opened
+    assert sizing.size_for(70) == Decimal("0.020")
+    assert sizing.size_for(71) == Decimal("0.050")
+    assert sizing.size_for(85) == Decimal("0.050")
+    assert sizing.size_for(86) == Decimal("0.100")  # top band 7% -> 10%
+    assert sizing.size_for(100) == Decimal("0.100")
 
 
 def test_no_confidence_score_exceeds_the_hard_cap(limits):
@@ -1126,16 +1127,18 @@ ALPHA_SECTOR = SectorMap(
 def test_three_same_sector_positions_within_the_cap_are_approved(limits):
     gate = make_gate(limits, sectors=ALPHA_SECTOR)
     for symbol in ("AL1", "AL2", "AL3"):
-        decision = gate.submit(equity_buy(symbol=symbol, qty=37, price="100.00"))
+        decision = gate.submit(equity_buy(symbol=symbol, qty=62, price="100.00"))
         assert decision.is_approved, decision
 
 
 def test_the_fourth_position_breaching_the_sector_cap_is_rejected(limits):
     gate = make_gate(limits, sectors=ALPHA_SECTOR)
+    # 3 x 6,200 = 18,600 sits inside the 25% sector cap (18,750 of 75k); the
+    # fourth carries it to 24,800 (caps 15% -> 25%, recalibration 2026-09-15).
     for symbol in ("AL1", "AL2", "AL3"):
-        assert gate.submit(equity_buy(symbol=symbol, qty=37, price="100.00")).is_approved
+        assert gate.submit(equity_buy(symbol=symbol, qty=62, price="100.00")).is_approved
 
-    fourth = gate.submit(equity_buy(symbol="AL4", qty=37, price="100.00"))
+    fourth = gate.submit(equity_buy(symbol="AL4", qty=62, price="100.00"))
     assert isinstance(fourth, Rejection)
     assert fourth.code is RejectionCode.SECTOR_CONCENTRATION
     assert "alpha" in fourth.message
@@ -1172,7 +1175,7 @@ def test_unmapped_tickers_never_share_a_bucket(limits):
     if unknown tickers silently shared a sector, the third would breach it."""
     gate = make_gate(limits, sectors=SectorMap({}))
     for symbol in ("ZZ1", "ZZ2", "ZZ3"):
-        decision = gate.submit(equity_buy(symbol=symbol, qty=37, price="100.00"))
+        decision = gate.submit(equity_buy(symbol=symbol, qty=62, price="100.00"))
         assert decision.is_approved, decision
     assert SectorMap({}).sector_of("ZZ1") == "unmapped:ZZ1"
     assert SectorMap({}).sector_of("zz1") == "unmapped:ZZ1"  # case-insensitive
@@ -1319,13 +1322,13 @@ def test_a_zero_weight_sleeve_rejects_orders_with_a_typed_rejection(limits):
 
 
 def test_the_judged_sleeve_spans_three_quarters_of_nav(limits):
-    """75/25/0 (2026-08-27): the judged 7% cap (2026-08-28) is 7% of a 75%
-    sleeve — 5.25% of account NAV, not 7%."""
+    """75/25/0 (2026-08-27): the judged 10% cap (2026-09-15; was 7%) is 10% of
+    a 75% sleeve — 7.5% of account NAV, not 10%."""
     gate = make_gate(limits)
     assert gate.sleeve_nav(Sleeve.EQUITY) == START_CASH * Decimal("0.75")
     assert gate.sleeve_nav(Sleeve.MECHANICAL) == START_CASH * Decimal("0.25")
-    approve(gate, equity_buy(qty=Decimal("52.5"), price="100.00"))  # == the cap
-    rejection = reject(gate, equity_buy(symbol="MSFT", qty=53, price="100.00"))
+    approve(gate, equity_buy(qty=Decimal("75"), price="100.00"))  # == the cap
+    rejection = reject(gate, equity_buy(symbol="MSFT", qty=76, price="100.00"))
     assert rejection.code is RejectionCode.MAX_SINGLE_POSITION_EXCEEDED
 
 

@@ -3223,6 +3223,60 @@ the record stamped only the sized report. Two visibility gaps, both closed:
 - The confirmed branch logs `boundary confirmed on …: first long/60, second
   long/N; the first pass sizes`.
 
+## RISK-ON RECALIBRATION + SHORT-DATED OPTIONS TEST — human ruling 2026-09-15
+
+The prompt/experiment freeze LIFTS for this bundle only and re-closes after it.
+One golden replay and one live round trip for the whole bundle (step 2). Dated
+2026-09-15 for attribution partitioning (before/after). Four steps, a commit
+each, pushed to both hosts verified, droplet pulled:
+
+1. config changes + tests (THIS ENTRY)
+2. both options doors + theme→ETF map + prompt (golden replay + live round trip)
+3. Form 4 C-suite singles
+4. 8-K Class 1 source
+
+Hard review dates: **2026-10-15** for the sources — if no source shows positive
+forward excess by then, that is the finding. **2026-10-30 or n≥10 resolved
+short-dated contracts**, whichever first: keep / widen / kill on the
+counterfactual-equity line.
+
+### Step 1 — config (shipped this entry)
+
+| knob | was | now |
+|---|---|---|
+| sizing bands 50-70 / 70-85 / 85+ | 1% / 2.5% / 7% | **2% / 5% / 10%** |
+| sizing.hard_cap | 0.07 | **0.10** |
+| equity_sleeve.max_single_position | 0.07 | **0.10** (moves with the table) |
+| equity_sleeve.max_daily_deployment | 0.15 | **0.25** |
+| equity_sleeve.max_sector_exposure | 0.15 | **0.25** |
+| reward_risk.min_ratio | 1.5 | **1.3** |
+| exits.ratchet.arm_at_gain | 0.20 | **0.12** (trail 0.10 unchanged) |
+| risk_scalars.drawdown_steps | 0.04→0.75, 0.08→0.5 | **0.06→0.75, 0.10→0.5** (multipliers unchanged) |
+| equity_sleeve.max_short_dated_premium_at_risk | — | **0.05** (new; validated ≤ the 0.20 aggregate; ENFORCED in step 2) |
+
+Unchanged: floor 50, boundary confirmation [50, 70), ATR stops, options
+halving, never-negative, no margin, long-only options, deterministic gate,
+kill switch 0.12, mechanical arm caps, verification rules, exit-authority
+probation. CLAUDE.md position caps and sizing table updated with the dated
+ruling. `options_selection.min_expiry_days.days` 14 → 7 is deliberately NOT
+in this step: alone it would let 7-DTE contracts through the existing
+catalyst path before the T-1 close rule and the 0.05 short-dated cap exist
+(Constraint #6) — it ships with the doors in step 2.
+
+**Consequences to expect after the bounce.** (a) The cash-sweep buffer is
+`0.25 × judged NAV + 0.15 × mechanical NAV + reservations + $2,500` ≈ $25K on
+a $100K account (was ≈ $17.5K): the first tick will unsweep ~$11K of SGOV to
+refill it — expected, not a fault. (b) Every held position keeps the stop and
+size it was opened with; the new table applies to NEW judged entries only.
+(c) With the ladder's first rung at 6%, the current 0.44% drawdown is far
+from any scalar; the ratchet arms at +12% on new and existing positions
+(the ratchet reads config at each check, not at entry).
+
+Tests: 41 pinned quantities recomputed (26 shares at 5% of the harness
+sleeve, 747-unit sweep under the $25K buffer, 7 contracts on the halved 5%
+band, sector-cap and single-cap boundaries at 25%/10%); the ladder default in
+code mirrors the ruling.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

@@ -360,8 +360,8 @@ class RiskScalarsConfig(BaseModel):
 
     enabled: bool = True
     drawdown_steps: tuple[DrawdownStep, ...] = (
-        DrawdownStep(at=Decimal("0.04"), multiplier=Decimal("0.75")),
-        DrawdownStep(at=Decimal("0.08"), multiplier=Decimal("0.5")),
+        DrawdownStep(at=Decimal("0.06"), multiplier=Decimal("0.75")),
+        DrawdownStep(at=Decimal("0.10"), multiplier=Decimal("0.5")),
     )
     regime: RegimeScalarConfig = Field(default_factory=RegimeScalarConfig)
 

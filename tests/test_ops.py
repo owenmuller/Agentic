@@ -340,12 +340,12 @@ def test_unmanaged_exposure_math(tmp_path, limits, signals_config, research_conf
     )
     started.loop.shutdown()
 
-    # The broker holds 20 NUE but the trail only accounts for 13 — plus 100 AAPL
+    # The broker holds 33 NUE but the trail only accounts for 26 — plus 100 AAPL
     # nothing accounts for at all.
     checks = preflight(
         adapter=FakeBroker(
             positions=[
-                BrokerPosition("NUE", Decimal("20"), Decimal("2800"), Decimal("2800")),
+                BrokerPosition("NUE", Decimal("33"), Decimal("4620"), Decimal("4620")),
                 BrokerPosition("AAPL", Decimal("100"), Decimal("22000"), Decimal("20000")),
             ]
         ),

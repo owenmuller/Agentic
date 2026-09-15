@@ -57,14 +57,15 @@ def report(confidence: int) -> ResearchReport:
     [
         (0, "0"),
         (49, "0"),  # below the floor (risk-on calibration 2026-08-28: 55 -> 50)
-        (50, "0.010"),  # floor is inclusive: "< 50 | No trade" is explicit
-        (54, "0.010"),  # the band the calibration opened: small shot, not none
-        (56, "0.010"),
-        (70, "0.010"),  # boundary -> smaller band (Constraint #6)
-        (71, "0.025"),
-        (85, "0.025"),  # boundary -> smaller band
-        (86, "0.070"),  # top band 5% -> 7%
-        (100, "0.070"),
+        # Table 1/2.5/7% -> 2/5/10% (risk-on recalibration 2026-09-15).
+        (50, "0.020"),  # floor is inclusive: "< 50 | No trade" is explicit
+        (54, "0.020"),  # the band the calibration opened: small shot, not none
+        (56, "0.020"),
+        (70, "0.020"),  # boundary -> smaller band (Constraint #6)
+        (71, "0.050"),
+        (85, "0.050"),  # boundary -> smaller band
+        (86, "0.100"),  # top band 7% -> 10%
+        (100, "0.100"),
     ],
 )
 def test_every_band_boundary(engine, confidence, expected):
@@ -82,7 +83,7 @@ def test_below_the_floor_is_no_trade_not_a_token_position(engine):
 
 def test_capital_is_the_fraction_of_the_nav_it_was_given(engine):
     proposal = engine.propose_equity(report(71), EQUITY_SLEEVE_NAV)
-    assert proposal.capital == Decimal("2250.00")  # 2.5% of 90,000
+    assert proposal.capital == Decimal("4500.00")  # 5% of 90,000
     assert proposal.sleeve is Sleeve.EQUITY
     assert proposal.instrument is InstrumentKind.EQUITY
 
@@ -90,7 +91,7 @@ def test_capital_is_the_fraction_of_the_nav_it_was_given(engine):
 def test_rounding_never_increases_exposure(engine):
     """An awkward NAV must round the dollars down, not to nearest."""
     proposal = engine.propose_equity(report(55), Decimal("1234.567"))
-    assert proposal.capital == Decimal("12.34")  # 1% = 12.34567, rounded down
+    assert proposal.capital == Decimal("24.69")  # 2% = 24.69134, rounded down
     assert proposal.capital <= proposal.sleeve_nav * proposal.fraction_of_sleeve_nav
 
 
@@ -108,11 +109,11 @@ def test_option_sizing_is_exactly_half_the_equity_size(engine, confidence):
 
 
 def test_option_at_maximum_confidence_is_capped_at_half_the_top_band(engine):
-    """7% top band, halved: options carry embedded leverage and the table must
-    not double it (risk-on calibration 2026-08-28)."""
+    """10% top band, halved: options carry embedded leverage and the table must
+    not double it (recalibration 2026-09-15)."""
     option = engine.propose_option(report(100), EQUITY_SLEEVE_NAV)
-    assert option.fraction_of_sleeve_nav == Decimal("0.035")
-    assert option.capital == Decimal("3150.00")
+    assert option.fraction_of_sleeve_nav == Decimal("0.05")
+    assert option.capital == Decimal("4500.00")
     assert "halved for embedded option leverage" in option.rationale
 
 
@@ -123,7 +124,7 @@ def test_a_weak_signal_buys_no_options_either(engine):
 def test_option_capital_is_premium_at_risk(engine):
     """The figure is premium, not notional — the whole point of halving it."""
     option = engine.propose_option(report(86), EQUITY_SLEEVE_NAV)
-    assert option.capital == Decimal("3150.00")
+    assert option.capital == Decimal("4500.00")
     assert option.instrument is InstrumentKind.OPTION
     assert option.sleeve is Sleeve.EQUITY
 
@@ -321,7 +322,7 @@ def test_no_position_sizes_to_zero_at_every_confidence(engine, confidence):
 def test_no_position_at_ninety_five_is_not_a_top_band_position(engine):
     """Stated against the concrete alternative, because that is the failure mode."""
     directional = engine.propose_equity(report(95), EQUITY_SLEEVE_NAV)
-    assert directional.capital == Decimal("6300.00")  # 7% of 90k, the top band
+    assert directional.capital == Decimal("9000.00")  # 10% of 90k, the top band
 
     abstaining = engine.propose_equity(no_trade_report(95), EQUITY_SLEEVE_NAV)
     assert abstaining.capital == Decimal("0")

@@ -220,14 +220,14 @@ def test_a_guardrail_breach_closes_the_position_end_to_end(
     assert trail.exits[0].gate.approved is True
     assert trail.exits[0].submitted is True
     assert trail.outcome is not None
-    assert trail.outcome.realised_pnl == Decimal("-273.00")  # 13 x (119 - 140)
+    assert trail.outcome.realised_pnl == Decimal("-546.00")  # 26 x (119 - 140)
     assert not trail.outcome.won
     assert trail.is_complete
 
     # The gate settled the close: the position is gone and the proceeds are cash.
     assert started.gate.state.position(("equity", "NUE")) is None
-    assert started.gate.state.cash == Decimal("100000") - Decimal("1820") + Decimal(
-        "1547"
+    assert started.gate.state.cash == Decimal("100000") - Decimal("3640") + Decimal(
+        "3094"
     )
 
     # And the loss resolved back to the source that called it. Hit rates are real now.
@@ -771,22 +771,22 @@ def test_a_partially_filled_exit_keeps_the_remainder_stopped(
     started.loop.tick()
     exit_id = started.exits.working_exits[0]
 
-    # It fills 6 of 13 and is then cancelled. The breach is still standing, so the
-    # same tick that settles the partial re-fires an exit for the remaining 7 —
+    # It fills 6 of 26 and is then cancelled. The breach is still standing, so the
+    # same tick that settles the partial re-fires an exit for the remaining 20 —
     # which, with the broker filling again, completes on the next tick.
     broker.set_status(exit_id, OrderStatus(exit_id, "canceled", Decimal("6"), STOP))
     broker.fill = "filled"
     report = started.loop.tick()
     assert report.positions_closed == 0
     assert report.exits_started == 1
-    assert started.exits.tracked[0].quantity == 7
+    assert started.exits.tracked[0].quantity == 20
 
     report = started.loop.tick()
     assert report.positions_closed == 1
 
     trail = started.audit.trail("dec-1")
     assert [f.side for f in trail.fills] == ["buy", "sell", "sell"]
-    assert trail.outcome.realised_pnl == Decimal("-273.00")  # 13 x (119 - 140), across two fills
+    assert trail.outcome.realised_pnl == Decimal("-546.00")  # 26 x (119 - 140), across two fills
     assert len(trail.exits) == 2  # two attempts, both recorded
 
 
@@ -824,7 +824,7 @@ def test_shutdown_cancels_a_working_exit_and_releases_its_reservation(
     prices.set("NUE", "119.00")
     broker.fill = "new"
     started.loop.tick()
-    assert started.gate.state.position(("equity", "NUE")).reserved_close == 13
+    assert started.gate.state.position(("equity", "NUE")).reserved_close == 26
 
     started.loop.shutdown()
 
@@ -1818,7 +1818,7 @@ def test_an_exit_that_terminates_unfilled_is_released_in_the_log(
     started.loop.tick()
     exit_id = started.exits.working_exits[0]
     pending = [p for p in pending_settlement(started.audit) if p.side == "sell"]
-    assert [p.quantity for p in pending] == [Decimal("13")]  # what it asked for
+    assert [p.quantity for p in pending] == [Decimal("26")]  # what it asked for
 
     broker.set_status(exit_id, OrderStatus(exit_id, "canceled", Decimal("0"), None))
     broker.fill = "filled"
@@ -1885,9 +1885,9 @@ def test_a_standing_close_verdict_replays_with_its_reason(
         prices=MutablePrices(NUE=str(QUOTE)),
         llm_client=RoutingLLM(),
         adapter=FakeBroker(
-            cash=Decimal("98180"),
+            cash=Decimal("96360"),
             positions=[
-                BrokerPosition("NUE", Decimal("13"), Decimal("1820"), Decimal("1820"))
+                BrokerPosition("NUE", Decimal("26"), Decimal("3640"), Decimal("3640"))
             ],
         ),
         id_factory=counter("b"),

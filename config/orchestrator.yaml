@@ -96,8 +96,10 @@ exits:
   # The trailing backstop beneath the review layer. Arms only after a gain that has
   # already happened, then follows the position's high-water mark and never falls.
   # Not a profit target: it cannot fire on a position that has not first run.
+  # arm_at_gain 0.20 -> 0.12 (human ruling 2026-09-15, risk-on recalibration):
+  # the backstop arms earlier under bigger positions; the trail is unchanged.
   ratchet:
-    arm_at_gain: 0.20
+    arm_at_gain: 0.12
     trail_fraction: 0.10
 
   # EXIT-AUTHORITY PROBATION (human ruling 2026-09-02, from live LLM-agent
@@ -192,11 +194,14 @@ atr_sizing:
 #
 # Attribution renders one weekly forgone-size line (table dollars minus scaled
 # dollars) so the scalars' cost/benefit is argued by data, ruled by humans.
+# Rungs 0.04/0.08 -> 0.06/0.10 (human ruling 2026-09-15, risk-on
+# recalibration): multipliers unchanged, the kill switch at 0.12 unchanged and
+# still above the last rung.
 risk_scalars:
   enabled: true
   drawdown_steps:
-    - { at: 0.04, multiplier: 0.75 }
-    - { at: 0.08, multiplier: 0.5 }
+    - { at: 0.06, multiplier: 0.75 }
+    - { at: 0.10, multiplier: 0.5 }
   regime:
     enabled: true
     thresholds:
@@ -234,9 +239,10 @@ boundary_confirmation:
 # (Constraint #6); a missing quote fails open because order construction
 # already refuses to price without one. Options entries excluded: premium is
 # the risk and the delta bands + halved table govern.
+# min_ratio 1.5 -> 1.3 (human ruling 2026-09-15, risk-on recalibration).
 reward_risk:
   enabled: true
-  min_ratio: 1.5
+  min_ratio: 1.3
   fallback_stop_fraction: 0.15
 
 # EXECUTION-FIDELITY HAIRCUT (ruling 2026-09-02). Paper fills are optimistic:

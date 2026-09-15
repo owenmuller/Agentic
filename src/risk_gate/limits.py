@@ -76,6 +76,11 @@ class EquitySleeveLimits(_Strict):
     max_single_position: Fraction
     max_daily_deployment: Fraction
     max_options_premium_at_risk: Fraction
+    #: Short-dated options test (human ruling 2026-09-15): premium at risk in
+    #: contracts bought under 21 DTE, a sub-cap INSIDE max_options_premium_at_risk.
+    #: Validated <= the aggregate below. Enforced by the gate from step 2 of the
+    #: 2026-09-15 bundle (the options doors); carried in the cap table from step 1.
+    max_short_dated_premium_at_risk: Fraction = Decimal("0.05")
     #: Aggregate equity exposure per sector, of sleeve NAV (config/sectors.yaml
     #: defines membership; unmapped tickers are singleton sectors).
     max_sector_exposure: Fraction
@@ -85,6 +90,16 @@ class EquitySleeveLimits(_Strict):
     #: are risk-reducing and must never be trapped by a floor, and the prediction
     #: sleeve's arb strategy is explicitly micro-unit.
     min_order_notional_usd: Annotated[Decimal, Field(ge=Decimal("0"))]
+
+    @model_validator(mode="after")
+    def _short_dated_inside_aggregate(self) -> "EquitySleeveLimits":
+        if self.max_short_dated_premium_at_risk > self.max_options_premium_at_risk:
+            raise ValueError(
+                f"max_short_dated_premium_at_risk {self.max_short_dated_premium_at_risk} "
+                f"exceeds max_options_premium_at_risk {self.max_options_premium_at_risk}; "
+                f"the short-dated cap sits INSIDE the aggregate (ruling 2026-09-15)"
+            )
+        return self
 
 
 class MechanicalSleeveLimits(_Strict):

@@ -124,7 +124,7 @@ def test_the_gate_can_be_disabled_but_ships_enabled():
     from orchestrator.config import OrchestratorConfig
 
     shipped = OrchestratorConfig.load().reward_risk
-    assert shipped.enabled and shipped.min_ratio == Decimal("1.5")
+    assert shipped.enabled and shipped.min_ratio == Decimal("1.3")  # 1.5 -> 1.3 (2026-09-15)
 
 
 # ================================================================================
