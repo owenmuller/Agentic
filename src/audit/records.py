@@ -475,6 +475,28 @@ class RecordKind(StrEnum):
     OPERATOR_ACTION = "operator_action"
 
 
+class BoundaryConfirmationSnapshot(_Record):
+    """What the boundary confirmation (ruling 2026-09-02) saw, when it ran
+    (2026-09-15: RWT sized at 60 inside [50, 70) and the record could not say
+    what the second pass returned or which pass sized). Both verdicts, the band,
+    and which one the LOWER-confidence rule chose. Absent on records where the
+    verdict sat outside the band, so absent means "not needed", never "not run".
+    """
+
+    floor: int
+    band_width: int
+    first_direction: str
+    first_confidence: int
+    second_direction: str
+    second_confidence: int
+    #: "first" or "second": the pass whose report sized (the lower confidence;
+    #: a tie keeps the first).
+    sized_from: str
+    #: The second pass's own estimated spend; the decision's est_cost_usd
+    #: includes it.
+    second_est_cost_usd: Optional[Decimal] = None
+
+
 class DecisionRecord(_Record):
     """Everything known when the gate answered. All four stages are required."""
 
@@ -496,6 +518,10 @@ class DecisionRecord(_Record):
     #: name when this decision was made. None on records written before the
     #: field, on mechanical entries, and on sweeps.
     convergence: Optional["ConvergenceSnapshot"] = None
+    #: Boundary confirmation (2026-09-15): both passes and which one sized, when
+    #: the verdict sat in the sizing floor's noise band. None outside the band
+    #: and on records written before the field.
+    boundary_confirmation: Optional[BoundaryConfirmationSnapshot] = None
     #: Two-stage research (2026-08-25): the stage-one screen draft behind a
     #: verified verdict, with its own cost. None when the pass ended at stage
     #: one (``research`` IS the screen report) or two-stage is off.
@@ -674,10 +700,24 @@ class ExitReason(StrEnum):
     MAX_LOSS_STOP = "max_loss_stop"
     #: Deterministic guardrail: held longer than the leash for its time horizon.
     TIME_STOP = "time_stop"
-    #: The thesis review concluded the position should close — an explicit close
-    #: verdict, or a triggered invalidation condition (which closes whatever the
-    #: action field said; the contradiction resolves toward the exit).
+    #: The thesis review concluded the position should close because the thesis
+    #: is DEAD: the invalidation condition happened, or validity=invalidated (either
+    #: closes whatever the action field said; the contradiction resolves toward the
+    #: exit). Also the reason for an explicit close verdict on a thesis the review
+    #: still calls intact and unresolved — the model's own judgment, not a rule —
+    #: which is the one remaining conflation under this name (noted 2026-09-15,
+    #: unruled).
     THESIS_INVALIDATED = "thesis_invalidated"
+    #: Contradiction rule 2 (2026-09-15, from INTC's 2026-09-09 close): the review
+    #: said validity=displaced — the position moved for reasons the thesis never
+    #: predicted, so what is held is not the bet that was approved. Its own reason
+    #: because it is NOT an invalidation (invalidation_triggered was false) and
+    #: attribution must be able to ask whether rule-forced closes pay.
+    THESIS_DISPLACED = "thesis_displaced"
+    #: Contradiction rule 3 (2026-09-15): resolution=substantial with no
+    #: continuation_thesis — the move the thesis underwrote arrived and nobody
+    #: wrote down the new bet. The thesis WORKED; this is not an invalidation.
+    THESIS_RESOLVED = "thesis_resolved"
     #: Long option inside the configured pre-expiry window. Closed regardless of
     #: thesis state: theta endgame is not a place this system holds (2026-08-24).
     EXPIRY_CLOSE = "expiry_close"

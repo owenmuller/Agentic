@@ -77,6 +77,10 @@ class GoldenCase:
     #: Review cases: the structural bar each case must clear, in characters.
     min_case_chars: int = 120
     expect_would_open: Optional[bool] = None
+    #: Review cases: the validity labels a correct review may report (2026-09-15).
+    #: Empty = ungraded. The INTC day-9 case grades on this alone: "displaced" is
+    #: a mislabel when the move came from exactly what the thesis predicted.
+    expect_validity: tuple[str, ...] = ()
 
     def under_review(self) -> PositionUnderReview:
         """The frozen position a review case replays."""
@@ -161,6 +165,7 @@ def load_cases(path: Optional[Path] = None) -> list[GoldenCase]:
                         actions=tuple(expect.get("actions", ("hold", "trim", "close"))),
                         min_case_chars=int(expect.get("min_case_chars", 120)),
                         expect_would_open=expect.get("would_open_today"),
+                        expect_validity=tuple(expect.get("validity", ())),
                     )
                 )
                 continue
@@ -273,6 +278,11 @@ def grade_review(case: GoldenCase, outcome, usage) -> GoldenResult:
     action = str(outcome.action)
     if case.actions and action not in case.actions:
         problems.append(f"verdict {action} not in graded set {list(case.actions)}")
+    validity = str(outcome.validity)
+    if case.expect_validity and validity not in case.expect_validity:
+        problems.append(
+            f"validity {validity} not in graded set {list(case.expect_validity)}"
+        )
     holding = outcome.case_for_holding.strip()
     selling = outcome.case_for_selling.strip()
     if len(holding) < case.min_case_chars:
@@ -300,7 +310,8 @@ def grade_review(case: GoldenCase, outcome, usage) -> GoldenResult:
             f"{case.expect_would_open}"
         )
     verdict = (
-        f"{action} would_open={outcome.would_open_today} | hold-case {len(holding)}c, "
+        f"{action} validity={validity} would_open={outcome.would_open_today} | "
+        f"hold-case {len(holding)}c, "
         f"sell-case {len(selling)}c | {outcome.verdict_reason.strip()[:90]}"
     )
     return GoldenResult(
@@ -361,8 +372,13 @@ def render_summary(results: list[GoldenResult]) -> str:
                 lines.append(
                     f"  {result.case.name}: got {result.verdict}; expected a "
                     f"verdict in {list(result.case.actions)} with both cases "
-                    f"argued (>= {result.case.min_case_chars} chars each) — "
-                    f"{result.case.note}"
+                    f"argued (>= {result.case.min_case_chars} chars each)"
+                    + (
+                        f", validity in {list(result.case.expect_validity)}"
+                        if result.case.expect_validity
+                        else ""
+                    )
+                    + f" — {result.case.note}"
                 )
                 continue
             lines.append(

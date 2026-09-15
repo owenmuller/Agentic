@@ -43,6 +43,7 @@ from typing import Callable, Collection, Optional, Protocol
 
 from audit.log import AuditLog, AuditLogError
 from audit.records import (
+    BoundaryConfirmationSnapshot,
     DecisionRecord,
     ExpressionSnapshot,
     NearMissSnapshot,
@@ -53,6 +54,18 @@ from execution.base import BrokerAdapter, BrokerError, OrderReceipt
 from research.reports import Direction, ResearchReport, ResearchUsage
 from research.research_pass import ResearchPass
 from research.triage import TriagePass
+
+
+@dataclass(frozen=True, slots=True)
+class _Confirmation:
+    """What the boundary confirmation decided: the report to size (None = not
+    confirmed, with ``failure`` saying why), the snapshot for the decision record
+    when a second pass ran, and that pass's usage so the record's cost is honest."""
+
+    report: Optional[ResearchReport]
+    failure: Optional[str] = None
+    snapshot: Optional[BoundaryConfirmationSnapshot] = None
+    usage: Optional[ResearchUsage] = None
 
 
 def _combine_usage(
@@ -370,21 +383,27 @@ class SignalPipeline:
         # 2a-0. Boundary confirmation (ruling 2026-09-02, post-diagnosis): a
         # tradeable verdict in the sizing floor's noise band must be confirmed
         # by a second independent pass, and the LOWER confidence sizes.
+        boundary = None
         if not report.recommends_no_position:
-            confirmed, failure = self._confirm_boundary(signal, report)
-            if confirmed is None:
+            confirmation = self._confirm_boundary(signal, report)
+            if confirmation.usage is not None:
+                # The second pass is real spend on THIS decision (2026-09-15:
+                # RWT's record carried one pass's cost for two passes' calls).
+                usage = _combine_usage(usage, confirmation.usage)
+            if confirmation.report is None:
                 return self._stopped(
                     decision_id,
                     signal,
                     RejectedStage.SIZING,
                     "unconfirmed_boundary",
-                    failure or "boundary confirmation failed",
+                    confirmation.failure or "boundary confirmation failed",
                     report=report,
                     usage=usage,
                     screen_report=screen_report,
                     screen_usage=screen_usage,
                 )
-            report = confirmed
+            report = confirmation.report
+            boundary = confirmation.snapshot
         # 2a. The reward:risk gate (ruling 2026-09-02): equity longs must clear
         # (target - entry) / (entry x stop) >= min_ratio before a dollar is
         # sized. Veto-only — the model's target claim can block an entry, never
@@ -483,6 +502,7 @@ class SignalPipeline:
             screen_report=screen_report,
             screen_usage=screen_usage,
             convergence=convergence,
+            boundary=boundary,
         )
         if not decision.is_approved:
             return PipelineResult(
@@ -688,9 +708,7 @@ class SignalPipeline:
             expression=_fallback_snapshot(fallback, chosen="equity"),
         )
 
-    def _confirm_boundary(
-        self, signal: Signal, report: ResearchReport
-    ) -> tuple[Optional[ResearchReport], Optional[str]]:
+    def _confirm_boundary(self, signal: Signal, report: ResearchReport) -> _Confirmation:
         """Boundary confirmation (ruling 2026-09-02, diagnosis: five
         identical-input replays of a floor-band case spanned long/38-54 and
         no_position/30-72 — the band admits stochastic noise).
@@ -699,16 +717,17 @@ class SignalPipeline:
         SECOND independent pass, same tier and fresh context. Confirmed = same
         direction at or above the floor; the LOWER-confidence report is the one
         that sizes (the second pass can only block or shrink, never enlarge).
-        Returns (report, None) to proceed or (None, why) for the typed
-        ``unconfirmed_boundary`` rejection. A second pass that errors outright
-        does not confirm — an unconfirmable boundary verdict is not sized
-        (Constraint #6).
+        Returns a confirmation carrying the report to size, or none plus why
+        for the typed ``unconfirmed_boundary`` rejection. A second pass that
+        errors outright does not confirm — an unconfirmable boundary verdict is
+        not sized (Constraint #6). Whenever a second pass ran, both verdicts and
+        its usage come back for the record (2026-09-15).
         """
         if self._boundary is None or not self._boundary.enabled:
-            return report, None
+            return _Confirmation(report)
         floor = self._sizing_floor
         if not floor <= report.confidence < floor + self._boundary.band_width:
-            return report, None
+            return _Confirmation(report)
         logger.info(
             "boundary confirmation on %s: %s/%d sits in the floor band "
             "[%d, %d); buying a second independent pass",
@@ -719,22 +738,50 @@ class SignalPipeline:
             floor + self._boundary.band_width,
         )
         second = self._research.run(signal)
+        second_usage = self._research.last_usage
         if not isinstance(second, ResearchReport):
-            return None, (
+            return _Confirmation(
+                None,
                 f"boundary verdict {report.direction}/{report.confidence} could "
                 f"not be confirmed: the second pass failed "
                 f"({getattr(second, 'code', 'error')}) — an unconfirmable "
-                f"floor-band verdict is not sized (ruling 2026-09-02)"
+                f"floor-band verdict is not sized (ruling 2026-09-02)",
+                usage=second_usage,
             )
         if second.direction is not report.direction or second.confidence < floor:
-            return None, (
+            return _Confirmation(
+                None,
                 f"boundary verdict NOT confirmed: first pass "
                 f"{report.direction}/{report.confidence}, second independent "
                 f"pass {second.direction}/{second.confidence} — the floor band "
                 f"is stochastic there, and a verdict that does not replicate "
-                f"is not sized (ruling 2026-09-02)"
+                f"is not sized (ruling 2026-09-02)",
+                usage=second_usage,
             )
-        return (second if second.confidence < report.confidence else report), None
+        sized_from = "second" if second.confidence < report.confidence else "first"
+        logger.info(
+            "boundary confirmed on %s: first %s/%d, second %s/%d; the %s pass sizes",
+            signal.signal_id,
+            report.direction,
+            report.confidence,
+            second.direction,
+            second.confidence,
+            sized_from,
+        )
+        return _Confirmation(
+            second if sized_from == "second" else report,
+            snapshot=BoundaryConfirmationSnapshot(
+                floor=floor,
+                band_width=self._boundary.band_width,
+                first_direction=str(report.direction),
+                first_confidence=report.confidence,
+                second_direction=str(second.direction),
+                second_confidence=second.confidence,
+                sized_from=sized_from,
+                second_est_cost_usd=(second_usage.cost_usd if second_usage else None),
+            ),
+            usage=second_usage,
+        )
 
     def _reward_risk_reason(self, report) -> Optional[str]:
         """Why this equity long fails the reward:risk gate, or None to proceed.

@@ -98,6 +98,7 @@ class AuditLog:
         screen_report: Optional[ResearchReport] = None,
         screen_usage: Optional[ResearchUsage] = None,
         convergence: Optional["ConvergenceSnapshot"] = None,
+        boundary: Optional["BoundaryConfirmationSnapshot"] = None,
     ) -> DecisionRecord:
         """Write the complete decision-time record. Approved or rejected, both land."""
         record = DecisionRecord(
@@ -109,6 +110,7 @@ class AuditLog:
             gate=GateSnapshot.of(gate_decision),  # type: ignore[arg-type]
             expression=expression,
             convergence=convergence,
+            boundary_confirmation=boundary,
             screen_research=(
                 ResearchSnapshot.of(screen_report)
                 if screen_report is not None

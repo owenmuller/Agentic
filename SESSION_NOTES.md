@@ -3155,6 +3155,70 @@ Cash returning to the buffer needs a market session: the retry prices at the
 bid at the next tick after 09:30 ET on 2026-09-09 and should print like the
 buy did. Check health then — `cash management` line and no pending rows.
 
+## Record-keeping from INTC's close and RWT's entry (2026-09-15) — three items, behaviour unchanged
+
+Freeze-compatible: no prompt, tier, model or research-layer change; no
+non-production API run. The golden set gained a case but was NOT replayed.
+
+### 1. Exit reasons: rule-forced closes stop recording as invalidations
+
+INTC closed 2026-09-09 via contradiction rule 2 (`validity=displaced`, hold →
+close) with `invalidation_triggered=false`, and the ExitRecord said
+`thesis_invalidated`. Two new members of the log vocabulary:
+
+- `ExitReason.THESIS_DISPLACED` — rule 2, the position moved for reasons the
+  thesis never predicted.
+- `ExitReason.THESIS_RESOLVED` — rule 3, `resolution=substantial` with no
+  `continuation_thesis`: the thesis WORKED and nobody wrote down the new bet.
+
+`orchestrator.exits.review_close_reason` maps a closing review's own findings
+to the reason with the rules' precedence (dead thesis → invalidated; displaced
+→ displaced; resolved without continuation → resolved; otherwise the historical
+name). The reason lives on the tracked position (`close_reason`) so a re-fire
+after a broker refusal or a restart records the same reason the review earned
+— replay rebuilds it from the ThesisReviewRecord. Attribution's
+"judged exits by reason" table grows the rows automatically. INTC's existing
+record is NOT rewritten (append-only); the golden case below carries the
+correction.
+
+**Residual conflation, unruled:** an EXPLICIT `action=close` on a thesis the
+review still calls intact and unresolved — the model's own judgment, no rule —
+still records as `thesis_invalidated`. Left as is pending a ruling on whether
+it deserves its own name (e.g. `review_close`).
+
+### 2. Golden review case: `review-intc-day9-post-blowout-real`
+
+INTC's 2026-09-09 facts frozen from the audit log: entry 90.75, price 104.52,
+day 9/274, confidence 54, resolution date 2027-06-01, stop 77.1375, 50% trim
+taken 09-08, Q2-2026 blowout public. Graded expectation `validity ∈ {intact}`,
+verdict `hold` or `close` (trim is off the table after the trim), structure
+still graded. The live review called it "displaced" because INTC had peaked at
+~141 in June BEFORE entry — pre-entry price history is not displacement, and a
+blowout quarter is exactly the appreciation-into-mid-2027 move the thesis
+underwrote. `GoldenCase.expect_validity` / `grade_review` gained the validity
+grade; the summary line now shows `validity=…`. This is the test the next
+prompt revision runs against; the review prompt is unchanged today.
+
+### 3. RWT (ef97909b502143f5): the second pass ran; the record could not show it
+
+Confidence 60 landed inside [50, 70). The log at 18:36:02Z says "buying a
+second independent pass"; four further Anthropic calls follow (18:37:53 →
+18:40:08Z) before the decision at 18:40:08Z. The entry SIZED, which under the
+lower-confidence rule means the second pass returned `long` at ≥ 60 — but its
+actual confidence is unrecoverable: the confirmed branch logged nothing and
+the record stamped only the sized report. Two visibility gaps, both closed:
+
+- `DecisionRecord.boundary_confirmation` (new, optional): floor, band width,
+  both directions and confidences, `sized_from` ("first"/"second"), and the
+  second pass's estimated cost. Absent = the verdict sat outside the band.
+- The second pass's usage now folds into the decision's `est_cost_usd` /
+  token estimates. RWT's record carries one pass's cost (est. $0.35: screen
+  $0.16 + verification) for two passes' calls — the month-to-date estimate is
+  understated by roughly one full pass per floor-band entry since 2026-09-02.
+  Console bill is truth.
+- The confirmed branch logs `boundary confirmed on …: first long/60, second
+  long/N; the first pass sizes`.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

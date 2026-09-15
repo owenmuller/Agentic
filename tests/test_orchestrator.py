@@ -1342,6 +1342,8 @@ def test_no_record_written_by_an_adversarial_run_is_anything_but_a_known_kind(
         "expression",
         # Convergence state at dispatch (2026-09-02): band-upgrade evidence.
         "convergence",
+        # Boundary confirmation (2026-09-15): both passes and which one sized.
+        "boundary_confirmation",
         # Two-stage research (2026-08-25): the screen draft and its cost.
         "screen_research",
         "screen_est_cost_usd",

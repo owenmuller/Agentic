@@ -1291,6 +1291,8 @@ def test_judged_pnl_is_grouped_by_why_the_position_closed(tmp_path, limits):
     closed_position(log, limits, gate, clock, ExitReason.THESIS_INVALIDATED, "150")
     closed_position(log, limits, gate, clock, ExitReason.TRAILING_STOP, "80", "MSFT")
     closed_position(log, limits, gate, clock, ExitReason.TRAILING_STOP, "-20", "AAPL")
+    closed_position(log, limits, gate, clock, ExitReason.THESIS_DISPLACED, "102", "INTC")
+    closed_position(log, limits, gate, clock, ExitReason.THESIS_RESOLVED, "40", "AMD")
 
     report = build_attribution(log.trails(), generated_at=clock.now)
     rows = {row.reason: row for row in report.by_exit_reason}
@@ -1298,6 +1300,12 @@ def test_judged_pnl_is_grouped_by_why_the_position_closed(tmp_path, limits):
     assert rows["thesis_invalidated"].closed == 1
     assert rows["thesis_invalidated"].realised_pnl == Decimal("150")
     assert rows["trailing_stop"].closed == 2
+    # Rule-forced closes are their own rows (2026-09-15): a displaced or resolved
+    # thesis is not an invalidation, and the question "did the rule pay?" needs
+    # them apart.
+    assert rows["thesis_displaced"].closed == 1
+    assert rows["thesis_displaced"].realised_pnl == Decimal("102")
+    assert rows["thesis_resolved"].closed == 1
     assert rows["trailing_stop"].realised_pnl == Decimal("60")
     assert rows["trailing_stop"].wins == 1
     rendered = report.render()

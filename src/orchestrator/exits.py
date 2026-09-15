@@ -87,6 +87,7 @@ from research.exit_review import (
     ExitReview,
     ExitReviewPass,
     PositionUnderReview,
+    ThesisResolution,
     ThesisValidity,
 )
 from risk_gate.gate import ApprovedOrder, RiskGate
@@ -186,6 +187,10 @@ class TrackedPosition:
     #: flat, and restored from the audit trail after a restart.
     close_verdict: bool = False
     close_detail: str = ""
+    #: WHY the standing close verdict closes (2026-09-15): invalidated, displaced,
+    #: or resolved-without-continuation. Carried so a re-fire on a later cycle
+    #: (no quote, broker down, restart) records the same reason the review earned.
+    close_reason: ExitReason = ExitReason.THESIS_INVALIDATED
     #: The trim half of scaling (ruling 2026-09-02) has fired: a partial-resolution
     #: verdict on a profitable position sold its configured fraction. At most once
     #: per position; set on the trim FILL and restored from the trail's submitted
@@ -230,6 +235,30 @@ class _WorkingExit:
     position: TrackedPosition
     reason: ExitReason
     detail: str
+
+
+def review_close_reason(
+    invalidation_triggered: Optional[bool],
+    validity: Optional[str],
+    resolution: Optional[str],
+    continuation_thesis: Optional[str],
+) -> ExitReason:
+    """The exit reason a closing review earns, from the review's own findings
+    (2026-09-15). Precedence follows the contradiction rules: a dead thesis is
+    an invalidation; a displaced one is rule 2; a resolved one with no new bet
+    written down is rule 3; anything else is an explicit close on a thesis the
+    review still calls intact, which keeps the historical name. Takes the raw
+    fields rather than an ExitReview so startup replay can rebuild the reason
+    from a ThesisReviewRecord the same way."""
+    if invalidation_triggered or validity == str(ThesisValidity.INVALIDATED):
+        return ExitReason.THESIS_INVALIDATED
+    if validity == str(ThesisValidity.DISPLACED):
+        return ExitReason.THESIS_DISPLACED
+    if resolution == str(ThesisResolution.SUBSTANTIAL) and not (
+        continuation_thesis or ""
+    ).strip():
+        return ExitReason.THESIS_RESOLVED
+    return ExitReason.THESIS_INVALIDATED
 
 
 class ExitEngine:
@@ -600,6 +629,16 @@ class ExitEngine:
                 close_detail=(
                     (last_review.assessment or "")[:200] if close_verdict else ""
                 ),
+                close_reason=(
+                    review_close_reason(
+                        last_review.invalidation_triggered,
+                        last_review.validity,
+                        last_review.resolution,
+                        last_review.continuation_thesis,
+                    )
+                    if close_verdict
+                    else ExitReason.THESIS_INVALIDATED
+                ),
             )
             # Re-arm the ratchet from the restored mark before the first tick: a
             # position that was riding a trailing stop must not spend a cycle back
@@ -812,7 +851,7 @@ class ExitEngine:
                     f"{position.time_horizon} horizon"
                 )
             elif position.close_verdict:
-                reason = ExitReason.THESIS_INVALIDATED
+                reason = position.close_reason
                 detail = position.close_detail or "thesis review returned close"
             else:
                 continue
@@ -1093,9 +1132,15 @@ class ExitEngine:
             # now (no quote, broker down), check_guardrails re-fires it every cycle.
             position.close_verdict = True
             position.close_detail = outcome.assessment[:300]
+            position.close_reason = review_close_reason(
+                outcome.invalidation_triggered,
+                str(outcome.validity),
+                str(outcome.resolution),
+                outcome.continuation_thesis,
+            )
             if self._initiate_exit(
                 position,
-                ExitReason.THESIS_INVALIDATED,
+                position.close_reason,
                 position.close_detail,
                 price,
             ):

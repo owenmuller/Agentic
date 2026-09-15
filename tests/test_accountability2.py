@@ -11,7 +11,7 @@ and detects drift.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -198,10 +198,19 @@ def test_the_golden_set_loads_and_names_the_ruled_cases():
     reviews = [case for case in cases if case.kind == "review"]
     assert len(entries) == 20
     # Review cases (ruling 2026-09-02) grade the reasoning structure.
-    assert len(reviews) == 3
+    assert len(reviews) == 4
     for case in reviews:
         under = case.under_review()
         assert under.symbol == "INTC" and under.stop_price is not None
+    # INTC's 2026-09-09 facts, frozen 2026-09-15: graded on the validity label.
+    day9 = next(c for c in reviews if c.name == "review-intc-day9-post-blowout-real")
+    under = day9.under_review()
+    assert (under.current_price, under.days_held, under.already_trimmed) == (
+        Decimal("104.52"), 9, True
+    )
+    assert under.expected_resolution_date == date(2027, 6, 1)
+    assert day9.actions == ("hold", "close")
+    assert day9.expect_validity == ("intact",)
     cases = entries
     names = {case.name for case in cases}
     assert {
@@ -255,3 +264,40 @@ def test_grading_passes_and_drifts():
         manipulation_assessment="embedded instruction detected",
     )
     assert grade(golden_case(must_flag=True), flagged, None).passed
+
+
+def test_the_review_grade_can_pin_the_validity_label():
+    """The INTC day-9 case: the live review called a move the thesis predicted
+    "displaced" and rule 2 closed the position. The grade fails that label and
+    passes intact, whatever the verdict (hold or close both allowed)."""
+    from orchestrator.golden import grade_review, load_cases
+    from research.exit_review import ExitReview
+    from test_exits import CASES
+
+    case = next(c for c in load_cases() if c.name == "review-intc-day9-post-blowout-real")
+    long_cases = {k: v * 3 for k, v in CASES.items()}  # clear the 120-char bar
+    base = {
+        "assessment": "post-blowout, trim taken, thin R:R from here",
+        "invalidation_triggered": False,
+        "would_open_today": False,
+        "would_open_today_reason": "R:R (141 - 104.52) / (104.52 - 77.14) = 1.33 < 1.5",
+        **long_cases,
+    }
+    mislabelled = grade_review(
+        case, ExitReview.model_validate({**base, "action": "close", "validity": "displaced"}), None
+    )
+    assert not mislabelled.passed
+    assert any("validity displaced not in graded set" in p for p in mislabelled.problems)
+
+    for action in ("hold", "close"):
+        graded = grade_review(
+            case, ExitReview.model_validate({**base, "action": action, "validity": "intact"}), None
+        )
+        assert graded.passed, graded.problems
+        assert "validity=intact" in graded.verdict
+
+    # The verdict set is still graded: a trim is not on the table after the trim.
+    trimmed = grade_review(
+        case, ExitReview.model_validate({**base, "action": "trim", "validity": "intact"}), None
+    )
+    assert not trimmed.passed

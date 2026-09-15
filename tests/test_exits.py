@@ -1210,17 +1210,20 @@ def test_an_extension_past_the_ceiling_is_clamped_from_entry_not_from_now(
 
 
 @pytest.mark.parametrize(
-    "fields,fragment",
+    "fields,fragment,reason",
     [
-        ({"invalidation_triggered": True}, "invalidation_triggered"),
-        ({"validity": "invalidated"}, "validity=invalidated"),
-        ({"validity": "displaced"}, "validity=displaced"),
-        ({"resolution": "substantial"}, "resolution=substantial"),
+        ({"invalidation_triggered": True}, "invalidation_triggered", ExitReason.THESIS_INVALIDATED),
+        ({"validity": "invalidated"}, "validity=invalidated", ExitReason.THESIS_INVALIDATED),
+        ({"validity": "displaced"}, "validity=displaced", ExitReason.THESIS_DISPLACED),
+        ({"resolution": "substantial"}, "resolution=substantial", ExitReason.THESIS_RESOLVED),
     ],
 )
 def test_every_contradiction_rule_resolves_a_hold_toward_the_exit(
-    tmp_path, limits, signals_config, research_config, fields, fragment
+    tmp_path, limits, signals_config, research_config, fields, fragment, reason
 ):
+    """...and each records the reason it earned (2026-09-15): a displaced or
+    resolved thesis is NOT an invalidation, and attribution must be able to
+    ask whether rule-forced closes pay separately from true invalidations."""
     started, _, clock = enter_position(
         tmp_path, limits, signals_config, research_config, config=review_config(),
         llm=review_llm(**fields),
@@ -1229,9 +1232,11 @@ def test_every_contradiction_rule_resolves_a_hold_toward_the_exit(
     report = started.loop.tick()
 
     assert report.exits_started == 1
-    review = started.audit.trail("dec-1").reviews[-1]
+    trail = started.audit.trail("dec-1")
+    review = trail.reviews[-1]
     assert review.outcome is ReviewOutcome.CLOSE
     assert fragment in review.close_contradiction
+    assert trail.exits[-1].reason is reason
 
 
 def test_a_resolved_position_may_be_held_when_the_new_bet_is_written_down(
@@ -1828,3 +1833,169 @@ def test_an_exit_that_terminates_unfilled_is_released_in_the_log(
 
     assert started.loop.tick().positions_closed == 1
     assert [p for p in pending_settlement(started.audit) if p.side == "sell"] == []
+
+
+# ================================================================================
+# Exit reasons carry the review's finding through re-fires and restarts (2026-09-15)
+# ================================================================================
+
+
+def test_a_displaced_close_keeps_its_reason_when_it_re_fires(
+    tmp_path, limits, signals_config, research_config
+):
+    """The broker refuses the first attempt; the standing verdict re-fires from
+    the guardrail pass next cycle — as thesis_displaced, not thesis_invalidated."""
+    from execution.base import BrokerRejected
+
+    started, _, clock = enter_position(
+        tmp_path, limits, signals_config, research_config, config=review_config(),
+        llm=review_llm(validity="displaced"),
+    )
+    broker = started.adapter
+    broker.submit_error = BrokerRejected("venue closed", 503, "closed")
+    clock.advance(hours=2)
+    assert started.loop.tick().exits_started == 0
+    position = started.exits.tracked[0]
+    assert position.close_verdict and position.close_reason is ExitReason.THESIS_DISPLACED
+
+    broker.submit_error = None
+    assert started.loop.tick().exits_started == 1
+    reasons = [e.reason for e in started.audit.trail("dec-1").exits]
+    assert reasons[-1] is ExitReason.THESIS_DISPLACED
+    assert ExitReason.THESIS_INVALIDATED not in reasons
+
+
+def test_a_standing_close_verdict_replays_with_its_reason(
+    tmp_path, limits, signals_config, research_config
+):
+    """The process dies holding a resolved-without-continuation close; the
+    restart rebuilds the verdict AND its reason from the review record."""
+    clock = FakeClock()
+    first, _, _ = enter_position(
+        tmp_path, limits, signals_config, research_config, config=review_config(),
+        clock=clock, llm=review_llm(resolution="substantial"),
+    )
+    first.adapter.fill = "new"  # the close rests, then the process dies
+    clock.advance(hours=2)
+    assert first.loop.tick().exits_started == 1
+    first.loop.shutdown()
+
+    restarted = start(
+        fetcher=feed(),
+        prices=MutablePrices(NUE=str(QUOTE)),
+        llm_client=RoutingLLM(),
+        adapter=FakeBroker(
+            cash=Decimal("98180"),
+            positions=[
+                BrokerPosition("NUE", Decimal("13"), Decimal("1820"), Decimal("1820"))
+            ],
+        ),
+        id_factory=counter("b"),
+        **restart_kwargs(tmp_path, limits, signals_config, research_config, clock),
+    )
+    position = restarted.exits.tracked[0]
+    assert position.close_verdict is True
+    assert position.close_reason is ExitReason.THESIS_RESOLVED
+    assert restarted.loop.tick().exits_started == 1
+    assert restarted.audit.trail("dec-1").exits[-1].reason is ExitReason.THESIS_RESOLVED
+
+
+def test_review_close_reason_precedence():
+    from orchestrator.exits import review_close_reason
+
+    # A dead thesis is an invalidation whatever else the review said.
+    assert review_close_reason(True, "displaced", "substantial", None) is ExitReason.THESIS_INVALIDATED
+    assert review_close_reason(False, "invalidated", "unresolved", None) is ExitReason.THESIS_INVALIDATED
+    assert review_close_reason(False, "displaced", "partial", None) is ExitReason.THESIS_DISPLACED
+    assert review_close_reason(False, "intact", "substantial", "") is ExitReason.THESIS_RESOLVED
+    # A resolved thesis WITH a continuation is a hold, but if the model closed
+    # anyway, the thesis was intact and the close is its own judgment.
+    assert review_close_reason(False, "intact", "substantial", "second leg") is ExitReason.THESIS_INVALIDATED
+    assert review_close_reason(False, "intact", "unresolved", None) is ExitReason.THESIS_INVALIDATED
+
+
+# ================================================================================
+# Boundary confirmation is visible on the decision record (2026-09-15)
+# ================================================================================
+
+
+class _SecondPass:
+    """Wraps the production research pass: the first run is real, the second
+    (the boundary confirmation) returns a scripted report. Everything else the
+    pipeline reads off the pass is proxied."""
+
+    def __init__(self, real, second, second_usage=None):
+        self._real = real
+        self._second = second
+        self._second_usage = second_usage
+        self.runs = 0
+
+    def run(self, signal):
+        self.runs += 1
+        if self.runs == 1:
+            return self._real.run(signal)
+        self._real._last_usage = self._second_usage
+        return self._second
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def _band_session(tmp_path, limits, signals_config, research_config, second_confidence):
+    from research.reports import ResearchReport, ResearchUsage
+
+    started = build(
+        tmp_path, limits, signals_config, research_config,
+        prices=MutablePrices(NUE=str(QUOTE)), clock=FakeClock(),
+        llm=RoutingLLM(**{REPORT_TOOL_NAME: structured({**REPORT, "confidence": 60})}),
+        # The shipped band (ruling 2026-09-03): [50, 70), RWT's exact case.
+        config=orchestrator_config(boundary_confirmation={"band_width": 20}),
+    )
+    pipeline = started.loop.pipeline
+    second = ResearchReport.model_validate({**REPORT, "confidence": second_confidence})
+    wrapped = _SecondPass(
+        pipeline._research, second,
+        ResearchUsage(input_tokens=1000, output_tokens=100, cost_usd=Decimal("0.05")),
+    )
+    pipeline._research = wrapped
+    report = started.loop.tick()
+    assert report.processed and report.processed[0].traded
+    assert wrapped.runs == 2  # the band bought a second independent pass
+    return started
+
+
+@pytest.mark.parametrize(
+    "second_confidence,sized_from,sized_confidence",
+    [(66, "first", 60), (55, "second", 55), (60, "first", 60)],
+)
+def test_the_boundary_confirmation_is_on_the_decision_record(
+    tmp_path, limits, signals_config, research_config,
+    second_confidence, sized_from, sized_confidence,
+):
+    """RWT (2026-09-15) sized at 60 inside [50, 70) and the record could not
+    say what the second pass returned or which pass sized. Now it does: both
+    verdicts, the band, the lower-sizes rule's choice, and the second pass's
+    spend folded into the decision's estimate."""
+    started = _band_session(
+        tmp_path, limits, signals_config, research_config, second_confidence
+    )
+    decision = started.audit.trail("dec-1").decision
+    stamp = decision.boundary_confirmation
+    assert stamp is not None
+    assert (stamp.floor, stamp.band_width) == (50, 20)
+    assert (stamp.first_direction, stamp.first_confidence) == ("long", 60)
+    assert (stamp.second_direction, stamp.second_confidence) == ("long", second_confidence)
+    assert stamp.sized_from == sized_from
+    assert decision.research.confidence == sized_confidence
+    assert decision.sizing.confidence == sized_confidence
+    assert stamp.second_est_cost_usd == Decimal("0.05")
+    assert decision.est_cost_usd is not None and decision.est_cost_usd >= Decimal("0.05")
+
+
+def test_a_verdict_outside_the_band_carries_no_confirmation_stamp(
+    tmp_path, limits, signals_config, research_config
+):
+    started, _, _ = enter_position(tmp_path, limits, signals_config, research_config)
+    decision = started.audit.trail("dec-1").decision
+    assert decision.research.confidence == 71  # outside [50, 70)
+    assert decision.boundary_confirmation is None
