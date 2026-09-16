@@ -3673,6 +3673,50 @@ forward report, and the `adds` attribution row against the originating lots.
 `X_BEARER_TOKEN` in the droplet's `.env` — the X feed has 401ed on every poll since
 2026-09-01 (see the previous entry).
 
+### Drift review closed: the leaky request shape, fixed and re-observed (2026-09-16, 7e08b0f)
+
+**Finding.** Rendering the full request for the four drifted lagged-class declines from
+bf7d3c7 and dc7a2ee: the USER prompt was byte-identical, but the SYSTEM_PROMPT (the new ADD
+DECISIONS section) and the tool schema (add_verdict/add_fraction as required-nullable fields
+plus a description sentence) had changed for EVERY pass, add or not. A request-shape change
+on the exact cases that drifted — the confound had to go before the drift could be read.
+
+**Fix (`7e08b0f`, VERIFIED origin/vps/HEAD, droplet pulled, 1244 passed / 3 skipped both
+sides).** `system_prompt_for(add_decision)` and `report_tool_definition(add_decision)`:
+an ordinary entry pass now sends the pre-ruling system prompt and tool schema byte-for-byte
+(proved by `cmp` on system/user/tool for all four cases); only an add decision carries the
+section and the fields. `ResearchPass._call` selects per request on both the screen and the
+verification tier. Add requests keep the shape the two round trips exercised. Tests pin the
+invariant on both sides (an ordinary schema offers no add fields; the add tests' fake LLM
+asserts the schema matches the prompt on every call).
+
+**Third observation, byte-identical shape (`golden --only`, ~$0.64):**
+
+| case | 09-15 (bf7d3c7) | 09-16 replay (dc7a2ee) | 09-16 rerun (dc7a2ee) | 09-16 fixed (7e08b0f) |
+|---|---|---|---|---|
+| appaloosa-13f-stale | no_position/72 | no_position/30 | (timed out, unscored) | **no_position/72** |
+| pelosi-intc-may-backfill | no_position/82 | no_position/28 | no_position/72 | **no_position/72** |
+| moskowitz-amat-max-lag | no_position/82 | no_position/18 | no_position/72 | **no_position/75** |
+| taylor-ibp-small | no_position/72 | no_position/22 | no_position/32 | **no_position/72** |
+
+Every case is back inside its band under the restored shape; the direction never moved in
+any observation. The 18-30 cluster appeared only under the leaky shape (five of six
+observations there landed low; all four under the restored shape landed 72-75). Read: the
+extra required-nullable fields and section in an ordinary pass depressed the confidence the
+screen model attached to lagged-class declines — a calibration effect on numbers that size
+nothing, but real, and now gone by construction rather than by argument. The remaining
+golden drift is the known `pelosi-be-calls-decline` case only.
+
+**X feed after the token replacement and 18:33 UTC bounce:** all six X accounts return 200,
+zero 401s; first-poll lookback 2.4h (gap since the newest audit record — the 09-01→09-16
+hole is not refetched, by design); every fetched item landed once in the credibility log
+(none was a forward call or a relayed Truth; @TrumpDailyPosts' items were the bot's own
+replies, marker absent); mirror-silence warnings remain honest — they count relayed
+principal posts, and none has been relayed yet. **@TrumpTruthOnX returned nothing in five
+polls while @TrumpDailyPosts posts: a human should check whether that bot is dead.**
+
+Freeze re-closes. Service still to be bounced onto 7e08b0f by the human.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in
