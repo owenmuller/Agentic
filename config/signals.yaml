@@ -146,6 +146,29 @@ classes:
           sectors: true
           policy_themes: [tariffs, energy, defense, crypto]
 
+      - id: form_8k
+        # Human ruling 2026-09-15 (design reviewed 2026-09-02): item-filtered
+        # 8-K current reports, market-wide on SEC EDGAR (free), at Class 1
+        # cadence — the judged arm's DATED-CATALYST supply. Whitelist = items
+        # with documented post-filing drift; everything else is never listed.
+        # Bearish items are emitted MEASUREMENT-ONLY (no bearish trading path);
+        # a filing carrying both kinds is measurement-only (Constraint #6).
+        # The announcement pop is public before we poll — forfeit by design;
+        # the claim is item-specific drift. Hard review 2026-10-15 alongside
+        # the other sources: no positive forward excess by then is the finding.
+        provider: sec_edgar_full_text_search
+        monthly_cost: 0 # EDGAR is free
+        start_date: 2026-09-15
+        user_agent: "Agentic trading research omuller@brasacap.com"
+        items_whitelist: ["5.02", "4.02", "2.05", "1.01", "1.05"]
+        bearish_items: ["4.02", "1.05"]
+        # Own daily cap (the ruling): at most this many research passes per
+        # UTC day from this source.
+        daily_research_cap: 6
+        prefilter:
+          # Backfill floods die here, recorded, instead of eating the cap.
+          max_report_age_days: 3
+
       - id: unusual_whales
         # Human-authorized 2026-08-25. Curated callouts of unusual options
         # activity — a THESIS INPUT to verify independently, never a copy-trade

@@ -65,6 +65,10 @@ def family_of(source_id: str, signal_class: SignalClass) -> str:
         return "13f_filings"
     if source_id == "trump_posts":
         return "trump_posts"
+    if source_id == "form_8k":
+        # Issuer's own disclosures (ruling 2026-09-15): a sixth family — not an
+        # insider's trade, not a fund's stake, not a post.
+        return "issuer_filings"
     return "x_callers"
 
 logger = logging.getLogger("orchestrator.registry")

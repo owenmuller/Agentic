@@ -264,7 +264,31 @@ def build_user_prompt(
     lines.extend(_theme_lines(signal))
 
     guidance = _CLASS_GUIDANCE[signal.signal_class]
-    if signal.signal_class is SignalClass.CLASS_2_MOMENTUM and signal.metadata.get(
+    if signal.signal_class is SignalClass.CLASS_1_REALTIME and signal.metadata.get(
+        "form", ""
+    ).startswith("8-K"):
+        # Item-filtered 8-Ks (human ruling 2026-09-15): an issuer's own current
+        # report, not a post — a dated public event, filed within four business
+        # days and usually the same day.
+        guidance = (
+            "This is a Form 8-K current report filed by the issuer itself with the "
+            "SEC: a material event, disclosed within FOUR business days and usually "
+            "the same day. The system lists only filings carrying a whitelisted item "
+            "(5.02 officer/director changes, 4.02 restatement, 2.05 restructuring, "
+            "1.01 material agreement, 1.05 cybersecurity incident); the content names "
+            "every item on the filing and carries an excerpt of the primary document. "
+            "The announcement is public before you read it: the filing-day reaction is "
+            "NOT the trade. The tradeable question is item-specific drift AFTER the "
+            "reaction — does the market finish pricing what the item implies over the "
+            "following days and weeks? priced_in_analysis is MANDATORY and must state "
+            "what has moved since the filing time. The event itself is a dated fact: "
+            "if a scheduled follow-on (a replacement CEO's start, an agreement's "
+            "closing, a restated filing's due date) falls inside your horizon, that is "
+            "a catalyst; the filing having happened is not. A 5.02 cuts both ways — a "
+            "forced departure and a strong appointment are different theses; say which "
+            "and why. Form your own view of the company and assign your own confidence."
+        )
+    elif signal.signal_class is SignalClass.CLASS_2_MOMENTUM and signal.metadata.get(
         "form", ""
     ).startswith("SCHEDULE 13D"):
         # Activist 13Ds (human ruling 2026-09-02): neither congressional nor

@@ -339,6 +339,20 @@ def render_forward_report(
             ]
         )
 
+    # 8-K items (ruling 2026-09-15): one row per whitelisted item an entry
+    # carried (a filing with two items counts under both), researched items and
+    # the bearish measurement-only ones apart. Hard review 2026-10-15.
+    form8k = [e for e in entries if e.source_id == "form_8k" and e.form8k_items]
+    if form8k:
+        lines.extend(["", f"8-K by item (excess at {KEY_HORIZON}d; ruling 2026-09-15, review 2026-10-15):"])
+        for item in sorted({i for e in form8k for i in e.form8k_items}):
+            members = [e for e in form8k if item in e.form8k_items]
+            bearish_members = [e for e in members if e.code == "bearish_measurement"]
+            label = f"item {item}"
+            if bearish_members and len(bearish_members) == len(members):
+                label += " (bearish, measurement only — negative excess = right)"
+            lines.append(_stat_line(label, _excess_values(members, rows, KEY_HORIZON)))
+
     # Bearish groundwork (ruling 2026-09-02): measurement-only rows, graded
     # before any bearish trading path exists. For BOTH slices a NEGATIVE excess
     # means the bearish signal was right.

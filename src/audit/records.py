@@ -178,6 +178,15 @@ def snapshot_tickers(snapshot: "SignalSnapshot") -> tuple[str, ...]:
     return extract_tickers(snapshot.content)
 
 
+def snapshot_8k_items(snapshot: "SignalSnapshot") -> tuple[str, ...]:
+    """The item numbers an 8-K signal carried (ruling 2026-09-15), read from the
+    fetcher's "items: 5.02, 9.01" content line; () for every other source."""
+    for line in (snapshot.content or "").splitlines():
+        if line.startswith("items: "):
+            return tuple(part.strip() for part in line[7:].split(",") if part.strip())
+    return ()
+
+
 def snapshot_form4_qualification(snapshot: "SignalSnapshot") -> str:
     """Which Form 4 door a filing came through (ruling 2026-09-15), read from
     the content the fetcher wrote so records before the field grade too:

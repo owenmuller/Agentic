@@ -49,6 +49,7 @@ from execution.options_data import AlpacaOptionsChain
 from signals import (
     Form4InsiderFetcher,
     Form13DFetcher,
+    Form8KFetcher,
     Form13FFetcher,
     QuiverCongressFetcher,
     SignalClass,
@@ -589,6 +590,9 @@ def run() -> int:
         # Activist 13Ds (ruling 2026-09-02): market-wide listing, watchlist
         # filter client-side, structured primary_doc.xml facts.
         form13d = Form13DFetcher(seen=seen_for("form_13d"))
+        # Item-filtered 8-Ks (human ruling 2026-09-15): Class 1 cadence, the
+        # fetcher self-throttles to the FTS index's own refresh pace.
+        form8k = Form8KFetcher(seen=seen_for("form_8k"))
         # Session-gap first-poll lookback (ruling 2026-08-26): the old fixed
         # 15-minute window lost every post made between sessions. Floor 15min
         # (a mid-session bounce re-reads almost nothing), cap 24h (X bills per
@@ -639,6 +643,8 @@ def run() -> int:
                 "form4_insiders": logged("form4_insiders", form4),
                 # Activist 13Ds (human ruling 2026-09-02): Class 2 hourly.
                 "form_13d": logged("form_13d", form13d),
+                # Item-filtered 8-Ks (human ruling 2026-09-15): Class 1.
+                "form_8k": logged("form_8k", form8k),
                 "nolimitgains": logged("nolimitgains", x_search),
                 # Options-flow free taste (human-authorized 2026-08-25).
                 "unusual_whales": logged("unusual_whales", x_search),

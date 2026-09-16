@@ -45,6 +45,8 @@ Three classes. Scan cadence is matched to signal decay speed so options and buy/
 - Pipeline: post detected → NLP extraction → research layer scores within minutes.
 - This is the only signal class where speed is genuine edge. Options plays (long calls/puts on implied moves) live here.
 
+- **Form 8-K item filter (human ruling 2026-09-15; design reviewed 2026-09-02)** — the issuer's own current report, market-wide on SEC EDGAR, listed only for whitelisted items with documented post-filing drift: 5.02 (officer/director changes), 4.02 (restatement), 2.05 (restructuring), 1.01 (material agreement), 1.05 (cybersecurity incident). Bearish items (4.02, 1.05) are measurement-only until a bearish path exists; a filing carrying both kinds is measurement-only. Own daily research cap. **Known lag: filed within 4 business days, usually same-day; the announcement pop is public before we poll and forfeit by design** — the claim is item-specific drift, and the filing hands the judged arm a dated catalyst. Family: `issuer_filings` (sixth family). Hard review 2026-10-15 with the other new sources.
+
 ### Class 2 — Medium-latency momentum confirmation (poll hourly)
 - **Congressional trading disclosures** — Pelosi and a configurable watchlist of high-signal members (via Quiver Quant / Unusual Whales / Capitol Trades API).
 - **Known lag: STOCK Act allows up to 45 days between trade and disclosure.** The research layer MUST evaluate what has already been priced in since the trade date, not the disclosure date. A disclosure is a thesis input, not a copy-trade trigger.
@@ -57,7 +59,7 @@ Three classes. Scan cadence is matched to signal decay speed so options and buy/
 
 ### Source families (human rulings 2026-09-02, amended same day)
 
-Five families for convergence purposes, deterministic and load-bearing: **congressional filings**, **13F filings** (13D beneficial-ownership filings join this family — a fund's 13D and its 13F are not independent), **insider filings** (Form 4), **X trade-callers** (ALL X accounts are ONE family — accounts amplifying each other is not independence), and **Trump posts**. PEAD-style market-data screens have no filer and sit **outside convergence entirely**. Any future convergence band-upgrade requires **≥3 families active with at least one filing family present**; the band-up lever itself stays unbuilt until forward-return evidence shows convergent signals outperform. Until then, family state is stamped on decision records so the evidence can accumulate.
+Six families for convergence purposes (five ruled 2026-09-02; **issuer filings** — Form 8-K — added by the 2026-09-15 ruling), deterministic and load-bearing: **congressional filings**, **13F filings** (13D beneficial-ownership filings join this family — a fund's 13D and its 13F are not independent), **insider filings** (Form 4), **X trade-callers** (ALL X accounts are ONE family — accounts amplifying each other is not independence), and **Trump posts**. PEAD-style market-data screens have no filer and sit **outside convergence entirely**. Any future convergence band-upgrade requires **≥3 families active with at least one filing family present**; the band-up lever itself stays unbuilt until forward-return evidence shows convergent signals outperform. Until then, family state is stamped on decision records so the evidence can accumulate.
 
 ## Research & Confidence Layer
 

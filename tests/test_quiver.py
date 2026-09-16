@@ -329,7 +329,7 @@ def test_the_router_dispatches_each_class_to_its_fetcher(signals_config):
             "trump_mirror_ttox": fake("x"),
             "trump_mirror_tdp": fake("x"),
         },
-        unbuilt={"trump_posts"},
+        unbuilt={"trump_posts", "form_8k"},
     )
     for sources in router_sources(signals_config).values():
         for source in sources:
@@ -389,7 +389,7 @@ def test_every_configured_source_has_a_wiring_decision(signals_config):
             "trump_mirror_ttox": lambda s: [],
             "trump_mirror_tdp": lambda s: [],
         },
-        unbuilt={"trump_posts"},
+        unbuilt={"trump_posts", "form_8k"},
     )
     for sources in router_sources(signals_config).values():
         for source in sources:

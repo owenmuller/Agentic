@@ -3348,6 +3348,31 @@ clustered / C-suite singles / control singles apart (older records grade too:
 the door is parsed from the content the fetcher wrote). Floor
 `c_suite_single_min_usd` lives in the fetcher as part of the recipe.
 
+### Step 4 — Form 8-K item-filtered Class 1 source (shipped this entry)
+
+`signals.form8k.Form8KFetcher`, source `form_8k` in class_1 (human approval =
+this ruling). Probed EDGAR full-text search live before building: 8-K hits
+carry the filing's `items` list, the issuer's ticker in `display_names`,
+`period_ending` (event date) and `file_date` — 124 hits for "Item 5.02" over
+four days, so the whitelist is what makes the source tractable. Per poll: one
+throttled listing per whitelisted item (5.02 / 4.02 / 2.05 / 1.01 / 1.05),
+unioned by accession; a filing with no US-listed ticker in its display name is
+dropped (nothing to trade); items outside the whitelist never emit. Bearish
+items 4.02 / 1.05 → `measurement_only: true` → the prefilter's existing
+measurement rule (code `bearish_measurement`, outside convergence); a filing
+carrying a bearish AND a researchable item is measurement-only (Constraint
+#6). The primary document is fetched from the Archives index and a 2,500-char
+text excerpt rides the content (fenced as untrusted like every source);
+excerpt failures degrade to the hit's facts, never drop the filing. The
+fetcher self-throttles to one EDGAR sweep per 5 minutes (the FTS index moves
+in minutes; Class 1 polls in seconds). `daily_research_cap: 6`,
+`max_report_age_days: 3`. Class 1 scanner now prefers a fetcher-provided
+`ticker` field over cashtag extraction. Prompt: an 8-K guidance branch (the
+filing-day reaction is not the trade; item-specific drift is; a scheduled
+follow-on inside the horizon is the catalyst, the filing having happened is
+not; 5.02 cuts both ways). Family `issuer_filings` (sixth). Forward report:
+"8-K by item" rows, bearish items labelled. Hard review **2026-10-15**.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

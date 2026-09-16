@@ -88,6 +88,7 @@ def test_exactly_the_configured_sources_are_filtered(prefilter):
         "form4_insiders",
         "form_13d",
         "form_13f",
+        "form_8k",  # 8-K source (ruling 2026-09-15): max_report_age_days
         "trump_posts",
     )
 
@@ -180,7 +181,7 @@ def run_loop(tmp_path, signals_config, posts, clock=None):
                 "optionshawk": feed(),
                 "citrini": feed(),
             },
-            unbuilt={"trump_posts"},
+            unbuilt={"trump_posts", "form_8k"},
         ),
         prices=MutablePrices(),
         llm_client=llm,
@@ -454,7 +455,7 @@ def test_a_filtered_disclosure_writes_the_trail_and_spends_nothing(
                 "congressional_disclosures": quiver_like,
                 "form_13f": feed(),
             },
-            unbuilt={"trump_posts"},
+            unbuilt={"trump_posts", "form_8k"},
         ),
         prices=MutablePrices(),
         llm_client=llm,

@@ -125,6 +125,11 @@ class SourceConfig(_Strict):
     filer_aliases: dict[str, str] = {}
     #: Contact header for sources that require one (SEC EDGAR). Must name an email.
     user_agent: Optional[str] = None
+    #: 8-K source (human ruling 2026-09-15): the item numbers a filing must carry
+    #: to be emitted at all, and the subset emitted MEASUREMENT-ONLY because no
+    #: bearish trading path exists. Human-edited; adding an item is a ruling.
+    items_whitelist: tuple[str, ...] = ()
+    bearish_items: tuple[str, ...] = ()
     #: Source type. "mirror" marks an unofficial account that republishes another
     #: source's posts; its signals are attributed to ``mirror_of`` for research and
     #: attribution, while the audit record preserves which mirror delivered them.

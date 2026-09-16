@@ -357,12 +357,15 @@ class Class1RealtimeScanner(Scanner):
                 return []
 
         if not source.classifies_posts:
+            # A structured source (the 8-K fetcher, ruling 2026-09-15) names its
+            # instrument in fields; prose sources get cashtag extraction.
+            tickers = item.fields.get("ticker") or ",".join(extract_tickers(item.content))
             signal = self._build(
                 source,
                 item,
                 item.content,
                 now,
-                metadata={**item.fields, "tickers": ",".join(extract_tickers(item.content))},
+                metadata={**item.fields, "tickers": tickers},
             )
             enqueued = self._enqueue(signal)
             return [enqueued] if enqueued else []

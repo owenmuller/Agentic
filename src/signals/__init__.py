@@ -20,6 +20,7 @@ from signals.config import ClassConfig, SignalsConfig, SourceConfig, default_sig
 from signals.edgar import ARCHIVES_URL, FTS_URL, EdgarError, Form13FFetcher
 from signals.form4 import Form4InsiderFetcher
 from signals.form13d import Form13DFetcher
+from signals.form8k import Form8KFetcher
 from signals.quiver import QUIVER_CONGRESS_URL, QuiverCongressFetcher, QuiverError
 from signals.routing import FeedNotConfigured, SourceRouter
 from signals.x import TWEET_FIELDS, X_SEARCH_URL, XError, XRecentSearchFetcher
@@ -55,6 +56,7 @@ __all__ = [
     "Form13FFetcher",
     "Form4InsiderFetcher",
     "Form13DFetcher",
+    "Form8KFetcher",
     "QUIVER_CONGRESS_URL",
     "QuiverCongressFetcher",
     "QuiverError",
