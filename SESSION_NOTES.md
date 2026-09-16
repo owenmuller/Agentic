@@ -3468,7 +3468,28 @@ prompt line says "theme(s)" and is otherwise unchanged in spirit — pick the
 one instrument whose holdings bear the post's actual exposure, or decline.
 Deterministic mapping change: no golden replay (ruled); validated by one live
 round trip on a tariffs-on-China fixture (`theme_etf_round_trip.py --china`,
-proposal XLI, XME, SLX, FXI) — result below.
+proposal XLI, XME, SLX, FXI).
+
+**Round trip (2026-09-16, droplet): the pick-or-decline path over a union
+WORKS — on the third attempt.** Verdict **no_position / 62, tickers [FXI]**,
+days horizon, catalyst present, est. $0.28. The thesis names FXI as "the
+correct single mapping from the shortlist: it holds the tariff's target
+economy … not the theme's consumers", rejects XLI (ambiguous sign: buyers of
+Chinese inputs and the retaliation target), XME and SLX on holdings grounds,
+then declines the trade on execution timing (US cash closed at 02:07 UTC while
+Hong Kong was absorbing the headline live). Exactly the ruling's rule.
+
+**Watch item — two schema failures first.** Runs 1 and 2 on the same fixture
+returned `schema_validation_failed` ("1 error(s)", est. $0.46 and $0.32); the
+single-theme fixture has never failed (0 of 2). The pass keeps only a 500-char
+excerpt of the payload (`_EXCERPT_CHARS`), so the failing field was NOT
+recoverable from either run; the script now intercepts validation and prints
+the full payload and pydantic errors, but the instrumented third run passed
+cleanly. Failure mode is safe (a typed rejection = no trade, one research pass
+spent). If production shows `schema_validation_failed` clustering on
+theme-mapped signals, the fix is diagnostic first: raise `_EXCERPT_CHARS` on
+the rejection record (a research-layer change → its own ruling under the
+freeze). n=3; not evidence of anything yet, recorded so it is not forgotten.
 
 ## Standing reminders
 
