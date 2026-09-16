@@ -158,7 +158,7 @@ def main() -> int:
     config = ResearchConfig.load()
     limits = RiskLimits.load()
     now = datetime.now(timezone.utc)
-    loaded = load_lots(AuditLog(default_data_dir()))
+    loaded = load_lots(AuditLog(default_data_dir() / "audit.jsonl"))
     context = build_context(loaded, same_family, now)
 
     if same_family:
