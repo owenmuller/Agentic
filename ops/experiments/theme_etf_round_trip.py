@@ -122,6 +122,24 @@ def main() -> int:
         )
     )
     code = str(getattr(outcome, "code", ""))
+    excerpt = getattr(outcome, "raw_excerpt", "") or ""
+    if excerpt:
+        print(f"--- model payload ({len(excerpt)} chars, truncated by the pass) ---")
+        print(excerpt)
+        try:
+            import ast
+
+            from pydantic import ValidationError
+
+            payload = ast.literal_eval(excerpt)
+            try:
+                ResearchReport.model_validate(payload)
+            except ValidationError as error:
+                print("--- schema errors ---")
+                for item in error.errors():
+                    print(f"  {'.'.join(str(x) for x in item['loc'])}: {item['msg']} (got {item.get('input')!r})")
+        except (ValueError, SyntaxError):
+            print("(payload truncated; cannot re-validate)")
     # A typed research-layer decline (e.g. triage no) still proves the request
     # path; an upstream error does not.
     print("ROUND TRIP", "OK (typed verdict)" if "error" not in code else "FAILED")
