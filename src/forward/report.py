@@ -339,6 +339,27 @@ def render_forward_report(
             ]
         )
 
+    # Add decisions (ruling 2026-09-16): the adds taken on held names against
+    # the signals that were held instead. Same question as every door: did the
+    # decision beat its counterfactual?
+    adds = [e for e in with_ticker if e.is_add]
+    held = [
+        e for e in with_ticker if e.code in ("already_held_no_add", "add_no_headroom")
+    ]
+    if adds or held:
+        lines.extend(
+            [
+                "",
+                f"Add decisions (excess at {KEY_HORIZON}d; ruling 2026-09-16 — did "
+                f"adding on a held name beat holding it?):",
+                _stat_line("adds taken", _excess_values(adds, rows, KEY_HORIZON)),
+                _stat_line(
+                    "held (already_held_no_add / add_no_headroom)",
+                    _excess_values(held, rows, KEY_HORIZON),
+                ),
+            ]
+        )
+
     # 8-K items (ruling 2026-09-15): one row per whitelisted item an entry
     # carried (a filing with two items counts under both), researched items and
     # the bearish measurement-only ones apart. Hard review 2026-10-15.

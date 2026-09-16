@@ -335,6 +335,9 @@ def test_report_fields_are_exactly_the_ones_the_spec_names():
         "catalyst_within_horizon",
         "expected_resolution_date",
         "target_price",
+        # Add decisions (ruling 2026-09-16): add/hold and the headroom share.
+        "add_verdict",
+        "add_fraction",
     }
 
 

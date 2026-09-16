@@ -165,7 +165,8 @@ class ExitsConfig(BaseModel):
     #: position, at most once per position (RULED 2026-09-02: once, not
     #: repeated halving — a position re-triggering partial after its trim is
     #: asked to close instead, and the review prompt says so). 0 disables
-    #: trims. Risk-reducing; never shadowed. Adds remain deferred.
+    #: trims. Risk-reducing; never shadowed. The ADD half is the add decision
+    #: (ruling 2026-09-16, ``add_decisions``), signal-driven, not review-driven.
     review_trim_fraction: Decimal = Field(
         default=Decimal("0.5"), ge=Decimal("0"), lt=Decimal("1")
     )
@@ -420,6 +421,25 @@ class OverreactionScreenConfig(BaseModel):
     universe_window_days: int = Field(default=60, gt=0)
 
 
+class AddDecisionsConfig(BaseModel):
+    """Same-name entries as add decisions (human ruling 2026-09-16).
+
+    One judged position per symbol: a tradeable signal on a held name is
+    researched as an ADD DECISION (add/hold with an add fraction) instead of
+    opening a second position. The combined size is capped at the confidence
+    band of the NEW verdict, widened by ``family_bump_bands`` when the new
+    signal's source family differs from the position's originating family,
+    and never past the hard cap. ``enabled: false`` restores the pre-ruling
+    behaviour (a second position per signal) — which is itself a ruling.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = True
+    #: 0 or 1: how many bands the combined cap widens for an independent family.
+    family_bump_bands: int = Field(default=1, ge=0, le=1)
+
+
 class MarketDataConfig(BaseModel):
     """Settings for the production price source. Consumed at wiring time —
     ``AlpacaPriceSource(feed=..., max_quote_age_seconds=...)`` — because the
@@ -482,6 +502,10 @@ class OrchestratorConfig(BaseModel):
     boundary_confirmation: BoundaryConfirmationConfig = Field(
         default_factory=BoundaryConfirmationConfig
     )
+    #: Add decisions (ruling 2026-09-16): one judged position per symbol, adds
+    #: under a combined cap. The combined cap can never exceed the hard cap, so
+    #: absent-section defaults are safe.
+    add_decisions: AddDecisionsConfig = Field(default_factory=AddDecisionsConfig)
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "OrchestratorConfig":

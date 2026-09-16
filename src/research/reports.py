@@ -82,6 +82,16 @@ class TimeHorizon(StrEnum):
     MONTHS = "months"
 
 
+class AddVerdict(StrEnum):
+    """The add decision (human ruling 2026-09-16): a tradeable signal on a name
+    the judged sleeve already holds asks ONE question — add to the position or
+    hold it as it is. Set only when the request stated the position is held;
+    null on every ordinary entry pass."""
+
+    ADD = "add"
+    HOLD = "hold"
+
+
 class CatalystAssessment(BaseModel):
     """Whether a specific event inside the time horizon backs the thesis.
 
@@ -148,12 +158,32 @@ class ResearchReport(BaseModel):
     #: direction without a target is rejected by the gate, so stating one is part
     #: of calling a trade. Defaulted so pre-ruling audit records parse unchanged.
     target_price: Optional[Decimal] = None
+    #: Add decisions (human ruling 2026-09-16). Set ONLY when the request said
+    #: this system already holds the instrument: "add" or "hold", and on an add
+    #: the share of the deterministic headroom to take, in (0, 1]. There is
+    #: still no field for dollars: the headroom comes from the confidence table
+    #: and a combined-position cap the model cannot see or move, so the most an
+    #: add can ask for is all of what the cap allows. Both null on every other
+    #: request; defaulted so pre-ruling audit records parse unchanged.
+    add_verdict: Optional[AddVerdict] = None
+    add_fraction: Optional[Decimal] = None
 
     @field_validator("target_price")
     @classmethod
     def _target_is_positive(cls, value: Optional[Decimal]) -> Optional[Decimal]:
         if value is not None and value <= 0:
             raise ValueError(f"target_price must be positive, got {value}")
+        return value
+
+    @field_validator("add_fraction")
+    @classmethod
+    def _add_fraction_in_unit_interval(
+        cls, value: Optional[Decimal]
+    ) -> Optional[Decimal]:
+        """(0, 1]: a fraction above one would be a request for more than the
+        cap, which is exactly the vocabulary this schema must not have."""
+        if value is not None and not Decimal("0") < value <= Decimal("1"):
+            raise ValueError(f"add_fraction must be in (0, 1], got {value}")
         return value
 
     @field_validator("confidence")
@@ -200,6 +230,18 @@ class ResearchReport(BaseModel):
     def flags_manipulation(self) -> bool:
         """True when the assessment reports something rather than clearing the signal."""
         return is_manipulation_flagged(self.manipulation_assessment)
+
+    @property
+    def is_add(self) -> bool:
+        """An add decision that actually adds (ruling 2026-09-16): verdict add,
+        a fraction stated, direction long. Anything less on an add pass — a hold,
+        an add without a fraction, a puts verdict — reads as HOLD (Constraint
+        #6), and the pipeline records it as such."""
+        return (
+            self.add_verdict is AddVerdict.ADD
+            and self.add_fraction is not None
+            and self.direction is Direction.LONG
+        )
 
     @property
     def recommends_no_position(self) -> bool:
@@ -366,7 +408,12 @@ def report_tool_definition() -> dict[str, Any]:
             "you will be graded on, not an order: it cannot raise a size or a "
             "cap, and inflating it past what your analysis supports only "
             "records a claim your track record then carries. null only with "
-            "direction no_position."
+            "direction no_position. For add_verdict and add_fraction: ONLY when "
+            "the request states that this system already holds the instrument "
+            "(an ADD DECISION) — \"add\" with add_fraction in (0, 1], the share "
+            "of the permitted headroom to take, or \"hold\" with add_fraction "
+            "null and direction no_position. On every other request both are "
+            "null."
         ),
         "strict": True,
         "input_schema": schema,

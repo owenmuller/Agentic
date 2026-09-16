@@ -318,6 +318,11 @@ class ResearchSnapshot(_Record):
     #: back — a leash rebuilt from the horizon bucket alone would silently revert
     #: a dated position to the fallback after a restart.
     expected_resolution_date: Optional[date] = None
+    #: Add decisions (ruling 2026-09-16): the verdict and fraction the model
+    #: gave when the pass was an add decision; None on ordinary entry passes
+    #: and on every record written before the ruling.
+    add_verdict: Optional[str] = None
+    add_fraction: Optional[Decimal] = None
 
     @classmethod
     def of(cls, report: ResearchReport) -> "ResearchSnapshot":
@@ -342,7 +347,42 @@ class ResearchSnapshot(_Record):
                 else None
             ),
             expected_resolution_date=report.expected_resolution_date,
+            add_verdict=(str(report.add_verdict) if report.add_verdict else None),
+            add_fraction=report.add_fraction,
         )
+
+
+class AddSnapshot(_Record):
+    """An add decision's deterministic facts (human ruling 2026-09-16).
+
+    Stamped on the DecisionRecord of an add that reached the gate and on the
+    StageRejectionRecord of one that did not (a hold, no headroom, a research
+    failure) — so attribution can separate adds from originating lots, replay
+    can attach a held signal to its position as convergence, and the forward
+    report can grade the holds. ``position_decision_id`` is the ORIGINATING
+    decision of the position the signal landed on.
+    """
+
+    position_decision_id: str
+    symbol: str
+    #: What happened: "add" (sized), "hold" (the model held, or the verdict did
+    #: not qualify as an add), "no_headroom" (an add verdict with nothing left
+    #: under the combined cap), "not_built" (an option position — adds to
+    #: options are not built), "research_failed".
+    verdict: str
+    signal_family: str = ""
+    originating_family: str = ""
+    #: The combined cap was widened one band because the families differ.
+    family_bump: bool = False
+    add_fraction: Optional[Decimal] = None
+    combined_cap_fraction: Optional[Decimal] = None
+    combined_cap_capital: Optional[Decimal] = None
+    held_value: Optional[Decimal] = None
+    headroom: Optional[Decimal] = None
+    lots_before: int = 1
+    #: True when the add pass ran AFTER an ordinary entry pass named the held
+    #: symbol without being told it was held (the signal carried no ticker).
+    second_pass: bool = False
 
 
 class ConvergenceSnapshot(_Record):
@@ -558,6 +598,9 @@ class DecisionRecord(_Record):
     #: the verdict sat in the sizing floor's noise band. None outside the band
     #: and on records written before the field.
     boundary_confirmation: Optional[BoundaryConfirmationSnapshot] = None
+    #: Add decision (ruling 2026-09-16): set when this decision ADDED to a held
+    #: position instead of opening one. None on every ordinary entry.
+    add: Optional[AddSnapshot] = None
     #: Two-stage research (2026-08-25): the stage-one screen draft behind a
     #: verified verdict, with its own cost. None when the pass ended at stage
     #: one (``research`` IS the screen report) or two-stage is off.
@@ -729,6 +772,9 @@ class StageRejectionRecord(_Record):
     #: over" from "that attempt is still unknown", instead of listing the order
     #: as pending on every health run until the end of time.
     broker_order_id: Optional[str] = None
+    #: Add decision that did not add (ruling 2026-09-16): the position it landed
+    #: on and why nothing was bought. Replay reads these back as convergence.
+    add: Optional["AddSnapshot"] = None
 
 
 class ExitReason(StrEnum):
@@ -780,7 +826,8 @@ class ExitReason(StrEnum):
     #: The trim half of position scaling (ruling 2026-09-02): a review verdict
     #: of resolution=partial on a position in profit sells a human-configured
     #: fraction of the lot, at most once per position. Risk-reducing, so exempt
-    #: from the exit-authority probation shadow; adds remain deferred.
+    #: from the exit-authority probation shadow. The ADD half is the add
+    #: decision (ruling 2026-09-16): signal-driven, recorded as its own lot.
     REVIEW_TRIM = "review_trim"
 
 

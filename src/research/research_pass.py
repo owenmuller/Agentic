@@ -133,8 +133,14 @@ class ResearchPass:
         """Every rejection this pass has produced, for the audit trail."""
         return tuple(self._rejections)
 
-    def run(self, signal: Signal) -> ResearchOutcome:
-        """Score a signal. Returns a validated report or a typed rejection."""
+    def run(self, signal: Signal, add_context=None) -> ResearchOutcome:
+        """Score a signal. Returns a validated report or a typed rejection.
+
+        ``add_context`` (ruling 2026-09-16): the held position, when the signal
+        names a name the judged sleeve already holds — the pass becomes an ADD
+        DECISION and the prompt states the position. Same tiers, same tool,
+        same two-stage path; only the question changes.
+        """
         credibility_context = self._context_for(signal)
         market_context = None
         if self._market_context is not None:
@@ -161,6 +167,7 @@ class ResearchPass:
             credibility_context,
             market_context=market_context,
             convergence_context=convergence_context,
+            add_context=add_context,
         )
 
         self._last_usage = None

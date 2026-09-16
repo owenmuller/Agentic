@@ -1947,10 +1947,10 @@ class _SecondPass:
         self._second_usage = second_usage
         self.runs = 0
 
-    def run(self, signal):
+    def run(self, signal, add_context=None):
         self.runs += 1
         if self.runs == 1:
-            return self._real.run(signal)
+            return self._real.run(signal, add_context=add_context)
         self._real._last_usage = self._second_usage
         return self._second
 

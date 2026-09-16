@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from research.add_decision import HeldPositionContext, add_decision_lines
 from signals import Signal, SignalClass, as_data_block
 
 SYSTEM_PROMPT = """\
@@ -89,6 +90,18 @@ confidence 80 or above; below 80 with no catalyst the thesis is stock. Contracts
 21 days to expiry at entry are closed the day before expiry.
 State time_horizon and the catalyst honestly: they route the expression and do not \
 change the size table. Never inflate confidence or invent a catalyst to reach an option.
+
+ADD DECISIONS
+
+When a request states that this system ALREADY HOLDS the instrument, the question \
+changes: one judged position per symbol, so you are deciding whether to ADD to the \
+existing position or HOLD it as it is — never whether to open a new one. The request \
+shows the position, its thesis, its size, its lots, its review history and the new \
+signal. Answer through add_verdict ("add" or "hold") and, on an add, add_fraction — \
+the share of a deterministic headroom you would take; the dollars come from your \
+confidence through the same table and a combined-position cap you cannot see or \
+move. Convergence from a genuinely independent source is evidence; the same family \
+repeating itself is not. On every other request add_verdict and add_fraction are null.
 
 When your conclusion is that nothing should be traded on a signal, say so \
 directly: set direction to "no_position". That is not a failure to reach a \
@@ -247,8 +260,13 @@ def build_user_prompt(
     credibility_context: Optional[str] = None,
     market_context: Optional[str] = None,
     convergence_context: Optional[str] = None,
+    add_context: Optional[HeldPositionContext] = None,
 ) -> str:
     """Assemble the analysis request.
+
+    ``add_context`` (ruling 2026-09-16) turns the request into an ADD DECISION:
+    the held position is stated from the system's own records, outside the
+    fence, before the ordinary signal metadata and content.
 
     Structured facts *about* the signal — its class, source, and timestamp — are
     supplied by the scanner and stated outside the fence. Everything the signal itself
@@ -268,6 +286,8 @@ def build_user_prompt(
     if tickers:
         lines.append(f"- tickers extracted by the scanner: {tickers}")
     lines.extend(_theme_lines(signal))
+    if add_context is not None:
+        lines.extend(add_decision_lines(add_context))
 
     guidance = _CLASS_GUIDANCE[signal.signal_class]
     if signal.signal_class is SignalClass.CLASS_1_REALTIME and signal.metadata.get(

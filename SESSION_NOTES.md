@@ -3491,6 +3491,117 @@ theme-mapped signals, the fix is diagnostic first: raise `_EXCERPT_CHARS` on
 the rejection record (a research-layer change → its own ruling under the
 freeze). n=3; not evidence of anything yet, recorded so it is not forgotten.
 
+### Same-name entries are ADD DECISIONS — human ruling 2026-09-16 (revising rejection to a convergence add)
+
+**Origin.** CELH, 2026-09-16 13:30 UTC poll: the Form 4 fetcher emitted TWO cluster
+signals on the same name in one drain — accession 0001628280-26-062057 (Fieldly CEO +
+DeSantis + Kravitz, 3 insiders, $1.83M) and 0001628280-26-062134 (Fieldly + Kravitz, a
+strict SUBSET of the first). Nothing stopped the second from being researched and sized
+as its own entry: decision 8ba9299d416f4ce0 (long/60 after boundary confirmation 65→60)
+filled 52.807 @ 28.41 at 14:05:27, decision 1eb9c63f8e6141c4 (long/62, confirmed 62/62)
+filled 52.975 @ 28.32 at 14:05:28 — two 2% lots, $3,000.50, 4% of the sleeve, both from
+`form4_insiders` (family **insider_filings**), two review streams, two stops, two leashes
+(122d and 181d). The originating signals were the same family repeating itself.
+
+**The ruling, as built (all six points):**
+
+1. **One judged position per symbol.** `SignalPipeline` asks the exit engine
+   (`HeldPositions` seam: `context_for`, `context_for_symbol`, `note_add_signal`) whether
+   the signal's scanner-extracted tickers name a held position. If so the research pass
+   runs as an **ADD DECISION**: `research/add_decision.py` renders the position from the
+   system's records (symbol, lots, blended entry, cost, current price, size as % of sleeve
+   NAV, originating family vs this signal's family, confidence/horizon/resolution/leash/
+   stop, the last three reviews, convergent signals already recorded, thesis and
+   invalidation at entry) ABOVE the fenced signal; the tool schema gained `add_verdict`
+   (add|hold, null on ordinary passes) and `add_fraction` in (0, 1] (validated; a
+   fraction above one is a schema error). SYSTEM_PROMPT gained an ADD DECISIONS section.
+   When the entry pass names a held symbol WITHOUT having been asked (a theme post, a
+   call with no ticker), the add pass runs as a second pass with the position in view and
+   ITS verdict stands (`AddSnapshot.second_pass`). Boundary confirmation applies to adds
+   (the second pass must replicate as an add). Reward:risk applies to adds.
+2. **Combined size cap.** `_propose_add`: the band of the NEW verdict's confidence,
+   bumped ONE band when `family_of(new signal) != position.originating_family`
+   (`add_decisions.family_bump_bands: 1`), `min(·, hard_cap 0.10)`. Held value counted
+   against the cap = max(cost basis, market value) — a drawdown cannot manufacture
+   headroom (Constraint #6). Add = headroom × add_fraction, then the same ATR risk-parity
+   and post-table scalars as every judged entry. Equity only; a held OPTION position
+   records the signal and holds (`not_built`).
+3. **One position, many lots.** `TrackedPosition.lots: list[Lot]` (decision, signal,
+   source, family, quantity, entry, cost, opened_at, confidence, thesis, invalidation,
+   horizon, resolution date, ATR stop fraction, filer, proceeds). On a filled add
+   (`_add_lot`): quantity/cost/blended entry updated; the stop re-derived at the
+   capital-weighted blended stop fraction from the blended entry and applied ONLY where
+   it tightens (an add below the blend would otherwise loosen the earlier lot's stop;
+   Constraint #6; a trailing stop never falls); the leash moves to the LATER resolution
+   date among the lots' theses, clamped in the winning lot's horizon bounds from the
+   ORIGINAL entry (`_releash`; a review may still shorten). Sells relieve lots FIFO
+   (`_allocate_sale`); a full close writes ONE OUTCOME PER LOT against the lot's own
+   decision (own realised P&L, own long-term boundary — the tax lots). Trims and closes
+   are otherwise unchanged. The review prompt shows LOTS and CONVERGENT SIGNALS blocks;
+   health shows a lots line.
+4. **Hold.** Any non-qualifying reading (verdict hold, no_position, add without a
+   fraction, wrong direction, wrong symbol) → `stage_rejection already_held_no_add`; an
+   add verdict with nothing left under the cap → `add_no_headroom`; both carry an
+   `AddSnapshot` (position id, verdict, families, cap, held value, headroom). The exit
+   engine records a `ConvergenceNote` on the position and flags a review
+   (`review_due_kind="add_signal"`, framed in the review prompt); the review ran in the
+   same tick in every test (reviews follow dispatch). Replay restores notes and any owed
+   review from the records. The registry shows later passes "held (code)", not
+   "declined". Forward report: "Add decisions" section (adds taken vs held).
+   Attribution: `adds` row — adds against the originating lots they joined.
+5. **CELH merged — by replay, from the log.** `ExitEngine.replay` now groups every open
+   judged trail by (kind, symbol) and rebuilds ONE position with one lot per trail in fill
+   order. The merge is therefore deterministic and needs no record surgery: at the next
+   startup CELH is one position keyed 8ba9299d416f4ce0 with lots [8ba9 52.807 @ 28.41
+   (insider_filings, 60), 1eb9 52.975 @ 28.32 (insider_filings, 62)], 105.782 shares,
+   $3,000.50 = 4.00% of the sleeve (kept as ruled; under the new rule the second signal
+   would have been a hold — same family, and at 62 the 2% band was already full),
+   blended entry 28.365, stop 25.06 (both lots carried the same ATR stop fraction
+   0.1166), leash 181 days to 2027-03-16 (the later of the two dates), one review stream.
+   `python -m orchestrator health` renders the merged view before the bounce.
+6. **Mechanical arm unchanged** — it never enters pipeline sizing; test pins it.
+
+**Attribution:** `DecisionRecord.add` / `StageRejectionRecord.add` (`AddSnapshot`),
+`ResearchSnapshot.add_verdict/add_fraction`, `FunnelEntry.is_add`,
+`AttributionReport.adds` (`AddDecisionAttribution`). Golden set: two `kind: "add"` cases
+graded on STRUCTURE plus the verdict set — `add-celh-same-cluster-repeat-real` (the real
+second cluster signal against the single-lot position; graded **hold**: the same family
+repeating itself is not information) and `add-celh-cross-family-congressional-synthetic`
+(the merged position asked about a SYNTHETIC congressional purchase; add or hold, shape
+graded). `ops/experiments/add_decision_round_trip.py` runs the production pass on the
+merged CELH context. Tests: `tests/test_adds.py` (15). Config: `orchestrator.yaml
+add_decisions`. Freeze: lifted for this ruling's prompt/schema change only, re-closes
+with the validation entry below.
+
+**The 16:04 UTC restart — operator bounce, not a crash.** `systemctl show
+agentic-paper.service`: `ExecMainStartTimestamp=2026-09-16 16:04:44 UTC`,
+`NRestarts=0`, `Result=success`, `ExecMainCode=0` — systemd did not restart it on
+failure. The previous process (PID 447943, up since 13:15:44) wrote no `shutdown
+complete` marker, consistent with SIGTERM from `systemctl restart`; the new process
+(449145) came up at 16:04:44 with the code pulled at bf7d3c7, and an `agentic` login
+session started nine seconds later. Same shape as the 08-25 18:54 bounce (SESSION_NOTES
+§ dispatch weight, item 5): the human's bounce after the union step shipped. No
+investigation beyond this.
+
+**FOUND WHILE READING THE JOURNAL — the X feed has been dead since 2026-09-01.** Every
+X poll since 2026-09-01 13:30:00 UTC (the first poll of September) has returned
+`HTTP 401 Unauthorized` — "X refused the request (HTTP 401): Unauthorized. Check
+X_BEARER_TOKEN in .env." — 109 today by 16:04, 347 on 09-15, 367 on 09-14, 332 on 09-11,
+365 on 09-09, 377 on 09-08; the last successful `api.x.com` call in orchestrator.log is
+2026-08-31 19:59:01. That is ELEVEN sessions with no @nolimitgains, no Unusual Whales, no
+Trump mirrors (`trump_mirror_ttox` last delivery 08-31, `trump_mirror_tdp` 08-20 — the
+startup warning has been saying "trump_posts may be quiet, or the bot may be dead; a
+human should check which", and the honest answer was neither: the token is dead). The
+failure surfaced only as `ERROR orchestrator.loop: Class1RealtimeScanner failed to poll`
+in the journal; run.log shows no POLL line for the X sources and health said nothing.
+**Human action:** regenerate/replace `X_BEARER_TOKEN` in the droplet's `.env` (never
+displayed; the agent does not touch credentials), then bounce. **Shipped hardening:** the
+loop now routes every scanner poll failure to the operator error sink (run.log
+`ERROR ... failed to poll: XError: ...`, and therefore health's last-error line), so a
+feed failing every poll cannot again hide behind a "mirror silent" warning. Class 1 X
+attribution from 09-01 onward is a hole, not a quiet feed — the forward and attribution
+reports should be read with that in mind.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

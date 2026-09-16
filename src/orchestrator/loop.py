@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Callable, Optional, Sequence
 from audit.log import AuditLog
 from execution.base import BrokerAdapter
 from risk_gate.gate import RiskGate
+from research.add_decision import ADD_HOLD_CODES
 from signals import Signal, SignalQueue
 from signals.scanners import Scanner
 
@@ -230,12 +231,25 @@ class TradingLoop:
         for scanner in self._scanners:
             try:
                 emitted = scanner.poll()
-            except Exception:  # noqa: BLE001 - a dead feed is not a dead loop
+            except Exception as error:  # noqa: BLE001 - a dead feed is not a dead loop
                 report.scanner_failures += 1
                 logger.exception(
                     "%s failed to poll; skipping its cycle",
                     type(scanner).__name__,
                 )
+                # Operator visibility (2026-09-16): a feed that fails EVERY poll
+                # must show in run.log / health, not only in the journal. The
+                # X bearer token 401ed on every poll from 2026-09-01 and the
+                # only operator-facing symptom was "mirror silent" warnings
+                # that blamed the mirrors.
+                if self._error_sink is not None:
+                    try:
+                        self._error_sink(
+                            f"{type(scanner).__name__} failed to poll: "
+                            f"{type(error).__name__}: {str(error)[:200]}"
+                        )
+                    except Exception:  # noqa: BLE001 - a sink must not kill the loop
+                        logger.exception("error sink failed")
                 continue
             report.polled += len(emitted)
 
@@ -506,6 +520,19 @@ class TradingLoop:
                     else None
                 ),
                 code=result.decision.gate.rejection_code or "",
+            )
+        elif result.rejection is not None and result.rejection.code in ADD_HOLD_CODES:
+            # An add decision that held (ruling 2026-09-16) is not a decline of
+            # the name — the system HOLDS it. Shown to later passes as such.
+            self._registry.note_outcome(
+                signal,
+                "held",
+                (
+                    result.rejection.research.confidence
+                    if result.rejection.research
+                    else None
+                ),
+                code=result.rejection.code,
             )
         elif result.rejection is not None and result.rejection.stage.value in (
             "sizing",

@@ -522,6 +522,9 @@ class AttributionReport:
     #: inception: own rows by tag with exit reasons and the counterfactual-equity
     #: line per contract. Review 2026-10-30 or n>=10 resolved short-dated.
     by_expression_tag: tuple["ExpressionTagAttribution", ...] = ()
+    #: Add decisions (ruling 2026-09-16) against the lots they joined, since
+    #: inception. None until the first add fills.
+    adds: Optional["AddDecisionAttribution"] = None
     #: Hit rate per sizing-table confidence band, since inception (2026-09-01).
     calibration: tuple["ConfidenceBandCalibration", ...] = ()
     #: Expectancy per source, since inception (2026-09-02): (source_id, stats).
@@ -628,6 +631,15 @@ class AttributionReport:
             for row in self.by_expression_tag:
                 lines.append(f"  {row.summary()}")
                 lines.extend(f"    - {c.summary()}" for c in row.contracts)
+        if self.adds is not None:
+            lines.extend(
+                [
+                    "",
+                    "Add decisions (ruling 2026-09-16; since inception; adds against "
+                    "the originating lots they joined):",
+                    *(f"  {line}" for line in self.adds.lines()),
+                ]
+            )
         if self.calibration:
             lines.extend(
                 [
@@ -826,6 +838,69 @@ class ExpressionTagAttribution:
             f"on {self.deployed:.2f} deployed, {self.open} open; by exit reason: "
             f"{reasons}{equity}"
         )
+
+
+@dataclass(frozen=True, slots=True)
+class AddDecisionAttribution:
+    """Add decisions (ruling 2026-09-16) apart from the lots they joined, since
+    inception: did adding on convergence pay, against the originating lots?"""
+
+    adds: int
+    adds_closed: int
+    adds_wins: int
+    adds_pnl: Decimal
+    adds_deployed: Decimal
+    bumped: int
+    origins: int
+    origins_closed: int
+    origins_wins: int
+    origins_pnl: Decimal
+    origins_deployed: Decimal
+
+    def lines(self) -> list[str]:
+        return [
+            f"adds: {self.adds} taken ({self.bumped} on an independent family, one "
+            f"band up), {self.adds_closed} closed ({self.adds_wins} won) "
+            f"{self.adds_pnl:+.2f} on {self.adds_deployed:.2f} deployed",
+            f"originating lots of the positions added to: {self.origins}, "
+            f"{self.origins_closed} closed ({self.origins_wins} won) "
+            f"{self.origins_pnl:+.2f} on {self.origins_deployed:.2f} deployed",
+        ]
+
+
+def _by_add(trails: list[AuditTrail]) -> Optional[AddDecisionAttribution]:
+    def deployed(members: list[AuditTrail]) -> Decimal:
+        return sum(
+            (f.filled_value for t in members for f in t.fills if f.side == "buy"), ZERO
+        )
+
+    adds = [
+        t
+        for t in trails
+        if t.decision.add is not None
+        and t.decision.add.verdict == "add"
+        and t.decision.was_approved
+        and any(f.side == "buy" for f in t.fills)
+    ]
+    if not adds:
+        return None
+    origin_ids = {t.decision.add.position_decision_id for t in adds}
+    origins = [t for t in trails if t.decision.decision_id in origin_ids]
+    adds_closed = [t for t in adds if t.outcome is not None]
+    origins_closed = [t for t in origins if t.outcome is not None]
+    return AddDecisionAttribution(
+        adds=len(adds),
+        adds_closed=len(adds_closed),
+        adds_wins=sum(1 for t in adds_closed if t.outcome.won),
+        adds_pnl=sum((t.outcome.realised_pnl for t in adds_closed), ZERO),
+        adds_deployed=deployed(adds),
+        bumped=sum(1 for t in adds if t.decision.add.family_bump),
+        origins=len(origins),
+        origins_closed=len(origins_closed),
+        origins_wins=sum(1 for t in origins_closed if t.outcome.won),
+        origins_pnl=sum((t.outcome.realised_pnl for t in origins_closed), ZERO),
+        origins_deployed=deployed(origins),
+    )
 
 
 def _contract_counterfactual(trail: AuditTrail) -> ContractCounterfactual:
@@ -1211,6 +1286,7 @@ def build_attribution(
     return AttributionReport(
         by_exit_reason=_by_exit_reason(judged_closed),
         by_expression_tag=_by_expression_tag(trails),
+        adds=_by_add(trails),
         # Since inception on purpose: calibration measures the scorer, not the
         # quarter, and windowing it would reset the sample every 90 days.
         calibration=_calibration(trails),

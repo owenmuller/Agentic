@@ -543,6 +543,10 @@ def start(
         id_factory=id_factory,
         fill_sink=exits.track_fill,
         convergence_snapshot=registry.snapshot_for,
+        # Add decisions (ruling 2026-09-16): one judged position per symbol.
+        # The exit engine knows what is held; the pipeline asks it.
+        adds=exits,
+        add_config=checks.orchestrator_config.add_decisions,
         scalars=scalars,
         # ATR sizing (ruling 2026-09-02): production wires AtrSource over the
         # daily bars; a harness that wires nothing runs the fixed-15% regime.

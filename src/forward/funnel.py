@@ -93,6 +93,9 @@ class FunnelEntry:
     form4_qualification: str = ""
     #: 8-K item numbers (ruling 2026-09-15); () on every other source.
     form8k_items: tuple[str, ...] = ()
+    #: An add decision that ADDED (ruling 2026-09-16): the entry joined a held
+    #: position's lots instead of opening one. Holds carry their own codes.
+    is_add: bool = False
 
     @property
     def primary_ticker(self) -> Optional[str]:
@@ -136,6 +139,7 @@ def funnel_entries(
                     expression_tag=(
                         (record.expression.tag or "") if record.expression is not None else ""
                     ),
+                    is_add=(record.add is not None and record.add.verdict == "add"),
                     confidence=(
                         record.research.confidence
                         if record.research is not None

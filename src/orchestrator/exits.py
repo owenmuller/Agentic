@@ -74,13 +74,21 @@ is not forgotten.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
 from typing import Collection, Iterable, Optional
 
-from audit.log import AuditLog
-from audit.records import AuditTrail, ExitReason, ReviewOutcome, long_term_boundary
+from audit.log import AuditLog, AuditLogError
+from audit.records import (
+    AuditTrail,
+    ExitReason,
+    ReviewOutcome,
+    StageRejectionRecord,
+    long_term_boundary,
+)
+from orchestrator.registry import family_of
+from research.add_decision import ADD_HOLD_CODES, HeldPositionContext, LotContext
 from execution.base import BrokerAdapter, BrokerError
 from research.exit_review import (
     ExitAction,
@@ -91,6 +99,7 @@ from research.exit_review import (
     ThesisValidity,
 )
 from risk_gate.gate import ApprovedOrder, RiskGate
+from risk_gate.state import Sleeve
 from risk_gate.rejections import Rejection, RejectionCode
 from risk_gate.schema import (
     EquityBuyOrder,
@@ -116,6 +125,60 @@ CENTS = Decimal("0.01")
 TAX_FACTOR_WINDOW_DAYS = 45
 
 logger = logging.getLogger("orchestrator.exits")
+
+
+@dataclass(slots=True)
+class Lot:
+    """One entry into a position (ruling 2026-09-16: one position, many lots).
+
+    Kept for cost basis and tax lots — each lot resolves to its OWN decision
+    record with its own realised P&L and its own long-term boundary — and for
+    attribution, which has to say which originating signal each entry was.
+    The position's stop and leash are one; the lots are where the money came
+    from. Sells relieve lots FIFO, the broker's default tax-lot method.
+    """
+
+    decision_id: str
+    signal_id: str
+    source_id: str
+    family: str
+    quantity: Decimal
+    entry_quantity: Decimal
+    entry_price: Decimal
+    entry_cost: Decimal
+    opened_at: datetime
+    confidence: int
+    thesis: str
+    invalidation_condition: str
+    time_horizon: str
+    resolution_date: Optional[date]
+    stop_fraction: Optional[Decimal]
+    content: str
+    filer: str = ""
+    proceeds: Decimal = ZERO
+
+
+@dataclass(frozen=True, slots=True)
+class ConvergenceNote:
+    """A signal on a held name that was researched as an add decision and did
+    NOT add (ruling 2026-09-16, rule 4): recorded on the position so the review
+    prompt and health can show who else spoke. Restored at replay from the
+    stage-rejection records carrying an AddSnapshot."""
+
+    decision_id: str
+    signal_id: str
+    source_id: str
+    family: str
+    recorded_at: datetime
+    verdict: str
+    confidence: Optional[int] = None
+
+    def line(self) -> str:
+        confidence = f" at confidence {self.confidence}" if self.confidence is not None else ""
+        return (
+            f"{self.recorded_at.date().isoformat()}: {self.source_id} "
+            f"({self.family or 'unknown family'}) — add decision: {self.verdict}{confidence}"
+        )
 
 
 @dataclass(slots=True)
@@ -216,10 +279,22 @@ class TrackedPosition:
     #: The parsed opening order, kept so an option close can be built with the
     #: exact contract identity the entry carried. None for equity.
     entry_order: Optional[object] = None
+    #: Add decisions (ruling 2026-09-16). The family of the signal that OPENED
+    #: the position (the combined cap widens one band for an independent
+    #: family); the lots when the position has more than one entry (empty =
+    #: a single lot, described by the fields above); and the convergent
+    #: signals that were researched as add decisions and held.
+    originating_family: str = ""
+    lots: list[Lot] = field(default_factory=list)
+    convergence: list[ConvergenceNote] = field(default_factory=list)
 
     @property
     def key(self) -> tuple[str, str]:
         return (self.instrument_kind, self.symbol)
+
+    @property
+    def lot_count(self) -> int:
+        return max(1, len(self.lots))
 
     @property
     def is_option(self) -> bool:
@@ -376,6 +451,336 @@ class ExitEngine:
             position.symbol.upper() for position in self._tracked.values()
         )
 
+    # -- add decisions (human ruling 2026-09-16) ----------------------------------
+
+    def position_for_symbol(self, symbol: str) -> Optional[TrackedPosition]:
+        """The tracked position in a name, matching an option position by its
+        underlying — one judged position per symbol counts the underlying."""
+        wanted = (symbol or "").strip().upper()
+        if not wanted:
+            return None
+        for position in self._tracked.values():
+            held = position.symbol
+            if position.is_option and position.entry_order is not None:
+                held = position.entry_order.underlying
+            if held.upper() == wanted:
+                return position
+        return None
+
+    def context_for(self, signal: Signal) -> Optional[HeldPositionContext]:
+        """The held position a signal names, if any — from the scanner's
+        structured tickers, never from the content. First held name wins."""
+        raw = signal.metadata.get("tickers") or ""
+        for ticker in raw.split(","):
+            context = self.context_for_symbol(ticker, signal)
+            if context is not None:
+                return context
+        return None
+
+    def context_for_symbol(
+        self, symbol: str, signal: Optional[Signal] = None
+    ) -> Optional[HeldPositionContext]:
+        position = self.position_for_symbol(symbol)
+        if position is None:
+            return None
+        signal_family = (
+            family_of(signal.source_id, signal.signal_class) if signal is not None else ""
+        )
+        return self._context_of(position, signal_family)
+
+    def _context_of(
+        self, position: TrackedPosition, signal_family: str
+    ) -> HeldPositionContext:
+        moment = self._clock()
+        price = self._mark_for(position)
+        market_value: Optional[Decimal] = None
+        if price is not None:
+            market_value = price * position.quantity * position.multiplier
+        else:
+            gate_position = self._gate.state.position(position.key)
+            if gate_position is not None and gate_position.market_value > ZERO:
+                market_value = gate_position.market_value
+        return HeldPositionContext(
+            symbol=position.symbol,
+            position_decision_id=position.decision_id,
+            instrument_kind=position.instrument_kind,
+            opened_at=position.opened_at,
+            days_held=position.days_held(moment),
+            quantity=position.quantity,
+            entry_price=position.entry_price,
+            entry_cost=position.entry_cost,
+            current_price=price,
+            market_value=market_value,
+            sleeve_nav=self._gate.sleeve_nav(Sleeve.EQUITY),
+            originating_family=position.originating_family
+            or family_of(position.source_id, _class_of(position.source_id)),
+            signal_family=signal_family,
+            source_id=position.source_id,
+            thesis=position.thesis,
+            invalidation_condition=position.invalidation_condition,
+            time_horizon=position.time_horizon,
+            confidence_at_entry=position.confidence,
+            resolution_date=position.resolution_date,
+            leash_days=position.leash_days,
+            stop_price=position.stop_price,
+            lots=tuple(
+                LotContext(
+                    decision_id=lot.decision_id,
+                    opened_at=lot.opened_at,
+                    quantity=lot.quantity,
+                    entry_price=lot.entry_price,
+                    entry_cost=lot.entry_cost,
+                    source_id=lot.source_id,
+                    family=lot.family,
+                    confidence=lot.confidence,
+                    thesis=lot.thesis,
+                )
+                for lot in self._lots_of(position)
+            ),
+            reviews=tuple(self._review_lines(position)),
+            convergence=tuple(note.line() for note in position.convergence),
+        )
+
+    def _lots_of(self, position: TrackedPosition) -> list[Lot]:
+        """The position's lots, WITHOUT mutating a single-lot position."""
+        if position.lots:
+            return list(position.lots)
+        return [self._origin_lot(position)]
+
+    def _origin_lot(self, position: TrackedPosition) -> Lot:
+        return Lot(
+            decision_id=position.decision_id,
+            signal_id=position.signal_id,
+            source_id=position.source_id,
+            family=position.originating_family,
+            quantity=position.quantity,
+            entry_quantity=position.entry_quantity,
+            entry_price=position.entry_price,
+            entry_cost=position.entry_cost,
+            opened_at=position.opened_at,
+            confidence=position.confidence,
+            thesis=position.thesis,
+            invalidation_condition=position.invalidation_condition,
+            time_horizon=position.time_horizon,
+            resolution_date=position.resolution_date,
+            stop_fraction=position.stop_fraction,
+            content=position.content,
+            filer=position.originating_filer,
+            proceeds=position.proceeds,
+        )
+
+    def _materialise_lots(self, position: TrackedPosition) -> None:
+        """Turn a single-lot position into an explicit lot list before an add."""
+        if not position.lots:
+            position.lots.append(self._origin_lot(position))
+
+    def _review_lines(self, position: TrackedPosition, limit: int = 3) -> list[str]:
+        """The last few reviews, from the log, for the add-decision prompt."""
+        try:
+            reviews = self._audit.trail(position.decision_id).reviews
+        except Exception:  # noqa: BLE001 - context must never block a pass
+            return []
+        lines = []
+        for review in reviews[-limit:]:
+            summary = (review.verdict_reason or review.assessment or "")[:140]
+            lines.append(
+                f"{review.recorded_at.date().isoformat()}: {review.outcome}; validity "
+                f"{review.validity or '?'}/{review.progress or '?'}/"
+                f"{review.resolution or '?'}"
+                + (f" — {summary}" if summary else "")
+            )
+        return lines
+
+    def note_add_signal(
+        self,
+        position_decision_id: str,
+        signal: Signal,
+        report,
+        verdict: str,
+        code: str,
+        decision_id: str,
+    ) -> None:
+        """An add decision that did not add (ruling 2026-09-16, rule 4): record
+        the signal as convergence on the position and trigger a review that
+        sees it. The stage-rejection record is the durable trail; this is the
+        in-memory half, restored at replay from that record."""
+        position = self._tracked.get(position_decision_id)
+        if position is None:
+            return
+        family = family_of(signal.source_id, signal.signal_class)
+        note = ConvergenceNote(
+            decision_id=decision_id,
+            signal_id=signal.signal_id,
+            source_id=signal.source_id,
+            family=family,
+            recorded_at=self._clock(),
+            verdict=verdict,
+            confidence=(report.confidence if report is not None else None),
+        )
+        position.convergence.append(note)
+        if verdict == "research_failed":
+            return  # the signal arrived; nothing was concluded about it
+        detail = (
+            f"{signal.source_id} ({family}) signalled {position.symbol} while it was "
+            f"held; the add decision was {verdict}"
+            + (f" at confidence {report.confidence}" if report is not None else "")
+            + f" ({code})"
+        )
+        # A filer event outranks this flag, like it outranks a price flag: the
+        # filing never re-arrives. Anything else yields to the newest question.
+        if position.review_due_kind != "filer_event":
+            position.review_due_reason = detail
+            position.review_due_kind = "add_signal"
+        logger.info("review triggered on %s by an add decision: %s", position.symbol, detail)
+
+    def _add_lot(
+        self, position: TrackedPosition, working: WorkingOrder, filled: Decimal, price: Decimal
+    ) -> None:
+        """Join a filled add to its position (ruling 2026-09-16, rule 3): one
+        position, a new lot, blended entry, the stop re-derived at the blended
+        ATR (applied only where it tightens — Constraint #6), the leash moved to
+        the later resolution date of the intact theses."""
+        report = working.report
+        cost = price * filled * position.multiplier
+        self._materialise_lots(position)
+        meta = working.signal.metadata
+        lot = Lot(
+            decision_id=working.decision_id,
+            signal_id=working.signal.signal_id,
+            source_id=working.signal.source_id,
+            family=family_of(working.signal.source_id, working.signal.signal_class),
+            quantity=filled,
+            entry_quantity=filled,
+            entry_price=price,
+            entry_cost=cost,
+            opened_at=self._clock(),
+            confidence=report.confidence,
+            thesis=report.thesis,
+            invalidation_condition=report.invalidation_condition,
+            time_horizon=str(report.time_horizon),
+            resolution_date=report.expected_resolution_date,
+            stop_fraction=working.proposal.stop_fraction,
+            content=working.signal.content,
+            filer=(meta.get("representative") or meta.get("fund") or meta.get("filer") or ""),
+        )
+        position.lots.append(lot)
+        position.quantity += filled
+        position.entry_quantity += filled
+        position.entry_cost += cost
+        position.entry_price = position.entry_cost / position.entry_quantity / position.multiplier
+        if position.high_water_price is None or price > position.high_water_price:
+            position.high_water_price = price
+        self._restop(position)
+        self._releash(position)
+        logger.info(
+            "add to %s (%s): lot %d of %s at %s from %s/%s; blended entry %s, stop %s, "
+            "leash day %d",
+            position.symbol,
+            position.decision_id,
+            len(position.lots),
+            filled,
+            price,
+            lot.source_id,
+            lot.family,
+            position.entry_price,
+            position.stop_price,
+            position.leash_days,
+        )
+
+    def _blended_stop_fraction(self, lots: list[Lot]) -> Optional[Decimal]:
+        """Capital-weighted stop distance across lots; a lot without an ATR stop
+        weighs in at the fixed max_loss_fraction. None when NO lot has one (the
+        fixed regime, exactly as before)."""
+        if not any(lot.stop_fraction is not None for lot in lots):
+            return None
+        total = sum((lot.entry_cost for lot in lots), ZERO)
+        if total <= ZERO:
+            return None
+        weighted = sum(
+            (
+                lot.entry_cost
+                * (lot.stop_fraction if lot.stop_fraction is not None else self._config.max_loss_fraction)
+                for lot in lots
+            ),
+            ZERO,
+        )
+        return weighted / total
+
+    def _restop(self, position: TrackedPosition) -> None:
+        """Re-derive the stop at the blended ATR from the blended entry. Applied
+        only where it TIGHTENS: an add below the blended entry could otherwise
+        loosen the stop the earlier lot was opened with (Constraint #6), and a
+        trailing stop already armed never falls."""
+        blended = self._blended_stop_fraction(position.lots)
+        position.stop_fraction = blended
+        derived = self._stop_for(position.entry_price, blended)
+        if derived > position.stop_price:
+            position.stop_price = derived
+
+    def _releash(self, position: TrackedPosition) -> None:
+        """The leash follows the LATER resolution date among the lots' theses
+        (rule 3; a review may still shorten it). Clamped into the winning lot's
+        horizon bounds, measured from the ORIGINAL entry like every leash."""
+        dated = [
+            (lot.resolution_date, lot.time_horizon)
+            for lot in position.lots
+            if lot.resolution_date is not None
+        ]
+        if not dated:
+            return
+        latest, horizon = max(dated, key=lambda item: item[0])
+        if position.resolution_date is not None and latest <= position.resolution_date:
+            return
+        proposed = self._leash_for(horizon, position.opened_at, latest)
+        if proposed <= position.leash_days:
+            return
+        logger.info(
+            "leash on %s moves from day %d to day %d on add (resolution now expected %s)",
+            position.symbol,
+            position.leash_days,
+            proposed,
+            latest.isoformat(),
+        )
+        position.leash_days = proposed
+        position.resolution_date = latest
+        position.time_horizon = horizon
+
+    @staticmethod
+    def _allocate_sale(position: TrackedPosition, units: Decimal, value: Decimal) -> None:
+        """Relieve lots FIFO — the broker's default tax-lot method — and book
+        each lot's share of the proceeds."""
+        remaining = units
+        for lot in position.lots:
+            if remaining <= ZERO:
+                break
+            take = min(lot.quantity, remaining)
+            if take <= ZERO:
+                continue
+            lot.quantity -= take
+            lot.proceeds += value * take / units
+            remaining -= take
+
+    def _lots_summary(self, position: TrackedPosition) -> Optional[str]:
+        if len(position.lots) < 2:
+            return None
+        return "\n".join(
+            f"  {index}. {lot.opened_at.date().isoformat()}: {lot.quantity} (of "
+            f"{lot.entry_quantity} bought) @ {lot.entry_price} from {lot.source_id}/"
+            f"{lot.family or 'unknown'} at confidence {lot.confidence}"
+            + (
+                f", resolution expected {lot.resolution_date.isoformat()}"
+                if lot.resolution_date is not None
+                else ""
+            )
+            + f" — {lot.thesis[:160]}"
+            for index, lot in enumerate(position.lots, start=1)
+        )
+
+    def _convergence_summary(self, position: TrackedPosition) -> Optional[str]:
+        if not position.convergence:
+            return None
+        return "\n".join(f"  - {note.line()}" for note in position.convergence[-5:])
+
     def note_disclosures(self, signals: Iterable[Signal]) -> int:
         """Match incoming Class 2/3 disclosures to held positions (ruling 2026-09-01).
 
@@ -416,7 +821,8 @@ class ExitEngine:
                     held_name = position.entry_order.underlying
                 if held_name.upper() != ticker:
                     continue
-                if not same_filer(position.originating_filer, filer):
+                filers = {position.originating_filer} | {lot.filer for lot in position.lots}
+                if not any(same_filer(known, filer) for known in filers if known):
                     continue
                 key = (position.decision_id, signal.external_id or signal.signal_id)
                 if key in self._filer_events_seen:
@@ -477,6 +883,20 @@ class ExitEngine:
             existing.entry_cost += cost
             return
 
+        # One judged position per symbol (ruling 2026-09-16): a fill routed as
+        # an add joins its position as a new lot. Defensively, so does an
+        # unrouted equity fill in a name already held — the invariant holds
+        # whatever routed the order.
+        add_to = getattr(working, "add_to", None)
+        target = self._tracked.get(add_to) if add_to else None
+        if target is None and not is_option:
+            target = self.position_for_symbol(order.symbol)
+            if target is not None and target.is_option:
+                target = None
+        if target is not None:
+            self._add_lot(target, working, filled, price)
+            return
+
         report = working.report
         self._tracked[working.decision_id] = TrackedPosition(
             decision_id=working.decision_id,
@@ -515,6 +935,9 @@ class ExitEngine:
             short_dated=(
                 is_option and self._is_short_dated(order.expiration, self._clock().date())
             ),
+            originating_family=family_of(
+                working.signal.source_id, working.signal.signal_class
+            ),
         )
 
     def replay(self, trails: Iterable[AuditTrail]) -> int:
@@ -525,8 +948,15 @@ class ExitEngine:
         is actually held — the gate was seeded from it — so a trail whose position the
         gate does not hold is skipped with a warning, and quantities are clamped to
         what the gate can see.
+
+        One judged position per symbol (ruling 2026-09-16): every open judged trail
+        in the same (kind, symbol) becomes ONE position with one lot per trail, in
+        fill order — blended entry, the stop at the blended ATR, the leash on the
+        later resolution date, sells relieved FIFO across the lots. A group of one
+        is exactly the pre-ruling position. This is how CELH's two 2026-09-16 lots
+        merge: deterministically, from the log, at the next startup.
         """
-        restored = 0
+        groups: dict[tuple[str, str], list[AuditTrail]] = {}
         for trail in trails:
             decision = trail.decision
             if decision.sizing.strategy in ("mechanical", "cash_sweep"):
@@ -539,171 +969,280 @@ class ExitEngine:
                 continue
             if not decision.was_approved or trail.outcome is not None:
                 continue
-            buys = [f for f in trail.fills if f.side == "buy"]
-            sells = [f for f in trail.fills if f.side == "sell"]
-            if not buys:
+            if not any(f.side == "buy" for f in trail.fills):
                 continue
             order = decision.gate.order or {}
             if order.get("kind") not in ("equity_buy", "option_buy_to_open"):
                 continue
-            is_option = order.get("kind") == "option_buy_to_open"
-            multiplier = int(order.get("multiplier", 100)) if is_option else 1
+            kind = "option" if order.get("kind") == "option_buy_to_open" else "equity"
+            groups.setdefault((kind, str(order["symbol"])), []).append(trail)
 
-            entry_quantity = sum((f.filled_quantity for f in buys), ZERO)
-            quantity = entry_quantity - sum((f.filled_quantity for f in sells), ZERO)
-            if quantity <= 0:
+        held_signals = [
+            record for record in self._audit.stage_rejections() if record.add is not None
+        ]
+        restored = 0
+        for (kind, symbol), members in groups.items():
+            members.sort(key=_first_buy_at)
+            position = self._restore_group(kind, symbol, members)
+            if position is None:
                 continue
-
-            symbol = str(order["symbol"])
-            kind = "option" if is_option else "equity"
-            gate_position = self._gate.state.position((kind, symbol))
-            if gate_position is None or gate_position.quantity <= 0:
-                logger.warning(
-                    "audit log says %s holds %s %s but the broker does not; "
-                    "not tracking — the broker is authoritative",
-                    decision.decision_id,
-                    quantity,
-                    symbol,
-                )
-                continue
-            quantity = min(quantity, gate_position.quantity)
-
-            entry_cost = sum((f.filled_value for f in buys), ZERO)
-            # Per-unit premium/price: filled_value carries the multiplier for
-            # options, so divide it back out to compare against per-unit marks.
-            entry_price = entry_cost / entry_quantity / multiplier
-            research = decision.research
-
-            # A close verdict the previous process recorded but died before executing
-            # must survive the restart — reviews are budgeted, and re-earning a verdict
-            # already paid for wastes one.
-            last_review = trail.reviews[-1] if trail.reviews else None
-            close_verdict = (
-                last_review is not None and last_review.outcome is ReviewOutcome.CLOSE
-            )
-            # The clock survives the restart, including any revision a review made
-            # to it: the latest review that named a date wins, otherwise the entry
-            # pass's date, otherwise the horizon fallback. Rebuilding from the
-            # bucket alone would quietly demote a dated position back to the
-            # default the moment the process bounced.
-            resolution_date = research.expected_resolution_date
-            for review in trail.reviews:
-                if review.revised_resolution_date is not None:
-                    resolution_date = review.revised_resolution_date
-            marks = self._persisted_marks.get(decision.decision_id, {})
-            high_water = marks.get("high_water_price")
-            last_review_price = marks.get("last_review_price")
-            # The originating filer, for the filer-event trigger. Records written
-            # before the snapshot field existed carry the member inside the
-            # per-member credibility key, so fall back to that.
-            filer = decision.signal.filer or ""
-            if (
-                not filer
-                and decision.signal.credibility_key
-                and "/" in decision.signal.credibility_key
-            ):
-                filer = decision.signal.credibility_key.split("/", 1)[1]
-
-            self._tracked[decision.decision_id] = TrackedPosition(
-                decision_id=decision.decision_id,
-                symbol=symbol,
-                quantity=quantity,
-                entry_quantity=entry_quantity,
-                entry_price=entry_price,
-                entry_cost=entry_cost,
-                opened_at=buys[0].recorded_at,
-                signal_id=decision.signal.signal_id,
-                source_id=decision.signal.source_id,
-                content=decision.signal.content,
-                thesis=research.thesis,
-                invalidation_condition=research.invalidation_condition,
-                time_horizon=research.time_horizon,
-                confidence=research.confidence,
-                stop_price=self._stop_for(entry_price, decision.sizing.stop_fraction),
-                stop_fraction=decision.sizing.stop_fraction,
-                resolution_date=resolution_date,
-                leash_days=self._leash_for(
-                    research.time_horizon, buys[0].recorded_at, resolution_date
-                ),
-                high_water_price=(
-                    high_water if high_water is not None else entry_price
-                ),
-                last_review_price=last_review_price,
-                originating_filer=filer,
-                proceeds=sum((f.filled_value for f in sells), ZERO),
-                instrument_kind=kind,
-                expiration=(
-                    date.fromisoformat(str(order["expiration"])) if is_option else None
-                ),
-                short_dated=(
-                    is_option
-                    and self._is_short_dated(
-                        date.fromisoformat(str(order["expiration"])),
-                        buys[0].recorded_at.date(),
-                    )
-                ),
-                multiplier=multiplier,
-                entry_order=parse_order(order) if is_option else None,
-                last_review_at=(last_review.recorded_at if last_review else None),
-                close_verdict=close_verdict,
-                close_detail=(
-                    (last_review.assessment or "")[:200] if close_verdict else ""
-                ),
-                close_reason=(
-                    review_close_reason(
-                        last_review.invalidation_triggered,
-                        last_review.validity,
-                        last_review.resolution,
-                        last_review.continuation_thesis,
-                    )
-                    if close_verdict
-                    else ExitReason.THESIS_INVALIDATED
-                ),
-            )
-            # Re-arm the ratchet from the restored mark before the first tick: a
-            # position that was riding a trailing stop must not spend a cycle back
-            # on its original one.
-            restored_position = self._tracked[decision.decision_id]
-            trailing = self._ratchet_stop_for(restored_position)
-            if trailing is not None and trailing > restored_position.stop_price:
-                restored_position.stop_price = trailing
-                restored_position.stop_is_trailing = True
-            # The trim latch survives the restart from the trail (ruling
-            # 2026-09-02): any SUBMITTED review_trim exit counts as spent. A
-            # submitted trim that later expired unfilled under-trims here — the
-            # fewer-trades side of that ambiguity, stated rather than silent.
-            restored_position.review_trimmed = any(
-                exit_record.reason is ExitReason.REVIEW_TRIM
-                and bool(exit_record.submitted)
-                for exit_record in trail.exits
-            )
-            # The last verdict's management state, so health shows it after a
-            # bounce instead of "unreviewed until the next cadence slot".
-            if last_review is not None and last_review.validity is not None:
-                restored_position.last_review_validity = last_review.validity
-                restored_position.last_review_progress = last_review.progress or ""
-                restored_position.last_review_resolution = (
-                    last_review.resolution or ""
-                )
-                restored_position.last_review_would_open = (
-                    last_review.would_open_today
-                )
-            # A filer event recorded after the last review is a review still
-            # owed. Unlike a price trigger — recomputed from marks every cycle —
-            # a filing arrives exactly once, so a restart between the event and
-            # its review would silently lose the question without this.
-            last_reviewed = last_review.recorded_at if last_review else None
-            for event in trail.filer_events:
-                if last_reviewed is None or event.recorded_at > last_reviewed:
-                    restored_position.review_due_reason = event.detail or (
-                        f"{event.filer} disclosed a {event.transaction} of "
-                        f"{event.symbol} while this position was held"
-                    )
-                    restored_position.review_due_kind = "filer_event"
+            self._restore_convergence(position, held_signals)
+            self._tracked[position.decision_id] = position
             restored += 1
         if restored:
             logger.info("restored %d open positions from the audit log", restored)
         return restored
+
+    def _restore_group(
+        self, kind: str, symbol: str, members: list[AuditTrail]
+    ) -> Optional[TrackedPosition]:
+        origin = members[0].decision
+        order = origin.gate.order or {}
+        is_option = kind == "option"
+        multiplier = int(order.get("multiplier", 100)) if is_option else 1
+        all_buys = sorted(
+            (f for trail in members for f in trail.fills if f.side == "buy"),
+            key=lambda f: f.recorded_at,
+        )
+        all_sells = sorted(
+            (f for trail in members for f in trail.fills if f.side == "sell"),
+            key=lambda f: f.recorded_at,
+        )
+        entry_quantity = sum((f.filled_quantity for f in all_buys), ZERO)
+        quantity = entry_quantity - sum((f.filled_quantity for f in all_sells), ZERO)
+        if quantity <= 0:
+            return None
+        gate_position = self._gate.state.position((kind, symbol))
+        if gate_position is None or gate_position.quantity <= 0:
+            logger.warning(
+                "audit log says %s holds %s %s but the broker does not; "
+                "not tracking — the broker is authoritative",
+                ", ".join(trail.decision.decision_id for trail in members),
+                quantity,
+                symbol,
+            )
+            return None
+        quantity = min(quantity, gate_position.quantity)
+
+        entry_cost = sum((f.filled_value for f in all_buys), ZERO)
+        # Per-unit premium/price: filled_value carries the multiplier for
+        # options, so divide it back out to compare against per-unit marks.
+        entry_price = entry_cost / entry_quantity / multiplier
+
+        lots: list[Lot] = []
+        for trail in members:
+            buys = [f for f in trail.fills if f.side == "buy"]
+            lot_quantity = sum((f.filled_quantity for f in buys), ZERO)
+            lot_cost = sum((f.filled_value for f in buys), ZERO)
+            research = trail.decision.research
+            lots.append(
+                Lot(
+                    decision_id=trail.decision.decision_id,
+                    signal_id=trail.decision.signal.signal_id,
+                    source_id=trail.decision.signal.source_id,
+                    family=family_of(
+                        trail.decision.signal.source_id, trail.decision.signal.signal_class
+                    ),
+                    quantity=lot_quantity,
+                    entry_quantity=lot_quantity,
+                    entry_price=lot_cost / lot_quantity / multiplier,
+                    entry_cost=lot_cost,
+                    opened_at=buys[0].recorded_at,
+                    confidence=research.confidence,
+                    thesis=research.thesis,
+                    invalidation_condition=research.invalidation_condition,
+                    time_horizon=research.time_horizon,
+                    resolution_date=research.expected_resolution_date,
+                    stop_fraction=trail.decision.sizing.stop_fraction,
+                    content=trail.decision.signal.content,
+                    filer=_filer_of(trail.decision),
+                )
+            )
+        research = origin.research
+        # Reviews are written against the position's originating id, but a
+        # lot's own trail may carry some from before it merged: pool them.
+        reviews = sorted(
+            (review for trail in members for review in trail.reviews),
+            key=lambda review: review.recorded_at,
+        )
+        last_review = reviews[-1] if reviews else None
+        close_verdict = (
+            last_review is not None and last_review.outcome is ReviewOutcome.CLOSE
+        )
+        # The clock, replayed in order: each lot's own date may EXTEND the leash
+        # to the later resolution date (rule 3), each review's revision applies
+        # as it did live (shorten freely, lengthen within bounds). Rebuilding
+        # from the bucket alone would quietly demote a dated position back to
+        # the default the moment the process bounced.
+        resolution_date = research.expected_resolution_date
+        horizon = research.time_horizon
+        events: list[tuple[datetime, str, object, Optional[str]]] = [
+            (lot.opened_at, "lot", lot.resolution_date, lot.time_horizon) for lot in lots[1:]
+        ] + [
+            (review.recorded_at, "review", review.revised_resolution_date, None)
+            for review in reviews
+            if review.revised_resolution_date is not None
+        ]
+        for _, event, revised, lot_horizon in sorted(events, key=lambda item: item[0]):
+            if revised is None:
+                continue
+            if event == "review":
+                resolution_date = revised  # type: ignore[assignment]
+            elif resolution_date is None or revised > resolution_date:  # type: ignore[operator]
+                resolution_date = revised  # type: ignore[assignment]
+                horizon = lot_horizon or horizon
+        lot_ids = [lot.decision_id for lot in lots]
+        highs = [
+            self._persisted_marks.get(lot_id, {}).get("high_water_price")
+            for lot_id in lot_ids
+        ]
+        highs = [mark for mark in highs if mark is not None]
+        high_water = max(highs) if highs else entry_price
+        last_review_price = self._persisted_marks.get(origin.decision_id, {}).get(
+            "last_review_price"
+        )
+        blended = self._blended_stop_fraction(lots) if len(lots) > 1 else lots[0].stop_fraction
+
+        position = TrackedPosition(
+            decision_id=origin.decision_id,
+            symbol=symbol,
+            quantity=quantity,
+            entry_quantity=entry_quantity,
+            entry_price=entry_price,
+            entry_cost=entry_cost,
+            opened_at=all_buys[0].recorded_at,
+            signal_id=origin.signal.signal_id,
+            source_id=origin.signal.source_id,
+            content=origin.signal.content,
+            thesis=research.thesis,
+            invalidation_condition=research.invalidation_condition,
+            time_horizon=horizon,
+            confidence=research.confidence,
+            stop_price=self._stop_for(entry_price, blended),
+            stop_fraction=blended,
+            resolution_date=resolution_date,
+            leash_days=self._leash_for(horizon, all_buys[0].recorded_at, resolution_date),
+            high_water_price=high_water,
+            last_review_price=last_review_price,
+            originating_filer=lots[0].filer,
+            proceeds=sum((f.filled_value for f in all_sells), ZERO),
+            instrument_kind=kind,
+            expiration=(
+                date.fromisoformat(str(order["expiration"])) if is_option else None
+            ),
+            short_dated=(
+                is_option
+                and self._is_short_dated(
+                    date.fromisoformat(str(order["expiration"])),
+                    all_buys[0].recorded_at.date(),
+                )
+            ),
+            multiplier=multiplier,
+            entry_order=parse_order(order) if is_option else None,
+            last_review_at=(last_review.recorded_at if last_review else None),
+            close_verdict=close_verdict,
+            close_detail=(
+                (last_review.assessment or "")[:200] if close_verdict else ""
+            ),
+            close_reason=(
+                review_close_reason(
+                    last_review.invalidation_triggered,
+                    last_review.validity,
+                    last_review.resolution,
+                    last_review.continuation_thesis,
+                )
+                if close_verdict
+                else ExitReason.THESIS_INVALIDATED
+            ),
+            originating_family=lots[0].family,
+            lots=lots if len(lots) > 1 else [],
+        )
+        if position.lots:
+            # Relieve the pooled sells FIFO across the lots, as _settle does live.
+            for sell in all_sells:
+                self._allocate_sale(position, sell.filled_quantity, sell.filled_value)
+            logger.info(
+                "merged %d open lots of %s into one position %s (ruling 2026-09-16): "
+                "%s at blended %s, stop %s, leash day %d",
+                len(lots),
+                symbol,
+                position.decision_id,
+                quantity,
+                position.entry_price,
+                position.stop_price,
+                position.leash_days,
+            )
+        # Re-arm the ratchet from the restored mark before the first tick: a
+        # position that was riding a trailing stop must not spend a cycle back
+        # on its original one.
+        trailing = self._ratchet_stop_for(position)
+        if trailing is not None and trailing > position.stop_price:
+            position.stop_price = trailing
+            position.stop_is_trailing = True
+        # The trim latch survives the restart from the trail (ruling
+        # 2026-09-02): any SUBMITTED review_trim exit counts as spent. A
+        # submitted trim that later expired unfilled under-trims here — the
+        # fewer-trades side of that ambiguity, stated rather than silent.
+        position.review_trimmed = any(
+            exit_record.reason is ExitReason.REVIEW_TRIM and bool(exit_record.submitted)
+            for trail in members
+            for exit_record in trail.exits
+        )
+        # The last verdict's management state, so health shows it after a
+        # bounce instead of "unreviewed until the next cadence slot".
+        if last_review is not None and last_review.validity is not None:
+            position.last_review_validity = last_review.validity
+            position.last_review_progress = last_review.progress or ""
+            position.last_review_resolution = last_review.resolution or ""
+            position.last_review_would_open = last_review.would_open_today
+        # A filer event recorded after the last review is a review still
+        # owed. Unlike a price trigger — recomputed from marks every cycle —
+        # a filing arrives exactly once, so a restart between the event and
+        # its review would silently lose the question without this.
+        last_reviewed = last_review.recorded_at if last_review else None
+        for event in sorted(
+            (event for trail in members for event in trail.filer_events),
+            key=lambda event: event.recorded_at,
+        ):
+            if last_reviewed is None or event.recorded_at > last_reviewed:
+                position.review_due_reason = event.detail or (
+                    f"{event.filer} disclosed a {event.transaction} of "
+                    f"{event.symbol} while this position was held"
+                )
+                position.review_due_kind = "filer_event"
+        return position
+
+    def _restore_convergence(
+        self, position: TrackedPosition, held_signals: list[StageRejectionRecord]
+    ) -> None:
+        """Re-attach the add decisions that held (ruling 2026-09-16) and re-arm
+        the review they owe when none has run since."""
+        ids = {position.decision_id} | {lot.decision_id for lot in position.lots}
+        owed: Optional[str] = None
+        for record in sorted(held_signals, key=lambda record: record.recorded_at):
+            snapshot = record.add
+            if snapshot is None or snapshot.position_decision_id not in ids:
+                continue
+            note = ConvergenceNote(
+                decision_id=record.decision_id,
+                signal_id=record.signal.signal_id,
+                source_id=record.signal.source_id,
+                family=family_of(record.signal.source_id, record.signal.signal_class),
+                recorded_at=record.recorded_at,
+                verdict=snapshot.verdict,
+                confidence=(record.research.confidence if record.research else None),
+            )
+            position.convergence.append(note)
+            if snapshot.verdict == "research_failed":
+                continue
+            if position.last_review_at is None or record.recorded_at > position.last_review_at:
+                owed = (
+                    f"{note.source_id} ({note.family}) signalled {position.symbol} while it "
+                    f"was held; the add decision was {snapshot.verdict} ({record.code})"
+                )
+        if owed is not None and position.review_due_kind != "filer_event":
+            position.review_due_reason = owed
+            position.review_due_kind = "add_signal"
 
     def _stop_for(
         self, entry_price: Decimal, fraction: Optional[Decimal] = None
@@ -1026,6 +1565,8 @@ class ExitEngine:
                     already_trimmed=position.review_trimmed,
                     spread_pct=self._spread_for(position),
                     opportunity_context=self._opportunity_summary(),
+                    lots_summary=self._lots_summary(position),
+                    convergence_summary=self._convergence_summary(position),
                 )
             )
             position.last_review_at = moment
@@ -1182,7 +1723,8 @@ class ExitEngine:
         the position — whole units, rounded down (Constraint #6: the smaller
         trade) — under its own exit reason, at most once per position.
         Risk-reducing by construction, so it is exempt from the exit-authority
-        probation shadow; the ADD half of scaling remains deferred as ruled.
+        probation shadow; the ADD half of scaling is the signal-driven add
+        decision (ruling 2026-09-16), never a review verdict.
         ``review_trimmed`` is set on the trim FILL (in ``_settle``), so a trim
         the broker refused or that expired unfilled is retried at the next trim
         verdict. A trim the engine cannot honour — already trimmed, not in
@@ -1426,6 +1968,10 @@ class ExitEngine:
         )
         position.quantity -= filled
         position.proceeds += filled_avg_price * filled * position.multiplier
+        if position.lots:
+            self._allocate_sale(
+                position, filled, filled_avg_price * filled * position.multiplier
+            )
         if working.reason is ExitReason.REVIEW_TRIM:
             # The once-per-position latch arms on the FILL, not the submission:
             # a trim that terminated unfilled may try again at the next partial
@@ -1455,13 +2001,37 @@ class ExitEngine:
             return False
 
         realised = position.proceeds - position.entry_cost
-        self._audit.record_outcome(
-            position.decision_id,
-            realised,
-            closed_at=self._clock(),
-            note=f"closed by exit engine: {working.reason} — {working.detail}",
-            credibility=self._credibility,
-        )
+        if position.lots:
+            # One position, many lots (ruling 2026-09-16): each lot resolves to
+            # its OWN decision with its own realised P&L and long-term boundary
+            # — the tax lots, and the attribution that says which originating
+            # signal each entry was. The originating decision is lot 1.
+            closed_at = self._clock()
+            for index, lot in enumerate(position.lots, start=1):
+                try:
+                    self._audit.record_outcome(
+                        lot.decision_id,
+                        lot.proceeds - lot.entry_cost,
+                        closed_at=closed_at,
+                        note=(
+                            f"closed by exit engine: {working.reason} — {working.detail} "
+                            f"(lot {index} of {len(position.lots)} of position "
+                            f"{position.decision_id})"
+                        ),
+                        credibility=self._credibility,
+                    )
+                except AuditLogError:
+                    logger.exception(
+                        "could not resolve lot %s of %s", lot.decision_id, position.symbol
+                    )
+        else:
+            self._audit.record_outcome(
+                position.decision_id,
+                realised,
+                closed_at=self._clock(),
+                note=f"closed by exit engine: {working.reason} — {working.detail}",
+                credibility=self._credibility,
+            )
         del self._tracked[position.decision_id]
         logger.info(
             "position %s closed: %s realised (%s)",
@@ -1564,6 +2134,31 @@ class ExitEngine:
         except Exception:  # noqa: BLE001 - degrade, never crash the cycle
             logger.exception("price source failed for %s", symbol)
             return None
+
+
+def _first_buy_at(trail: AuditTrail) -> datetime:
+    return min(f.recorded_at for f in trail.fills if f.side == "buy")
+
+
+def _filer_of(decision) -> str:
+    """The originating filer, for the filer-event trigger. Records written
+    before the snapshot field existed carry the member inside the per-member
+    credibility key, so fall back to that."""
+    filer = decision.signal.filer or ""
+    if (
+        not filer
+        and decision.signal.credibility_key
+        and "/" in decision.signal.credibility_key
+    ):
+        filer = decision.signal.credibility_key.split("/", 1)[1]
+    return filer
+
+
+def _class_of(source_id: str) -> SignalClass:
+    """Best-effort class for a family lookup on a restored position whose
+    family was not stamped: the two class-sensitive sources are 13F (class 3)
+    and everything else resolves on source id alone."""
+    return SignalClass.CLASS_3_THESIS if source_id == "form_13f" else SignalClass.CLASS_2_MOMENTUM
 
 
 def unmanaged_exposure(

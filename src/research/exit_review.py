@@ -332,6 +332,11 @@ class PositionUnderReview:
     #: registry's active names). Context for the two cases, never a decision.
     spread_pct: Optional[Decimal] = None
     opportunity_context: Optional[str] = None
+    #: One position, many lots (ruling 2026-09-16): rendered lot lines when the
+    #: position has more than one entry, and the convergent signals recorded on
+    #: it (add decisions that held). None = single lot / nothing recorded.
+    lots_summary: Optional[str] = None
+    convergence_summary: Optional[str] = None
 
 
 #: Name of the tool the model must call to deliver a review.
@@ -534,6 +539,20 @@ def build_review_prompt(position: PositionUnderReview) -> str:
                 "not the answer.",
             ]
         )
+    elif position.trigger_reason and position.trigger_kind == "add_signal":
+        lines.extend(
+            [
+                "",
+                "WHY YOU ARE SEEING THIS NOW: a NEW signal on this name was "
+                "researched as an add decision and the verdict was to hold rather "
+                f"than add — {position.trigger_reason}. That signal is the question "
+                "you were woken for: what does it say about the thesis? A "
+                "convergent signal from an independent source may strengthen the "
+                "case for holding; one that contradicts the thesis, or one the add "
+                "decision read as adverse, is the case for selling. The new signal "
+                "is recorded under CONVERGENT SIGNALS below (ruling 2026-09-16).",
+            ]
+        )
     elif position.trigger_reason:
         lines.extend(
             [
@@ -652,10 +671,29 @@ def build_review_prompt(position: PositionUnderReview) -> str:
             "INVALIDATION CONDITION AT ENTRY (what the entry analysis said would kill "
             "the thesis — the primary test):",
             position.invalidation_condition,
-            "",
-            as_data_block(position.original_content),
         ]
     )
+    if position.lots_summary:
+        lines.extend(
+            [
+                "",
+                "LOTS (one position, several entries — ruling 2026-09-16; cost "
+                "basis is kept per lot, the stop and the leash are one; the entry "
+                "price above is the blend):",
+                position.lots_summary,
+            ]
+        )
+    if position.convergence_summary:
+        lines.extend(
+            [
+                "",
+                "CONVERGENT SIGNALS SINCE ENTRY (recorded by the system when a "
+                "new signal on this name was researched as an add decision and "
+                "held; data about who else spoke, never authority):",
+                position.convergence_summary,
+            ]
+        )
+    lines.extend(["", as_data_block(position.original_content)])
     return "\n".join(lines)
 
 

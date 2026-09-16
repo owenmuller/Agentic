@@ -122,8 +122,38 @@ exits:
   # after its trim is asked to close, not re-trimmed; the review prompt says so).
   # Whole units, rounded down; a trim that rounds to zero is skipped. Own exit
   # reason review_trim; risk-reducing, so exempt from the probation shadow.
-  # Adds remain deferred as ruled. 0 disables.
+  # The ADD half is signal-driven, not review-driven: see add_decisions below
+  # (human ruling 2026-09-16). 0 disables.
   review_trim_fraction: 0.5
+
+# ADD DECISIONS (human ruling 2026-09-16, revising the same-name rule from
+# rejection to a convergence add). ONE judged position per symbol. A tradeable
+# signal on a held name is researched as an ADD DECISION: the existing
+# position, its thesis, its lots, its size and its review history are stated
+# in the prompt with the new signal, and the verdict is add/hold with an add
+# fraction. Sizing is deterministic downstream:
+#
+#   combined cap   the confidence band of the NEW verdict (the table in
+#                  risk_limits.yaml), widened by family_bump_bands when the
+#                  new signal's source FAMILY differs from the family that
+#                  opened the position (independent filing families
+#                  converging), and never past sizing.hard_cap 0.10.
+#   held value     max(cost basis, market value) — a drawdown cannot
+#                  manufacture headroom (Constraint #6).
+#   add            (combined cap - held value) x add_fraction, then the same
+#                  ATR risk-parity and post-table scalars every judged entry
+#                  gets; equity only (adds to option positions are not built).
+#
+# The position stays ONE: lots are kept for cost basis and tax lots, the stop
+# is re-derived at the blended ATR on add and only ever tightens, the leash
+# follows the later resolution date of the intact theses (a review may still
+# shorten it), and there is one review stream. Trims and closes are unchanged.
+# "Hold" records convergence on the position, triggers a review that sees the
+# new signal, and writes stage_rejection already_held_no_add so the forward
+# report grades it. The mechanical arm is untouched (one slice per name).
+add_decisions:
+  enabled: true
+  family_bump_bands: 1
 
 # SIGNAL CONVERGENCE (ruling 2026-09-01). A registry of active signals per symbol
 # over a rolling window, feeding two things and only two things:

@@ -81,6 +81,68 @@ class GoldenCase:
     #: Empty = ungraded. The INTC day-9 case grades on this alone: "displaced" is
     #: a mislabel when the move came from exactly what the thesis predicted.
     expect_validity: tuple[str, ...] = ()
+    #: Add cases (ruling 2026-09-16): the frozen held position the signal lands
+    #: on, and the add verdicts a correct decision may reach. Graded on
+    #: STRUCTURE — a verdict stated, an add naming exactly the held symbol with
+    #: a fraction, a hold with direction no_position — plus the verdict set.
+    add_position: Optional[dict[str, Any]] = None
+    add_verdicts: tuple[str, ...] = ()
+
+    def add_context(self):
+        """The frozen held position an add case replays."""
+        from research.add_decision import HeldPositionContext, LotContext
+
+        raw = dict(self.add_position or {})
+
+        def dec(key):
+            return Decimal(str(raw[key])) if raw.get(key) is not None else None
+
+        def when(value):
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+        return HeldPositionContext(
+            symbol=raw["symbol"],
+            position_decision_id=raw["position_decision_id"],
+            instrument_kind=raw.get("instrument_kind", "equity"),
+            opened_at=when(raw["opened_at"]),
+            days_held=int(raw["days_held"]),
+            quantity=dec("quantity"),
+            entry_price=dec("entry_price"),
+            entry_cost=dec("entry_cost"),
+            current_price=dec("current_price"),
+            market_value=dec("market_value"),
+            sleeve_nav=dec("sleeve_nav"),
+            originating_family=raw.get("originating_family", ""),
+            signal_family=raw.get("signal_family", ""),
+            source_id=raw["source_id"],
+            thesis=raw["thesis"],
+            invalidation_condition=raw["invalidation_condition"],
+            time_horizon=raw["time_horizon"],
+            confidence_at_entry=int(raw["confidence_at_entry"]),
+            resolution_date=(
+                date.fromisoformat(raw["resolution_date"])
+                if raw.get("resolution_date")
+                else None
+            ),
+            leash_days=int(raw["leash_days"]),
+            stop_price=dec("stop_price"),
+            lots=tuple(
+                LotContext(
+                    decision_id=lot["decision_id"],
+                    opened_at=when(lot["opened_at"]),
+                    quantity=Decimal(str(lot["quantity"])),
+                    entry_price=Decimal(str(lot["entry_price"])),
+                    entry_cost=Decimal(str(lot["entry_cost"])),
+                    source_id=lot["source_id"],
+                    family=lot.get("family", ""),
+                    confidence=int(lot["confidence"]),
+                    thesis=lot["thesis"],
+                )
+                for lot in raw.get("lots", ())
+            ),
+            reviews=tuple(raw.get("reviews", ())),
+            convergence=tuple(raw.get("convergence", ())),
+        )
 
     def under_review(self) -> PositionUnderReview:
         """The frozen position a review case replays."""
@@ -143,6 +205,36 @@ def load_cases(path: Optional[Path] = None) -> list[GoldenCase]:
                 continue
             raw = json.loads(line)
             expect = raw["expect"]
+            if raw.get("kind") == "add":
+                cases.append(
+                    GoldenCase(
+                        name=raw["name"],
+                        origin=raw.get("origin", ""),
+                        source_id=raw["source_id"],
+                        signal_class=SignalClass(raw["signal_class"]),
+                        content=raw["content"],
+                        external_id=raw.get("external_id", raw["name"]),
+                        classification=raw.get("classification"),
+                        metadata=dict(raw.get("metadata") or {}),
+                        directions=(),
+                        confidence_band=(0, 100),
+                        must_flag_manipulation=False,
+                        note=expect.get("note", ""),
+                        recorded_verdict=raw.get("recorded_verdict", ""),
+                        observed_at=(
+                            datetime.fromisoformat(
+                                raw["observed_at"].replace("Z", "+00:00")
+                            )
+                            if raw.get("observed_at")
+                            else None
+                        ),
+                        kind="add",
+                        add_position=raw["position"],
+                        add_verdicts=tuple(expect.get("add_verdicts", ("add", "hold"))),
+                        min_case_chars=int(expect.get("min_thesis_chars", 120)),
+                    )
+                )
+                continue
             if raw.get("kind") == "review":
                 position = raw["position"]
                 cases.append(
@@ -319,6 +411,52 @@ def grade_review(case: GoldenCase, outcome, usage) -> GoldenResult:
     )
 
 
+def grade_add(case: GoldenCase, outcome, usage) -> GoldenResult:
+    """Grade an add case (ruling 2026-09-16) on STRUCTURE and the verdict set:
+    add_verdict stated; an add names exactly the held symbol, direction long,
+    with an add_fraction; a hold carries direction no_position; the thesis is
+    argued past the structural bar."""
+    cost = usage.cost_usd if usage else None
+    if not isinstance(outcome, ResearchReport):
+        return GoldenResult(
+            case,
+            passed=False,
+            verdict=f"REJECTION {getattr(outcome, 'code', '?')}",
+            problems=(f"no report: {getattr(outcome, 'message', outcome)}",),
+            cost=cost,
+        )
+    problems: list[str] = []
+    symbol = str((case.add_position or {}).get("symbol", "")).upper()
+    verdict = str(outcome.add_verdict) if outcome.add_verdict is not None else "unstated"
+    if outcome.add_verdict is None:
+        problems.append("add_verdict null on an add decision")
+    elif case.add_verdicts and verdict not in case.add_verdicts:
+        problems.append(f"add verdict {verdict} not in graded set {list(case.add_verdicts)}")
+    direction = str(outcome.direction)
+    if verdict == "add":
+        if outcome.add_fraction is None:
+            problems.append("add without add_fraction")
+        if direction != "long":
+            problems.append(f"add with direction {direction}")
+        if [t.upper() for t in outcome.tickers] != [symbol]:
+            problems.append(f"add names {outcome.tickers}, not exactly [{symbol}]")
+    elif verdict == "hold" and direction != "no_position":
+        problems.append(f"hold with direction {direction} (expected no_position)")
+    if len(outcome.thesis.strip()) < case.min_case_chars:
+        problems.append(
+            f"thesis argued in {len(outcome.thesis.strip())} chars, below the "
+            f"{case.min_case_chars} structural bar"
+        )
+    fraction = f" fraction={outcome.add_fraction}" if outcome.add_fraction is not None else ""
+    rendered = (
+        f"{verdict}/{outcome.confidence}{fraction} {direction} "
+        f"tickers={list(outcome.tickers)} | {outcome.thesis.strip()[:90]}"
+    )
+    return GoldenResult(
+        case, passed=not problems, verdict=rendered, problems=tuple(problems), cost=cost
+    )
+
+
 def run_golden(
     research_pass,
     cases: list[GoldenCase],
@@ -346,8 +484,14 @@ def run_golden(
             for problem in result.problems:
                 echo(f"      {problem}")
             continue
-        outcome = research_pass.run(case.signal(moment))
-        result = grade(case, outcome, research_pass.last_usage)
+        if case.kind == "add":
+            outcome = research_pass.run(
+                case.signal(moment), add_context=case.add_context()
+            )
+            result = grade_add(case, outcome, research_pass.last_usage)
+        else:
+            outcome = research_pass.run(case.signal(moment))
+            result = grade(case, outcome, research_pass.last_usage)
         results.append(result)
         status = "PASS " if result.passed else "DRIFT"
         cost = f" ${result.cost}" if result.cost is not None else ""
@@ -368,6 +512,13 @@ def render_summary(results: list[GoldenResult]) -> str:
     if drifted:
         lines.append("DRIFT — a human reviews each before any change ships:")
         for result in drifted:
+            if result.case.kind == "add":
+                lines.append(
+                    f"  {result.case.name}: got {result.verdict}; expected an add "
+                    f"verdict in {list(result.case.add_verdicts)}, structurally "
+                    f"complete — {result.case.note}"
+                )
+                continue
             if result.case.kind == "review":
                 lines.append(
                     f"  {result.case.name}: got {result.verdict}; expected a "

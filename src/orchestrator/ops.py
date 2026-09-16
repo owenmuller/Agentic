@@ -370,8 +370,34 @@ def _fmt_position(position: TrackedPosition, now: datetime) -> str:
         f"@ {position.entry_price}  stop {position.stop_price}  "
         f"leash {position.days_held(now)}/{position.leash_days}d "
         f"({position.time_horizon})  reviewed {reviewed}{flags}\n"
-        f"{_fmt_management(position, now)}"
+        f"{_fmt_management(position, now)}{_fmt_lots(position)}"
     )
+
+
+def _fmt_lots(position: TrackedPosition) -> str:
+    """One position, many lots (ruling 2026-09-16): the lots and the convergent
+    signals recorded on the position, when there are any to show."""
+    lots = getattr(position, "lots", ()) or ()
+    convergence = getattr(position, "convergence", ()) or ()
+    if len(lots) < 2 and not convergence:
+        return ""
+    parts = []
+    if len(lots) >= 2:
+        parts.append(
+            "lots: "
+            + " | ".join(
+                f"{lot.decision_id[:8]} {lot.quantity}@{lot.entry_price} "
+                f"({lot.family or lot.source_id}, {lot.confidence})"
+                for lot in lots
+            )
+        )
+    if convergence:
+        last = convergence[-1]
+        parts.append(
+            f"convergence: {len(convergence)} held add decision(s), last "
+            f"{last.source_id} -> {last.verdict}"
+        )
+    return "\n           " + "  ".join(parts)
 
 
 def _fmt_management(position: TrackedPosition, now: datetime) -> str:

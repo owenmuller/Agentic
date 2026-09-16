@@ -99,6 +99,7 @@ class AuditLog:
         screen_usage: Optional[ResearchUsage] = None,
         convergence: Optional["ConvergenceSnapshot"] = None,
         boundary: Optional["BoundaryConfirmationSnapshot"] = None,
+        add: Optional["AddSnapshot"] = None,
     ) -> DecisionRecord:
         """Write the complete decision-time record. Approved or rejected, both land."""
         record = DecisionRecord(
@@ -111,6 +112,7 @@ class AuditLog:
             expression=expression,
             convergence=convergence,
             boundary_confirmation=boundary,
+            add=add,
             screen_research=(
                 ResearchSnapshot.of(screen_report)
                 if screen_report is not None
@@ -235,6 +237,7 @@ class AuditLog:
         screen_report: Optional[ResearchReport] = None,
         screen_usage: Optional[ResearchUsage] = None,
         broker_order_id: Optional[str] = None,
+        add: Optional["AddSnapshot"] = None,
     ) -> StageRejectionRecord:
         """Record a signal that stopped before the gate, or an order the broker refused.
 
@@ -269,6 +272,7 @@ class AuditLog:
             est_output_tokens=usage.output_tokens if usage else None,
             est_cost_usd=usage.cost_usd if usage else None,
             broker_order_id=broker_order_id,
+            add=add,
         )
         self._append(record)
         return record

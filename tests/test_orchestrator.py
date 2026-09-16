@@ -1344,6 +1344,8 @@ def test_no_record_written_by_an_adversarial_run_is_anything_but_a_known_kind(
         "convergence",
         # Boundary confirmation (2026-09-15): both passes and which one sized.
         "boundary_confirmation",
+        # Add decision (2026-09-16): the position an add joined; None on entries.
+        "add",
         # Two-stage research (2026-08-25): the screen draft and its cost.
         "screen_research",
         "screen_est_cost_usd",

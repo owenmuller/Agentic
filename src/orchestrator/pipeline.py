@@ -43,6 +43,7 @@ from typing import Callable, Collection, Optional, Protocol
 
 from audit.log import AuditLog, AuditLogError
 from audit.records import (
+    AddSnapshot,
     BoundaryConfirmationSnapshot,
     DecisionRecord,
     ExpressionSnapshot,
@@ -51,6 +52,7 @@ from audit.records import (
     StageRejectionRecord,
 )
 from execution.base import BrokerAdapter, BrokerError, OrderReceipt
+from research.add_decision import ADD_HOLD_CODES, HeldPositionContext
 from research.reports import Direction, ResearchReport, ResearchUsage
 from signals.themes import THEME_KEY, shortlist_of
 from research.research_pass import ResearchPass
@@ -110,6 +112,28 @@ CENTS = Decimal("0.01")
 logger = logging.getLogger("orchestrator.pipeline")
 
 
+class HeldPositions(Protocol):
+    """The exit engine's add-decision seam (ruling 2026-09-16): which held
+    position a signal names, and where a non-add outcome lands as convergence.
+    A pipeline wired without one never routes an add — the pre-ruling path."""
+
+    def context_for(self, signal: Signal) -> Optional[HeldPositionContext]: ...
+
+    def context_for_symbol(
+        self, symbol: str, signal: Optional[Signal] = None
+    ) -> Optional[HeldPositionContext]: ...
+
+    def note_add_signal(
+        self,
+        position_decision_id: str,
+        signal: Signal,
+        report: Optional[ResearchReport],
+        verdict: str,
+        code: str,
+        decision_id: str,
+    ) -> None: ...
+
+
 class PriceSource(Protocol):
     """Per-unit price to bound a buy with, or None when no usable price is available.
 
@@ -142,6 +166,9 @@ class WorkingOrder:
     #: from before the ruling or when the quote was unavailable.
     submitted_at: Optional[datetime] = None
     spread_pct_at_submission: Optional[Decimal] = None
+    #: Add decision (ruling 2026-09-16): the ORIGINATING decision id of the
+    #: position this fill joins as a new lot. None = opens a position.
+    add_to: Optional[str] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,8 +253,18 @@ class SignalPipeline:
         reward_risk: Optional["RewardRiskConfig"] = None,
         boundary: Optional["BoundaryConfirmationConfig"] = None,
         sizing_floor: int = 50,
+        adds: Optional[HeldPositions] = None,
+        add_config: Optional["AddDecisionsConfig"] = None,
     ) -> None:
         self._research = research
+        #: Add decisions (ruling 2026-09-16): the exit engine's view of held
+        #: names. None = never route an add (harnesses without an exit engine).
+        self._adds = adds
+        self._add_config = add_config
+        #: The add decision in flight for the signal being processed, so the
+        #: outer wrapper can hand a non-add outcome back as convergence
+        #: whichever stage it stopped at.
+        self._add_in_flight: Optional[dict] = None
         self._triage = triage
         self._pending_triage_usage: Optional[ResearchUsage] = None
         self._sizing = sizing
@@ -337,8 +374,9 @@ class SignalPipeline:
     def process(self, signal: Signal) -> PipelineResult:
         """Research, size, build, submit. Returns where it stopped."""
         decision_id = self._id_factory()
+        self._add_in_flight = None
         try:
-            return self._process(decision_id, signal)
+            result = self._process(decision_id, signal)
         except (BuyingPowerBreached, AuditLogError):
             # Constraint #1 violated in reality, or the log itself failed. Neither is a
             # verdict about this signal, and neither is survivable: trading on without
@@ -353,13 +391,46 @@ class SignalPipeline:
                 f"pipeline raised: {error}",
                 signal,
             )
-            return PipelineResult(
+            result = PipelineResult(
                 decision_id=decision_id,
                 signal_id=signal.signal_id,
                 stage_reached=str(RejectedStage.INTERNAL_ERROR),
                 traded=False,
                 rejection=rejection,
             )
+        self._settle_add_outcome(signal, result)
+        return result
+
+    def _settle_add_outcome(self, signal: Signal, result: PipelineResult) -> None:
+        """An add decision that did not add — a hold, no headroom, a research
+        failure, a gate or broker refusal — is convergence on the position and
+        owes it a review (ruling 2026-09-16, rule 4). Whichever stage it
+        stopped at, it lands here once."""
+        in_flight = self._add_in_flight
+        self._add_in_flight = None
+        if in_flight is None or result.traded or self._adds is None:
+            return
+        context: HeldPositionContext = in_flight["context"]
+        if result.rejection is not None:
+            code = result.rejection.code
+        elif result.decision is not None:
+            code = result.decision.gate.rejection_code or "gate_rejected"
+        else:
+            code = "unknown"
+        verdict = in_flight.get("verdict") or (
+            "hold" if code in ADD_HOLD_CODES else code
+        )
+        try:
+            self._adds.note_add_signal(
+                context.position_decision_id,
+                signal,
+                in_flight.get("report"),
+                verdict=verdict,
+                code=code,
+                decision_id=result.decision_id,
+            )
+        except Exception:  # noqa: BLE001 - a note must never undo a recorded verdict
+            logger.exception("could not note the add decision on %s", context.symbol)
 
     def _process(self, decision_id: str, signal: Signal) -> PipelineResult:
         # 0. Theme -> ETF proposal (ruling 2026-09-15): a no-ticker Class 1 post
@@ -367,8 +438,18 @@ class SignalPipeline:
         # prompt. Deterministic; the model may decline.
         if self._themes is not None:
             signal = self._themes.apply(signal)
+        # 0b. Add decision (ruling 2026-09-16): a signal naming a name the judged
+        # sleeve already holds is researched as an ADD DECISION — the position
+        # stated in the prompt, the verdict add/hold with a fraction — never as
+        # a second position. Deterministic routing from the scanner's tickers.
+        add_context: Optional[HeldPositionContext] = None
+        second_pass = False
+        if self._adds_enabled:
+            add_context = self._adds.context_for(signal)  # type: ignore[union-attr]
+            if add_context is not None:
+                self._add_in_flight = {"context": add_context, "report": None}
         # 1. Research.
-        outcome = self._research.run(signal)
+        outcome = self._research.run(signal, add_context=add_context)
         usage = _combine_usage(self._pending_triage_usage, self._research.last_usage)
         self._pending_triage_usage = None
         screen_report = self._research.last_screen
@@ -383,27 +464,91 @@ class SignalPipeline:
                 usage=usage,
                 screen_report=screen_report,
                 screen_usage=screen_usage,
+                add=self._add_stub(add_context, "research_failed", second_pass),
             )
         report = outcome
+        # 1b. The model named a held symbol WITHOUT having been asked the add
+        # question (the signal carried no ticker — a theme post, a bare call).
+        # One position per symbol still holds: buy the add-decision pass now,
+        # with the position in view, and let ITS verdict stand.
+        if (
+            add_context is None
+            and self._adds_enabled
+            and not report.recommends_no_position
+            and len(report.tickers) == 1
+        ):
+            held = self._adds.context_for_symbol(report.tickers[0], signal)  # type: ignore[union-attr]
+            if held is not None:
+                logger.info(
+                    "%s named held %s without the add question; running the add "
+                    "decision pass (ruling 2026-09-16)",
+                    signal.signal_id,
+                    held.symbol,
+                )
+                add_context = held
+                second_pass = True
+                self._add_in_flight = {"context": held, "report": report}
+                second = self._research.run(signal, add_context=held)
+                usage = _combine_usage(usage, self._research.last_usage)
+                if self._research.last_screen is not None:
+                    screen_report = self._research.last_screen
+                    screen_usage = self._research.last_screen_usage
+                if not isinstance(second, ResearchReport):
+                    return self._stopped(
+                        decision_id,
+                        signal,
+                        RejectedStage.RESEARCH,
+                        str(second.code),
+                        f"add decision pass on held {held.symbol} failed: {second.message}",
+                        usage=usage,
+                        screen_report=screen_report,
+                        screen_usage=screen_usage,
+                        add=self._add_stub(held, "research_failed", second_pass),
+                    )
+                report = second
+        is_add = add_context is not None
+        if is_add:
+            self._add_in_flight = {"context": add_context, "report": report}
+            problem = self._add_problem(report, add_context)
+            if problem is not None:
+                verdict, message = problem
+                self._add_in_flight["verdict"] = verdict
+                return self._stopped(
+                    decision_id,
+                    signal,
+                    RejectedStage.SIZING,
+                    "already_held_no_add",
+                    message,
+                    report=report,
+                    usage=usage,
+                    screen_report=screen_report,
+                    screen_usage=screen_usage,
+                    add=self._add_stub(add_context, verdict, second_pass),
+                )
 
         # 2. Sizing. Sub-floor confidence and a no_position verdict both land here.
         # The table is picked by intended instrument: a catalyst-backed thesis (or
         # any puts thesis — puts are its only expression) sizes on the halved
         # options table; everything else on the full equity table. A later
         # fallback to equity RE-sizes at the full table (ruling 2026-08-24 #2:
-        # no phantom half-size penalty for chain illiquidity).
+        # no phantom half-size penalty for chain illiquidity). Adds are equity
+        # only (ruling 2026-09-16): they join an equity position's lots.
         sleeve_nav = self._gate.sleeve_nav(Sleeve.EQUITY)
         wants_puts = report.direction is Direction.SHORT_VIA_PUTS
-        intends_option = self._option_selector is not None and (
-            wants_puts
-            or (report.direction is Direction.LONG and self._option_door(report) is not None)
+        intends_option = (
+            not is_add
+            and self._option_selector is not None
+            and (
+                wants_puts
+                or (report.direction is Direction.LONG and self._option_door(report) is not None)
+            )
         )
         # 2a-0. Boundary confirmation (ruling 2026-09-02, post-diagnosis): a
         # tradeable verdict in the sizing floor's noise band must be confirmed
         # by a second independent pass, and the LOWER confidence sizes.
         boundary = None
         if not report.recommends_no_position:
-            confirmation = self._confirm_boundary(signal, report)
+            confirmation = self._confirm_boundary(signal, report, add_context)
             if confirmation.usage is not None:
                 # The second pass is real spend on THIS decision (2026-09-15:
                 # RWT's record carried one pass's cost for two passes' calls).
@@ -419,13 +564,16 @@ class SignalPipeline:
                     usage=usage,
                     screen_report=screen_report,
                     screen_usage=screen_usage,
+                    add=self._add_stub(add_context, "unconfirmed", second_pass),
                 )
             report = confirmation.report
             boundary = confirmation.snapshot
+            if is_add:
+                self._add_in_flight = {"context": add_context, "report": report}
         # 2a. The reward:risk gate (ruling 2026-09-02): equity longs must clear
         # (target - entry) / (entry x stop) >= min_ratio before a dollar is
         # sized. Veto-only — the model's target claim can block an entry, never
-        # enlarge one.
+        # enlarge one. Adds clear it too: more of a position is a new dollar.
         if not intends_option and report.direction is Direction.LONG:
             failed = self._reward_risk_reason(report)
             if failed is not None:
@@ -439,23 +587,40 @@ class SignalPipeline:
                     usage=usage,
                     screen_report=screen_report,
                     screen_usage=screen_usage,
+                    add=self._add_stub(add_context, "insufficient_reward_risk", second_pass),
                 )
-        if intends_option:
+        add_snapshot: Optional[AddSnapshot] = None
+        if is_add:
+            proposal, add_snapshot = self._propose_add(
+                report, sleeve_nav, add_context, second_pass  # type: ignore[arg-type]
+            )
+        elif intends_option:
             proposal = self._propose_option(report, sleeve_nav)
         else:
             proposal = self._propose_equity(report, sleeve_nav)
         if not proposal.is_tradeable:
+            if is_add:
+                code = "below_floor" if add_snapshot.combined_cap_fraction == ZERO else "add_no_headroom"  # type: ignore[union-attr]
+                self._add_in_flight["verdict"] = (  # type: ignore[index]
+                    "no_headroom" if code == "add_no_headroom" else code
+                )
+                add_snapshot = add_snapshot.model_copy(  # type: ignore[union-attr]
+                    update={"verdict": self._add_in_flight["verdict"]}  # type: ignore[index]
+                )
+            else:
+                code = "no_position" if report.recommends_no_position else "below_floor"
             return self._stopped(
                 decision_id,
                 signal,
                 RejectedStage.SIZING,
-                "no_position" if report.recommends_no_position else "below_floor",
+                code,
                 proposal.rationale,
                 report=report,
                 proposal=proposal,
                 usage=usage,
                 screen_report=screen_report,
                 screen_usage=screen_usage,
+                add=add_snapshot,
             )
 
         # 2b. Probation (human ruling 2026-08-25, first source: optionshawk).
@@ -479,12 +644,19 @@ class SignalPipeline:
                 usage=usage,
                 screen_report=screen_report,
                 screen_usage=screen_usage,
+                add=add_snapshot,
             )
 
-        # 3. Order construction (expression routing lives inside).
-        order, problem, proposal, expression = self._build_order(
-            signal, report, proposal
-        )
+        # 3. Order construction (expression routing lives inside). An add is
+        # always stock: it joins the lots of an equity position.
+        if is_add:
+            order, problem, proposal, expression = self._build_equity_order(
+                signal, report, proposal, expression=None
+            )
+        else:
+            order, problem, proposal, expression = self._build_order(
+                signal, report, proposal
+            )
         if order is not None:
             expression = self._with_theme(signal, report, expression)
         if order is None:
@@ -501,6 +673,7 @@ class SignalPipeline:
                 expression=expression,
                 screen_report=screen_report,
                 screen_usage=screen_usage,
+                add=add_snapshot,
             )
 
         # 4. The risk gate. Approved or rejected, this writes the full decision record.
@@ -523,6 +696,7 @@ class SignalPipeline:
             screen_usage=screen_usage,
             convergence=convergence,
             boundary=boundary,
+            add=add_snapshot,
         )
         if not decision.is_approved:
             return PipelineResult(
@@ -557,6 +731,7 @@ class SignalPipeline:
                 signal,
                 report=report,
                 proposal=proposal,
+                add=add_snapshot,
             )
             return PipelineResult(
                 decision_id=decision_id,
@@ -586,6 +761,7 @@ class SignalPipeline:
             proposal=proposal,
             submitted_at=self._clock(),
             spread_pct_at_submission=spread,
+            add_to=(add_context.position_decision_id if add_context is not None else None),
         )
         return PipelineResult(
             decision_id=decision_id,
@@ -594,6 +770,161 @@ class SignalPipeline:
             traded=True,
             decision=record,
             receipt=receipt,
+        )
+
+    # -- add decisions (human ruling 2026-09-16) -----------------------------------------
+
+    @property
+    def _adds_enabled(self) -> bool:
+        return self._adds is not None and (
+            self._add_config is None or self._add_config.enabled
+        )
+
+    def _add_problem(
+        self, report: ResearchReport, context: HeldPositionContext
+    ) -> Optional[tuple[str, str]]:
+        """Why this add-decision report does NOT add: ``(verdict, message)`` for
+        the already_held_no_add record, or None when it is a qualifying add.
+        Every non-qualifying reading resolves to a hold (Constraint #6)."""
+        symbol = context.symbol
+        if context.instrument_kind == "option":
+            return "not_built", (
+                f"{symbol} is held as an option; adds to option positions are not "
+                f"built (ruling 2026-09-16) — the signal is recorded as convergence "
+                f"and a review is triggered"
+            )
+        verdict = str(report.add_verdict) if report.add_verdict is not None else "unstated"
+        if report.recommends_no_position or report.add_verdict is None or verdict == "hold":
+            return "hold", (
+                f"add decision on held {symbol}: verdict {verdict}"
+                f"{' (direction no_position)' if report.recommends_no_position else ''} "
+                f"at confidence {report.confidence} — nothing bought; recorded as "
+                f"convergence on the position, review triggered (ruling 2026-09-16)"
+            )
+        if report.direction is not Direction.LONG:
+            return "hold", (
+                f"add decision on held {symbol}: verdict add with direction "
+                f"{report.direction} — only a long adds to a long position; read as "
+                f"a hold (Constraint #6), recorded as convergence, review triggered"
+            )
+        if [t.upper() for t in report.tickers] != [symbol.upper()]:
+            return "hold", (
+                f"add decision on held {symbol}: the report names "
+                f"{', '.join(report.tickers) or 'nothing'} — an add must name exactly "
+                f"the held symbol; read as a hold, recorded as convergence, review "
+                f"triggered"
+            )
+        if report.add_fraction is None:
+            return "hold", (
+                f"add decision on held {symbol}: verdict add without an add_fraction "
+                f"— read as a hold (Constraint #6), recorded as convergence, review "
+                f"triggered"
+            )
+        return None
+
+    def _combined_cap(self, confidence: int, independent_family: bool) -> tuple[Decimal, bool]:
+        """The combined-position cap (rule 2): the band of the NEW verdict's
+        confidence, one band wider for an independent family, never past the
+        hard cap. Returns ``(fraction, bumped)``."""
+        sizing = self._gate.limits.sizing
+        band = sizing.size_for(confidence)
+        bumped = False
+        bump_bands = self._add_config.family_bump_bands if self._add_config else 1
+        if band > ZERO and independent_family and bump_bands > 0:
+            wider = sorted({b.size for b in sizing.bands if b.size > band})
+            if wider:
+                band = wider[0]
+                bumped = True
+        return min(band, sizing.hard_cap), bumped
+
+    def _propose_add(
+        self,
+        report: ResearchReport,
+        sleeve_nav: Decimal,
+        context: HeldPositionContext,
+        second_pass: bool,
+    ) -> tuple[SizedProposal, AddSnapshot]:
+        """Size an add (ruling 2026-09-16): headroom under the combined cap x
+        the model's add_fraction, then the same ATR risk-parity and post-table
+        scalars every judged entry gets. The held value is max(cost, market),
+        so a drawdown cannot manufacture headroom (Constraint #6)."""
+        combined_fraction, bumped = self._combined_cap(
+            report.confidence, context.independent_family
+        )
+        combined_capital = (sleeve_nav * combined_fraction).quantize(
+            CENTS, rounding=ROUND_DOWN
+        )
+        held_value = context.held_value
+        headroom = combined_capital - held_value
+        add_fraction = report.add_fraction or ZERO
+        capital = ZERO
+        if combined_fraction > ZERO and headroom > ZERO:
+            capital = (headroom * add_fraction).quantize(CENTS, rounding=ROUND_DOWN)
+        if combined_fraction == ZERO:
+            rationale = (
+                f"add decision: confidence {report.confidence} is below the "
+                f"{self._gate.limits.sizing.no_trade_below} floor; no add"
+            )
+        elif headroom <= ZERO:
+            rationale = (
+                f"add decision: confidence {report.confidence} caps the COMBINED "
+                f"position at {combined_fraction:.2%} of sleeve NAV = {combined_capital}"
+                f"{' (one band up: ' + context.signal_family + ' is independent of ' + context.originating_family + ')' if bumped else ''}; "
+                f"already holding {held_value:.2f} — no headroom, no add"
+            )
+        else:
+            rationale = (
+                f"add decision: confidence {report.confidence} caps the COMBINED "
+                f"position at {combined_fraction:.2%} of sleeve NAV = {combined_capital}"
+                f"{' (one band up: ' + context.signal_family + ' is independent of ' + context.originating_family + ')' if bumped else ''}; "
+                f"holding {held_value:.2f}, headroom {headroom:.2f} x add_fraction "
+                f"{add_fraction} = {capital}"
+            )
+        proposal = SizedProposal(
+            instrument=InstrumentKind.EQUITY,
+            sleeve=Sleeve.EQUITY,
+            confidence=report.confidence,
+            sleeve_nav=sleeve_nav,
+            fraction_of_sleeve_nav=(capital / sleeve_nav if sleeve_nav > ZERO else ZERO),
+            capital=capital,
+            rationale=rationale,
+        )
+        proposal = self._apply_atr(proposal, report)
+        if self._scalars:
+            proposal = self._scalars.scale(proposal)
+        snapshot = AddSnapshot(
+            position_decision_id=context.position_decision_id,
+            symbol=context.symbol,
+            verdict="add",
+            signal_family=context.signal_family,
+            originating_family=context.originating_family,
+            family_bump=bumped,
+            add_fraction=report.add_fraction,
+            combined_cap_fraction=combined_fraction,
+            combined_cap_capital=combined_capital,
+            held_value=held_value,
+            headroom=headroom,
+            lots_before=max(1, len(context.lots)),
+            second_pass=second_pass,
+        )
+        return proposal, snapshot
+
+    @staticmethod
+    def _add_stub(
+        context: Optional[HeldPositionContext], verdict: str, second_pass: bool
+    ) -> Optional[AddSnapshot]:
+        """The add snapshot for a decision that stopped before sizing."""
+        if context is None:
+            return None
+        return AddSnapshot(
+            position_decision_id=context.position_decision_id,
+            symbol=context.symbol,
+            verdict=verdict,
+            signal_family=context.signal_family,
+            originating_family=context.originating_family,
+            held_value=context.held_value,
+            lots_before=max(1, len(context.lots)),
+            second_pass=second_pass,
         )
 
     # -- order construction ------------------------------------------------------------
@@ -784,7 +1115,12 @@ class SignalPipeline:
             update={"tag": expression.tag or "theme_etf", "theme": theme}
         )
 
-    def _confirm_boundary(self, signal: Signal, report: ResearchReport) -> _Confirmation:
+    def _confirm_boundary(
+        self,
+        signal: Signal,
+        report: ResearchReport,
+        add_context: Optional[HeldPositionContext] = None,
+    ) -> _Confirmation:
         """Boundary confirmation (ruling 2026-09-02, diagnosis: five
         identical-input replays of a floor-band case spanned long/38-54 and
         no_position/30-72 — the band admits stochastic noise).
@@ -813,7 +1149,7 @@ class SignalPipeline:
             floor,
             floor + self._boundary.band_width,
         )
-        second = self._research.run(signal)
+        second = self._research.run(signal, add_context=add_context)
         second_usage = self._research.last_usage
         if not isinstance(second, ResearchReport):
             return _Confirmation(
@@ -822,6 +1158,18 @@ class SignalPipeline:
                 f"not be confirmed: the second pass failed "
                 f"({getattr(second, 'code', 'error')}) — an unconfirmable "
                 f"floor-band verdict is not sized (ruling 2026-09-02)",
+                usage=second_usage,
+            )
+        if add_context is not None and not second.is_add:
+            # An add decision must REPLICATE as an add (ruling 2026-09-16): a
+            # second pass that holds is a hold, whatever the first said.
+            return _Confirmation(
+                None,
+                f"boundary add verdict NOT confirmed: first pass add/"
+                f"{report.confidence}, second independent pass "
+                f"{second.add_verdict or 'unstated'}/{second.direction}/"
+                f"{second.confidence} — an add that does not replicate is not "
+                f"sized (rulings 2026-09-02, 2026-09-16)",
                 usage=second_usage,
             )
         if second.direction is not report.direction or second.confidence < floor:
@@ -1183,6 +1531,7 @@ class SignalPipeline:
         expression: Optional[ExpressionSnapshot] = None,
         screen_report=None,
         screen_usage=None,
+        add: Optional[AddSnapshot] = None,
     ) -> PipelineResult:
         rejection = self._audit.record_stage_rejection(
             decision_id,
@@ -1196,6 +1545,7 @@ class SignalPipeline:
             expression=expression,
             screen_report=screen_report,
             screen_usage=screen_usage,
+            add=add,
         )
         return PipelineResult(
             decision_id=decision_id,
