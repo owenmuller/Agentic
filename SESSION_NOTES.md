@@ -3443,8 +3443,18 @@ china_trade) still gets NO mapping under the 2026-09-15 ambiguity rule — a
 one-line ruling could union the shortlists instead; not done without it.
 
 Validation: the theme line is prompt text no golden case exercises, so the
-change was validated by re-running the theme→ETF live round trip (below), not
-by a golden replay (which would spend ~$4.40 to exercise nothing new).
+change was validated by re-running the theme→ETF live round trip, not by a
+golden replay (which would spend ~$4.40 to exercise nothing new).
+**Round trip (2026-09-16, droplet, commit 37ef087): OK.** Same synthetic steel/
+aluminum tariff post; shortlist stamped (XLI, XME, SLX); production pass
+accepted (opus-5 verification, sonnet screen), est. $0.34. Verdict
+**no_position / 80**, tickers **[XME]** — the model did exactly what the ruling
+asks: it named the shortlisted instrument whose holdings bear the exposure
+(XME, domestic metals & mining), rejected XLI as steel CONSUMERS and SLX as
+dominated by FOREIGN producers who are the tariff's targets, and then declined
+the trade on policy staleness (the 25%/50% Section 232 duties were priced in
+2025). The decline path and the pick-one path both work; a live tariff post
+with genuinely new policy would express through XME.
 
 ## Standing reminders
 
