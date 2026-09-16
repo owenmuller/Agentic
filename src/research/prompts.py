@@ -170,19 +170,25 @@ def build_verification_prompt(user_prompt: str, screen_report) -> str:
 
 
 def _theme_lines(signal: Signal) -> list[str]:
-    """The theme->ETF proposal (ruling 2026-09-15), when the system made one."""
-    etf = signal.metadata.get("theme_etf")
-    if not etf:
+    """The theme->ETF shortlist proposal (ruling 2026-09-15, shortlists confirmed
+    2026-09-16), when the system made one."""
+    raw = signal.metadata.get("theme_etf") or ""
+    shortlist = [part.strip() for part in raw.split(",") if part.strip()]
+    if not shortlist:
         return []
     theme = signal.metadata.get("theme") or "unnamed"
+    listed = ", ".join(shortlist)
     return [
         f"- theme -> ETF proposal (system mapping): the scanner extracted no ticker; "
-        f"the post matched the policy theme \"{theme}\", which this system maps to "
-        f"the liquid ETF {etf}. If the theme genuinely fits the post, express the "
-        f"thesis through {etf}: analyse the ETF as the instrument and return "
-        f"tickers [\"{etf}\"]. If the theme does not fit, DECLINE the mapping — "
-        f"return no_position, or name the specific instrument the post actually "
-        f"implies. The mapping is a proposal, never a directive.",
+        f"the post matched the policy theme \"{theme}\", for which this system "
+        f"shortlists the liquid ETFs {listed}. The shortlist is a proposal. If the "
+        f"theme genuinely fits the post, name the ONE instrument from the shortlist "
+        f"whose holdings actually bear the theme's exposure — return that single "
+        f"ticker and say in the thesis why its holdings carry the exposure (an "
+        f"index of the theme's CONSUMERS is not the theme's expression). If none of "
+        f"them does, or the theme does not fit, DECLINE the mapping: return "
+        f"no_position, or name the specific instrument the post actually implies. "
+        f"Never a directive.",
     ]
 
 

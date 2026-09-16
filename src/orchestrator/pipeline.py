@@ -52,7 +52,7 @@ from audit.records import (
 )
 from execution.base import BrokerAdapter, BrokerError, OrderReceipt
 from research.reports import Direction, ResearchReport, ResearchUsage
-from signals.themes import THEME_ETF_KEY, THEME_KEY
+from signals.themes import THEME_KEY, shortlist_of
 from research.research_pass import ResearchPass
 from research.triage import TriagePass
 
@@ -768,8 +768,8 @@ class SignalPipeline:
     ) -> Optional[ExpressionSnapshot]:
         """Tag a decision that expressed a no-ticker post through its mapped ETF
         (ruling 2026-09-15). Only when the report actually named the ETF."""
-        etf = signal.metadata.get(THEME_ETF_KEY)
-        if not etf or list(report.tickers) != [etf]:
+        shortlist = shortlist_of(signal)
+        if not shortlist or len(report.tickers) != 1 or report.tickers[0].upper() not in shortlist:
             return expression
         theme = signal.metadata.get(THEME_KEY)
         if expression is None:
@@ -778,7 +778,7 @@ class SignalPipeline:
                 chosen="equity",
                 tag="theme_etf",
                 theme=theme,
-                underlying_price=self._safe_price(etf),
+                underlying_price=self._safe_price(report.tickers[0]),
             )
         return expression.model_copy(
             update={"tag": expression.tag or "theme_etf", "theme": theme}

@@ -97,10 +97,13 @@ class PrefilterConfig(_Strict):
 
 
 class ThemeEtfConfig(_Strict):
-    """One policy theme's ETF expression (human ruling 2026-09-15)."""
+    """One policy theme's ETF expression (human ruling 2026-09-15; shortlists
+    confirmed 2026-09-16)."""
 
-    #: The liquid ETF a no-ticker post on this theme may be researched against.
-    etf: str
+    #: The liquid ETFs a no-ticker post on this theme may be researched
+    #: against — a SHORTLIST: the research pass names the one whose holdings
+    #: actually bear the theme's exposure, or declines the mapping.
+    etfs: tuple[str, ...] = Field(min_length=1)
     #: Word-prefix stems, case-insensitive, matched against the post's content
     #: ("tariff" covers tariffs/tariffed) — the same rule as
     #: research_prefilter_themes.

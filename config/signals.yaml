@@ -76,20 +76,23 @@ classes:
           # economy/economic/economics (human ruling 2026-08-20).
           - econom
 
-        # THEME -> ETF EXPRESSION (human ruling 2026-09-15; ETF list PROPOSED,
-        # awaiting the human's confirmation). A post with no extracted ticker
-        # matching exactly ONE theme is researched with the ETF proposed as its
-        # instrument; the research pass may decline. Two themes = ambiguous =
-        # no mapping. Stems are word-prefix, case-insensitive.
+        # THEME -> ETF EXPRESSION (human ruling 2026-09-15; ETF shortlists
+        # CONFIRMED 2026-09-16). A post with no extracted ticker matching exactly
+        # ONE theme is researched with the theme's ETF SHORTLIST proposed; the
+        # research pass names the instrument whose holdings actually bear the
+        # theme's exposure, states why, or declines the mapping. Two themes
+        # matching = ambiguous = no mapping (Constraint #6). Stems are
+        # word-prefix, case-insensitive. Editing a shortlist is a human ruling.
         theme_etf_map:
-          tariffs: { etf: XLI, stems: [tariff, trade deal, trade war, import dut] }
-          energy: { etf: XLE, stems: [energy, oil, gas, drill, opec, pipeline] }
-          defense: { etf: ITA, stems: [defense, defence, military, pentagon, nato] }
-          financials: { etf: XLF, stems: [bank, banks, financial, wall street] }
-          rates: { etf: TLT, stems: [interest rate, rate cut, rate hike, fed, federal reserve, treasur, yield] }
-          semis: { etf: SMH, stems: [chip, chips, semiconductor] }
-          broad: { etf: SPY, stems: [stock market, economy, gdp, recession, jobs report] }
-          tech: { etf: QQQ, stems: [big tech, tech stock, nasdaq] }
+          tariffs: { etfs: [XLI, XME, SLX], stems: [tariff, import dut, section 232, section 301] }
+          china_trade: { etfs: [FXI], stems: [china, chinese, beijing, trade deal, trade war, trade talks] }
+          energy: { etfs: [XLE, XOP], stems: [energy, oil, gas, drill, opec, pipeline] }
+          defense: { etfs: [ITA, XAR], stems: [defense, defence, military, pentagon, nato] }
+          financials: { etfs: [XLF, KRE], stems: [bank, banks, financial, wall street] }
+          rates: { etfs: [TLT, IEF], stems: [interest rate, rate cut, rate hike, fed, federal reserve, treasur, yield] }
+          semis: { etfs: [SMH, SOXX], stems: [chip, chips, semiconductor] }
+          broad: { etfs: [SPY], stems: [stock market, economy, gdp, recession, jobs report] }
+          tech: { etfs: [QQQ], stems: [big tech, tech stock, nasdaq] }
       # --- Mirrors of trump_posts (human-approved 2026-08-18) -------------------
       # Decision: ride X mirror accounts, not the Truth API; the upgrade decision
       # belongs to attribution data. Signals from these attribute to trump_posts

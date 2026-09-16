@@ -377,11 +377,13 @@ def test_a_no_ticker_theme_post_carries_its_etf_proposal_into_the_prompt(signals
         metadata={"tickers": ""},
     )
     matched = themes.match(signal)
-    assert (matched.theme, matched.etf) == ("tariffs", "XLI")
+    assert (matched.theme, matched.etfs) == ("tariffs", ("XLI", "XME", "SLX"))
     stamped = themes.apply(signal)
-    assert (stamped.metadata["theme"], stamped.metadata["theme_etf"]) == ("tariffs", "XLI")
+    assert (stamped.metadata["theme"], stamped.metadata["theme_etf"]) == ("tariffs", "XLI,XME,SLX")
     prompt = build_user_prompt(stamped)
-    assert "theme -> ETF proposal" in prompt and "XLI" in prompt
+    assert "theme -> ETF proposal" in prompt and "XLI, XME, SLX" in prompt
+    assert "The shortlist is a proposal" in prompt
+    assert "holdings actually bear the theme's exposure" in prompt
     assert "DECLINE the mapping" in prompt
     # No proposal without the stamp; none for a post that names its instrument.
     assert "theme -> ETF" not in build_user_prompt(signal)
@@ -403,33 +405,51 @@ def test_two_matching_themes_are_ambiguous_and_get_no_mapping(signals_config):
     assert themes.apply(signal) is signal
 
 
-def test_a_theme_post_expressed_through_its_etf_is_tagged_theme_etf(
-    tmp_path, limits, signals_config, research_config
+@pytest.mark.parametrize("pick", ["XLI", "SLX"])
+def test_a_theme_post_expressed_through_a_shortlisted_etf_is_tagged_theme_etf(
+    tmp_path, limits, signals_config, research_config, pick
 ):
-    """End to end: no ticker, tariff theme, the model takes XLI. The decision
-    carries tag theme_etf and the theme; the forward funnel sees the tag."""
+    """End to end: no ticker, tariff theme, the model picks ONE shortlisted ETF.
+    The decision carries tag theme_etf and the theme; the funnel sees the tag."""
     llm = RoutingLLM(**{REPORT_TOOL_NAME: structured({
         **REPORT,
-        "tickers": ["XLI"],
-        "thesis": "Steel and aluminum tariffs lift domestic industrials; XLI is the liquid expression.",
+        "tickers": [pick],
+        "thesis": f"Steel and aluminum tariffs lift domestic producers; {pick} holds the exposure.",
         "target_price": "150",
     })})
     started = build(
         tmp_path, limits, signals_config, research_config,
-        llm=llm, prices=prices_of(NUE="140.00", XLI="120.00"),
+        llm=llm, prices=prices_of(NUE="140.00", XLI="120.00", SLX="60.00"),
         fetcher=feed(trump_posts=[TARIFF_POST]),
     )
     result = started.loop.tick().processed[0]
     assert result.traded, result
     assert "theme -> ETF proposal" in llm.calls[0]["user"]
     trail = started.audit.trail(result.decision_id)
-    assert trail.decision.gate.order["symbol"] == "XLI"
+    assert trail.decision.gate.order["symbol"] == pick
     expression = trail.decision.expression
     assert expression is not None
     assert (expression.tag, expression.theme) == ("theme_etf", "tariffs")
-    assert expression.underlying_price == Decimal("120.00")
+    assert expression.underlying_price == prices_of(XLI="120.00", SLX="60.00")(pick)
     entries = funnel_entries(started.audit.records())
     assert [e.expression_tag for e in entries if e.decision_id == result.decision_id] == ["theme_etf"]
+
+
+def test_a_model_that_names_an_instrument_off_the_shortlist_is_not_tagged(
+    tmp_path, limits, signals_config, research_config
+):
+    """The model may name the specific instrument the post implies instead of
+    the shortlist (NUE, a producer): researched and traded as an ordinary
+    decision, no theme_etf tag — the mapping was declined."""
+    llm = RoutingLLM(**{REPORT_TOOL_NAME: structured({**REPORT, "tickers": ["NUE"]})})
+    started = build(
+        tmp_path, limits, signals_config, research_config,
+        llm=llm, prices=prices_of(NUE="140.00"), fetcher=feed(trump_posts=[TARIFF_POST]),
+    )
+    result = started.loop.tick().processed[0]
+    assert result.traded
+    expression = started.audit.trail(result.decision_id).decision.expression
+    assert expression is None or expression.tag is None
 
 
 def test_a_model_that_declines_the_mapping_leaves_no_tag(

@@ -30,7 +30,7 @@ from research.reports import ResearchReport  # noqa: E402
 from research.research_pass import ResearchPass  # noqa: E402
 from signals import SignalsConfig  # noqa: E402
 from signals.records import Priority, Signal, SignalClass  # noqa: E402
-from signals.themes import ThemeEtfMap  # noqa: E402
+from signals.themes import ThemeEtfMap, shortlist_of  # noqa: E402
 
 #: SYNTHETIC. Written for this round trip; not a real post by anyone.
 POST = (
@@ -59,10 +59,10 @@ def main() -> int:
         metadata={"tickers": ""},
     )
     stamped = themes.apply(signal)
-    proposal = stamped.metadata.get("theme_etf")
-    print(f"theme proposal stamped: {stamped.metadata.get('theme')!r} -> {proposal!r}")
-    if proposal != "XLI":
-        print("FAIL: the tariff post did not map to XLI; check theme_etf_map", file=sys.stderr)
+    shortlist = shortlist_of(stamped)
+    print(f"theme proposal stamped: {stamped.metadata.get('theme')!r} -> {shortlist}")
+    if "XLI" not in shortlist:
+        print("FAIL: the tariff post did not map to the tariffs shortlist", file=sys.stderr)
         return 1
     prompt = build_user_prompt(stamped)
     assert "theme -> ETF proposal" in prompt, "prompt lacks the proposal line"
@@ -80,7 +80,11 @@ def main() -> int:
     if isinstance(outcome, ResearchReport):
         # "Taken" means expressed THROUGH the ETF: a no_position verdict that
         # names XLI only to explain its decline is a decline.
-        took = list(outcome.tickers) == ["XLI"] and str(outcome.direction) != "no_position"
+        took = (
+            len(outcome.tickers) == 1
+            and outcome.tickers[0].upper() in shortlist
+            and str(outcome.direction) != "no_position"
+        )
         summary = {
             "direction": str(outcome.direction),
             "confidence": outcome.confidence,

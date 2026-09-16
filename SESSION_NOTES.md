@@ -3424,6 +3424,28 @@ UW) at the low end, opus-tier prose at the high end.
 The freeze re-closes with this entry: no research-layer changes and no
 non-production API runs until the paper period has data on the shipped bundle.
 
+## Theme → ETF shortlists — CONFIRMED (human ruling 2026-09-16)
+
+The ETF list moves from PROPOSED to ruled, and from one ETF per theme to a
+SHORTLIST the research pass picks from (or declines): tariffs [XLI, XME, SLX];
+china/trade [FXI] (new theme; stems china / chinese / beijing / trade deal /
+trade war / trade talks — moved off the tariffs theme, whose stems are now
+tariff / import duty / Section 232 / Section 301); energy [XLE, XOP]; defense
+[ITA, XAR]; financials [XLF, KRE]; rates [TLT, IEF]; semis [SMH, SOXX]; broad
+[SPY]; tech [QQQ]. Prompt guidance per the ruling: the shortlist is a
+proposal; the model names the ONE instrument whose holdings actually bear the
+theme's exposure and says why ("an index of the theme's CONSUMERS is not the
+theme's expression" — the 2026-09-15 round trip's finding, now in the
+prompt), or declines. `theme_etf` metadata carries the comma-joined shortlist;
+a decision is tagged `theme_etf` when the report names exactly one shortlisted
+ETF. A post matching two themes (a China tariff post touches both tariffs and
+china_trade) still gets NO mapping under the 2026-09-15 ambiguity rule — a
+one-line ruling could union the shortlists instead; not done without it.
+
+Validation: the theme line is prompt text no golden case exercises, so the
+change was validated by re-running the theme→ETF live round trip (below), not
+by a golden replay (which would spend ~$4.40 to exercise nothing new).
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in
