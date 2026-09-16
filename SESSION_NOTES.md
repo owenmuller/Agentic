@@ -3373,6 +3373,57 @@ follow-on inside the horizon is the catalyst, the filing having happened is
 not; 5.02 cuts both ways). Family `issuer_filings` (sixth). Forward report:
 "8-K by item" rows, bearish items labelled. Hard review **2026-10-15**.
 
+### Validation — the bundle's live round trip and golden replay (2026-09-15/16, droplet)
+
+**Live round trip — theme→ETF path through the production pass: OK.**
+`ops/experiments/theme_etf_round_trip.py` ran a synthetic no-ticker steel/aluminum
+tariff post with the "tariffs → XLI" proposal stamped exactly as the pipeline
+stamps it, through the production ResearchPass (opus-5 verification, sonnet
+screen, the revised SYSTEM_PROMPT). Request shape accepted; typed verdict
+**no_position / 74**, time_horizon days, catalyst present, est. $0.31. The model
+**declined the mapping on instrument grounds**: "XLI holds steel/aluminum
+CONSUMERS (CAT, DE, BA, HON, RTX, UNP, UPS), not producers — domestic mills
+(NUE, STLD, CLF, X) sit in Materials, and the pure-play tariff beneficiaries
+would be XME/SLX" — and declined the trade on information grounds (Section
+232 duties have been law since 2025; policy staleness, not reporting lag).
+The decline path works as designed. **For the ETF confirmation:** the
+tariffs→XLI row is arguably the wrong instrument for a steel/aluminum tariff
+(the model's XME/SLX point stands); no change without your ruling — the list
+is marked PROPOSED in signals.yaml.
+
+**Golden replay — run after step 3 so the Form 4 guidance change was inside it
+(step 4's 8-K branch is exercised by no golden case).**
+
+**Golden replay — 23/24 PASS, ~$4.38, exit 3 (drift for review).** Run on the
+droplet at step 3 (commit fcf5090). One drift, the SAME noisy floor-band case
+as the 2026-09-03 replay:
+
+- `pelosi-be-calls-decline` → **long/62, target 310** (graded set: no_position;
+  2026-09-03 replay: long/52; the post-ship variance arm ran no/45, no/72,
+  no/72). 62 sits inside the [50, 70) boundary band, so in production this
+  verdict would have bought a second independent pass before sizing — the guard
+  the band exists for. Reviewed, not acted on: the graded decline stands.
+
+Passes worth noting for this bundle:
+- `review-intc-day9-post-blowout-real` (new, step 2 of the previous session):
+  **close, validity=intact** — the current review prompt did NOT reproduce the
+  2026-09-09 "displaced" mislabel; the verdict reason cites R:R 1.33 < 1.5 from
+  the frozen facts. The case now guards against regression rather than
+  documenting a live defect.
+- `form4-intc-cluster`: long/62 target 30 under the revised Form 4 guidance
+  (both doors described) — unchanged direction, same band.
+- All four review cases argued both sides past the structural bar
+  (749–1157 chars each) with a named winner.
+- Every no_position decline held (13F stale, priced-in, non-market, injection,
+  fabricated buyback), all at 62–95 confidence.
+
+Cost per case $0.07–$0.32; the sonnet-tier structured sources (13D, Form 4,
+UW) at the low end, opus-tier prose at the high end.
+
+
+The freeze re-closes with this entry: no research-layer changes and no
+non-production API runs until the paper period has data on the shipped bundle.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in
