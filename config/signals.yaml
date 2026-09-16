@@ -80,9 +80,12 @@ classes:
         # CONFIRMED 2026-09-16). A post with no extracted ticker matching exactly
         # ONE theme is researched with the theme's ETF SHORTLIST proposed; the
         # research pass names the instrument whose holdings actually bear the
-        # theme's exposure, states why, or declines the mapping. Two themes
-        # matching = ambiguous = no mapping (Constraint #6). Stems are
-        # word-prefix, case-insensitive. Editing a shortlist is a human ruling.
+        # theme's exposure, states why, or declines the mapping. A post matching
+        # SEVERAL themes gets the UNION of their shortlists, deduplicated and
+        # capped at 6 candidates (human ruling 2026-09-16); over the cap, the
+        # two highest-weighted matched themes' lists are kept (optional
+        # `weight:` per theme; ties by order here). Stems are word-prefix,
+        # case-insensitive. Editing a shortlist is a human ruling.
         theme_etf_map:
           tariffs: { etfs: [XLI, XME, SLX], stems: [tariff, import dut, section 232, section 301] }
           china_trade: { etfs: [FXI], stems: [china, chinese, beijing, trade deal, trade war, trade talks] }

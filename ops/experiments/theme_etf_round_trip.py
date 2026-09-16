@@ -38,31 +38,41 @@ POST = (
     "dumping has hollowed out American mills for decades and it ends now. Our "
     "workers and our industry are going to WIN again like never before!"
 )
+#: SYNTHETIC dual-theme fixture (ruling 2026-09-16): tariffs AND china_trade
+#: match, so the proposal is the UNION of both shortlists.
+POST_CHINA = (
+    "China has cheated on trade for decades. Starting Monday a 60% tariff on ALL "
+    "Chinese imports, no exceptions, until Beijing comes to the table. The trade "
+    "talks are over. America will not be ripped off any longer!"
+)
 
 
 def main() -> int:
     logging.basicConfig(level=logging.WARNING)
+    china = "--china" in sys.argv[1:]
+    post = POST_CHINA if china else POST
+    expect = ("XLI", "FXI") if china else ("XLI",)
     load_environment()
     signals_config = SignalsConfig.load()
     config = ResearchConfig.load()
     themes = ThemeEtfMap.from_config(signals_config)
 
     signal = Signal(
-        signal_id="theme-etf-round-trip-2026-09-15",
+        signal_id="theme-etf-round-trip-2026-09-15" + ("-china" if china else ""),
         source_id="trump_posts",
         signal_class=SignalClass.CLASS_1_REALTIME,
         observed_at=datetime.now(timezone.utc),
-        content=POST,
-        raw_content=POST,
+        content=post,
+        raw_content=post,
         priority=Priority.for_class(SignalClass.CLASS_1_REALTIME),
-        external_id="theme-etf-round-trip-2026-09-15",
+        external_id="theme-etf-round-trip-2026-09-15" + ("-china" if china else ""),
         metadata={"tickers": ""},
     )
     stamped = themes.apply(signal)
     shortlist = shortlist_of(stamped)
     print(f"theme proposal stamped: {stamped.metadata.get('theme')!r} -> {shortlist}")
-    if "XLI" not in shortlist:
-        print("FAIL: the tariff post did not map to the tariffs shortlist", file=sys.stderr)
+    if any(etf not in shortlist for etf in expect):
+        print(f"FAIL: expected {expect} in the proposal, got {shortlist}", file=sys.stderr)
         return 1
     prompt = build_user_prompt(stamped)
     assert "theme -> ETF proposal" in prompt, "prompt lacks the proposal line"

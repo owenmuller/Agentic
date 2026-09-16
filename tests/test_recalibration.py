@@ -391,18 +391,63 @@ def test_a_no_ticker_theme_post_carries_its_etf_proposal_into_the_prompt(signals
     assert themes.match(named) is None
 
 
-def test_two_matching_themes_are_ambiguous_and_get_no_mapping(signals_config):
+def _post(text, source="trump_posts"):
     from signals.records import Priority
 
-    themes = ThemeEtfMap.from_config(signals_config)
-    text = "Tariffs on chips and semiconductors from overseas start next week."
-    signal = Signal(
-        signal_id="s2", source_id="trump_posts", signal_class=SignalClass.CLASS_1_REALTIME,
+    return Signal(
+        signal_id="s2", source_id=source, signal_class=SignalClass.CLASS_1_REALTIME,
         observed_at=NOW, content=text, raw_content=text,
         priority=Priority.for_class(SignalClass.CLASS_1_REALTIME), metadata={"tickers": ""},
     )
-    assert themes.match(signal) is None  # tariffs AND semis: the fewer trades
-    assert themes.apply(signal) is signal
+
+
+def test_a_dual_theme_post_gets_the_union_of_both_shortlists(signals_config):
+    """Ruling 2026-09-16: tariffs on China touches tariffs AND china_trade; the
+    proposal is the deduplicated union, in config order, and the prompt says so."""
+    themes = ThemeEtfMap.from_config(signals_config)
+    signal = _post(
+        "China has cheated on trade for decades. A 60% tariff on all Chinese imports "
+        "starts Monday until Beijing comes to the table."
+    )
+    matched = themes.match(signal)
+    assert matched.themes == ("tariffs", "china_trade")
+    assert matched.theme == "tariffs+china_trade"
+    assert matched.etfs == ("XLI", "XME", "SLX", "FXI")
+    stamped = themes.apply(signal)
+    assert stamped.metadata["theme_etf"] == "XLI,XME,SLX,FXI"
+    prompt = build_user_prompt(stamped)
+    assert 'theme(s) "tariffs+china_trade"' in prompt and "XLI, XME, SLX, FXI" in prompt
+
+    # tariffs AND semis: the same rule, a five-name proposal.
+    chips = themes.match(_post("Tariffs on chips and semiconductors from overseas start next week."))
+    assert chips.etfs == ("XLI", "XME", "SLX", "SMH", "SOXX")
+
+
+def test_the_union_is_capped_at_six_by_the_two_highest_weighted_themes():
+    themes = ThemeEtfMap({
+        "trump_posts": {
+            "a": (("A1", "A2", "A3"), ("alpha",), 1),
+            "b": (("B1", "B2", "B3"), ("bravo",), 5),
+            "c": (("C1", "C2", "C3"), ("charlie",), 3),
+            "d": (("D1", "D2", "D3", "D4"), ("delta",), 5),
+        }
+    })
+    # Three themes, nine candidates: over the cap, so the two highest-weighted
+    # (b and c) survive, in config order.
+    matched = themes.match(_post("alpha bravo charlie"))
+    assert matched.themes == ("b", "c")
+    assert matched.etfs == ("B1", "B2", "B3", "C1", "C2", "C3")
+    # A tie at the top breaks on config order (b before d); seven candidates
+    # from the two survivors are then truncated to six.
+    matched = themes.match(_post("bravo delta alpha"))
+    assert matched.themes == ("b", "d")
+    assert matched.etfs == ("B1", "B2", "B3", "D1", "D2", "D3")
+    # Under the cap nothing is dropped.
+    assert themes.match(_post("alpha bravo")).etfs == ("A1", "A2", "A3", "B1", "B2", "B3")
+    # No theme, no mapping; a post naming its ticker is never mapped.
+    assert themes.match(_post("nothing here")) is None
+    named = replace(_post("alpha"), metadata={"tickers": "NUE"})
+    assert themes.match(named) is None
 
 
 @pytest.mark.parametrize("pick", ["XLI", "SLX"])

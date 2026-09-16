@@ -104,6 +104,11 @@ class ThemeEtfConfig(_Strict):
     #: against — a SHORTLIST: the research pass names the one whose holdings
     #: actually bear the theme's exposure, or declines the mapping.
     etfs: tuple[str, ...] = Field(min_length=1)
+    #: Priority when a post matches several themes and their union would exceed
+    #: the candidate cap (ruling 2026-09-16): the two highest-weighted matched
+    #: themes' lists are kept. Ties break on config order (earlier wins). Default
+    #: 0 = order alone decides.
+    weight: int = 0
     #: Word-prefix stems, case-insensitive, matched against the post's content
     #: ("tariff" covers tariffs/tariffed) — the same rule as
     #: research_prefilter_themes.

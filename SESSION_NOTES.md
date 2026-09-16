@@ -3456,6 +3456,20 @@ the trade on policy staleness (the 25%/50% Section 232 duties were priced in
 2025). The decline path and the pick-one path both work; a live tariff post
 with genuinely new policy would express through XME.
 
+## Dual-theme posts: UNION the shortlists (human ruling 2026-09-16)
+
+Replaces the 2026-09-15 ambiguity rule (two themes → no mapping). A post
+matching several themes now gets the deduplicated union of their shortlists in
+config order, capped at `MAX_CANDIDATES` = 6; if the union would exceed the
+cap, the two highest-weighted matched themes' lists are kept (new optional
+`weight:` per theme in `theme_etf_map`, ties by config order) and truncated to
+six. `theme` metadata joins the matched names ("tariffs+china_trade"); the
+prompt line says "theme(s)" and is otherwise unchanged in spirit — pick the
+one instrument whose holdings bear the post's actual exposure, or decline.
+Deterministic mapping change: no golden replay (ruled); validated by one live
+round trip on a tariffs-on-China fixture (`theme_etf_round_trip.py --china`,
+proposal XLI, XME, SLX, FXI) — result below.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

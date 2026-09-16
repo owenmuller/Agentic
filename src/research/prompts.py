@@ -180,7 +180,7 @@ def _theme_lines(signal: Signal) -> list[str]:
     listed = ", ".join(shortlist)
     return [
         f"- theme -> ETF proposal (system mapping): the scanner extracted no ticker; "
-        f"the post matched the policy theme \"{theme}\", for which this system "
+        f"the post matched the policy theme(s) \"{theme}\", for which this system "
         f"shortlists the liquid ETFs {listed}. The shortlist is a proposal. If the "
         f"theme genuinely fits the post, name the ONE instrument from the shortlist "
         f"whose holdings actually bear the theme's exposure — return that single "
