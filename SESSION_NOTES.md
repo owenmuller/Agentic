@@ -3602,6 +3602,77 @@ feed failing every poll cannot again hide behind a "mirror silent" warning. Clas
 attribution from 09-01 onward is a hole, not a quiet feed — the forward and attribution
 reports should be read with that in mind.
 
+### Validation — add decisions: two live round trips and the golden replay (2026-09-16, droplet, dc7a2ee/26d18df)
+
+**Shipped:** `dc7a2ee` (the ruling), `26d18df` (round-trip script path fix); both VERIFIED
+on origin, vps and HEAD; droplet pulled, suite green there (1242 passed, 3 skipped, locally and
+on the droplet). `python -m orchestrator health` on the droplet, from the log,
+BEFORE the bounce, already renders the merge:
+
+    8ba9299d416f4ce0  CELH   105.782039550 @ 28.3649  stop 25.0571  leash 0/181d (months)
+               lots: 8ba9299d 52.807110172@28.41 (insider_filings, 60) | 1eb9c63f 52.974929378@28.32 (insider_filings, 62)
+
+**Round trip 1 — cross-family, synthetic congressional purchase against the merged two-lot
+position (`ops/experiments/add_decision_round_trip.py`):** typed verdict **hold / 72**,
+direction no_position, add_fraction null, tickers [CELH], $0.11. Request shape accepted
+(tool schema with `add_verdict`/`add_fraction`, the ADD DECISION block, POSITION HELD with
+two lots). The model held because the fixture SAYS it is synthetic ("SYNTHETIC ROUND-TRIP
+FIXTURE, not a real filing") and dismissed it as noise — a correct reading of the content,
+and a limit of synthetic fixtures for this question: the pick-or-add path was not exercised
+by it.
+
+**Round trip 2 — same family, the REAL second cluster signal (1eb9c63f8e6141c4's content)
+against the single-lot position it originally opened a second lot on (`--same-family`):**
+typed verdict **hold / 60**, no_position, $0.12. The thesis is exactly the ruling's rule:
+"a subset re-publication of the same transactions that opened the existing CELH position
+... No new insider, no new transaction date, no new dollar amount." Under the new rule the
+second CELH lot would not have been bought. Both verdicts came from the SCREEN tier
+(sonnet-4-6; a no_position screen is the record and does not graduate), so the opus
+verification tier has not yet answered an add prompt live — the golden entry cases below
+did exercise the new tool schema on the verification tier (every traded screen verdict
+graduates through it), which is the request-shape claim; the first live add verdict will
+come from production.
+
+**Golden replay (26 cases: 20 entry, 4 review, 2 add):**
+
+**21/26 passed, ~$4.80** (`data/golden_2026-09-16.log` on the droplet). Both add cases PASSED:
+`add-celh-same-cluster-repeat-real` → **hold/60**, no_position, tickers [CELH] ("a re-emission of
+the same transactions that opened the existing position") — the graded verdict; and
+`add-celh-cross-family-congressional-synthetic` → hold/72, structurally complete. All four review
+cases passed (day-9 post-blowout: hold, validity intact). Every Class 1 entry case passed.
+
+**Five DRIFTs, for human review — none of them a direction change on a case that traded:**
+
+- `pelosi-be-calls-decline`: long/62 target 75. Drifted IDENTICALLY yesterday (long/62 target 310
+  on the 2026-09-15 replay) — the known noisy case, unchanged by this ruling.
+- `appaloosa-13f-stale` no_position/30, `pelosi-intc-may-backfill` no_position/28,
+  `moskowitz-amat-max-lag` no_position/18, `taylor-ibp-small` no_position/22: the DIRECTION is the
+  graded one in all four; what moved is the confidence the model attaches to a decline (yesterday
+  72 / 82 / 82 / 72). A decline's confidence sizes nothing — it is a calibration number. Because
+  all four are lagged Class 2/3 declines and all four moved the same way in one run, I bought one
+  targeted re-run (`golden --only`, ~$0.40): `pelosi-intc-may-backfill` **72** and
+  `moskowitz-amat-max-lag` **72** came back exactly where they were yesterday; `taylor-ibp-small`
+  stayed low at 32; `appaloosa-13f-stale` returned nothing inside its 280s timeout (unscored).
+  Reading: the shift is mostly the known run-to-run noise in no_position confidence (the
+  2026-09-02 variance experiment saw one case span 30-72 on identical inputs), with taylor-ibp-small
+  low twice — enough to WATCH the calibration of lagged-class declines under the new tool schema
+  (two extra required-nullable fields, one new SYSTEM_PROMPT section), not enough to call a shift.
+  Nothing in the drift touches a sized verdict.
+
+**Ruling asked of the human:** the bounce (which activates the prompt, the schema and the CELH
+merge together) is yours; the drift above is the evidence for it. If the lagged-class decline
+confidence keeps landing under 50 in production records, that is a research-layer question for the
+next ruling, not something to tune under the freeze.
+
+**Freeze re-closes** with this entry. Review the add decisions with the other 2026-09-15
+sources on 2026-10-15: adds taken vs `already_held_no_add`/`add_no_headroom` holds in the
+forward report, and the `adds` attribution row against the originating lots.
+
+**Human actions outstanding:** (1) bounce `agentic-paper.service` so the running process
+(bf7d3c7) picks up the ruling — the CELH merge takes effect at that startup; (2) replace
+`X_BEARER_TOKEN` in the droplet's `.env` — the X feed has 401ed on every poll since
+2026-09-01 (see the previous entry).
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in
