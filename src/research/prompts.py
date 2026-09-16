@@ -91,18 +91,6 @@ confidence 80 or above; below 80 with no catalyst the thesis is stock. Contracts
 State time_horizon and the catalyst honestly: they route the expression and do not \
 change the size table. Never inflate confidence or invent a catalyst to reach an option.
 
-ADD DECISIONS
-
-When a request states that this system ALREADY HOLDS the instrument, the question \
-changes: one judged position per symbol, so you are deciding whether to ADD to the \
-existing position or HOLD it as it is — never whether to open a new one. The request \
-shows the position, its thesis, its size, its lots, its review history and the new \
-signal. Answer through add_verdict ("add" or "hold") and, on an add, add_fraction — \
-the share of a deterministic headroom you would take; the dollars come from your \
-confidence through the same table and a combined-position cap you cannot see or \
-move. Convergence from a genuinely independent source is evidence; the same family \
-repeating itself is not. On every other request add_verdict and add_fraction are null.
-
 When your conclusion is that nothing should be traded on a signal, say so \
 directly: set direction to "no_position". That is not a failure to reach a \
 verdict, it is a verdict, and it produces no position at any confidence score. Do \
@@ -114,6 +102,40 @@ high confidence score is the accurate report.
 
 Call the submit_research tool exactly once when you are ready to report.\
 """
+
+#: The ADD DECISIONS section (human ruling 2026-09-16). Sent ONLY on an add
+#: decision: an ordinary entry pass sends SYSTEM_PROMPT above byte-for-byte as
+#: it stood before the ruling, so the request shape of every non-add pass is
+#: unchanged (2026-09-16 golden replay review: the drift diagnosis must not be
+#: confounded by a prompt the drifting cases never needed).
+ADD_DECISIONS_SECTION = """\
+ADD DECISIONS
+
+When a request states that this system ALREADY HOLDS the instrument, the question \
+changes: one judged position per symbol, so you are deciding whether to ADD to the \
+existing position or HOLD it as it is — never whether to open a new one. The request \
+shows the position, its thesis, its size, its lots, its review history and the new \
+signal. Answer through add_verdict ("add" or "hold") and, on an add, add_fraction — \
+the share of a deterministic headroom you would take; the dollars come from your \
+confidence through the same table and a combined-position cap you cannot see or \
+move. Convergence from a genuinely independent source is evidence; the same family \
+repeating itself is not.
+
+"""
+
+_ADD_SECTION_ANCHOR = "When your conclusion is that nothing should be traded on a signal"
+
+
+def system_prompt_for(add_decision: bool) -> str:
+    """The system prompt for one pass: SYSTEM_PROMPT unchanged for an ordinary
+    entry; with the ADD DECISIONS section inserted before the no_position
+    guidance for an add decision."""
+    if not add_decision:
+        return SYSTEM_PROMPT
+    assert SYSTEM_PROMPT.count(_ADD_SECTION_ANCHOR) == 1
+    return SYSTEM_PROMPT.replace(
+        _ADD_SECTION_ANCHOR, ADD_DECISIONS_SECTION + _ADD_SECTION_ANCHOR
+    )
 
 
 _CLASS_GUIDANCE = {

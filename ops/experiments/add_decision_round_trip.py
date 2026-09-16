@@ -35,7 +35,7 @@ from orchestrator.golden import build_source_tiers  # noqa: E402
 from research.add_decision import HeldPositionContext, LotContext  # noqa: E402
 from research.client import AnthropicResearchClient  # noqa: E402
 from research.config import ResearchConfig  # noqa: E402
-from research.prompts import SYSTEM_PROMPT, build_user_prompt  # noqa: E402
+from research.prompts import build_user_prompt, system_prompt_for  # noqa: E402
 from research.reports import ResearchReport  # noqa: E402
 from research.research_pass import ResearchPass  # noqa: E402
 from risk_gate import RiskLimits  # noqa: E402
@@ -194,7 +194,7 @@ def main() -> int:
         )
     prompt = build_user_prompt(signal, add_context=context)
     assert "ADD DECISION" in prompt and "POSITION HELD" in prompt
-    assert "ADD DECISIONS" in SYSTEM_PROMPT
+    assert "ADD DECISIONS" in system_prompt_for(True)
     print(f"context: {len(context.lots)} lot(s), {context.quantity} CELH at blended {context.entry_price}, "
           f"cost {context.entry_cost}, family {context.originating_family} <- signal family {context.signal_family}")
 

@@ -361,14 +361,29 @@ class ResearchUsage:
 REPORT_TOOL_NAME = "submit_research"
 
 
-def report_tool_definition() -> dict[str, Any]:
+#: The add-decision fields (ruling 2026-09-16). Offered to the model ONLY on
+#: an add decision; an ordinary entry pass sends the pre-ruling schema
+#: byte-for-byte. The pydantic model keeps them nullable so both shapes
+#: validate through the same class.
+ADD_DECISION_FIELDS: tuple[str, ...] = ("add_verdict", "add_fraction")
+
+
+def report_tool_definition(add_decision: bool = False) -> dict[str, Any]:
     """The forced tool the model answers through.
 
     Strict mode plus a closed schema is what turns "please reply in JSON" into a
     structural guarantee. The description says what the tool is for and nothing about
-    what conclusion to reach.
+    what conclusion to reach. ``add_decision`` adds the add_verdict/add_fraction
+    fields and their guidance; without it the schema is the pre-ruling one.
     """
     schema = strip_unsupported_schema_keywords(ResearchReport.model_json_schema())
+    if not add_decision:
+        for name in ADD_DECISION_FIELDS:
+            schema["properties"].pop(name, None)
+        defs = schema.get("$defs") or {}
+        defs.pop("AddVerdict", None)
+        if not defs:
+            schema.pop("$defs", None)
     schema["additionalProperties"] = False
     # Every field is required of the MODEL even where python has a default: a
     # nullable field the model may omit is a field it will omit, and "declined to
@@ -408,12 +423,16 @@ def report_tool_definition() -> dict[str, Any]:
             "you will be graded on, not an order: it cannot raise a size or a "
             "cap, and inflating it past what your analysis supports only "
             "records a claim your track record then carries. null only with "
-            "direction no_position. For add_verdict and add_fraction: ONLY when "
-            "the request states that this system already holds the instrument "
-            "(an ADD DECISION) — \"add\" with add_fraction in (0, 1], the share "
-            "of the permitted headroom to take, or \"hold\" with add_fraction "
-            "null and direction no_position. On every other request both are "
-            "null."
+            "direction no_position."
+            + (
+                " For add_verdict and add_fraction: this request is an ADD "
+                "DECISION on an instrument this system already holds — \"add\" "
+                "with add_fraction in (0, 1], the share of the permitted headroom "
+                "to take, or \"hold\" with add_fraction null and direction "
+                "no_position."
+                if add_decision
+                else ""
+            )
         ),
         "strict": True,
         "input_schema": schema,

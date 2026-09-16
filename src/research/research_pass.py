@@ -23,7 +23,7 @@ from pydantic import ValidationError
 
 from research.client import LLMClient, ResearchUsage
 from research.credibility import CredibilityTracker
-from research.prompts import SYSTEM_PROMPT, build_user_prompt, build_verification_prompt
+from research.prompts import SYSTEM_PROMPT, build_user_prompt, build_verification_prompt, system_prompt_for
 from research.reports import (
     ResearchRejection,
     ResearchRejectionCode,
@@ -175,15 +175,18 @@ class ResearchPass:
         self._last_screen_usage = None
         tier = self._source_tiers.get(signal.source_id) or str(signal.signal_class)
 
+        add_decision = add_context is not None
         if self._screen_graduation is None:
             # Single pass at the source tier — two-stage is not configured.
-            outcome, usage = self._call(signal, user_prompt, tier)
+            outcome, usage = self._call(signal, user_prompt, tier, add_decision)
             self._last_usage = usage
             return self._record_final(signal, outcome)
 
         # Stage one: the cheap screen. Its failures and its unactionable verdicts
         # are the record — rejections get cheap.
-        screen_outcome, screen_usage = self._call(signal, user_prompt, "screen")
+        screen_outcome, screen_usage = self._call(
+            signal, user_prompt, "screen", add_decision
+        )
         self._last_usage = screen_usage
         if not isinstance(screen_outcome, ResearchReport):
             return screen_outcome
@@ -203,19 +206,24 @@ class ResearchPass:
             signal,
             build_verification_prompt(user_prompt, screen_outcome),
             tier,
+            add_decision,
         )
         self._last_usage = _sum_usage(screen_usage, verify_usage)
         return self._record_final(signal, verified_outcome)
 
     def _call(
-        self, signal: Signal, user_prompt: str, tier: str
+        self, signal: Signal, user_prompt: str, tier: str, add_decision: bool = False
     ) -> tuple[ResearchOutcome, Optional["ResearchUsage"]]:
-        """One model call plus every validation rule. Returns (outcome, usage)."""
+        """One model call plus every validation rule. Returns (outcome, usage).
+
+        ``add_decision`` (ruling 2026-09-16) selects the system prompt and tool
+        schema variant; an ordinary pass sends the pre-ruling shape byte-for-byte.
+        """
         try:
             result = self._client.research(
-                system=SYSTEM_PROMPT,
+                system=system_prompt_for(add_decision),
                 user=user_prompt,
-                tool=report_tool_definition(),
+                tool=report_tool_definition(add_decision),
                 tier=tier,
             )
         except Exception as error:  # noqa: BLE001 - upstream failures are data here

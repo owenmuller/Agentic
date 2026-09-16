@@ -549,9 +549,17 @@ def test_the_report_tool_is_strict_and_closed():
 
 
 def test_every_report_field_is_required_in_the_tool_schema():
-    """A nullable field the model must state beats an optional one it can forget."""
+    """A nullable field the model must state beats an optional one it can forget.
+    The add-decision fields (ruling 2026-09-16) exist only on an add decision's
+    schema; an ordinary pass offers exactly the pre-ruling fields."""
     schema = report_tool_definition()["input_schema"]
-    assert set(schema["required"]) == set(ResearchReport.model_fields)
+    assert set(schema["required"]) == set(ResearchReport.model_fields) - {
+        "add_verdict",
+        "add_fraction",
+    }
+    assert set(schema["required"]) == set(schema["properties"])
+    add_schema = report_tool_definition(add_decision=True)["input_schema"]
+    assert set(add_schema["required"]) == set(ResearchReport.model_fields)
 
 
 def test_unsupported_schema_keywords_are_stripped_but_still_enforced():

@@ -31,7 +31,7 @@ from orchestrator import start
 from orchestrator.golden import load_cases
 from research.add_decision import ADD_HOLD_CODES, HeldPositionContext
 from research.exit_review import EXIT_REVIEW_TOOL_NAME
-from research.prompts import SYSTEM_PROMPT, build_user_prompt
+from research.prompts import SYSTEM_PROMPT, build_user_prompt, system_prompt_for
 from research.reports import ResearchReport, report_tool_definition
 from signals.scanners import RawItem
 from test_exits import HOLD_REVIEW, MutablePrices, RoutingLLM, build, enter_position, restart_kwargs
@@ -110,6 +110,9 @@ class AddAwareLLM:
         self.calls.append({"system": system, "user": user, "tool": tool["name"], "tier": tier})
         if tool["name"] == EXIT_REVIEW_TOOL_NAME:
             return self.review
+        # The add fields are offered ONLY on an add decision's schema.
+        offered = set(tool["input_schema"]["properties"])
+        assert ("add_verdict" in offered) == ("ADD DECISION" in user), offered
         if "ADD DECISION" in user:
             return self.add
         return self.entry
@@ -510,10 +513,11 @@ def test_a_held_add_decision_survives_a_restart_as_convergence_and_an_owed_revie
 
 
 def test_the_report_schema_offers_add_verdict_and_a_bounded_fraction():
-    tool = report_tool_definition()
+    tool = report_tool_definition(add_decision=True)
     assert "add_verdict" in tool["input_schema"]["properties"]
     assert "add_fraction" in tool["input_schema"]["properties"]
     assert {"add_verdict", "add_fraction"} <= set(tool["input_schema"]["required"])
+    assert "ADD DECISION" in tool["description"]
     report = ResearchReport.model_validate(ADD_REPORT)
     assert report.is_add and report.add_fraction == Decimal("0.5")
     assert not ResearchReport.model_validate(HOLD_ADD).is_add
@@ -527,9 +531,35 @@ def test_the_report_schema_offers_add_verdict_and_a_bounded_fraction():
 
 
 def test_the_system_prompt_states_the_add_question_and_denies_the_dollars():
-    assert "ADD DECISIONS" in SYSTEM_PROMPT
-    assert "one judged position per symbol" in SYSTEM_PROMPT
-    assert "combined-position cap you cannot see or move" in SYSTEM_PROMPT
+    prompt = system_prompt_for(True)
+    assert "ADD DECISIONS" in prompt
+    assert "one judged position per symbol" in prompt
+    assert "combined-position cap you cannot see or move" in prompt
+
+
+def test_an_ordinary_entry_pass_sends_the_pre_ruling_request_shape():
+    """The add machinery must be invisible to every pass that is not an add
+    decision (2026-09-16 drift review): no section in the system prompt, no
+    add fields in the tool schema, nothing in the description."""
+    assert system_prompt_for(False) == SYSTEM_PROMPT
+    assert "ADD DECISION" not in SYSTEM_PROMPT and "add_verdict" not in SYSTEM_PROMPT
+    tool = report_tool_definition()
+    rendered = str(tool)
+    assert "add_verdict" not in rendered and "add_fraction" not in rendered
+    assert "AddVerdict" not in rendered and "ADD DECISION" not in rendered
+    # Both shapes validate through the same model: an ordinary report carries
+    # no add fields and still parses.
+    assert ResearchReport.model_validate(REPORT).add_verdict is None
+
+
+def test_the_research_pass_selects_the_shape_per_request(tmp_path, limits, signals_config, research_config):
+    started, feeds, prices, clock, llm = enter_nue(tmp_path, limits, signals_config, research_config)
+    second_signal(started, feeds, clock)
+    entry_calls = [c for c in llm.calls if c["tool"] != EXIT_REVIEW_TOOL_NAME and "ADD DECISION" not in c["user"]]
+    add_calls = [c for c in llm.calls if "ADD DECISION" in c["user"]]
+    assert entry_calls and add_calls
+    assert all("ADD DECISIONS" not in c["system"] for c in entry_calls)
+    assert all("ADD DECISIONS" in c["system"] for c in add_calls)
 
 
 def test_the_golden_set_carries_the_add_cases_and_their_contexts_render():
