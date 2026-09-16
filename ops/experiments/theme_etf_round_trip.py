@@ -78,6 +78,24 @@ def main() -> int:
     assert "theme -> ETF proposal" in prompt, "prompt lacks the proposal line"
     assert "Conviction door" in SYSTEM_PROMPT and "hard 10% cap" in SYSTEM_PROMPT
 
+    # Capture the FULL payload and pydantic errors of any schema failure: the
+    # pass keeps only a 500-char excerpt, which is not enough to diagnose one.
+    import research.research_pass as research_pass_module
+    from pydantic import ValidationError
+
+    captured: list = []
+
+    class CapturingReport(ResearchReport):
+        @classmethod
+        def model_validate(cls, payload, *args, **kwargs):  # type: ignore[override]
+            try:
+                return ResearchReport.model_validate(payload, *args, **kwargs)
+            except ValidationError as error:
+                captured.append((payload, error))
+                raise
+
+    research_pass_module.ResearchReport = CapturingReport
+
     client = AnthropicResearchClient(config)
     research = ResearchPass(client, source_tiers=build_source_tiers(signals_config))
     print(
@@ -122,6 +140,12 @@ def main() -> int:
         )
     )
     code = str(getattr(outcome, "code", ""))
+    for payload, error in captured:
+        print("--- FULL rejected payload ---")
+        print(json.dumps(payload, indent=2, ensure_ascii=False, default=str)[:6000])
+        print("--- schema errors ---")
+        for item in error.errors():
+            print(f"  {'.'.join(str(x) for x in item['loc'])}: {item['msg']} (got {str(item.get('input'))[:200]!r})")
     excerpt = getattr(outcome, "raw_excerpt", "") or ""
     if excerpt:
         print(f"--- model payload ({len(excerpt)} chars, truncated by the pass) ---")
