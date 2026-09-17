@@ -3717,6 +3717,46 @@ polls while @TrumpDailyPosts posts: a human should check whether that bot is dea
 
 Freeze re-closes. Service still to be bounced onto 7e08b0f by the human.
 
+### The ttox mirror is alive; today's zero-item polls were correct; TrumpDailyPosts no longer relays (2026-09-16 diagnosis)
+
+Asked because @TrumpTruthOnX visibly posted marked relays 1-2 hours before the question while the
+service had polled it five times with items=0. Three questions, answered against the live API from
+the droplet (probe scripts printed bodies only, never the credential):
+
+1. **Handle.** `GET /2/users/by/username/TrumpTruthOnX` → id 1922803520019013632, username
+   unchanged; only the display NAME changed to "Commentary Donald J. Trump Truth Social Posts On X"
+   (bio: "Commentary, not associated with President Trump"). `search/recent from:TrumpTruthOnX`,
+   `from:1922803520019013632` and `users/{id}/tweets` return identical results. The config handle is
+   right; nothing to change.
+2. **since_id.** The fetcher sets `since_id` only from `meta.newest_id` on a 200 that returned posts;
+   a 401 raises inside `_fetch` before that line, and the map is per-process memory (reset at every
+   bounce). No since_id could have advanced during the outage. The journal confirms every ttox
+   request since the 18:33 bounce carried `start_time = now - 8817s` (the gap-sized first-poll
+   lookback) and NO since_id — because every poll returned zero posts, so newest_id was never set.
+   @TrumpDailyPosts, which did return posts, advanced its since_id normally (…207838982287 →
+   …296409044152712 → …299122477768904 → …302046297829478 → …302937776103509 → …311257022906853).
+3. **Raw response.** `search/recent from:TrumpTruthOnX -is:retweet start_time=2026-09-16T13:30Z
+   end_time=20:00Z` → `{"meta": {"result_count": 0}}`. The account posted NOTHING inside today's
+   polled session (Class 1 polls only 13:30-20:00 UTC). Its relays today were 20:28, 20:33, 21:11,
+   22:03 and 22:50 UTC — all after the close, and exactly the posts you saw. Nothing was dropped
+   downstream because nothing arrived. Seven-day profile: 88 posts, 63 genuine relays (marker
+   present), of which only 10 fell inside a session window (10th: 2, 11th: 4, 14th: 3, 15th: 1,
+   16th: 0). Off-session relays are fetched at the next session's first poll (lookback = gap since
+   the newest audit record, floor 15 min, cap 24h), so tonight's relays are read at tomorrow's open.
+   The "silent since 08-31" warning was the dead token, nothing else.
+
+**The real finding is the OTHER mirror.** @TrumpDailyPosts: 348 posts in 7 days, ZERO carrying the
+"Donald J. Trump Truth Social Post" header the config requires, and none whose text matches a
+TrumpTruthOnX relay within ±15 minutes — it now posts news items and commentary in its own voice
+("🔴JUST IN VIDEO: …", "CNN even had to admit …"), never relaying Truths. Every one of its 27
+in-session posts today was correctly dropped to its credibility record as commentary (this is the
+2026-08-19 $4.24 lesson working as designed). The secondary mirror delivers nothing; the tdp
+mirror-silence warning ("last delivery 2026-08-20") is honest and is pointing at this. **Human
+ruling wanted:** retire trump_mirror_tdp (it costs reads and adds noise to the credibility log) or
+keep it as a dormant fallback; the Trump leg currently rides @TrumpTruthOnX alone, which relays
+within a minute but delivers ~1-4 in-session relays a day, most of them media-only ("New media post
+from Donald J. Trump") that the no-ticker/no-theme prefilter drops. No code or config changed.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in
