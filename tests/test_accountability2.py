@@ -267,6 +267,95 @@ def test_grading_passes_and_drifts():
     assert grade(golden_case(must_flag=True), flagged, None).passed
 
 
+def test_the_priced_in_declines_grade_behaviourally():
+    """2026-09-17: decline confidence between 30 and 82 on identical requests is
+    noise; the three Class 2 priced-in cases grade on direction and tradeability
+    and keep the raw confidence on the line."""
+    cases = {c.name: c for c in load_cases()}
+    for name in ("pelosi-uber-priced-in", "pelosi-be-calls-decline", "taylor-ibp-small"):
+        case = cases[name]
+        assert case.directions == ("no_position", "long")
+        assert case.confidence_band == (0, 100)
+        assert case.traded_confidence_band == (0, 49)
+        assert grade(case, make_report(direction="no_position", confidence=30), None).passed
+        assert grade(case, make_report(direction="long", confidence=45, target_price="10"), None).passed
+        drift = grade(case, make_report(direction="long", confidence=58, target_price="10"), None)
+        assert not drift.passed and "traded verdict confidence 58" in drift.problems[0]
+        assert drift.verdict.startswith("long/58")
+
+
+class _Scripted:
+    """A research pass that answers from a script, counting calls."""
+
+    def __init__(self, *outcomes):
+        self._outcomes = list(outcomes)
+        self.calls = 0
+        self.last_usage = None
+
+    def run(self, signal, add_context=None):
+        self.calls += 1
+        return self._outcomes.pop(0)
+
+
+def test_the_golden_replay_runs_the_production_boundary_confirmation():
+    """2026-09-17: an in-band tradeable verdict buys the SAME second pass the
+    pipeline buys; the case grades on what would size, both passes stay on the
+    line, and the summary tallies concurrence."""
+    from orchestrator.golden import BoundaryBand, confirmation_tally, render_summary, run_golden
+
+    band = BoundaryBand(floor=50, band_width=20)
+    from dataclasses import replace
+
+    case = replace(golden_case(directions=("no_position", "long")), traded_confidence_band=(0, 49))
+    long58 = make_report(direction="long", confidence=58, target_price="10")
+
+    # Reversed: the second pass declines -> nothing sizes -> behaviourally a pass.
+    research = _Scripted(long58, make_report(direction="no_position", confidence=40))
+    (result,) = run_golden(research, [case], echo=lambda *_: None, band=band)
+    assert research.calls == 2
+    assert result.passed and result.confirmation.reversed
+    assert result.verdict.startswith("long/58") and "REVERSED" in result.verdict
+
+    # Upheld: the second pass replicates at 52 -> long/52 sizes -> drift on the traded band.
+    research = _Scripted(long58, make_report(direction="long", confidence=52, target_price="10"))
+    (result,) = run_golden(research, [case], echo=lambda *_: None, band=band)
+    assert research.calls == 2
+    assert not result.passed and result.confirmation.upheld
+    assert "traded verdict confidence 52" in result.problems[0]
+    assert "UPHELD, the second pass sizes (long/52)" in result.verdict
+
+    # Outside the band (75) and a decline: no second pass is bought.
+    research = _Scripted(make_report(direction="long", confidence=75, target_price="10"))
+    (outside,) = run_golden(research, [case], echo=lambda *_: None, band=band)
+    assert research.calls == 1 and outside.confirmation is not None and not outside.confirmation.ran
+    research = _Scripted(make_report(direction="no_position", confidence=55))
+    (decline,) = run_golden(research, [case], echo=lambda *_: None, band=band)
+    assert research.calls == 1 and decline.confirmation is None
+    # No band wired: single pass, as before.
+    research = _Scripted(long58)
+    (single,) = run_golden(research, [case], echo=lambda *_: None)
+    assert research.calls == 1 and single.confirmation is None and not single.passed
+
+    tally = confirmation_tally([result, outside, decline, single])
+    assert tally == (1, 1, 0)
+    summary = render_summary([result, outside, decline, single], band)
+    assert "1 in the band -> 1 upheld, 0 reversed (100% concurrence)" in summary
+    assert "a traded verdict only in [0, 49]" in summary
+
+
+def test_the_pipeline_and_the_golden_replay_share_one_confirmation_rule():
+    """The rule is ONE function: the pipeline's method delegates to it."""
+    import inspect
+
+    from orchestrator import pipeline
+    from orchestrator.boundary import confirm_boundary, in_boundary_band
+
+    assert "confirm_boundary(" in inspect.getsource(pipeline.SignalPipeline._confirm_boundary)
+    assert in_boundary_band(50, 50, 20) and in_boundary_band(69, 50, 20)
+    assert not in_boundary_band(70, 50, 20) and not in_boundary_band(49, 50, 20)
+    assert confirm_boundary is pipeline.confirm_boundary
+
+
 def test_the_review_grade_can_pin_the_validity_label():
     """The INTC day-9 case: the live review called a move the thesis predicted
     "displaced" and rule 2 closed the position. The grade fails that label and

@@ -53,22 +53,11 @@ from audit.records import (
 )
 from execution.base import BrokerAdapter, BrokerError, OrderReceipt
 from research.add_decision import ADD_HOLD_CODES, HeldPositionContext
+from orchestrator.boundary import BoundaryConfirmation, confirm_boundary
 from research.reports import Direction, ResearchReport, ResearchUsage
 from signals.themes import THEME_KEY, shortlist_of
 from research.research_pass import ResearchPass
 from research.triage import TriagePass
-
-
-@dataclass(frozen=True, slots=True)
-class _Confirmation:
-    """What the boundary confirmation decided: the report to size (None = not
-    confirmed, with ``failure`` saying why), the snapshot for the decision record
-    when a second pass ran, and that pass's usage so the record's cost is honest."""
-
-    report: Optional[ResearchReport]
-    failure: Optional[str] = None
-    snapshot: Optional[BoundaryConfirmationSnapshot] = None
-    usage: Optional[ResearchUsage] = None
 
 
 def _combine_usage(
@@ -1120,91 +1109,23 @@ class SignalPipeline:
         signal: Signal,
         report: ResearchReport,
         add_context: Optional[HeldPositionContext] = None,
-    ) -> _Confirmation:
-        """Boundary confirmation (ruling 2026-09-02, diagnosis: five
-        identical-input replays of a floor-band case spanned long/38-54 and
-        no_position/30-72 — the band admits stochastic noise).
-
-        A tradeable verdict with confidence in [floor, floor + band) runs a
-        SECOND independent pass, same tier and fresh context. Confirmed = same
-        direction at or above the floor; the LOWER-confidence report is the one
-        that sizes (the second pass can only block or shrink, never enlarge).
-        Returns a confirmation carrying the report to size, or none plus why
-        for the typed ``unconfirmed_boundary`` rejection. A second pass that
-        errors outright does not confirm — an unconfirmable boundary verdict is
-        not sized (Constraint #6). Whenever a second pass ran, both verdicts and
-        its usage come back for the record (2026-09-15).
+    ) -> BoundaryConfirmation:
+        """Boundary confirmation (ruling 2026-09-02): a tradeable verdict in
+        the floor band must replicate before it sizes. The rule itself lives in
+        ``orchestrator.boundary.confirm_boundary`` — ONE function, shared with
+        the golden replay (2026-09-17) so the set exercises the guard production
+        runs. Returns the report to size, or none plus why for the typed
+        ``unconfirmed_boundary`` rejection.
         """
         if self._boundary is None or not self._boundary.enabled:
-            return _Confirmation(report)
-        floor = self._sizing_floor
-        if not floor <= report.confidence < floor + self._boundary.band_width:
-            return _Confirmation(report)
-        logger.info(
-            "boundary confirmation on %s: %s/%d sits in the floor band "
-            "[%d, %d); buying a second independent pass",
-            signal.signal_id,
-            report.direction,
-            report.confidence,
-            floor,
-            floor + self._boundary.band_width,
-        )
-        second = self._research.run(signal, add_context=add_context)
-        second_usage = self._research.last_usage
-        if not isinstance(second, ResearchReport):
-            return _Confirmation(
-                None,
-                f"boundary verdict {report.direction}/{report.confidence} could "
-                f"not be confirmed: the second pass failed "
-                f"({getattr(second, 'code', 'error')}) — an unconfirmable "
-                f"floor-band verdict is not sized (ruling 2026-09-02)",
-                usage=second_usage,
-            )
-        if add_context is not None and not second.is_add:
-            # An add decision must REPLICATE as an add (ruling 2026-09-16): a
-            # second pass that holds is a hold, whatever the first said.
-            return _Confirmation(
-                None,
-                f"boundary add verdict NOT confirmed: first pass add/"
-                f"{report.confidence}, second independent pass "
-                f"{second.add_verdict or 'unstated'}/{second.direction}/"
-                f"{second.confidence} — an add that does not replicate is not "
-                f"sized (rulings 2026-09-02, 2026-09-16)",
-                usage=second_usage,
-            )
-        if second.direction is not report.direction or second.confidence < floor:
-            return _Confirmation(
-                None,
-                f"boundary verdict NOT confirmed: first pass "
-                f"{report.direction}/{report.confidence}, second independent "
-                f"pass {second.direction}/{second.confidence} — the floor band "
-                f"is stochastic there, and a verdict that does not replicate "
-                f"is not sized (ruling 2026-09-02)",
-                usage=second_usage,
-            )
-        sized_from = "second" if second.confidence < report.confidence else "first"
-        logger.info(
-            "boundary confirmed on %s: first %s/%d, second %s/%d; the %s pass sizes",
-            signal.signal_id,
-            report.direction,
-            report.confidence,
-            second.direction,
-            second.confidence,
-            sized_from,
-        )
-        return _Confirmation(
-            second if sized_from == "second" else report,
-            snapshot=BoundaryConfirmationSnapshot(
-                floor=floor,
-                band_width=self._boundary.band_width,
-                first_direction=str(report.direction),
-                first_confidence=report.confidence,
-                second_direction=str(second.direction),
-                second_confidence=second.confidence,
-                sized_from=sized_from,
-                second_est_cost_usd=(second_usage.cost_usd if second_usage else None),
-            ),
-            usage=second_usage,
+            return BoundaryConfirmation(report)
+        return confirm_boundary(
+            self._research,
+            signal,
+            report,
+            floor=self._sizing_floor,
+            band_width=self._boundary.band_width,
+            add_context=add_context,
         )
 
     def _reward_risk_reason(self, report) -> Optional[str]:

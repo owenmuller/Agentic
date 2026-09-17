@@ -441,12 +441,18 @@ def golden() -> int:
     the CURRENT prompt/tier/model. Required before any prompt, tier, or model
     change ships. Spends real API dollars; writes no audit records. Usage:
 
-        python -m orchestrator golden [--only name] [--limit N]
+        python -m orchestrator golden [--only name] [--limit N] [--single-pass]
+
+    A tradeable verdict inside the boundary-confirmation band buys the
+    PRODUCTION second pass (2026-09-17) and the case grades on what would size;
+    ``--single-pass`` restores the one-pass replay for variance measurement.
     """
     logging.basicConfig(level=logging.WARNING)
     from execution.environment import load_environment as _load_env
 
+    from orchestrator.config import OrchestratorConfig
     from orchestrator.golden import (
+        BoundaryBand,
         build_source_tiers,
         load_cases,
         render_summary,
@@ -461,6 +467,7 @@ def golden() -> int:
     args = sys.argv[2:]
     only = None
     limit = None
+    single_pass = False
     index = 0
     while index < len(args):
         if args[index] == "--only" and index + 1 < len(args):
@@ -469,6 +476,9 @@ def golden() -> int:
         elif args[index] == "--limit" and index + 1 < len(args):
             limit = int(args[index + 1])
             index += 2
+        elif args[index] == "--single-pass":
+            single_pass = True
+            index += 1
         else:
             print(f"unknown argument {args[index]!r}", file=sys.stderr)
             return 2
@@ -487,14 +497,29 @@ def golden() -> int:
         research = ResearchPass(
             client, source_tiers=build_source_tiers(SignalsConfig.load())
         )
+        band = None
+        boundary = OrchestratorConfig.load().boundary_confirmation
+        if boundary.enabled and not single_pass:
+            band = BoundaryBand(
+                floor=RiskLimits.load().sizing.no_trade_below,
+                band_width=boundary.band_width,
+            )
         reviews = sum(1 for case in cases if case.kind == "review")
         print(
             f"replaying {len(cases)} golden cases ({reviews} review) through the "
             f"production passes (model {config.model}, screen "
-            f"{config.screen.model if config.screen else 'off'}) — real API spend"
+            f"{config.screen.model if config.screen else 'off'}"
+            + (
+                f", boundary confirmation in [{band.floor}, {band.floor + band.band_width})"
+                if band is not None
+                else ", single pass"
+            )
+            + ") — real API spend"
         )
-        results = run_golden(research, cases, review_pass=ExitReviewPass(client))
-        print(render_summary(results))
+        results = run_golden(
+            research, cases, review_pass=ExitReviewPass(client), band=band
+        )
+        print(render_summary(results, band))
         return 0 if all(result.passed for result in results) else 3
     except Exception as error:  # noqa: BLE001
         print(f"GOLDEN REPLAY FAILED: {type(error).__name__}: {error}", file=sys.stderr)

@@ -14,7 +14,13 @@ human, before ANY prompt, tier, or model change ships.
 
 What it grades and what it cannot: direction against the allowed set,
 confidence against the band, and the manipulation flag where the case demands
-one. It does not grade prose. Context builders (market context, credibility,
+one. It does not grade prose. Since 2026-09-17 (human approval) a tradeable
+verdict landing in the boundary-confirmation band buys the PRODUCTION second
+pass through the same function the pipeline calls, and the case is graded on
+what would SIZE — the lower-confidence report when the second pass replicates,
+no position when it does not. Both passes stay on the line, and the summary
+tallies upheld against reversed: the concurrence rate is the single most useful
+input to the 2026-10-15 floor review. Context builders (market context, credibility,
 convergence) are deliberately absent — the replay isolates prompt x schema x
 model, the three things a change under test actually changes. Costs real API
 dollars by design (~$0.05-0.15/case); it writes NO audit records and places no
@@ -31,6 +37,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
 
+from orchestrator.boundary import BoundaryConfirmation, confirm_boundary
 from research.exit_review import ExitReview, PositionUnderReview
 from research.reports import ResearchReport, is_manipulation_flagged
 from signals import SignalClass, SignalsConfig
@@ -313,10 +320,53 @@ class GoldenResult:
     verdict: str
     problems: tuple[str, ...]
     cost: Optional[Decimal]
+    #: The boundary confirmation, when the first pass's verdict was tradeable
+    #: and the harness had the band wired (2026-09-17). ``ran`` False = the
+    #: verdict sat outside the band; None = not tradeable, or not wired.
+    confirmation: Optional[BoundaryConfirmation] = None
 
 
-def grade(case: GoldenCase, outcome, usage) -> GoldenResult:
-    cost = usage.cost_usd if usage else None
+@dataclass(frozen=True, slots=True)
+class BoundaryBand:
+    """The floor and width production confirms inside — from risk_limits.yaml
+    ``sizing.no_trade_below`` and orchestrator.yaml ``boundary_confirmation``."""
+
+    floor: int
+    band_width: int
+
+
+def _total_cost(usage, confirmation: Optional[BoundaryConfirmation]) -> Optional[Decimal]:
+    first = usage.cost_usd if usage else None
+    second = (
+        confirmation.usage.cost_usd
+        if confirmation is not None and confirmation.ran and confirmation.usage
+        else None
+    )
+    if first is None:
+        return second
+    return first if second is None else first + second
+
+
+def _confirmed_line(first: str, confirmation: Optional[BoundaryConfirmation]) -> str:
+    if confirmation is None or not confirmation.ran:
+        return first
+    return f"{first} | boundary: {confirmation.describe()}"
+
+
+def grade(
+    case: GoldenCase,
+    outcome,
+    usage,
+    confirmation: Optional[BoundaryConfirmation] = None,
+) -> GoldenResult:
+    """Grade an entry case on what would SIZE. Without a confirmation (or one
+    that did not run) that is the report itself. When the production second
+    pass ran: upheld -> the lower-confidence report is graded for direction and
+    confidence; reversed -> the effective verdict is no_position and no
+    confidence is graded (nothing would trade). The manipulation flag and the
+    priced-in analysis are graded on the FIRST report — the observation the
+    case is about — and both passes are rendered on the line."""
+    cost = _total_cost(usage, confirmation)
     if not isinstance(outcome, ResearchReport):
         return GoldenResult(
             case,
@@ -326,21 +376,29 @@ def grade(case: GoldenCase, outcome, usage) -> GoldenResult:
             cost=cost,
         )
     problems: list[str] = []
-    direction = str(outcome.direction)
+    first_verdict = f"{outcome.direction}/{outcome.confidence}"
+    if outcome.target_price is not None:
+        first_verdict += f" target={outcome.target_price}"
+    sized: Optional[ResearchReport] = outcome
+    if confirmation is not None and confirmation.ran:
+        sized = confirmation.report  # None when reversed: nothing sizes
+    direction = str(sized.direction) if sized is not None else "no_position"
     if direction not in case.directions:
         problems.append(
             f"direction {direction} not in graded set {list(case.directions)}"
         )
-    low, high = case.confidence_band
-    if not low <= outcome.confidence <= high:
-        problems.append(f"confidence {outcome.confidence} outside [{low}, {high}]")
-    if case.traded_confidence_band is not None and direction != "no_position":
-        traded_low, traded_high = case.traded_confidence_band
-        if not traded_low <= outcome.confidence <= traded_high:
-            problems.append(
-                f"traded verdict confidence {outcome.confidence} outside "
-                f"[{traded_low}, {traded_high}]"
-            )
+    if sized is not None:
+        low, high = case.confidence_band
+        if not low <= sized.confidence <= high:
+            problems.append(f"confidence {sized.confidence} outside [{low}, {high}]")
+        if case.traded_confidence_band is not None and direction != "no_position":
+            traded_low, traded_high = case.traded_confidence_band
+            if not traded_low <= sized.confidence <= traded_high:
+                problems.append(
+                    f"traded verdict confidence {sized.confidence} outside "
+                    f"[{traded_low}, {traded_high}]"
+                    + (" (the confirmed, lower pass)" if sized is not outcome else "")
+                )
     if case.must_flag_manipulation and not is_manipulation_flagged(
         outcome.manipulation_assessment
     ):
@@ -353,15 +411,13 @@ def grade(case: GoldenCase, outcome, usage) -> GoldenResult:
             problems.append(
                 "priced_in_analysis carries no number — suspicion, not measurement"
             )
-    verdict = f"{direction}/{outcome.confidence}"
-    if outcome.target_price is not None:
-        verdict += f" target={outcome.target_price}"
     return GoldenResult(
         case,
         passed=not problems,
-        verdict=verdict,
+        verdict=_confirmed_line(first_verdict, confirmation),
         problems=tuple(problems),
         cost=cost,
+        confirmation=confirmation,
     )
 
 
@@ -424,12 +480,19 @@ def grade_review(case: GoldenCase, outcome, usage) -> GoldenResult:
     )
 
 
-def grade_add(case: GoldenCase, outcome, usage) -> GoldenResult:
+def grade_add(
+    case: GoldenCase,
+    outcome,
+    usage,
+    confirmation: Optional[BoundaryConfirmation] = None,
+) -> GoldenResult:
     """Grade an add case (ruling 2026-09-16) on STRUCTURE and the verdict set:
     add_verdict stated; an add names exactly the held symbol, direction long,
     with an add_fraction; a hold carries direction no_position; the thesis is
-    argued past the structural bar."""
-    cost = usage.cost_usd if usage else None
+    argued past the structural bar. An in-band add that the production second
+    pass did not replicate (2026-09-17) is graded as the hold production would
+    record — the first pass's structure is still checked, and both are on the line."""
+    cost = _total_cost(usage, confirmation)
     if not isinstance(outcome, ResearchReport):
         return GoldenResult(
             case,
@@ -441,10 +504,13 @@ def grade_add(case: GoldenCase, outcome, usage) -> GoldenResult:
     problems: list[str] = []
     symbol = str((case.add_position or {}).get("symbol", "")).upper()
     verdict = str(outcome.add_verdict) if outcome.add_verdict is not None else "unstated"
+    effective = verdict
+    if confirmation is not None and confirmation.reversed:
+        effective = "hold"  # production: unconfirmed_boundary, no add, review triggered
     if outcome.add_verdict is None:
         problems.append("add_verdict null on an add decision")
-    elif case.add_verdicts and verdict not in case.add_verdicts:
-        problems.append(f"add verdict {verdict} not in graded set {list(case.add_verdicts)}")
+    elif case.add_verdicts and effective not in case.add_verdicts:
+        problems.append(f"add verdict {effective} not in graded set {list(case.add_verdicts)}")
     direction = str(outcome.direction)
     if verdict == "add":
         if outcome.add_fraction is None:
@@ -466,7 +532,31 @@ def grade_add(case: GoldenCase, outcome, usage) -> GoldenResult:
         f"tickers={list(outcome.tickers)} | {outcome.thesis.strip()[:90]}"
     )
     return GoldenResult(
-        case, passed=not problems, verdict=rendered, problems=tuple(problems), cost=cost
+        case,
+        passed=not problems,
+        verdict=_confirmed_line(rendered, confirmation),
+        problems=tuple(problems),
+        cost=cost,
+        confirmation=confirmation,
+    )
+
+
+def _confirm(research_pass, signal, outcome, band, add_context=None):
+    """The production boundary confirmation on a TRADEABLE first-pass verdict
+    (a long or puts; an add on an add case). None when the band is not wired
+    or the verdict is not tradeable; ``ran`` False when it sat outside the band."""
+    if band is None or not isinstance(outcome, ResearchReport):
+        return None
+    tradeable = outcome.is_add if add_context is not None else str(outcome.direction) != "no_position"
+    if not tradeable:
+        return None
+    return confirm_boundary(
+        research_pass,
+        signal,
+        outcome,
+        floor=band.floor,
+        band_width=band.band_width,
+        add_context=add_context,
     )
 
 
@@ -476,9 +566,12 @@ def run_golden(
     now: Optional[datetime] = None,
     echo=print,
     review_pass=None,
+    band: Optional[BoundaryBand] = None,
 ) -> list[GoldenResult]:
     """Replay each case through the given (production) passes, grading as we go.
-    Review cases need ``review_pass``; without one they grade as drift, loudly."""
+    Review cases need ``review_pass``; without one they grade as drift, loudly.
+    With ``band`` wired, a tradeable verdict inside it buys the production
+    second pass (2026-09-17); without it the replay is single-pass, as before."""
     moment = now or datetime.now(timezone.utc)
     results: list[GoldenResult] = []
     for case in cases:
@@ -498,13 +591,17 @@ def run_golden(
                 echo(f"      {problem}")
             continue
         if case.kind == "add":
-            outcome = research_pass.run(
-                case.signal(moment), add_context=case.add_context()
-            )
-            result = grade_add(case, outcome, research_pass.last_usage)
+            signal, context = case.signal(moment), case.add_context()
+            outcome = research_pass.run(signal, add_context=context)
+            usage = research_pass.last_usage
+            confirmation = _confirm(research_pass, signal, outcome, band, context)
+            result = grade_add(case, outcome, usage, confirmation)
         else:
-            outcome = research_pass.run(case.signal(moment))
-            result = grade(case, outcome, research_pass.last_usage)
+            signal = case.signal(moment)
+            outcome = research_pass.run(signal)
+            usage = research_pass.last_usage
+            confirmation = _confirm(research_pass, signal, outcome, band)
+            result = grade(case, outcome, usage, confirmation)
         results.append(result)
         status = "PASS " if result.passed else "DRIFT"
         cost = f" ${result.cost}" if result.cost is not None else ""
@@ -514,7 +611,14 @@ def run_golden(
     return results
 
 
-def render_summary(results: list[GoldenResult]) -> str:
+def confirmation_tally(results: list[GoldenResult]) -> tuple[int, int, int]:
+    """(in-band second passes run, upheld, reversed) across the results."""
+    ran = [r.confirmation for r in results if r.confirmation is not None and r.confirmation.ran]
+    upheld = sum(1 for c in ran if c.upheld)
+    return len(ran), upheld, len(ran) - upheld
+
+
+def render_summary(results: list[GoldenResult], band: Optional[BoundaryBand] = None) -> str:
     drifted = [r for r in results if not r.passed]
     total_cost = sum((r.cost for r in results if r.cost is not None), Decimal("0"))
     lines = [
@@ -522,6 +626,17 @@ def render_summary(results: list[GoldenResult]) -> str:
         f"Golden set: {len(results) - len(drifted)}/{len(results)} passed, "
         f"~${total_cost:.2f} spent",
     ]
+    if band is not None:
+        ran, upheld, reversed_ = confirmation_tally(results)
+        tradeable = sum(1 for r in results if r.confirmation is not None)
+        lines.append(
+            f"Boundary confirmation [{band.floor}, {band.floor + band.band_width}): "
+            f"{tradeable} tradeable first-pass verdicts, {ran} in the band -> "
+            f"{upheld} upheld, {reversed_} reversed"
+            + (
+                f" ({upheld / ran:.0%} concurrence)" if ran else ""
+            )
+        )
     if drifted:
         lines.append("DRIFT — a human reviews each before any change ships:")
         for result in drifted:
@@ -549,6 +664,11 @@ def render_summary(results: list[GoldenResult]) -> str:
                 f"  {result.case.name}: got {result.verdict}; expected "
                 f"{list(result.case.directions)} in "
                 f"{list(result.case.confidence_band)}"
+                + (
+                    f", a traded verdict only in {list(result.case.traded_confidence_band)}"
+                    if result.case.traded_confidence_band is not None
+                    else ""
+                )
                 + (
                     " + manipulation flag"
                     if result.case.must_flag_manipulation
