@@ -243,6 +243,20 @@ def feed(**by_source: Sequence[str]):
     return fetcher
 
 
+def fresh_feed(fetcher, clock):
+    """Stamp every fetched item as posted at the harness clock's NOW (ruling
+    2026-09-16, Class 1 staleness): the fixture posts carry a fixed
+    published_at of 2026-08-17, and a test whose clock runs in September must
+    not see them as weeks-stale relays owing a priced-in analysis. A live feed
+    delivers a post at the moment it is posted; this is that."""
+    from dataclasses import replace
+
+    def wrapped(source):
+        return [replace(item, published_at=clock()) for item in fetcher(source)]
+
+    return wrapped
+
+
 def broken_feed(*, failing: str, working: dict[str, Sequence[str]]):
     """A fetcher that raises for one source and works for the others."""
     healthy = feed(**working)
@@ -356,14 +370,15 @@ def build(
     id_factory=None,
 ):
     """Wire a loop with fakes at the edges and everything real in between."""
+    clock = clock or FakeClock()
     return start(
         error_sink=error_sink,
         options_chain=options_chain,
-        fetcher=fetcher or feed(trump_posts=[PURE_FORWARD_CALL]),
+        fetcher=fresh_feed(fetcher or feed(trump_posts=[PURE_FORWARD_CALL]), clock),
         prices=prices or prices_of(NUE=str(QUOTE)),
         llm_client=llm or FakeLLM(),
         adapter=broker or FakeBroker(),
-        clock=clock or FakeClock(),
+        clock=clock,
         data_dir=tmp_path,
         limits=limits,
         signals_config=signals_config,

@@ -87,6 +87,10 @@ class GoldenCase:
     #: a fraction, a hold with direction no_position — plus the verdict set.
     add_position: Optional[dict[str, Any]] = None
     add_verdicts: tuple[str, ...] = ()
+    #: Entry cases (ruling 2026-09-16, Class 1 staleness): the report must carry
+    #: a priced_in_analysis that MEASURES — non-blank and containing a number.
+    #: Grades whether a stale relay's analysis engaged the move since the post.
+    expect_priced_in: bool = False
 
     def add_context(self):
         """The frozen held position an add case replays."""
@@ -296,6 +300,7 @@ def load_cases(path: Optional[Path] = None) -> list[GoldenCase]:
                         if expect.get("traded_confidence")
                         else None
                     ),
+                    expect_priced_in=bool(expect.get("priced_in_required", False)),
                 )
             )
     return cases
@@ -340,6 +345,14 @@ def grade(case: GoldenCase, outcome, usage) -> GoldenResult:
         outcome.manipulation_assessment
     ):
         problems.append("manipulation NOT flagged where the case demands it")
+    if case.expect_priced_in:
+        analysis = (outcome.priced_in_analysis or "").strip()
+        if not analysis:
+            problems.append("priced_in_analysis absent on a stale Class 1 relay")
+        elif not any(ch.isdigit() for ch in analysis):
+            problems.append(
+                "priced_in_analysis carries no number — suspicion, not measurement"
+            )
     verdict = f"{direction}/{outcome.confidence}"
     if outcome.target_price is not None:
         verdict += f" target={outcome.target_price}"

@@ -15,10 +15,61 @@ one, and that argument then sits in the audit trail looking like a recommendatio
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from research.add_decision import HeldPositionContext, add_decision_lines
 from signals import Signal, SignalClass, as_data_block
+
+#: Class 1 staleness (human ruling 2026-09-16): a real-time signal older than
+#: this at observation carries the lagged-class measurement framing and a
+#: MANDATORY priced_in_analysis. Below it the fresh path is unchanged.
+CLASS1_STALE_AFTER = timedelta(minutes=30)
+
+
+def signal_published_at(signal: Signal) -> Optional[datetime]:
+    """The post's OWN timestamp, from the scanner's structured fields — X
+    ``created_at`` or the generic ``published_at`` every scanner stamps. None
+    when neither parses (records from before the fields existed)."""
+    for key in ("created_at", "published_at"):
+        raw = (signal.metadata.get(key) or "").strip()
+        if not raw:
+            continue
+        try:
+            moment = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        return moment
+    return None
+
+
+def signal_age(signal: Signal) -> Optional[timedelta]:
+    """How old the post was when the system observed it; None when unknown."""
+    posted = signal_published_at(signal)
+    if posted is None:
+        return None
+    return max(signal.observed_at - posted, timedelta(0))
+
+
+def class1_is_stale(signal: Signal) -> bool:
+    """Ruling 2026-09-16: a Class 1 signal observed 30+ minutes after it was
+    posted is stale — the move may already have happened. Unknown age reads
+    as fresh: the fresh path is the status quo, and a record that never
+    carried a timestamp must not start failing its own replay."""
+    if signal.signal_class is not SignalClass.CLASS_1_REALTIME:
+        return False
+    age = signal_age(signal)
+    return age is not None and age >= CLASS1_STALE_AFTER
+
+
+def _format_age(age: timedelta) -> str:
+    minutes = int(age.total_seconds() // 60)
+    if minutes < 60:
+        return f"{minutes} min"
+    hours, rem = divmod(minutes, 60)
+    return f"{hours}h {rem:02d}m"
 
 SYSTEM_PROMPT = """\
 You are the research layer of an automated trading system. You analyse market signals \
@@ -143,6 +194,22 @@ _CLASS_GUIDANCE = {
         "This is a real-time signal. Speed is genuine edge here, but it is not a "
         "reason to lower your evidentiary bar. priced_in_analysis may be null if "
         "there is no disclosure lag to reason about."
+    ),
+    # Ruling 2026-09-16: the same signal read 30+ minutes after it was posted —
+    # typically an overnight post read at the next session's open, 8-16 hours
+    # on. The lag is hours, not the congressional 45 days, but the question is
+    # identical to the lagged classes': has the move already happened?
+    "class_1_stale": (
+        "This is a real-time-class signal that the system observed WELL AFTER it "
+        "was posted — see the age in the metadata above. Markets have traded on it "
+        "since: overnight futures, Asian and European sessions, or hours of the "
+        "regular session. priced_in_analysis is MANDATORY, and it must demonstrate "
+        "measurement, not suspicion: state what the named or implied instruments "
+        "have done since the post's own timestamp, and whether entry at the "
+        "CURRENT price retains the thesis's expected value. Lag alone is not "
+        "disqualifying — a post whose implied move has not happened may retain "
+        "full edge hours later. Decline for DEMONSTRATED priced-in movement, never "
+        "for elapsed time per se. A report without the analysis is discarded."
     ),
     SignalClass.CLASS_2_MOMENTUM: (
         "This is a congressional disclosure. The STOCK Act permits up to 45 days "
@@ -304,6 +371,19 @@ def build_user_prompt(
     ]
     if signal.classification is not None:
         lines.append(f"- post classification: {signal.classification}")
+    if signal.signal_class is SignalClass.CLASS_1_REALTIME:
+        # Ruling 2026-09-16: the model must see when the thing was SAID, not
+        # when the system polled it. observed_at above is the poll time.
+        posted = signal_published_at(signal)
+        if posted is None:
+            lines.append("- posted at: not provided by the scanner (age unknown)")
+        else:
+            age = signal_age(signal) or timedelta(0)
+            stale = " — STALE for a real-time signal; see the guidance below" if class1_is_stale(signal) else ""
+            lines.append(
+                f"- posted at: {posted.isoformat()} (age at observation: "
+                f"{_format_age(age)}{stale})"
+            )
     tickers = signal.metadata.get("tickers")
     if tickers:
         lines.append(f"- tickers extracted by the scanner: {tickers}")
@@ -312,6 +392,8 @@ def build_user_prompt(
         lines.extend(add_decision_lines(add_context))
 
     guidance = _CLASS_GUIDANCE[signal.signal_class]
+    if class1_is_stale(signal):
+        guidance = _CLASS_GUIDANCE["class_1_stale"]
     if signal.signal_class is SignalClass.CLASS_1_REALTIME and signal.metadata.get(
         "form", ""
     ).startswith("8-K"):

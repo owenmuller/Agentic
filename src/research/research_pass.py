@@ -23,7 +23,15 @@ from pydantic import ValidationError
 
 from research.client import LLMClient, ResearchUsage
 from research.credibility import CredibilityTracker
-from research.prompts import SYSTEM_PROMPT, build_user_prompt, build_verification_prompt, system_prompt_for
+from research.prompts import (
+    CLASS1_STALE_AFTER,
+    SYSTEM_PROMPT,
+    build_user_prompt,
+    build_verification_prompt,
+    class1_is_stale,
+    signal_age,
+    system_prompt_for,
+)
 from research.reports import (
     ResearchRejection,
     ResearchRejectionCode,
@@ -274,6 +282,23 @@ class ResearchPass:
                     (
                         f"{signal.signal_class} signals carry disclosure lag; "
                         f"priced_in_analysis is mandatory and was not provided"
+                    ),
+                    excerpt=report.thesis,
+                ),
+                usage,
+            )
+        if class1_is_stale(signal) and not report.has_priced_in_analysis:
+            # Ruling 2026-09-16: a Class 1 signal read 30+ minutes after it was
+            # posted is measured like a lagged one — the move may have happened.
+            age = signal_age(signal)
+            return (
+                self._reject(
+                    signal,
+                    ResearchRejectionCode.MISSING_PRICED_IN_ANALYSIS,
+                    (
+                        f"class_1 signal observed {age} after it was posted "
+                        f"(stale past {CLASS1_STALE_AFTER}); priced_in_analysis is "
+                        f"mandatory and was not provided (ruling 2026-09-16)"
                     ),
                     excerpt=report.thesis,
                 ),

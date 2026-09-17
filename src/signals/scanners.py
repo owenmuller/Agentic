@@ -212,6 +212,11 @@ class Scanner(ABC):
         dispatch_weight: float = 0.0,
     ) -> Signal:
         meta = dict(item.fields) if metadata is None else dict(metadata)
+        # The item's OWN timestamp (ruling 2026-09-16): the research prompt
+        # renders when the thing was said and how old it is at observation,
+        # and Class 1 signals past 30 minutes get the lagged-class framing.
+        # Set for every source; a fetcher's own field (X created_at) wins.
+        meta.setdefault("published_at", item.published_at.isoformat())
         attributed = source.id
         external = item.external_id
 

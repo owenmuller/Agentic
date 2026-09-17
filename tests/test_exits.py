@@ -46,6 +46,7 @@ from test_orchestrator import (
     FakeClock,
     counter,
     feed,
+    fresh_feed,
     kill_switch_broker,
     orchestrator_config,
     prose,
@@ -157,12 +158,15 @@ def build(
 ):
     from fixture_posts import PURE_FORWARD_CALL
 
+    clock = clock or FakeClock()
     return start(
-        fetcher=fetcher if fetcher is not None else feed(trump_posts=[PURE_FORWARD_CALL]),
+        fetcher=fresh_feed(
+            fetcher if fetcher is not None else feed(trump_posts=[PURE_FORWARD_CALL]), clock
+        ),
         prices=prices if prices is not None else MutablePrices(NUE=str(QUOTE)),
         llm_client=llm or RoutingLLM(),
         adapter=broker or FakeBroker(),
-        clock=clock or FakeClock(),
+        clock=clock,
         data_dir=tmp_path,
         limits=limits,
         signals_config=signals_config,

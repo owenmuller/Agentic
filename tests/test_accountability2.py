@@ -196,7 +196,8 @@ def test_the_golden_set_loads_and_names_the_ruled_cases():
     cases = load_cases()
     entries = [case for case in cases if case.kind == "entry"]
     reviews = [case for case in cases if case.kind == "review"]
-    assert len(entries) == 20
+    # 20 + the stale Class 1 relay (ruling 2026-09-16).
+    assert len(entries) == 21
     # Review cases (ruling 2026-09-02) grade the reasoning structure.
     assert len(reviews) == 4
     for case in reviews:
