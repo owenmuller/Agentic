@@ -3887,6 +3887,58 @@ which is the rule working; the harness now delivers posts as a live feed does, a
 
 **Freeze re-closes.** Bounce to activate (the running service predates `7bc183c` and `4a364cd`).
 
+### Golden replay exercises the boundary confirmation; first concurrence read — 2026-09-17 (two human approvals)
+
+**Measurement that prompted it (report-only, ~$1.19).** The three Class 2 priced-in cases rerun
+3x each under the byte-identical shipped shape, giving six observations per case:
+`pelosi-uber-priced-in` no/62, no/74, **long/58**, no/35, no/30, no/32 (1 traded in 6);
+`pelosi-be-calls-decline` **long/62, long/62**, no/38, no/32, no/72, no/55 (2 in 6; with the 09-03
+history long/52 and the post-ship arm no/45, no/72, no/72: 3 in 10); `taylor-ibp-small` no/72,
+no/72, no/35, no/82, no/72, no/72 (0 in 6). Every traded verdict any of these cases has ever
+produced (52, 58, 62, 62) sat INSIDE the boundary-confirmation band [50, 70) — none cleared 70.
+So on priced-in Class 2 fixtures the band is the only thing between model variance and a 2%
+position, engaged on roughly one first pass in six, and the golden harness could not say how often
+the second pass would concur because it ran a single pass and stopped one step short of the guard.
+
+**Approval 1 — the golden replay runs the production confirmation (`60be09b`, VERIFIED
+origin/vps/HEAD, droplet pulled, 1255 passed / 3 skipped both sides).** The rule moved out of the
+pipeline method into ONE function, `orchestrator.boundary.confirm_boundary`; the pipeline
+delegates to it unchanged (a test pins the delegation). The golden runner calls the same function:
+a tradeable first-pass verdict inside `[no_trade_below, + band_width)` buys the production second
+pass, the case grades on what would SIZE — the lower-confidence report when the second replicates,
+no position when it does not — both passes stay on the line (`long/58 target=95 | boundary: second
+no_position/72 -> REVERSED, nothing sizes`), and the summary tallies upheld against reversed with a
+concurrence rate. `python -m orchestrator golden --single-pass` restores the one-pass replay for
+variance measurement. Graded on the sized outcome deliberately: a reversed in-band long is the guard
+working, and a drift list that flagged it would carry the noise the rewrite below removes; the
+tally line is where the guard's workload is read.
+
+**Approval 2 — BE-calls and IBP graded behaviourally.** Both now match the Uber case: directions
+no_position|long, confidence [0, 100], a traded verdict only in [0, 49]. A decline at any
+confidence passes; a long that would size is drift. Decline confidence on identical requests
+(38/32/72/55; 72/72/35/82/72/72) is recorded on every line and graded on none.
+
+**First concurrence read (9 full-path runs, 3 per case, ~$2.14, `data/variance_full_2026-09-17.log`):**
+
+| case | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| pelosi-uber-priced-in | no/35 | **long/58 → 2nd no/72, REVERSED** | no/18 |
+| pelosi-be-calls-decline | no/38 | **long/62 → 2nd long/52, UPHELD — sizes long/52 (DRIFT)** | **long/52 → 2nd no/42, REVERSED** |
+| taylor-ibp-small | no/72 | no/72 | no/72 |
+
+Nine first passes, three tradeable, all three inside the band, **1 upheld, 2 reversed —
+1-in-3 concurrence, n=3**. Across every byte-identical observation now on file (27 first passes
+on these three fixtures) the first-pass tradeable rate is 6/27 (22%), all six in the band; the one
+full-path pass-through that would have become a live position is a 2% BE long at 52 on a
+28-day-lagged options disclosure the human graded a decline on 2026-08-27. Read for 2026-10-15:
+the guard is doing real work and is catching most of what reaches it, but not all — with n=3 the
+concurrence rate is between "mostly reverses" and "coin flip", and it needs the tally from every
+routine replay between now and the review before the floor question (is 2% at 50 safe, or does the
+floor itself move) is answerable. Every golden run now prints that line; the replay logs are the
+accumulating record. No prompt change follows.
+
+**Also:** the pipeline's `BoundaryConfirmationSnapshot` import, orphaned by the extraction, removed.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

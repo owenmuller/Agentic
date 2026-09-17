@@ -44,7 +44,6 @@ from typing import Callable, Collection, Optional, Protocol
 from audit.log import AuditLog, AuditLogError
 from audit.records import (
     AddSnapshot,
-    BoundaryConfirmationSnapshot,
     DecisionRecord,
     ExpressionSnapshot,
     NearMissSnapshot,
