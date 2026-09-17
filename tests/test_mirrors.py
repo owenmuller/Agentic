@@ -365,8 +365,13 @@ def test_a_silent_mirror_is_flagged_for_a_human(tmp_path, signals_config):
     assert len(silent) == 1
     assert "silent for 4 trading days" in silent[0]
     assert "a human should check which" in silent[0]
-    # The never-delivered mirror is flagged too, against the same baseline.
-    assert any("trump_mirror_tdp" in m and "NEVER delivered" in m for m in messages)
+    # The dormant fallback (human ruling 2026-09-16) is measured against the
+    # same baseline, but its line STATES what the silence means — no alarm.
+    fallback = [m for m in messages if "trump_mirror_tdp" in m]
+    assert len(fallback) == 1
+    assert "has relayed nothing with a valid marker for 4 trading days" in fallback[0]
+    assert "retained as fallback" in fallback[0]
+    assert "a human should check" not in fallback[0]
 
 
 def test_a_weekend_gap_is_not_silence(tmp_path, signals_config):

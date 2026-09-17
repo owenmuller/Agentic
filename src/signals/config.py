@@ -155,6 +155,11 @@ class SourceConfig(_Strict):
     #: delivery — silence might mean the principal is quiet, or the bot died, and a
     #: human should check which.
     silence_warning_trading_days: Optional[int] = None
+    #: For mirror sources: what a silence MEANS for this mirror, when a human has
+    #: already ruled on it (2026-09-16: @TrumpDailyPosts posts only its own
+    #: commentary now and is retained as a dormant fallback). When set, the
+    #: silence line states this instead of asking a human to check.
+    silence_note: Optional[str] = None
     #: When set, this source's signals are researched ONLY if they name an
     #: instrument (per the scanner's ticker extraction) or match one of these theme
     #: stems. Everything else is recorded as a pre_filter stage rejection instead of

@@ -311,6 +311,16 @@ def mirror_silence(
             gap = _trading_days_between(baseline.date(), now.date())
             if gap < threshold:
                 continue
+            if source.silence_note:
+                # A human has already said what this mirror's silence means
+                # (ruling 2026-09-16): state it, do not raise an alarm.
+                messages.append(
+                    f"mirror {source.id} ({source.handle}) has relayed nothing with "
+                    f"a valid marker for {gap} trading days"
+                    + (f" (last delivery {last.date().isoformat()})" if last else "")
+                    + f" — {source.silence_note}"
+                )
+                continue
             if last is None:
                 messages.append(
                     f"mirror {source.id} ({source.handle}) has NEVER delivered a "

@@ -3757,6 +3757,58 @@ keep it as a dormant fallback; the Trump leg currently rides @TrumpTruthOnX alon
 within a minute but delivers ~1-4 in-session relays a day, most of them media-only ("New media post
 from Donald J. Trump") that the no-ticker/no-theme prefilter drops. No code or config changed.
 
+### Ruling 2026-09-16: trump_mirror_tdp retained as a dormant fallback; the Trump leg's real yield; age at read
+
+**Ruling.** @TrumpDailyPosts stays configured (marker enforcement makes it free; it covers the
+single point of failure on @TrumpTruthOnX). Its silence line now states what the silence means
+instead of asking a human to check: `SourceConfig.silence_note`, set in signals.yaml, renders
+"mirror trump_mirror_tdp (@TrumpDailyPosts) has relayed nothing with a valid marker for N trading
+days (last delivery …) — currently posting its own commentary; retained as fallback (human ruling
+2026-09-16)". ttox's line is unchanged (a real alarm). Tests in test_mirrors.
+
+**Q1 — the Trump leg's real yield, session gate removed (report only).** ttox's 88 posts since
+2026-09-10T12Z contain 63 genuine relays (marker present). Through the REAL Class 1 scanner they
+become **24 distinct trump_posts signals** — mirror signals dedup on a normalised content key, so
+the five "New media post from Donald J. Trump" relays stamped in the same minute collapse to one,
+and media-only relays with identical text collapse likewise. Through the real prefilter:
+
+    18  dropped: no ticker and no configured policy theme
+     3  dropped: bare link
+     3  SURVIVE -> research  (2 in-session on 09-14; 1 overnight 09-13/14)
+
+The three survivors: "Ukraine has agreed not to hit Russian Energy targets. Russia has agreed to
+do, likewise! The World's Diesel pr…" (09-14 15:07Z, in-session, theme **energy** → ETF shortlist
+[XLE, XOP] would have been proposed — the ONE post in seven days the theme→ETF map would have
+touched); "The failing Nation of Iran wants to make a deal…" (09-14 15:33Z, in-session, prefilter
+theme stem matched but no ETF-map theme); "First interior renderings of the magnificent new
+Ballroom…" (09-13 23:54Z, overnight, prefilter stem matched — a false positive of the broad
+research_prefilter_themes stems, no ETF theme). Zero relays carried a cashtag. **Yield: 3 research
+passes per week from 63 relays, one of them ETF-mappable, none naming a ticker.** The ETF map
+moved the needle by exactly one candidate post in seven days; the leg's supply is the constraint,
+not the mapping. (Dead-token weeks excluded — this is one live week.)
+
+**Q2 — age at read.** Class 1 polls only 13:30-20:00 UTC; off-session relays are read at the next
+open's gap-sized lookback. Age of each of the 63 relays when the system would read it:
+
+    10  under 5 min (in-session relays)
+    19  0.1-4h   (posted 09:30-13:30Z, read at the 13:30Z open)
+    10  8-12h
+    14  12-16h
+     3  16-24h
+     7  24h+     (Friday-evening / weekend posts read Monday 13:30Z; max 65.3h)
+    median age of an off-session relay at read: 9.6h
+
+Of the three survivors: two read at ~0h, one at 13.6h. **What the model is told:** a Class 1
+signal's `observed_at` is the POLL time, and `created_at` sits in metadata but is not rendered in
+the prompt — so an overnight Truth read at 13:30Z looks to the research pass like a post from a
+minute ago, and the Class 1 guidance says "priced_in_analysis may be null: no disclosure lag to
+reason about". For a policy post that is wrong by 10-16 hours of overnight futures, Asian and
+European trading. Recommendation (a research-layer change → its own ruling under the freeze, golden
+replay + round trip): render the post's own timestamp and its age in the SIGNAL METADATA block,
+and for a Class 1 signal older than N minutes (proposed: 30) make priced_in_analysis mandatory with
+the same measurement framing the lagged classes get — the lag is hours, not days, but the
+question is identical: has the move already happened? No change made.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

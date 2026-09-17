@@ -142,6 +142,13 @@ classes:
         # warning is the watchdog that tells a human to re-verify the format.
         required_marker: 'donald\s+j\.?\s*trump\s+truth\s+social\s+post'
         silence_warning_trading_days: 2
+        # Human ruling 2026-09-16: verified against the live API that this
+        # account no longer relays Truths (348 posts in 7 days, 0 carrying the
+        # header, none matching a @TrumpTruthOnX relay) — it posts its own
+        # commentary. RETAINED as a dormant fallback: marker enforcement makes
+        # it free, and it covers the single point of failure on ttox. The
+        # silence line below states this instead of asking a human to check.
+        silence_note: "currently posting its own commentary; retained as fallback (human ruling 2026-09-16)"
         daily_read_warning: 200
         monthly_cost: 0
         # Feed cost is billed from here, not from the window start
