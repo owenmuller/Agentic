@@ -3809,6 +3809,84 @@ and for a Class 1 signal older than N minutes (proposed: 30) make priced_in_anal
 the same measurement framing the lagged classes get — the lag is hours, not days, but the
 question is identical: has the move already happened? No change made.
 
+### Class 1 staleness — human ruling 2026-09-16 (freeze lifted for this alone, re-closed here)
+
+**Ruling, as built (`4a364cd`, VERIFIED origin/vps/HEAD, droplet pulled, 1252 passed / 3
+skipped both sides):**
+
+1. Every Class 1 prompt renders the post's OWN timestamp and its age at observation:
+   `- posted at: 2026-09-14T15:07:02+00:00 (age at observation: 10h 00m — STALE for a real-time
+   signal; see the guidance below)`. The scanner's `_build` stamps `published_at` (the item's own
+   time) into every signal's metadata; the X fetcher's `created_at` is left alone and read first.
+   `observed_at` stays the poll time, as before — the prompt now shows both.
+2. `class1_is_stale`: Class 1 and age ≥ 30 min (`CLASS1_STALE_AFTER`, inclusive at 30). Stale →
+   the "class_1_stale" guidance replaces the fresh one: markets have traded on it since;
+   priced_in_analysis is MANDATORY and must MEASURE what the named or implied instruments did since
+   the post's timestamp; lag alone is not disqualifying; decline for DEMONSTRATED movement, never
+   for elapsed time. `ResearchPass` rejects a stale Class 1 report without the analysis
+   (`missing_priced_in_analysis`), exactly as it does the lagged classes.
+3. Under 30 minutes the fresh path is unchanged (tests pin "priced_in_analysis may be null" on a
+   2-minute-old post). Unknown age (records/fixtures without a timestamp) renders "not provided by
+   the scanner (age unknown)" and reads as fresh — the status quo, so old records replay unchanged.
+4. Golden: `expect_priced_in` grading (non-blank AND carrying a number — a measurement, not a
+   suspicion) and the new case `trump-energy-relay-read-10h-later`: the REAL 09-14 15:07Z relay
+   ("Ukraine has agreed not to hit Russian Energy targets… The World's Diesel price rise…"), the
+   one ETF-mappable policy relay of the live week, observed ten hours later with theme energy →
+   [XLE, XOP] stamped as the pipeline would. Any verdict may be right; a null or numberless
+   analysis is drift.
+
+**Live round trip (`ops/experiments/class1_staleness_round_trip.py`, production pass, screen →
+verification, $0.27):** typed verdict **no_position / 78**, tickers [XOP], horizon days. The
+model read the age line and reasoned about it: "The headline landed mid-session, so roughly five
+and a half hours of NYMEX crude and NYSE equity trading plus the settle … elapsed before
+observation … the front-month reaction window is seconds-to-minutes … the repricing window closed
+intraday; the honest read is priced-in-by-session-close." It also read the post's economics
+correctly against the proposal — bearish crude and diesel cracks, so the long-oil shortlist
+[XLE, XOP] carries the exposure the WRONG way — and declined. Honest limit, stated by the model
+itself: "I did not complete direct quote measurement of XOP/XLE/Brent prints since 15:07 UTC, so
+I am NOT claiming a measured percentage move." The golden digit check passed on the timestamps in
+the analysis, not on a price move; the case's bar is "engages the move", which this does, but a
+stricter grade (a percent or a price) is a reasonable tightening if the pattern repeats.
+
+**Golden replay (27 cases: 21 entry, 4 review, 2 add):**
+
+**24/27 passed, ~$5.24** (`data/golden_2026-09-16b.log` on the droplet, finished 02:23Z 09-17).
+The new case **`trump-energy-relay-read-10h-later`: PASS, no_position/80** — the analysis carried
+the measurement the case demands (the round trip above was 78; two observations, same verdict).
+All Class 1 cases passed (trump-* 76-88, nolimitgains 92, uw 85, injection 93, mirror 91): the
+age line renders on every one of them now, and none of those fixtures carries a timestamp older
+than 30 minutes, so they read the unchanged fresh guidance plus one metadata line. Reviews 4/4
+(hold / trim / close / close — day9 back to close after one hold), adds 2/2 (hold/60, hold/72,
+identical to the 09-16 run).
+
+Three drifts, all **Class 2 congressional** cases. The ruling touches Class 1 only, and the
+system prompt, user prompt and tool schema for these three cases are **byte-identical** between
+`7bc183c` (pre-ruling) and `4a364cd` (checked with a worktree at 7bc183c: `diff -r` on the three
+dumps, silent). So this is the model's variance on unchanged requests, not the change:
+
+- `pelosi-uber-priced-in`: **long/58, target 90** — the case's behavioural grade is "no position
+  is taken", and 58 would trade at 2%. Prior observations no_position/62 (09-15) and
+  no_position/74 (09-16). First traded verdict on this case in three full replays; the May
+  purchase read in August is the canonical priced-in decline. One observation; the fixture is
+  unchanged. Watch on the next replay — a second traded verdict here would be a real question
+  about how the prompt frames a three-month backfill, not noise.
+- `pelosi-be-calls-decline`: **no_position/38** — direction right (the graded decline) for the
+  first time in three full replays (long/62 on 09-15 and 09-16); confidence outside [40, 95].
+  The known drift on this case is the traded long; a low-confidence decline is the better failure.
+- `taylor-ibp-small`: **no_position/35** — direction right; confidence 72 (09-15), 22 (09-16,
+  leaky shape), 72 (third observation, byte-identical shape), 35 now. The no_position confidence
+  band is the set's known noise source; the verdict itself has never drifted on this case.
+
+No prompt change follows from this run. Human review of the three lines above is the CLAUDE.md
+requirement; the pelosi-uber line is the one that earns attention.
+
+**Test harness note.** `tests/test_orchestrator.fresh_feed` stamps fixture posts at the harness
+clock: the fixture's published_at was the constant 2026-08-17, and nine September-clock tests
+(position management, probation bias, the halt marker) saw a weeks-stale relay owing an analysis —
+which is the rule working; the harness now delivers posts as a live feed does, at posting time.
+
+**Freeze re-closes.** Bounce to activate (the running service predates `7bc183c` and `4a364cd`).
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in
