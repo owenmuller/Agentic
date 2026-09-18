@@ -52,6 +52,7 @@ from signals.scanners import Scanner
 from orchestrator.budget import ResearchBudget
 from orchestrator.config import DispatchConfig, ResearchClassCaps
 from orchestrator.scoring import DispatchScorer
+from signals.classification import extract_tickers
 from orchestrator.exits import ExitEngine
 from orchestrator.pipeline import PipelineResult, SignalPipeline
 from orchestrator.prefilter import ResearchPreFilter
@@ -61,6 +62,18 @@ if TYPE_CHECKING:  # pragma: no cover - annotation only
 from orchestrator.state import SessionState
 
 logger = logging.getLogger("orchestrator.loop")
+
+
+def _primary_symbol(signal: Signal) -> str:
+    """The symbol a signal is about, for same-day de-duplication: the scanner's
+    structured tickers field first, its own extraction over the content second.
+    Empty when the signal names nothing (a themed post) — nothing to de-duplicate."""
+    listed = str(signal.metadata.get("tickers") or "")
+    first = listed.split(",")[0].strip().upper() if listed else ""
+    if first:
+        return first
+    extracted = extract_tickers(signal.content)
+    return extracted[0].upper() if extracted else ""
 
 
 @dataclass(slots=True)
@@ -119,6 +132,7 @@ class TradingLoop:
         class_passes: Optional[dict[str, int]] = None,
         scorer: Optional["DispatchScorer"] = None,
         dispatch: Optional["DispatchConfig"] = None,
+        symbols_today: Optional[dict[str, str]] = None,
         previously_capped: Optional[set[tuple[str, str]]] = None,
         mechanical: Optional[object] = None,
         sweeper: Optional[object] = None,
@@ -167,6 +181,10 @@ class TradingLoop:
         self._pooled_sources = frozenset(dispatch.pooled_sources) if self._dispatch else frozenset()
         self._next_release: Optional[datetime] = None
         self._last_window: Optional[str] = None
+        #: Same-name-same-day de-duplication (ruling 2026-09-18): symbol ->
+        #: decision id of the first research pass dispatched on it today.
+        #: Seeded from the log, rolled with the source-pass day.
+        self._symbols_today: dict[str, str] = dict(symbols_today or {})
         #: Signals that lost a research slot (capped, or budget-deferred this
         #: process). Seeded from the audit log so a restart remembers. When
         #: the staleness rule later kills one of these, the rejection carries
@@ -468,6 +486,36 @@ class TradingLoop:
                 self._source_pass_day = dispatch_now.date()
                 self._source_passes = {}
                 self._class_passes = {}
+                self._symbols_today = {}
+            # Same-name-same-day de-duplication (ruling 2026-09-18): the FIRST
+            # tradeable candidate for a symbol dispatches; a later same-day
+            # candidate on that symbol is recorded, not paid for. It attaches
+            # as convergence — the registry already noted it for the batch, and
+            # on a held name it goes onto the position and owes a review — and
+            # the forward engine grades it through its own code. SBLK was
+            # researched three times on 2026-09-17 on three separate filings.
+            primary = _primary_symbol(signal)
+            first_id = self._symbols_today.get(primary) if primary else None
+            if primary and first_id is not None:
+                result = self._pipeline.record_prefiltered(
+                    signal,
+                    f"{primary} already researched today (decision {first_id}); "
+                    f"this {signal.source_id} signal attaches as convergence "
+                    f"context, not a second pass (ruling 2026-09-18)",
+                    code="same_name_today",
+                )
+                held_position = self._exits.position_for_symbol(primary)
+                if held_position is not None:
+                    self._exits.note_add_signal(
+                        held_position.decision_id,
+                        signal,
+                        None,
+                        "same_name_today",
+                        "same_name_today",
+                        result.decision_id,
+                    )
+                report.prefiltered += 1
+                continue
             cap = self._source_caps.get(signal.source_id)
             if cap is not None:
                 if self._source_passes.get(signal.source_id, 0) >= cap:
@@ -529,6 +577,9 @@ class TradingLoop:
                 bucket = self._class_caps.bucket(signal.signal_class)
                 self._class_passes[bucket] = self._class_passes.get(bucket, 0) + 1
             result = self._pipeline.process(signal)
+            symbol_key = _primary_symbol(signal)
+            if symbol_key:
+                self._symbols_today.setdefault(symbol_key, result.decision_id)
             report.processed.append(result)
             self._note_verdict(signal, result)
             if (

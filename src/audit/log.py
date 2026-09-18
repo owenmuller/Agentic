@@ -24,6 +24,7 @@ from typing import Callable, Iterator, Optional
 from pydantic import TypeAdapter
 
 from audit.records import (
+    snapshot_tickers,
     ConvergenceSnapshot,
     ExpressionSnapshot,
     AuditRecord,
@@ -834,6 +835,31 @@ class AuditLog:
                 continue
             counts[source] = counts.get(source, 0) + 1
         return counts
+
+    def research_symbols_on(self, day: date) -> dict[str, str]:
+        """symbol -> decision_id of the FIRST research pass dispatched on that
+        symbol on ``day`` (same-name-same-day de-duplication, ruling
+        2026-09-18): the seed for the loop's per-day symbol ledger, so a
+        restart cannot buy a second pass on a name already researched today.
+        Same counting rule as ``research_passes_by_source_on``."""
+        first: dict[str, str] = {}
+        for record in self.records():
+            if getattr(record, "recorded_at", None) is None:
+                continue
+            if record.recorded_at.date() != day:
+                continue
+            if isinstance(record, DecisionRecord):
+                if record.sizing.strategy in ("mechanical", "cash_sweep"):
+                    continue
+            elif isinstance(record, StageRejectionRecord):
+                if record.stage in (RejectedStage.PRE_FILTER, RejectedStage.TRIAGE):
+                    continue
+            else:
+                continue
+            tickers = snapshot_tickers(record.signal)
+            if tickers:
+                first.setdefault(tickers[0].upper(), record.decision_id)
+        return first
 
     def research_passes_on(self, day: date) -> int:
         """How many signals were researched on ``day`` (UTC).

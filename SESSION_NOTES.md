@@ -4102,6 +4102,55 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### Two rulings from the grounding pass — 2026-09-18 (congressional floor $100K; same-name-same-day de-dup)
+
+**1. Congressional amount floor $15K → $100K (`signals.yaml prefilter.min_amount_max` 100001, strictly-below).**
+The evidence: ≤$15K was 82% of graded candidates at −0.79% mean 5d excess (33% hit, n=1541);
+$15K–$50K −0.67 (n=223); $50K–$100K −0.88 (n=34); only $100K–$250K (+0.58, n=34) and $250K–$1M
+(+0.76, n=36) measured positive. The threshold is 100,001 so the "$50,001 – $100,000" band (max
+exactly 100,000, measured −0.88) is excluded; "$100,001 – $250,000" researches.
+
+**Two facts the ruling should know, measured after it was made:**
+- **The live cut is ~99.7%, not ~80%.** Of the 1,546 congressional purchases that reached dispatch
+  in the last 16 days, **4** topped out above $100,000 (0.25/day; all in the $250K–$1M band; 3 of
+  the 4 were already researched). The positive bands' n (34/36) accrued mostly from the August
+  roster backfill, not the live flow. Forward, the congressional source yields roughly one
+  candidate a week. Its 5-pass cap and its class-pool share are now almost entirely headroom.
+- **The mechanical arm moves with it.** Qualification is the same prefilter by the 2026-08-27 ruling
+  (the funnels never diverge), so mechanical intake also falls to ~1/week. The sleeve holds 30
+  positions at capacity (554 `mechanical_capacity` rejections in 16 days, none above $100K), so the
+  practical change is that slices freed by 367-day time exits will refill slowly. Both flagged for
+  the 2026-10-15 review; implemented as ruled, no divergence built.
+
+**2. Same-name-same-day de-duplication (loop, before the caps).** The FIRST tradeable candidate for
+a symbol on a day dispatches; every later same-day candidate on that symbol writes
+`stage_rejection same_name_today` naming the first decision id, spends no pass, and attaches as
+convergence: the registry already has it for the batch, and on a held name it is noted on the
+position (`note_add_signal`, verdict `same_name_today`) and owes a review, which runs in the same
+tick like a held add verdict's does. The ledger (`AuditLog.research_symbols_on`) is seeded from the
+log at startup and rolls with the day. Keyed on the candidate's OWN instrument (structured tickers
+field, then extraction), never on what research later returned; a signal naming nothing is not
+de-duplicated. Consequence by design: a second same-day signal on a name opened today is no longer
+an add decision — it attaches; the add path is for a later day. Origin: SBLK researched three
+times on 2026-09-17 on three separate Form 4 filings. Tests: `tests/test_same_name_today.py` (4);
+fixtures across the suite moved above the new floor, and same-symbol batches in the budget and cap
+tests now use distinct names.
+
+**Report (no build): Form 4 cluster sample vs the singles control.**
+- Clusters: 51 candidates since the source went live 2026-09-02 (16 trading days), ~3.2/day, rising
+  (8–10/day this week). 12 have 5d marks (mean −0.14, 50% hit — unmeasured at that n). A 5d mark
+  needs five calendar days plus a forward refresh: with `priors --refresh` on or after 2026-09-22 the
+  clusters observed through 09-15 (24) resolve → **n ≥ 20 at 5d by about 2026-09-22**, ~50 by the
+  09-25 weekly report. At 20d, n ≥ 20 needs clusters observed by ~09-15 marked 20 days on → **about
+  2026-10-06**, inside the 10-15 review window.
+- Singles (the control): 186 candidates, 98 with 5d marks, **−1.80% mean, 43% hit** — measured
+  negative, grounded. C-suite singles: 4 candidates in 16 days (0.25/day), 0 with marks; at that
+  pace n ≥ 20 is ~80 trading days out, so the C-suite door cannot be graded on its own by 10-15 and
+  should be judged against the singles control it was carved from.
+- Flagged for 2026-10-15: if clusters are not positive at n ≥ 20 while singles stay negative, the
+  cluster hypothesis fails its own test; if singles stay negative regardless, the C-suite door is
+  a door into a measured-negative population.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in

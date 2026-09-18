@@ -272,7 +272,7 @@ def test_the_class_pool_stops_the_next_pass_with_the_code(tmp_path, signals_conf
     from research.config import ResearchConfig
     from risk_gate import RiskLimits
 
-    calls = [f"Loading $NVDA here. Setup is live, entry: {180 + n}." for n in range(3)]
+    calls = [f"Loading ${symbol} here. Setup is live, entry: {180 + n}." for n, symbol in enumerate(("NVDA", "AMD", "INTC"))]
     started = build(
         tmp_path,
         RiskLimits.load(),

@@ -1437,7 +1437,7 @@ def test_a_filer_sale_in_a_held_name_forces_a_review_through_the_loop(
     from test_hardening import disclosure_item
 
     fetcher = MutableCongressionalFeed(
-        disclosure_item("row-entry", "NUE", "$50,001 - $100,000", "2026-08-17")
+        disclosure_item("row-entry", "NUE", "$100,001 - $250,000", "2026-08-17")
     )
     llm = RoutingLLM(
         **{

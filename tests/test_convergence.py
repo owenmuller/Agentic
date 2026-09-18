@@ -293,7 +293,7 @@ def test_the_mechanical_record_is_never_stamped(tmp_path):
             }
         ),
         fetcher=congressional_feed(
-            disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")
+            disclosure_item("row-1", "NUE", "$100,001 - $250,000", "2026-08-17")
         ),
         prices=prices_of(NUE="140.00", SGOV="100.40"),
         broker=FakeBroker(),
@@ -330,7 +330,7 @@ def test_a_traded_decision_is_stamped(tmp_path):
             }
         ),
         fetcher=congressional_feed(
-            disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")
+            disclosure_item("row-1", "NUE", "$100,001 - $250,000", "2026-08-17")
         ),
         prices=prices_of(NUE="140.00", SGOV="100.40"),
         broker=FakeBroker(),
@@ -389,13 +389,13 @@ def test_clustered_disclosures_outrank_a_solo_one_for_the_last_slot(
     from signals import SignalsConfig
     from test_orchestrator import FakeBroker, FakeClock, build, orchestrator_config, prices_of
 
-    solo = disclosure_item("solo-1", "AAA", "$50,001 - $100,000", "2026-08-17")
+    solo = disclosure_item("solo-1", "AAA", "$100,001 - $250,000", "2026-08-17")
     solo.fields["representative"] = "Solo Member"
     solo.fields["credibility_key"] = "congressional_disclosures/Solo Member"
-    pair_one = disclosure_item("pair-1", "BBB", "$50,001 - $100,000", "2026-08-17")
+    pair_one = disclosure_item("pair-1", "BBB", "$100,001 - $250,000", "2026-08-17")
     pair_one.fields["representative"] = "Member One"
     pair_one.fields["credibility_key"] = "congressional_disclosures/Member One"
-    pair_two = disclosure_item("pair-2", "BBB", "$50,001 - $100,000", "2026-08-17")
+    pair_two = disclosure_item("pair-2", "BBB", "$100,001 - $250,000", "2026-08-17")
     pair_two.fields["representative"] = "Member Two"
     pair_two.fields["credibility_key"] = "congressional_disclosures/Member Two"
 
@@ -423,4 +423,7 @@ def test_clustered_disclosures_outrank_a_solo_one_for_the_last_slot(
     assert len(report.processed) == 1
     record = report.processed[0].decision or report.processed[0].rejection
     assert record.signal.external_id in {"pair-1", "pair-2"}  # not the solo
-    assert report.deferred == 2
+    # The solo waits for tomorrow's budget; the pair's other member is the same
+    # name on the same day and attaches as convergence instead (ruling 2026-09-18).
+    assert report.deferred == 1
+    assert any(r.code == "same_name_today" for r in started.audit.stage_rejections())

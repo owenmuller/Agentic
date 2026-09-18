@@ -643,6 +643,7 @@ def start(
         class_passes=_class_passes_today(checks, now.date()),
         scorer=_dispatch_scorer(checks, registry),
         dispatch=checks.orchestrator_config.dispatch,
+        symbols_today=checks.audit.research_symbols_on(now.date()),
         previously_capped=checks.audit.capped_external_ids(),
         budget=checks.budget,
         session=checks.session,

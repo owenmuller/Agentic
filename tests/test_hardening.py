@@ -331,7 +331,7 @@ def test_outcomes_credit_the_member_not_the_firehose(tmp_path):
             self.outcomes.append((source_id, won))
 
     laced = signal(
-        "Purchase NUE $50,001 - $100,000",
+        "Purchase NUE $100,001 - $250,000",
         source_id="congressional_disclosures",
         metadata={"credibility_key": "congressional_disclosures/Nancy Pelosi"},
     )
@@ -395,7 +395,7 @@ def test_the_source_cap_stops_the_fourth_pass_with_the_code(
     from risk_gate import RiskLimits
 
     calls = [
-        f"Loading $NVDA here. Setup is live, entry: {180 + n}." for n in range(4)
+        f"Loading ${symbol} here. Setup is live, entry: {180 + n}." for n, symbol in enumerate(("NVDA", "AMD", "INTC", "MU"))
     ]
     llm = FakeLLM()
     started = build(
@@ -698,11 +698,11 @@ def test_stale_reported_disclosures_die_at_the_prefilter(prefilter):
     now = dt(2026, 8, 26, 14, 0, tzinfo=tz.utc)
 
     def disclosure(report_date):
-        metadata = {"amount_range": "$50,001 - $100,000"}
+        metadata = {"amount_range": "$100,001 - $250,000"}
         if report_date:
             metadata["report_date"] = report_date
         return signal(
-            "Purchase NUE $50,001 - $100,000",
+            "Purchase NUE $100,001 - $250,000",
             source_id="congressional_disclosures",
             metadata=metadata,
         )
@@ -857,8 +857,8 @@ def test_dispatch_weights_order_as_ruled():
     small_fresh = dispatch_weight_for("$1,001 - $15,000", "2026-08-26", now)
     assert big_old > small_fresh
 
-    same_size_fresher = dispatch_weight_for("$50,001 - $100,000", "2026-08-25", now)
-    same_size_staler = dispatch_weight_for("$50,001 - $100,000", "2026-08-20", now)
+    same_size_fresher = dispatch_weight_for("$100,001 - $250,000", "2026-08-25", now)
+    same_size_staler = dispatch_weight_for("$100,001 - $250,000", "2026-08-20", now)
     assert same_size_fresher > same_size_staler
 
     same_day_larger = dispatch_weight_for("$500,001 - $1,000,000", "2026-08-26", now)
@@ -908,7 +908,7 @@ def test_the_big_old_disclosure_dispatches_before_the_small_fresh_one(
             )
         ),
         fetcher=congressional_feed(
-            disclosure_item("small-fresh", "TOST", "$1,001 - $15,000", "2026-08-17"),
+            disclosure_item("small-fresh", "TOST", "$100,001 - $250,000", "2026-08-17"),
             disclosure_item(
                 "big-old", "BE", "$1,000,001 - $5,000,000", "2026-08-12"
             ),
@@ -974,9 +974,9 @@ def test_aged_out_capped_fires_only_after_a_prior_cap(tmp_path, signals_config):
 
     fresh = "2026-08-15"  # 2 days old at NOW; 17 days old after the restart
     day_one = [
-        disclosure_item(f"row-{n}", f"TK{n}", "$50,001 - $100,000", fresh)
+        disclosure_item(f"row-{n}", f"TK{n}", "$100,001 - $250,000", fresh)
         for n in range(5)
-    ] + [disclosure_item("capped-me", "BE", "$50,001 - $100,000", fresh)]
+    ] + [disclosure_item("capped-me", "BE", "$100,001 - $250,000", fresh)]
 
     llm = FakeLLM(
         structured({**REPORT, "confidence": 40, "priced_in_analysis": "checked"})
@@ -1006,7 +1006,7 @@ def test_aged_out_capped_fires_only_after_a_prior_cap(tmp_path, signals_config):
         llm=llm,
         fetcher=congressional_feed(
             *day_one,
-            disclosure_item("stale-new", "XOM", "$50,001 - $100,000", fresh),
+            disclosure_item("stale-new", "XOM", "$100,001 - $250,000", fresh),
         ),
         prices=prices_of(NUE="140.00"),
         broker=FakeBroker(),

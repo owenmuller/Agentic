@@ -262,7 +262,7 @@ def test_the_same_family_gets_no_bump_and_a_full_band_is_no_headroom(
     from fixture_posts import PURE_FORWARD_CALL
 
     feeds.items["trump_posts"].append(RawItem("trump_posts-1", PURE_FORWARD_CALL + " Adding.", NOW))
-    clock.advance(minutes=2)
+    clock.advance(days=1, minutes=1)  # same-day repeats attach (ruling 2026-09-18)
     report = started.loop.tick()
 
     result = report.processed[0]
@@ -390,7 +390,7 @@ def test_the_stop_is_re_derived_on_add_and_only_ever_tightens(
     # mark it saw (160) until the guardrail pass re-marks it, so a full-headroom
     # add here would be refused as max_single_position_exceeded — correctly.
     llm.add = structured({**ADD_REPORT, "confidence": 100, "add_fraction": "0.25", "target_price": "260"})
-    clock.advance(minutes=61)
+    clock.advance(days=1, minutes=1)  # same-day repeats attach (ruling 2026-09-18)
     tick = started.loop.tick()
     assert tick.processed and tick.processed[0].traded
     assert len(position.lots) == 3

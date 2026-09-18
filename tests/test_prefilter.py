@@ -295,7 +295,7 @@ def test_filtered_posts_do_not_requeue_after_restart(tmp_path, signals_config):
 
 
 def disclosure_signal(
-    amount_range: str = "$50,001 - $100,000",
+    amount_range: str = "$100,001 - $250,000",  # above the 2026-09-18 floor
     lag_days: str = "20",
     transaction: str = "Purchase",
     ticker: str = "NVDA",
@@ -335,19 +335,24 @@ def filing_signal(period_of_report: str):
 
 
 def test_a_small_disclosure_is_skipped_with_the_threshold_in_the_reason(prefilter):
-    reason = prefilter.skip_reason(
-        disclosure_signal(amount_range="$1,001 - $14,999"), now=NOW
+    """Ruling 2026-09-18: the floor is $100K — every band at or below it
+    measured negative 5d excess in the forward engine."""
+    for amount in ("$1,001 - $15,000", "$15,001 - $50,000", "$50,001 - $100,000"):
+        reason = prefilter.skip_reason(disclosure_signal(amount_range=amount), now=NOW)
+        assert reason is not None, amount
+        assert "min_amount_max" in reason
+    assert "$100,000" in prefilter.skip_reason(
+        disclosure_signal(amount_range="$50,001 - $100,000"), now=NOW
     )
-    assert reason is not None
-    assert "$14,999" in reason
-    assert "min_amount_max" in reason
 
 
 def test_the_amount_floor_is_strictly_below(prefilter):
-    """$1,001 - $15,000 tops out AT the floor: not below it, so it is researched.
+    """$100,001 - $250,000 tops out above the 100,001 threshold and researches;
+    $50,001 - $100,000 tops out at 100,000, strictly below it, and is skipped.
     Constraint #6 does not apply — the yaml states 'strictly below to skip'."""
-    signal = disclosure_signal(amount_range="$1,001 - $15,000")
-    assert prefilter.skip_reason(signal, now=NOW) is None
+    assert prefilter.skip_reason(disclosure_signal(amount_range="$100,001 - $250,000"), now=NOW) is None
+    assert prefilter.skip_reason(disclosure_signal(amount_range="$250,001 - $500,000"), now=NOW) is None
+    assert prefilter.skip_reason(disclosure_signal(amount_range="$50,001 - $100,000"), now=NOW) is not None
 
 
 def test_an_unparseable_amount_fails_open_to_research(prefilter):

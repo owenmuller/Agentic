@@ -765,7 +765,7 @@ def test_a_failing_fetcher_does_not_stop_other_classes_producing_signals(
 def test_the_budget_stops_research_and_defers_the_rest(
     tmp_path, limits, signals_config, research_config
 ):
-    posts = [f"Buying $NUE here. Entry: {140 + i}, stop: 130." for i in range(5)]
+    posts = [f"Buying ${symbol} here. Entry: {140 + i}, stop: 130." for i, symbol in enumerate(("NUE", "STLD", "CLF", "X", "CMC"))]
     started = build(
         tmp_path,
         limits,
@@ -787,7 +787,7 @@ def test_deferred_signals_are_queued_not_dropped(
 ):
     """They are still there tomorrow — the ceiling costs latency, not coverage."""
     clock = FakeClock()
-    posts = [f"Buying $NUE here. Entry: {140 + i}, stop: 130." for i in range(3)]
+    posts = [f"Buying ${symbol} here. Entry: {140 + i}, stop: 130." for i, symbol in enumerate(("NUE", "STLD", "CLF"))]
     started = build(
         tmp_path,
         limits,

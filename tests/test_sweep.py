@@ -394,7 +394,7 @@ def test_sweeps_and_mechanical_entries_replay_as_zero_research_passes(
         signals_config,
         research_config,
         fetcher=congressional_feed(
-            disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")
+            disclosure_item("row-1", "NUE", "$100,001 - $250,000", "2026-08-17")
         ),
         llm=quiet_llm(),
         prices=MutablePrices(NUE="140.00", SGOV="100.40"),

@@ -79,7 +79,7 @@ def test_a_qualified_disclosure_becomes_an_equal_weight_mechanical_entry(
     started = build_mechanical(
         tmp_path,
         signals_config,
-        items=[disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")],
+        items=[disclosure_item("row-1", "NUE", "$100,001 - $250,000", "2026-08-17")],
         broker=broker,
     )
     report = started.loop.tick()
@@ -107,7 +107,7 @@ def test_the_entry_record_is_a_decision_with_no_research_and_the_ruleset(
     started = build_mechanical(
         tmp_path,
         signals_config,
-        items=[disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")],
+        items=[disclosure_item("row-1", "NUE", "$100,001 - $250,000", "2026-08-17")],
     )
     started.loop.tick()
 
@@ -144,9 +144,9 @@ def test_mechanical_records_never_seal_the_signal_for_the_judged_arm(
     """Same disclosure, judged research suppressed at the cap: after the
     mechanical entry, the signal must still be unsealed for the judged path."""
     config_items = [
-        disclosure_item(f"warm-{n}", f"TK{n}", "$50,001 - $100,000", "2026-08-17")
+        disclosure_item(f"warm-{n}", f"TK{n}", "$100,001 - $250,000", "2026-08-17")
         for n in range(5)
-    ] + [disclosure_item("row-x", "NUE", "$50,001 - $100,000", "2026-08-17")]
+    ] + [disclosure_item("row-x", "NUE", "$100,001 - $250,000", "2026-08-17")]
     started = build_mechanical(tmp_path, signals_config, items=config_items)
     started.loop.tick()
 
@@ -162,7 +162,7 @@ def test_the_funnel_is_shared_and_identical(tmp_path, signals_config):
     """The engine holds the very same prefilter object the loop dispatches
     with (ruling: the experiment varies only judgment and exits), and a
     disclosure the judged rules kill is not entered mechanically."""
-    stale = disclosure_item("old", "NUE", "$50,001 - $100,000", "2026-07-01")
+    stale = disclosure_item("old", "NUE", "$100,001 - $250,000", "2026-07-01")
     small = disclosure_item("small", "NUE", "$1,001 - $5,000", "2026-08-17")
     started = build_mechanical(tmp_path, signals_config, items=[stale, small])
     assert started.loop.mechanical._prefilter is started.loop._prefilter
@@ -173,7 +173,7 @@ def test_the_funnel_is_shared_and_identical(tmp_path, signals_config):
 
 
 def test_sales_and_untradeable_names_never_enter(tmp_path, signals_config):
-    sale = disclosure_item("sale", "NUE", "$50,001 - $100,000", "2026-08-17")
+    sale = disclosure_item("sale", "NUE", "$100,001 - $250,000", "2026-08-17")
     sale.fields["transaction"] = "Sale (full)"
 
     class NoAssetBroker(FakeBroker):
@@ -185,7 +185,7 @@ def test_sales_and_untradeable_names_never_enter(tmp_path, signals_config):
         signals_config,
         items=[
             sale,
-            disclosure_item("ok", "NUE", "$50,001 - $100,000", "2026-08-17"),
+            disclosure_item("ok", "NUE", "$100,001 - $250,000", "2026-08-17"),
         ],
         broker=NoAssetBroker(),
     )
@@ -209,7 +209,7 @@ def mech_signal(external_id, ticker, filer="Test Member"):
             "representative": filer,
             "ticker": ticker,
             "transaction": "Purchase",
-            "amount_range": "$50,001 - $100,000",
+            "amount_range": "$100,001 - $250,000",
             "report_date": "2026-08-17",
             "disclosure_lag_days": "10",
         },
@@ -307,7 +307,7 @@ def test_a_filer_event_on_a_mechanical_position_is_recorded_and_changes_nothing(
     started = build_mechanical(
         tmp_path,
         signals_config,
-        items=[disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")],
+        items=[disclosure_item("row-1", "NUE", "$100,001 - $250,000", "2026-08-17")],
     )
     started.loop.tick()
     engine = started.loop.mechanical
@@ -340,7 +340,7 @@ def test_a_mechanical_filer_event_requires_the_same_filer(
     started = build_mechanical(
         tmp_path,
         signals_config,
-        items=[disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")],
+        items=[disclosure_item("row-1", "NUE", "$100,001 - $250,000", "2026-08-17")],
     )
     started.loop.tick()
     other = mech_signal("row-other", "NUE", filer="Other Member")
@@ -358,7 +358,7 @@ def enter_one(tmp_path, signals_config, prices=None):
     started = build_mechanical(
         tmp_path,
         signals_config,
-        items=[disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")],
+        items=[disclosure_item("row-1", "NUE", "$100,001 - $250,000", "2026-08-17")],
         prices=prices,
         clock=clock,
     )
@@ -434,7 +434,7 @@ def test_the_breaker_halts_entries_but_never_closes(tmp_path, signals_config):
 
     # A fresh qualifier is refused with the halt's own code...
     started2_items = disclosure_item(
-        "row-2", "AAPL", "$50,001 - $100,000", "2026-08-17"
+        "row-2", "AAPL", "$100,001 - $250,000", "2026-08-17"
     )
     started.loop._mechanical._considered.discard("row-2")
     from signals.scanners import Class2CongressionalScanner  # noqa: F401
@@ -456,7 +456,7 @@ def test_the_breaker_halts_entries_but_never_closes(tmp_path, signals_config):
             "representative": "Test Member",
             "ticker": "AAPL",
             "transaction": "Purchase",
-            "amount_range": "$50,001 - $100,000",
+            "amount_range": "$100,001 - $250,000",
             "report_date": "2026-08-17",
             "disclosure_lag_days": "10",
         },
@@ -491,7 +491,7 @@ def test_a_restart_splits_the_broker_position_and_does_not_rebuy(
     restarted = build_mechanical(
         tmp_path,
         signals_config,
-        items=[disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")],
+        items=[disclosure_item("row-1", "NUE", "$100,001 - $250,000", "2026-08-17")],
         broker=FakeBroker(
             cash=Decimal("99300"),
             positions=[
@@ -528,7 +528,7 @@ def test_attribution_buckets_mechanical_separately_and_measures_overlap(
     started = build_mechanical(
         tmp_path,
         signals_config,
-        items=[disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")],
+        items=[disclosure_item("row-1", "NUE", "$100,001 - $250,000", "2026-08-17")],
         llm=FakeLLM(
             structured({**REPORT, "priced_in_analysis": "checked"})
         ),
@@ -590,7 +590,7 @@ def test_a_mechanical_fill_lost_to_a_crash_is_recovered_at_next_startup(
     started = build_mechanical(
         tmp_path,
         signals_config,
-        items=[disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")],
+        items=[disclosure_item("row-1", "NUE", "$100,001 - $250,000", "2026-08-17")],
         broker=broker,
     )
     assert started.loop.tick().mechanical_entries == 1
@@ -671,7 +671,7 @@ def test_an_order_that_died_unfilled_records_its_release_not_a_fill(
     started = build_mechanical(
         tmp_path,
         signals_config,
-        items=[disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")],
+        items=[disclosure_item("row-1", "NUE", "$100,001 - $250,000", "2026-08-17")],
         broker=broker,
     )
     started.loop.tick()
@@ -702,7 +702,7 @@ def test_an_unanswerable_broker_leaves_the_record_untouched(tmp_path, signals_co
     started = build_mechanical(
         tmp_path,
         signals_config,
-        items=[disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")],
+        items=[disclosure_item("row-1", "NUE", "$100,001 - $250,000", "2026-08-17")],
         broker=broker,
     )
     started.loop.tick()
@@ -737,7 +737,7 @@ def test_pending_settlement_reads_differently_from_unmanaged(
     started = build_mechanical(
         tmp_path,
         signals_config,
-        items=[disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")],
+        items=[disclosure_item("row-1", "NUE", "$100,001 - $250,000", "2026-08-17")],
         broker=broker,
     )
     started.loop.tick()
@@ -777,7 +777,7 @@ def test_the_mechanical_entries_switch_stops_slices_while_exits_still_fire(
     first = build_mechanical(
         tmp_path,
         signals_config,
-        items=[disclosure_item("row-1", "NUE", "$50,001 - $100,000", "2026-08-17")],
+        items=[disclosure_item("row-1", "NUE", "$100,001 - $250,000", "2026-08-17")],
         prices=prices,
         clock=clock,
     )
@@ -799,7 +799,7 @@ def test_the_mechanical_entries_switch_stops_slices_while_exits_still_fire(
         ResearchConfig.load(),
         llm=quiet_llm(),
         fetcher=congressional_feed(
-            disclosure_item("row-2", "AAPL", "$50,001 - $100,000", fresh_report_date)
+            disclosure_item("row-2", "AAPL", "$100,001 - $250,000", fresh_report_date)
         ),
         prices=prices,
         broker=FakeBroker(
