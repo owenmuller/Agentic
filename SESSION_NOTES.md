@@ -3939,6 +3939,85 @@ accumulating record. No prompt change follows.
 
 **Also:** the pipeline's `BoundaryConfirmationSnapshot` import, orphaned by the extraction, removed.
 
+### AGGRESSION RULING 2026-09-18 — step 1 shipped (prefilters, Class 1 horizons, class-pool caps)
+
+Four levers ruled; sequence (1) prefilters + horizons -> (2) 8-K widening -> (3) baseline
+sleeve -> (4) new sources, report after each. **Revised the same day: cost discipline binds** —
+budget stays 40 (not 60) with class pools 15 / 20 / 5-reserve; Class 2/3 horizons NOT shortened;
+the baseline sleeve freezes both ways under a tripped kill switch; ambiguous tense admits behind a
+realized-P&L guard. Steps 2-4 gated on the spend/crowding report below.
+
+**Shipped (`579f0f1`, VERIFIED origin/vps/HEAD, droplet pulled, 1279 passed / 3 skipped both sides):**
+
+- `trump_posts` bare-link floor 120 -> 60; `research_prefilter_themes` 31 -> ~150 stems (multi-word
+  stems as phrases; short generic prefixes deliberately avoided — "port" would match "report"). The
+  theme -> ETF map is unchanged: a newly themed ticker-less post (healthcare, immigration, labor,
+  housing, regulation) researches WITHOUT a shortlist unless a human adds a map entry.
+- X trade-callers: `default_when_ambiguous: forward_call` on all four (nolimitgains, unusual_whales,
+  optionshawk, citrini), now actually wired — the field existed since 08-18 but the classifier
+  hard-coded retrospective. The **realized-P&L guard** (RETROSPECTIVE_PATTERNS) discards regardless
+  of tense: realised amounts, `+N%`, reported moves, dollar / "few K" results, multiples (3x, not
+  "3x leveraged"), entry-to-exit moves, exit and profit-taking language, P&L/screenshot, claimed past
+  calls, past timeframes, and celebration of a finished trade ("nice one", "great tell", "that
+  $META trade was beautiful", "caught"). Only bare was/were/had/got flips. Function-level default
+  stays retrospective (Constraint #6); the scanner passes the source's rule.
+- Class 1 prompts carry `FAST_CLASS_HORIZON_GUIDANCE` after the class guidance (fresh, stale and
+  8-K alike); Class 2/3 prompts proven byte-identical to `9b4477d` across all 11 lagged golden
+  entry cases (line diff: the 10 Class 1 cases differ by exactly the block; system prompt unchanged).
+- `TrackedPosition.signal_class` stamped at open and at replay; `exits.fast_class_leash_bounds`
+  (weeks floor 7) applies to Class 1 positions only via `ExitsConfig.leash_bounds_for`; unstamped
+  legacy positions read as not-Class-1.
+- Budget: `review_budget_reserve_fraction` 0.25 -> 0.125 (5 passes); `research_class_caps`
+  class_1 15 / class_2_3 20 in the loop after the per-source cap, before triage, code `class_cap`,
+  seeded from the log by source class on restart, validated <= entry ceiling.
+
+**Projected candidate increase (21-day funnel dump, 16 trading days of records):**
+
+| source | now researched/day | mechanism | after |
+|---|---|---|---|
+| trump_posts | 1.25 | 4 of 9 bare_links pass at 60; ~6 of 40 theme-misses match the new stems | ~1.9 (+0.6) |
+| unusual_whales | ~0 | 11 ambiguous discards in 7d flip, 0 carry a cashtag | +0 (die free at require_instrument) |
+| optionshawk | ~0.15 | 8 flip, 3 with cashtags; 2 of those 3 now hit the guard | +~0.15 |
+| nolimitgains | ~0 | 16 flip, 0 with cashtags | +0 |
+
+Net: roughly +1 pass/day, ~$0.20. The caller change is almost free because `require_instrument`
+still kills instrument-less prose at the prefilter; it only matters on the day a caller phrases a
+real, instrumented call in the past tense.
+
+**Spend and crowding under the 40 cap (revised ruling item 5).** Paid passes/day rose 4-10 (early
+Sept) -> 16 / 19 / 22 on 09-16/17/18 at a mean $0.213 per paid pass (screen + verification;
+reviews separate, median $0.16). Slot winners on 09-18: form_8k 6 (its cap), form4 5 (cap),
+congressional 5 (cap), trump 5, optionshawk 1 — i.e. Class 1 pool 12/15, Class 2/3 pool 10/20.
+Today's funnel does NOT exhaust either pool; the pools bind only if a source cap is raised. What
+the caps crowd out is already visible in `source_cap` rejections: **form_8k 87 / 254 / 67 per day
+against a cap of 6** (20-40x oversupply under the CURRENT five-item whitelist), congressional
+70-213/day against 5. Ceiling spend at full pools: 35 x $0.213 + 5 x $0.16 = ~$8.30/day; expected
+~$5-6 at today's volume. Within the $5-8 target; well under $20.
+
+**Golden replay (10 Class 1 entry cases, production path with boundary confirmation) + live round trip:**
+
+10/10 PASS, ~$2.19 (`data/golden_step1_2026-09-18.log`): trump-nike-woke no/78, trump-micron-announcement
+no/78, trump-clemens-nonmarket no/91, trump-ford-tariff-brag no/74, trump-venezuela-spr no/88,
+nolimitgains-instrumentless no/90, uw-tim-cook-breaking no/85, injection-cashtag no/92,
+mirror-fabricated-buyback no/90, trump-energy-relay-read-10h-later no/74 (priced-in analysis
+measured, digit check passed). No tradeable first-pass verdict, so the boundary tally is 0/0.
+The horizon block did not move a single verdict on the decline set — expected, since none of these
+cases has a horizon to shorten; the lever's effect shows up on the day a Class 1 signal is taken.
+
+**Live round trip** (`ops/experiments/class1_staleness_round_trip.py`, production two-stage pass
+under the new Class 1 prompt, $0.38): typed **no_position / 72, horizon days**, priced_in_analysis
+present and measuring the 10h window ("both legs ... wired into price before observation";
+"declined for demonstrated absorption plus a contradicted premise, not for elapsed time per se"),
+the ETF mapping declined on sign, mirror provenance verified. Honest limit stated by the model:
+search budget exhausted before it could pull XLE/XOP prints, so no percentage asserted — the same
+limit as the 09-16 round trip; a stricter numeric grade remains the reasonable tightening if it
+repeats a third time. Golden grade PASS. Request shape accepted: shipped.
+
+**Steps 2-4 status.** 8-K widening: the six new items (1.02, 2.02, 3.01, 5.01, 7.01, 8.01) are
+the HIGH-volume items — 2.02 (earnings) and 8.01 (other events) alone dwarf the current five — so
+widening adds candidates to a source already 20-40x over its 6-pass cap; volume and crowding are
+reported before it ships. Baseline sleeve and new sources: pending, in order.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in
