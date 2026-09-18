@@ -242,6 +242,11 @@ class TrackedPosition:
     #: positions. A NEW disclosure by this filer in this name forces a review
     #: (ruling 2026-09-01).
     originating_filer: str = ""
+    #: The opening signal's latency class ("class_1" / "class_2" / "class_3";
+    #: empty on positions restored from records that predate the stamp). A
+    #: Class 1 position's leash clamps into the fast-class bounds (ruling
+    #: 2026-09-18); empty reads as not-Class-1, the pre-ruling behaviour.
+    signal_class: str = ""
     #: Accumulated proceeds from closing fills.
     proceeds: Decimal = ZERO
     last_review_at: Optional[datetime] = None
@@ -731,7 +736,9 @@ class ExitEngine:
         latest, horizon = max(dated, key=lambda item: item[0])
         if position.resolution_date is not None and latest <= position.resolution_date:
             return
-        proposed = self._leash_for(horizon, position.opened_at, latest)
+        proposed = self._leash_for(
+            horizon, position.opened_at, latest, position.signal_class
+        )
         if proposed <= position.leash_days:
             return
         logger.info(
@@ -921,7 +928,9 @@ class ExitEngine:
                 str(report.time_horizon),
                 self._clock(),
                 report.expected_resolution_date,
+                str(working.signal.signal_class),
             ),
+            signal_class=str(working.signal.signal_class),
             high_water_price=price,
             originating_filer=(
                 working.signal.metadata.get("representative")
@@ -1121,7 +1130,13 @@ class ExitEngine:
             stop_price=self._stop_for(entry_price, blended),
             stop_fraction=blended,
             resolution_date=resolution_date,
-            leash_days=self._leash_for(horizon, all_buys[0].recorded_at, resolution_date),
+            leash_days=self._leash_for(
+                horizon,
+                all_buys[0].recorded_at,
+                resolution_date,
+                str(origin.signal.signal_class),
+            ),
+            signal_class=str(origin.signal.signal_class),
             high_water_price=high_water,
             last_review_price=last_review_price,
             originating_filer=lots[0].filer,
@@ -1258,15 +1273,17 @@ class ExitEngine:
         horizon: str,
         opened_at: datetime,
         resolution_date: Optional[date],
+        signal_class: str = "",
     ) -> int:
         """Days from entry this position may be held.
 
         The report's own date where it stated one, the horizon fallback where it did
-        not, and always clamped into the configured bounds for that horizon. The
-        clamp is what makes the date safe to accept: a model naming 2031 gets the
-        ceiling, not 2031.
+        not, and always clamped into the configured bounds for that horizon — the
+        fast-class bounds for a Class 1 position (ruling 2026-09-18). The clamp is
+        what makes the date safe to accept: a model naming 2031 gets the ceiling,
+        not 2031.
         """
-        bounds = self._config.leash_bounds.for_horizon(horizon)
+        bounds = self._config.leash_bounds_for(horizon, signal_class)
         if resolution_date is None:
             return bounds.clamp(self._config.time_stop_days.for_horizon(horizon))
         return bounds.clamp((resolution_date - opened_at.date()).days)
@@ -1444,7 +1461,9 @@ class ExitEngine:
         revised = verdict.revised_resolution_date
         if revised is None:
             return None
-        proposed = self._leash_for(position.time_horizon, position.opened_at, revised)
+        proposed = self._leash_for(
+            position.time_horizon, position.opened_at, revised, position.signal_class
+        )
         if proposed == position.leash_days:
             return None
         if proposed > position.leash_days and not verdict.may_extend:
@@ -1525,7 +1544,9 @@ class ExitEngine:
                 break
 
             price = self._mark_for(position)
-            bounds = self._config.leash_bounds.for_horizon(position.time_horizon)
+            bounds = self._config.leash_bounds_for(
+                position.time_horizon, position.signal_class
+            )
             # Tax timing factor (2026-09-02): stated only when the boundary is
             # ahead, near, and there is a gain to defer. Options excluded — a
             # long option approaching a year of holding is deep in its theta

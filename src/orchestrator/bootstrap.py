@@ -639,6 +639,8 @@ def start(
         },
         source_passes=checks.audit.research_passes_by_source_on(now.date()),
         source_pass_day=now.date(),
+        class_caps=checks.orchestrator_config.research_class_caps,
+        class_passes=_class_passes_today(checks, now.date()),
         previously_capped=checks.audit.capped_external_ids(),
         budget=checks.budget,
         session=checks.session,
@@ -661,3 +663,24 @@ def start(
         mechanical=mechanical,
         preflight=checks,
     )
+
+
+def _class_passes_today(checks, today) -> dict[str, int]:
+    """Seed the combined class pools (ruling 2026-09-18) from the log, the way
+    the per-source counts are seeded: a restart cannot reset a cap. Sources
+    are mapped to their configured class; an unknown source counts in the
+    Class 2/3 pool (Constraint #6: the pool with the tighter remaining room
+    is the wrong guess less often than a free pass)."""
+    caps = checks.orchestrator_config.research_class_caps
+    if caps is None:
+        return {}
+    class_of = {
+        source.id: key
+        for key, klass in checks.signals_config.classes.items()
+        for source in klass.sources
+    }
+    passes: dict[str, int] = {}
+    for source_id, count in checks.audit.research_passes_by_source_on(today).items():
+        bucket = caps.bucket(class_of.get(source_id, "class_2"))
+        passes[bucket] = passes.get(bucket, 0) + count
+    return passes

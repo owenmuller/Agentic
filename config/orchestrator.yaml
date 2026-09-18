@@ -20,7 +20,23 @@ max_research_passes_per_day: 40
 # (1 - this) of the day's passes, so reviews of open positions can never be starved
 # by a noisy entry feed. Reviews may use the whole remainder, including the entry
 # share nobody claimed — the reserve is a floor under reviews, not a cap on them.
-review_budget_reserve_fraction: 0.25
+# 0.25 -> 0.125 (AGGRESSION RULING 2026-09-18, revised): 5 of the 40 passes are
+# reserved for reviews and triggered work; the other 35 split into the class
+# pools below.
+review_budget_reserve_fraction: 0.125
+
+# COMBINED CLASS CAPS (AGGRESSION RULING 2026-09-18, revised — cost discipline
+# is the binding constraint). The daily budget stays at 40, NOT 60: the
+# loosened Class 1 filters mean better candidates compete for the SAME slots,
+# and dispatch weight decides which ones win — that is what it is for. Class 1
+# sources (posts, callers, 8-K) share 15 passes a day; Class 2 and 3 (filings)
+# share 20; per-source caps in signals.yaml still apply inside each pool. A
+# capped signal writes stage_rejection class_cap — recorded, not researched,
+# and the forward report can say what the cap crowded out. Target spend is
+# unchanged at ~$5-8/day (35 x ~$0.21 + reviews = ~$8.30 at full utilisation).
+research_class_caps:
+  class_1: 15
+  class_2_3: 20
 
 # COST TRIPWIRE. Same pattern as the X reads counter: when a day's cumulative
 # estimated research spend (entry passes + exit reviews, rejected passes included
@@ -76,6 +92,18 @@ exits:
   leash_bounds:
     days: { floor: 3, ceiling: 21 }
     weeks: { floor: 14, ceiling: 90 }
+    months: { floor: 60, ceiling: 367 }
+
+  # FAST-CLASS LEASH (AGGRESSION RULING 2026-09-18, lever 3; revised: Class 1
+  # ONLY — Class 2/3 horizons are not shortened). A Class 1 position's leash
+  # clamps into THIS table: the weeks floor moves 14 -> 7 so a fast-class
+  # thesis that has not worked inside a week can be let go; days and months
+  # are unchanged. The research prompt tells the model a Class 1 edge decays
+  # and a months verdict needs explicit justification. The ratchet (arms at
+  # +12%) is untouched.
+  fast_class_leash_bounds:
+    days: { floor: 3, ceiling: 21 }
+    weeks: { floor: 7, ceiling: 90 }
     months: { floor: 60, ceiling: 367 }
 
   # How often each open position gets a thesis review. Reviews spend the daily

@@ -49,6 +49,7 @@ from signals import Signal, SignalQueue
 from signals.scanners import Scanner
 
 from orchestrator.budget import ResearchBudget
+from orchestrator.config import ResearchClassCaps
 from orchestrator.exits import ExitEngine
 from orchestrator.pipeline import PipelineResult, SignalPipeline
 from orchestrator.prefilter import ResearchPreFilter
@@ -112,6 +113,8 @@ class TradingLoop:
         source_caps: Optional[dict[str, int]] = None,
         source_passes: Optional[dict[str, int]] = None,
         source_pass_day: Optional[date] = None,
+        class_caps: Optional["ResearchClassCaps"] = None,
+        class_passes: Optional[dict[str, int]] = None,
         previously_capped: Optional[set[tuple[str, str]]] = None,
         mechanical: Optional[object] = None,
         sweeper: Optional[object] = None,
@@ -147,6 +150,11 @@ class TradingLoop:
         self._source_caps = dict(source_caps or {})
         self._source_passes = dict(source_passes or {})
         self._source_pass_day = source_pass_day
+        #: Combined class pools (AGGRESSION RULING 2026-09-18, revised): Class 1
+        #: sources share one daily cap, Class 2/3 another. Seeded from the log
+        #: like the source counts, rolled on the same day boundary.
+        self._class_caps = class_caps
+        self._class_passes = dict(class_passes or {})
         #: Signals that lost a research slot (capped, or budget-deferred this
         #: process). Seeded from the audit log so a restart remembers. When
         #: the staleness rule later kills one of these, the rejection carries
@@ -367,17 +375,37 @@ class TradingLoop:
             # Per-source daily cap (2026-08-25): after the content rules so the
             # rejection code stays precise, before triage so a capped source
             # spends nothing further today.
+            if self._source_pass_day != dispatch_now.date():
+                self._source_pass_day = dispatch_now.date()
+                self._source_passes = {}
+                self._class_passes = {}
             cap = self._source_caps.get(signal.source_id)
             if cap is not None:
-                if self._source_pass_day != dispatch_now.date():
-                    self._source_pass_day = dispatch_now.date()
-                    self._source_passes = {}
                 if self._source_passes.get(signal.source_id, 0) >= cap:
                     self._pipeline.record_prefiltered(
                         signal,
                         f"{signal.source_id} has spent its {cap}-pass daily cap; "
                         f"recorded, not researched",
                         code="source_cap",
+                    )
+                    if signal.external_id:
+                        self._slot_losers.add(
+                            (signal.source_id, signal.external_id)
+                        )
+                    report.prefiltered += 1
+                    continue
+            if self._class_caps is not None:
+                # Combined class pool (ruling 2026-09-18): after the per-source
+                # cap so the code stays precise, before triage so a capped
+                # class spends nothing further today.
+                bucket = self._class_caps.bucket(signal.signal_class)
+                class_cap = self._class_caps.cap_for(signal.signal_class)
+                if self._class_passes.get(bucket, 0) >= class_cap:
+                    self._pipeline.record_prefiltered(
+                        signal,
+                        f"{bucket} sources have spent their combined {class_cap}-pass "
+                        f"daily cap (ruling 2026-09-18); recorded, not researched",
+                        code="class_cap",
                     )
                     if signal.external_id:
                         self._slot_losers.add(
@@ -408,6 +436,9 @@ class TradingLoop:
             self._source_passes[signal.source_id] = (
                 self._source_passes.get(signal.source_id, 0) + 1
             )
+            if self._class_caps is not None:
+                bucket = self._class_caps.bucket(signal.signal_class)
+                self._class_passes[bucket] = self._class_passes.get(bucket, 0) + 1
             result = self._pipeline.process(signal)
             report.processed.append(result)
             self._note_verdict(signal, result)

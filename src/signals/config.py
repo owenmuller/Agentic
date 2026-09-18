@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ZERO = Decimal("0")
 CENTS = Decimal("0.01")
@@ -57,9 +57,22 @@ class PollWindow(_Strict):
 class ClassificationRules(_Strict):
     required_before_research_pass: bool
     labels: tuple[str, ...]
+    #: Where a segment with only weak tense markers lands (AGGRESSION RULING
+    #: 2026-09-18: forward_call for the X trade-callers; retrospective was the
+    #: 2026-08-18 default). The realized-P&L guard runs BEFORE this default and
+    #: is not configurable: an explicit result marker is retrospective.
     default_when_ambiguous: str
     when_in_doubt: str
     ambiguity_markers: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _default_is_a_label(self) -> "ClassificationRules":
+        if self.default_when_ambiguous not in self.labels:
+            raise ValueError(
+                f"default_when_ambiguous {self.default_when_ambiguous!r} is not one of "
+                f"the configured labels {list(self.labels)}"
+            )
+        return self
 
 
 class PrefilterConfig(_Strict):

@@ -257,7 +257,12 @@ class Scanner(ABC):
         self, source: SourceConfig, item: RawItem, now: datetime
     ) -> list[Signal]:
         """Classify, split mixed posts, discard retrospectives."""
-        result = classify_post(item.content)
+        default = Classification.RETROSPECTIVE
+        if source.classification is not None:
+            # AGGRESSION RULING 2026-09-18: the source's rule decides where an
+            # ambiguous-tense segment lands; the P&L guard runs before it.
+            default = Classification(source.classification.default_when_ambiguous)
+        result = classify_post(item.content, default_when_ambiguous=default)
         self._classify_tally[(source.id, str(result.label))] += 1
 
         if result.label is Classification.OTHER:

@@ -22,7 +22,10 @@ classes:
       - id: trump_posts
         # Bare-link rule (2026-08-25): theme-matched, ticker-less posts whose
         # content minus URLs is under this length are bare_link rejections.
-        bare_link_min_chars: 120
+        # 120 -> 60 (AGGRESSION RULING 2026-09-18, lever 1): a one-line policy
+        # headline over 60 chars is a thesis worth a screen pass; 4 of the 9
+        # bare_link rejections of the prior 16 days would have researched.
+        bare_link_min_chars: 60
         platforms: [truth_social, x]
         # Pending the Truth API decision: X is only a partial, sometimes-late mirror
         # of Truth Social for this account. The handle is here so that joining the X
@@ -42,6 +45,7 @@ classes:
         # rejection — visible, revisitable, never silently dropped. Applies equally
         # to mirror-delivered content (it attributes to this source).
         research_prefilter_themes:
+          # ORIGINAL LIST (2026-08-18), 31 stems:
           - tariff
           - trade
           - sanction
@@ -75,6 +79,157 @@ classes:
           # econom, not economy: stem-prefix matching, so this covers
           # economy/economic/economics (human ruling 2026-08-20).
           - econom
+          # WIDENED (AGGRESSION RULING 2026-09-18, lever 1): ~3x, covering
+          # tariffs/trade, energy, defense, rates/Fed, crypto, semis/AI,
+          # healthcare, immigration, regulation, labor, housing, China and
+          # trade partners. Stems are word-prefix matches, so short generic
+          # prefixes are avoided on purpose ("port" would match "report",
+          # "sec" would match "second"); multi-word stems match as phrases.
+          # A themed post with no ticker still maps via theme_etf_map only
+          # where that map has an entry; adding a map entry is a human ruling.
+          # -- tariffs / trade
+          - export
+          - imports
+          - import dut
+          - import tax
+          - embargo
+          - quota
+          - subsid
+          - trade deal
+          - trade war
+          - usmca
+          - mexico
+          - canada
+          # -- fiscal / rates / Fed
+          - deficit
+          - debt
+          - treasur
+          - yield
+          - bond
+          - powell
+          - warsh
+          - fomc
+          - federal reserve
+          - monetary
+          - gdp
+          - recession
+          - stimulus
+          - budget
+          - shutdown
+          - appropriation
+          # -- energy
+          - pipeline
+          - nuclear
+          - coal
+          - solar
+          - wind power
+          - wind farm
+          - offshore wind
+          - lng
+          - refin
+          - diesel
+          - gasoline
+          - electric
+          - grid
+          - utilit
+          - russia
+          - ukraine
+          - venezuela
+          # -- defense
+          - pentagon
+          - nato
+          - weapon
+          - missile
+          - navy
+          - shipbuild
+          - aerospace
+          - contractor
+          - boeing
+          - lockheed
+          - raytheon
+          # -- crypto
+          - ethereum
+          - digital asset
+          - token
+          - blockchain
+          - coinbase
+          # -- semis / AI / tech
+          - artificial intelligence
+          - data center
+          - nvidia
+          - openai
+          - taiwan
+          - tiktok
+          - huawei
+          # -- metals / materials
+          - aluminum
+          - copper
+          - lithium
+          - rare earth
+          - mineral
+          - mining
+          - gold
+          - silver
+          # -- healthcare
+          - healthcare
+          - health care
+          - medicare
+          - medicaid
+          - insurer
+          - hospital
+          - vaccine
+          - fda
+          - biotech
+          - obamacare
+          - prescription
+          # -- immigration
+          - immigration
+          - border
+          - deport
+          - visa
+          - h-1b
+          - h1b
+          - migrant
+          # -- regulation / antitrust
+          - regulat
+          - deregulat
+          - antitrust
+          - ftc
+          - merger
+          - acquisition
+          - monopol
+          # -- labor
+          - labor
+          - union
+          - strike
+          - wage
+          - jobs
+          - employ
+          - unemploy
+          - payroll
+          # -- housing
+          - housing
+          - mortgage
+          - homebuild
+          - rents
+          - rental
+          - infrastructure
+          # -- financials
+          - bank
+          - financial
+          - wall street
+          - lending
+          - credit
+          # -- transport / agriculture
+          - airline
+          - airbus
+          - shipping
+          - tanker
+          - farm
+          - agricultur
+          - soybean
+          - ethanol
+          - fertilizer
 
         # THEME -> ETF EXPRESSION (human ruling 2026-09-15; ETF shortlists
         # CONFIRMED 2026-09-16). A post with no extracted ticker matching exactly
@@ -210,8 +365,12 @@ classes:
         classification:
           required_before_research_pass: true
           labels: [forward_call, retrospective, other]
-          default_when_ambiguous: retrospective
-          when_in_doubt: discard
+          # AGGRESSION RULING 2026-09-18: ambiguous TENSE admits (a genuinely
+          # current call must not die on grammar); the realized-P&L guard in
+          # signals/classification.py discards any segment carrying an explicit
+          # result marker as retrospective regardless of tense.
+          default_when_ambiguous: forward_call
+          when_in_doubt: research_behind_the_pnl_guard
           ambiguity_markers:
             - past_tense
             - missing_entry_price
@@ -241,8 +400,12 @@ classes:
         classification:
           required_before_research_pass: true
           labels: [forward_call, retrospective, other]
-          default_when_ambiguous: retrospective
-          when_in_doubt: discard
+          # AGGRESSION RULING 2026-09-18: ambiguous TENSE admits (a genuinely
+          # current call must not die on grammar); the realized-P&L guard in
+          # signals/classification.py discards any segment carrying an explicit
+          # result marker as retrospective regardless of tense.
+          default_when_ambiguous: forward_call
+          when_in_doubt: research_behind_the_pnl_guard
           ambiguity_markers:
             - past_tense
             - missing_entry_price
@@ -273,8 +436,12 @@ classes:
         classification:
           required_before_research_pass: true
           labels: [forward_call, retrospective, other]
-          default_when_ambiguous: retrospective
-          when_in_doubt: discard
+          # AGGRESSION RULING 2026-09-18: ambiguous TENSE admits (a genuinely
+          # current call must not die on grammar); the realized-P&L guard in
+          # signals/classification.py discards any segment carrying an explicit
+          # result marker as retrospective regardless of tense.
+          default_when_ambiguous: forward_call
+          when_in_doubt: research_behind_the_pnl_guard
           ambiguity_markers:
             - past_tense
             - missing_entry_price
@@ -482,8 +649,12 @@ classes:
         classification:
           required_before_research_pass: true
           labels: [forward_call, retrospective, other]
-          default_when_ambiguous: retrospective
-          when_in_doubt: discard
+          # AGGRESSION RULING 2026-09-18: ambiguous TENSE admits (a genuinely
+          # current call must not die on grammar); the realized-P&L guard in
+          # signals/classification.py discards any segment carrying an explicit
+          # result marker as retrospective regardless of tense.
+          default_when_ambiguous: forward_call
+          when_in_doubt: research_behind_the_pnl_guard
           ambiguity_markers:
             - past_tense
             - missing_entry_price

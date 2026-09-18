@@ -155,6 +155,11 @@ class ExitsConfig(BaseModel):
     time_stop_days: TimeStopDays
     #: Bounds every leash is clamped into, whatever its source.
     leash_bounds: LeashBoundsTable
+    #: AGGRESSION RULING 2026-09-18 (lever 3): the bounds a CLASS 1 position's
+    #: leash is clamped into instead — the weeks floor 14 -> 7 so a fast-class
+    #: thesis that has not worked in a week can be let go. None = every class
+    #: uses ``leash_bounds``. The lagged classes are untouched by ruling.
+    fast_class_leash_bounds: Optional[LeashBoundsTable] = None
     thesis_review_interval_hours: int = Field(gt=0)
     review_trigger: ReviewTriggerConfig
     ratchet: RatchetConfig
@@ -171,18 +176,29 @@ class ExitsConfig(BaseModel):
         default=Decimal("0.5"), ge=Decimal("0"), lt=Decimal("1")
     )
 
+    def leash_bounds_for(self, horizon: str, signal_class: str = "") -> LeashBounds:
+        """The bounds this position's leash clamps into: the fast-class table for
+        a Class 1 position when one is configured, ``leash_bounds`` otherwise."""
+        if self.fast_class_leash_bounds is not None and str(signal_class) == "class_1":
+            return self.fast_class_leash_bounds.for_horizon(horizon)
+        return self.leash_bounds.for_horizon(horizon)
+
     @model_validator(mode="after")
     def _fallbacks_sit_inside_their_bounds(self) -> "ExitsConfig":
         """A fallback outside its own bounds would be silently clamped, which is a
         config that does not say what it does."""
-        for horizon in ("days", "weeks", "months"):
-            fallback = self.time_stop_days.for_horizon(horizon)
-            bounds = self.leash_bounds.for_horizon(horizon)
-            if not bounds.floor <= fallback <= bounds.ceiling:
-                raise ValueError(
-                    f"{horizon} fallback leash {fallback} sits outside its bounds "
-                    f"{bounds.floor}-{bounds.ceiling}"
-                )
+        tables = [("", self.leash_bounds)]
+        if self.fast_class_leash_bounds is not None:
+            tables.append(("fast-class ", self.fast_class_leash_bounds))
+        for label, table in tables:
+            for horizon in ("days", "weeks", "months"):
+                fallback = self.time_stop_days.for_horizon(horizon)
+                bounds = table.for_horizon(horizon)
+                if not bounds.floor <= fallback <= bounds.ceiling:
+                    raise ValueError(
+                        f"{horizon} fallback leash {fallback} sits outside its "
+                        f"{label}bounds {bounds.floor}-{bounds.ceiling}"
+                    )
         return self
 
 
@@ -451,6 +467,26 @@ class MarketDataConfig(BaseModel):
     max_quote_age_seconds: int = Field(gt=0)
 
 
+class ResearchClassCaps(BaseModel):
+    """Combined daily research caps by latency class (AGGRESSION RULING
+    2026-09-18, revised: the 40-pass budget does not grow; loosened filters mean
+    better candidates compete for the SAME slots and dispatch weight decides).
+    Class 1 sources share one pool, Class 2 and 3 share another; per-source caps
+    still apply inside each. The remainder of the entry ceiling is headroom
+    nobody may spend, and the review reserve sits outside both pools."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    class_1: int = Field(ge=0)
+    class_2_3: int = Field(ge=0)
+
+    def bucket(self, signal_class: str) -> str:
+        return "class_1" if str(signal_class) == "class_1" else "class_2_3"
+
+    def cap_for(self, signal_class: str) -> int:
+        return self.class_1 if self.bucket(signal_class) == "class_1" else self.class_2_3
+
+
 class OrchestratorConfig(BaseModel):
     """Loop cadence and the daily research budget."""
 
@@ -469,6 +505,29 @@ class OrchestratorConfig(BaseModel):
     #: line goes to run.log. A warning, not a stop — the pass budget above is
     #: the hard ceiling; this makes the bill visible before the console does.
     daily_cost_warning_usd: Decimal = Field(default=Decimal("10"), ge=Decimal("0"))
+    #: None = no class caps (pre-ruling: per-source caps and the budget alone).
+    research_class_caps: Optional[ResearchClassCaps] = None
+
+    @model_validator(mode="after")
+    def _class_caps_fit_the_entry_ceiling(self) -> "OrchestratorConfig":
+        """The class pools may not promise more passes than entries can spend:
+        class_1 + class_2_3 <= max - review reserve (rounded down, as the
+        budget rounds it)."""
+        caps = self.research_class_caps
+        if caps is None:
+            return self
+        reserve = int(
+            (Decimal(self.max_research_passes_per_day) * self.review_budget_reserve_fraction)
+            .to_integral_value(rounding="ROUND_FLOOR")
+        )
+        ceiling = self.max_research_passes_per_day - reserve
+        if caps.class_1 + caps.class_2_3 > ceiling:
+            raise ValueError(
+                f"research_class_caps {caps.class_1} + {caps.class_2_3} exceed the entry "
+                f"ceiling {ceiling} ({self.max_research_passes_per_day} passes less the "
+                f"{reserve}-pass review reserve)"
+            )
+        return self
     tick_interval_seconds: int = Field(gt=0)
     account_type: AccountType
     exits: ExitsConfig

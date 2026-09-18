@@ -1,9 +1,14 @@
 """Post classification for trade-call accounts.
 
 CLAUDE.md § Class 1 requires every post from a trade-call account to be labelled
-``forward_call``, ``retrospective`` or ``other`` *before* the research pass, with
-ambiguity defaulting to ``retrospective`` and retrospectives discarded as entry
-signals.
+``forward_call``, ``retrospective`` or ``other`` *before* the research pass, and
+retrospectives discarded as entry signals. Where a segment carries only weak
+tense markers, the SOURCE's configured default decides (AGGRESSION RULING
+2026-09-18: ``forward_call`` for the X trade-callers, so a genuinely current
+call does not die on grammar) — but the realized-P&L guard runs first and is not
+configurable: any segment with an explicit result marker (a percentage or dollar
+result, a multiple, exit or profit-taking language, a P&L screenshot, a claimed
+past call, celebration of a finished trade) is retrospective whatever its tense.
 
 Why this is deterministic
 -------------------------
@@ -49,6 +54,24 @@ RETROSPECTIVE_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\btold\s+(?:you|y'?all|everyone)\b", "claiming a past call"),
     (r"\bp\s*/?\s*l\b|\bpnl\b", "P&L reference"),
     (r"\bscreenshot\b", "screenshot of results"),
+    # ---- The realized-P&L guard (AGGRESSION RULING 2026-09-18). With ambiguous
+    # tense now admitting, these are the explicit result markers that discard a
+    # segment as retrospective REGARDLESS of tense.
+    (r"\bmade\s+\+?\$?\d", "realised amount"),
+    (r"\+\s?\d+(?:\.\d+)?\s*%", "explicit percentage gain"),
+    (r"\b(?:up|down)\s+\d+(?:\.\d+)?\s*%\s+(?:since|today|this\s+week)\b", "reported move on a position"),
+    (r"\b\d+(?:\.\d+)?\s*%\s+(?:profit|move)\b", "percentage result"),
+    (r"\$\s?\d[\d,]*(?:\.\d+)?\s*[kKmM]?\b[^.\n]*\b(?:profit|gain|banked|booked|locked|secured|win)\b", "dollar result"),
+    (r"\b(?:\d+(?:\.\d+)?|few|couple)\s*[kK]\s+(?:win|gain|profit|winner)\b", "dollar result"),
+    (r"\b\d+(?:\.\d+)?\s*x\b(?!\s*(?:leverage|leveraged|dte))", "multiple on a position"),
+    (r"\bfrom\s+\$?\d[\d.,]*\s+to\s+\$?\d", "entry-to-exit move"),
+    (r"\b(?:locked\s+in|secured|took\s+profits?|taking\s+profits?|profits?\s+taken)\b", "profit-taking language"),
+    (r"\b(?:great|nice|good|solid)\s+(?:tell|move|win|winner|runner|print)\b", "celebrating a finished trade"),
+    (r"\b(?:nice|beautiful|easy)\s+(?:trade|one|money)\b", "celebrating a finished trade"),
+    (r"\bthat\s+(?:one|trade|play)\b", "referring back to a finished trade"),
+    (r"\bthat\s+\$?[a-z]{1,5}\s+(?:trade|play|one|position|entry)\b", "referring back to a finished trade"),
+    (r"\bwas\s+(?:beautiful|a\s+beauty|perfect|clean|easy|free\s+money|the\s+(?:move|play|trade|one))\b", "celebrating a finished trade"),
+    (r"\bcaught\b", "caught a move that already happened"),
 )
 
 #: Text that commits to a position now. Only these make a segment actionable.
@@ -65,13 +88,15 @@ FORWARD_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\bsetup\s+(?:is\s+)?(?:live|active|triggering)\b", "live setup"),
 )
 
-#: Weak signals of pastness used only to break ties. On their own they are not proof of
-#: a historical trade, but combined with the absence of any forward marker they push an
-#: ambiguous segment to retrospective — which is the configured default anyway.
+#: Weak signals of pastness. On their own they are not proof of a historical
+#: trade; a segment carrying only these (no result marker, no forward marker)
+#: is AMBIGUOUS and lands where the source's ``default_when_ambiguous`` says
+#: (AGGRESSION RULING 2026-09-18: forward_call for the X trade-callers, so a
+#: current call written in the past tense is researched, not discarded). The
+#: celebration and referring-back markers that used to live here are now part
+#: of the guard above — they describe a finished trade, whatever the tense.
 AMBIGUITY_MARKERS: tuple[tuple[str, str], ...] = (
-    (r"\b(?:was|were|had|got|caught)\b", "past tense"),
-    (r"\b(?:nice|beautiful|easy)\s+(?:trade|one|money)\b", "celebrating"),
-    (r"\bthat\s+(?:one|trade|play)\b", "referring back"),
+    (r"\b(?:was|were|had|got)\b", "past tense"),
 )
 
 _TICKER = re.compile(r"(?:(?<=\$)|(?<=\b))([A-Z]{1,5})\b")
@@ -191,7 +216,9 @@ def extract_tickers(text: str) -> tuple[str, ...]:
     return tuple(found)
 
 
-def _classify_segment(text: str) -> Segment:
+def _classify_segment(
+    text: str, default_when_ambiguous: Classification = Classification.RETROSPECTIVE
+) -> Segment:
     retrospective = _matches(text, RETROSPECTIVE_PATTERNS)
     forward = _matches(text, FORWARD_PATTERNS)
 
@@ -205,13 +232,24 @@ def _classify_segment(text: str) -> Segment:
 
     ambiguous = _matches(text, AMBIGUITY_MARKERS)
     if ambiguous:
-        # CLAUDE.md: "Ambiguous posts ... default to retrospective. When in doubt,
-        # discard."
-        return Segment(text, Classification.RETROSPECTIVE, ambiguous)
+        # The source's configured default decides (AGGRESSION RULING 2026-09-18:
+        # forward_call for the X trade-callers). The function-level default stays
+        # retrospective — Constraint #6 — so a caller that states nothing gets
+        # the pre-ruling behaviour; the scanner passes the source's rule.
+        markers = ambiguous + (
+            ("ambiguous tense, admitted by the source's default",)
+            if default_when_ambiguous is Classification.FORWARD_CALL
+            else ()
+        )
+        return Segment(text, default_when_ambiguous, markers)
     return Segment(text, Classification.OTHER, ())
 
 
-def classify_post(content: str) -> ClassificationResult:
+def classify_post(
+    content: str,
+    *,
+    default_when_ambiguous: Classification = Classification.RETROSPECTIVE,
+) -> ClassificationResult:
     """Label a post, splitting mixed posts into their forward and historical parts.
 
     Pure function of the text. No network, no model, no state — the same post always
@@ -228,7 +266,7 @@ def classify_post(content: str) -> ClassificationResult:
             tickers=(),
         )
 
-    segments = tuple(_classify_segment(text) for text in raw_segments)
+    segments = tuple(_classify_segment(text, default_when_ambiguous) for text in raw_segments)
     forward = [s for s in segments if s.label is Classification.FORWARD_CALL]
     historical = [s for s in segments if s.label is Classification.RETROSPECTIVE]
 

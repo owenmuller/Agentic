@@ -189,6 +189,20 @@ def system_prompt_for(add_decision: bool) -> str:
     )
 
 
+#: AGGRESSION RULING 2026-09-18 (lever 3, Class 1 only): the fast classes
+#: should actually be fast. Appended after the class guidance on every Class 1
+#: prompt — fresh, stale, or 8-K — and on no other class.
+FAST_CLASS_HORIZON_GUIDANCE = (
+    "FAST-CLASS HORIZON. This is a Class 1 signal, and a fast-class signal's edge "
+    "DECAYS: the market absorbs a post or a filing in hours to weeks, and what is "
+    "left afterwards is ordinary exposure, not this signal's edge. Default to a "
+    "time_horizon of days or weeks. A months horizon on a Class 1 signal needs "
+    "explicit justification in the thesis — name the mechanism that keeps paying "
+    "beyond the initial reaction and the dated resolution you expect — or shorten "
+    "the horizon. Do not stretch a horizon to reach an options door; the horizon "
+    "you state is the leash the position gets."
+)
+
 _CLASS_GUIDANCE = {
     SignalClass.CLASS_1_REALTIME: (
         "This is a real-time signal. Speed is genuine edge here, but it is not a "
@@ -490,6 +504,11 @@ def build_user_prompt(
             "priced-in movement is. A report without it is discarded."
         )
     lines.extend(["", guidance])
+    if signal.signal_class is SignalClass.CLASS_1_REALTIME:
+        # AGGRESSION RULING 2026-09-18, lever 3: fast-class edge decays; a
+        # months horizon on a Class 1 signal must be argued for. Class 1 only —
+        # the lagged classes' horizons are untouched by ruling.
+        lines.extend(["", FAST_CLASS_HORIZON_GUIDANCE])
     lines.extend(_disclosed_instrument_lines(signal))
 
     delivered_by = signal.metadata.get("delivered_by")
