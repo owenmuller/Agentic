@@ -184,6 +184,16 @@ def test_grounding_replaces_only_slices_with_enough_sample():
     assert cong["amount=<=1M|lag=<=35d"]["grounded"] is True and cong["amount=<=1M|lag=<=35d"]["prior"] == 1.96
     k8 = merged["sources"]["form_8k"]["slices"]["item=5.02"]
     assert k8["grounded"] is False and k8["prior"] == 0.5 and k8["n"] == 1  # ruled default kept, n recorded
+    # An ungrounded compound slice the file never carried is NOT written: it
+    # would shadow the single-facet resolution.
+    assert "amount=<=1M|lag=<=20d" not in cong or cong["amount=<=1M|lag=<=20d"].get("grounded")
+    sparse = merged_priors_mapping(
+        {"min_n": 20, "sources": {"form4_insiders": {"fallback": 0.0, "slices": {"qual=cluster": {"prior": 0.5}}}}},
+        [SliceStat("form4_insiders", "qual=cluster|size=<=5M", 8, -1.07, -1.5, 0.38)],
+        "2026-09-18T00:00:00+00:00",
+    )
+    assert "qual=cluster|size=<=5M" not in sparse["sources"]["form4_insiders"]["slices"]
+    assert DispatchPriors.from_mapping(sparse).prior_for("form4_insiders", "qual=cluster|size=<=5M") == (0.5, False, "qual=cluster")
     assert merged["generated_at"].startswith("2026-09-18")
 
 

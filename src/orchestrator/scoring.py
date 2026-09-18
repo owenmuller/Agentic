@@ -228,6 +228,8 @@ class DispatchPriors:
             slices = {}
             for facet, spec in (block.get("slices") or {}).items():
                 spec = spec or {}
+                if "prior" not in spec:
+                    continue  # sample-size bookkeeping only; resolves through its facets
                 slices[str(facet)] = SlicePrior(
                     prior=float(spec.get("prior", 0.0)),
                     grounded=bool(spec.get("grounded", False)),
@@ -465,11 +467,16 @@ def merged_priors_mapping(
                     "note": f"measured mean {out.get('horizon_days', 5)}d excess, {generated_at[:10]}",
                 }
             )
-        else:
-            spec.setdefault("prior", block.get("fallback", 0.0))
+        elif stat.facet in slices:
+            # A ruled entry keeps its value; only its sample size is refreshed.
+            # An ungrounded slice the file does NOT carry is not written: an
+            # entry at the fallback would shadow the single-facet resolution
+            # (qual=cluster|size=<=5M at 0.0 would hide qual=cluster at 0.5).
             spec["grounded"] = False
             spec["n"] = stat.n
             spec.setdefault("note", "ruled default; sample too small to ground")
+        else:
+            continue
         slices[stat.facet] = spec
     return out
 
