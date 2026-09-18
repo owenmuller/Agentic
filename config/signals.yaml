@@ -517,18 +517,20 @@ classes:
         # RESEARCH PRE-FILTER (cost pass, 2026-08-19): free deterministic checks
         # before the LLM spends a pass. A disclosure is skipped (recorded as a
         # pre_filter stage rejection, never silently dropped) when:
-        #   - the amount range tops out at or below $100,000 (the range MAX
-        #     must be strictly below the 100,001 threshold to skip) — HUMAN
-        #     RULING 2026-09-18, from the forward engine's grounding pass:
-        #     purchases up to $15K were 82% of candidates at -0.79% mean 5d
-        #     excess (33% hit, n=1541); $15K-$50K -0.67 (n=223); $50K-$100K
-        #     -0.88 (n=34); only the $100K-$250K (+0.58, n=34) and $250K-$1M
-        #     (+0.76, n=36) bands measured positive. Research slots were being
-        #     spent on a measured negative-excess population. Was 15000
-        #     (2026-08-19 to 2026-09-18). SAME CODE PATH AS THE MECHANICAL
-        #     ARM, by the 2026-08-27 ruling that the funnels never diverge: the
-        #     mechanical sleeve's qualification moves with it. Dated so
-        #     attribution partitions before/after.
+        #   - the amount range tops out at or below $50,000 (the range MAX
+        #     must be strictly below the 50,001 threshold to skip) — HUMAN
+        #     RULING 2026-09-18, corrected the same day from $100K. From the
+        #     forward engine's grounding pass: purchases up to $15K were 82% of
+        #     candidates at -0.79% mean 5d excess (33% hit, n=1541) and
+        #     $15K-$50K measured -0.67 (n=223) — the confident, measured-worst
+        #     population, excluded. Above $50K the evidence is thin ($50K-$100K
+        #     -0.88 at n=34; $100K-$1M positive at n=34/36, mostly August
+        #     backfill) and a $100K floor would have passed 4 candidates in 16
+        #     days — not a source, and it took the mechanical control arm's
+        #     intake with it. $50K keeps enough flow to keep measuring. Was
+        #     15000 (2026-08-19 to 2026-09-18). SAME CODE PATH AS THE
+        #     MECHANICAL ARM (ruling 2026-08-27: the funnels never diverge).
+        #     Dated so attribution partitions before/after.
         #   - the observed lag between trade and report exceeds 75 days (STOCK
         #     Act allows 45; far beyond that the move is long priced in), or
         #   - it is a SALE in a name the system does not hold (someone else's
@@ -536,7 +538,7 @@ classes:
         # Unparseable amounts/lags fail OPEN to research - the budget bounds the
         # cost of erring toward research; erring away silently drops signal.
         prefilter:
-          min_amount_max: 100001
+          min_amount_max: 50001
           max_lag_days: 75
           # Disclosure->today staleness (ruling 2026-08-26), DISTINCT from the
           # trade->disclosure lag rule above. Steady-state hourly polling sees

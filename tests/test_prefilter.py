@@ -335,24 +335,25 @@ def filing_signal(period_of_report: str):
 
 
 def test_a_small_disclosure_is_skipped_with_the_threshold_in_the_reason(prefilter):
-    """Ruling 2026-09-18: the floor is $100K — every band at or below it
-    measured negative 5d excess in the forward engine."""
-    for amount in ("$1,001 - $15,000", "$15,001 - $50,000", "$50,001 - $100,000"):
+    """Ruling 2026-09-18 (corrected from $100K the same day): the floor is
+    $50K — the measured-worst bands (<=15K -0.79 n=1541, 15K-50K -0.67 n=223)
+    are excluded; above it the flow is kept so the size effect can be measured."""
+    for amount in ("$1,001 - $15,000", "$15,001 - $50,000"):
         reason = prefilter.skip_reason(disclosure_signal(amount_range=amount), now=NOW)
         assert reason is not None, amount
         assert "min_amount_max" in reason
-    assert "$100,000" in prefilter.skip_reason(
-        disclosure_signal(amount_range="$50,001 - $100,000"), now=NOW
+    assert "$50,000" in prefilter.skip_reason(
+        disclosure_signal(amount_range="$15,001 - $50,000"), now=NOW
     )
 
 
 def test_the_amount_floor_is_strictly_below(prefilter):
-    """$100,001 - $250,000 tops out above the 100,001 threshold and researches;
-    $50,001 - $100,000 tops out at 100,000, strictly below it, and is skipped.
+    """$50,001 - $100,000 tops out above the 50,001 threshold and researches;
+    $15,001 - $50,000 tops out at 50,000, strictly below it, and is skipped.
     Constraint #6 does not apply — the yaml states 'strictly below to skip'."""
+    assert prefilter.skip_reason(disclosure_signal(amount_range="$50,001 - $100,000"), now=NOW) is None
     assert prefilter.skip_reason(disclosure_signal(amount_range="$100,001 - $250,000"), now=NOW) is None
-    assert prefilter.skip_reason(disclosure_signal(amount_range="$250,001 - $500,000"), now=NOW) is None
-    assert prefilter.skip_reason(disclosure_signal(amount_range="$50,001 - $100,000"), now=NOW) is not None
+    assert prefilter.skip_reason(disclosure_signal(amount_range="$15,001 - $50,000"), now=NOW) is not None
 
 
 def test_an_unparseable_amount_fails_open_to_research(prefilter):

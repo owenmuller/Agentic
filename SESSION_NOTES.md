@@ -4102,6 +4102,33 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### Correction — congressional floor $100K → $50K (2026-09-18, same day), and what the live flow says
+
+**Ruled:** `prefilter.min_amount_max` 100001 → **50001** (strictly-below): the "$15,001 – $50,000"
+band (max 50,000) is excluded with the ≤$15K bulk; "$50,001 – $100,000" researches. Reasoning as
+ruled: the confident finding is the sub-$15K bulk (−0.79, n=1541); the size effect above $50K is
+thin (n=34/36, mostly August backfill) and should not drive a 99.7% cut; $50K excludes the
+measured-worst population while preserving flow.
+
+**Measured after the correction — the flow is not preserved.** The last 16 trading days
+(08-28..09-18) delivered 1,546 congressional purchases to dispatch:
+
+| band (range max) | candidates |
+|---|---|
+| ≤ $15,000 | 1,498 |
+| $15,001 – $50,000 | 44 |
+| $50,001 – $100,000 | **0** |
+| $100,001 – $250,000 | **0** |
+| $250,001 – $1,000,000 | 4 (2 distinct filings; 3 records researched, 1 lost to the cap) |
+
+Nothing in the live flow sits between $50K and $250K, so the $50K floor admits the SAME four
+records the $100K floor admitted: **0.25/day, ~1.2/week, both arms** (the mechanical arm's
+qualification moves with it; it is at 30-position capacity, so the practical effect is slow
+refill of time-exit slots). The only floor that keeps a measurable flow is one that excludes the
+≤$15K bulk alone: 48 survivors in 16 days, **3.0/day, ~15/week**, of which 44 sit in the
+$15K–$50K band that measured −0.67 (n=223) historically. Stated, not built — the floor is the
+ruling's to set; implemented at $50K as ruled.
+
 ### Two rulings from the grounding pass — 2026-09-18 (congressional floor $100K; same-name-same-day de-dup)
 
 **1. Congressional amount floor $15K → $100K (`signals.yaml prefilter.min_amount_max` 100001, strictly-below).**
