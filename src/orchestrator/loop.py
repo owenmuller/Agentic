@@ -36,9 +36,10 @@ from pathlib import Path
 
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from typing import TYPE_CHECKING, Callable, Optional, Sequence
 
 from audit.log import AuditLog
@@ -49,7 +50,8 @@ from signals import Signal, SignalQueue
 from signals.scanners import Scanner
 
 from orchestrator.budget import ResearchBudget
-from orchestrator.config import ResearchClassCaps
+from orchestrator.config import DispatchConfig, ResearchClassCaps
+from orchestrator.scoring import DispatchScorer
 from orchestrator.exits import ExitEngine
 from orchestrator.pipeline import PipelineResult, SignalPipeline
 from orchestrator.prefilter import ResearchPreFilter
@@ -115,6 +117,8 @@ class TradingLoop:
         source_pass_day: Optional[date] = None,
         class_caps: Optional["ResearchClassCaps"] = None,
         class_passes: Optional[dict[str, int]] = None,
+        scorer: Optional["DispatchScorer"] = None,
+        dispatch: Optional["DispatchConfig"] = None,
         previously_capped: Optional[set[tuple[str, str]]] = None,
         mechanical: Optional[object] = None,
         sweeper: Optional[object] = None,
@@ -155,6 +159,14 @@ class TradingLoop:
         #: like the source counts, rolled on the same day boundary.
         self._class_caps = class_caps
         self._class_passes = dict(class_passes or {})
+        #: Cross-source scoring (ruling 2026-09-18, revised step 2): the sort
+        #: key and the release windows for pooled filing sources. None/off =
+        #: the dispatch-weight sort and immediate dispatch, exactly as before.
+        self._scorer = scorer
+        self._dispatch = dispatch if (dispatch is not None and dispatch.scored) else None
+        self._pooled_sources = frozenset(dispatch.pooled_sources) if self._dispatch else frozenset()
+        self._next_release: Optional[datetime] = None
+        self._last_window: Optional[str] = None
         #: Signals that lost a research slot (capped, or budget-deferred this
         #: process). Seeded from the audit log so a restart remembers. When
         #: the staleness rule later kills one of these, the rejection carries
@@ -204,6 +216,68 @@ class TradingLoop:
         return self._running
 
     # -- one pass -----------------------------------------------------------------
+
+    def _release_pooled(
+        self, pending: list[Signal], now: datetime
+    ) -> tuple[list[Signal], list[Signal]]:
+        """Split the sorted batch into what dispatches now and what waits.
+
+        Immediate sources pass straight through. Pooled (filing) sources wait
+        for the next release window; at a window they are ranked TOGETHER by
+        score (class priority set aside - an 8-K and a congressional disclosure
+        compete on the same unit) and each source may spend at most
+        ceil(remaining cap / remaining windows today), so the day's slots are
+        spread across the session and a strong 14:00 filing is not shut out by
+        a mediocre 09:31 one. Held-back signals come back next tick unchanged.
+        """
+        assert self._dispatch is not None and self._scorer is not None
+        from orchestrator.ops import session_bounds  # local: ops imports bootstrap imports loop
+
+        immediate = [s for s in pending if s.source_id not in self._pooled_sources]
+        pooled = [s for s in pending if s.source_id in self._pooled_sources]
+        if not pooled:
+            return immediate, []
+        interval = timedelta(minutes=self._dispatch.pool_release_interval_minutes)
+        if self._next_release is not None and now < self._next_release:
+            return immediate, pooled
+        self._next_release = now + interval
+        _, close = session_bounds(now)
+        remaining_windows = max(1, math.ceil(max((close - now), timedelta(0)) / interval))
+        pooled.sort(key=lambda signal: self._scorer.sort_key(signal, now))
+        if self._source_pass_day != now.date():
+            spent: dict[str, int] = {}
+        else:
+            spent = self._source_passes
+        allowance: dict[str, int] = {}
+        released: list[Signal] = []
+        held: list[Signal] = []
+        taken: dict[str, int] = {}
+        for signal in pooled:
+            cap = self._source_caps.get(signal.source_id)
+            if cap is None:
+                released.append(signal)
+                continue
+            if signal.source_id not in allowance:
+                remaining_cap = max(0, cap - spent.get(signal.source_id, 0))
+                allowance[signal.source_id] = math.ceil(remaining_cap / remaining_windows)
+            if taken.get(signal.source_id, 0) < allowance[signal.source_id]:
+                taken[signal.source_id] = taken.get(signal.source_id, 0) + 1
+                released.append(signal)
+            else:
+                held.append(signal)
+        window = now.strftime("%H:%M")
+        if released or held:
+            logger.info(
+                "dispatch window %s: released %d pooled signal(s) %s, holding %d for the "
+                "next window (%d windows left today)",
+                window,
+                len(released),
+                {k: v for k, v in taken.items()},
+                len(held),
+                remaining_windows,
+            )
+        self._last_window = window
+        return immediate + released, held
 
     def tick(self) -> TickReport:
         """Poll, research, trade, settle, persist. Never raises for a fetcher or a bug."""
@@ -284,13 +358,28 @@ class TradingLoop:
             )
             return signal.dispatch_weight + bonus
 
-        pending.sort(
-            key=lambda signal: (
-                -int(signal.priority),
-                -_dispatch_rank(signal),
-                signal.observed_at,
+        sort_now = self._clock()
+        if self._scorer is not None:
+            # Ruling 2026-09-18 (revised step 2): one comparable score across
+            # sources. Class 1 still goes first - speed is its edge - and within
+            # a class the score, then size, then arrival decide.
+            pending.sort(
+                key=lambda signal: (
+                    -int(signal.priority),
+                    *self._scorer.sort_key(signal, sort_now),
+                )
             )
-        )
+        else:
+            pending.sort(
+                key=lambda signal: (
+                    -int(signal.priority),
+                    -_dispatch_rank(signal),
+                    signal.observed_at,
+                )
+            )
+        if self._dispatch is not None and self._pooled_sources:
+            pending, held_back = self._release_pooled(pending, sort_now)
+            self._deferred = held_back
 
         held = self._exits.held_symbols()
         dispatch_now = self._clock()

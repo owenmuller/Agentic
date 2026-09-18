@@ -487,6 +487,25 @@ class ResearchClassCaps(BaseModel):
         return self.class_1 if self.bucket(signal_class) == "class_1" else self.class_2_3
 
 
+class DispatchConfig(BaseModel):
+    """Cross-source dispatch scoring (AGGRESSION RULING 2026-09-18, step 2 as
+    revised: selection-constrained, not supply-constrained). When ``scored`` is
+    on, the dispatch sort ranks by the comparable score in
+    ``config/dispatch_priors.yaml`` instead of the per-source dispatch weight,
+    and the filing sources listed in ``pooled_sources`` compete in RELEASE
+    WINDOWS: they wait until the next window, are ranked together, and each
+    source may spend at most ceil(remaining cap / remaining windows today) in a
+    window, so the day's slots spread across the session instead of going to
+    whatever arrived first. Posts and callers (speed is edge) dispatch at once,
+    scored. Off = the 2026-08-26 behaviour exactly."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scored: bool = False
+    pool_release_interval_minutes: int = Field(default=30, gt=0)
+    pooled_sources: tuple[str, ...] = ()
+
+
 class OrchestratorConfig(BaseModel):
     """Loop cadence and the daily research budget."""
 
@@ -507,6 +526,7 @@ class OrchestratorConfig(BaseModel):
     daily_cost_warning_usd: Decimal = Field(default=Decimal("10"), ge=Decimal("0"))
     #: None = no class caps (pre-ruling: per-source caps and the budget alone).
     research_class_caps: Optional[ResearchClassCaps] = None
+    dispatch: DispatchConfig = Field(default_factory=DispatchConfig)
 
     @model_validator(mode="after")
     def _class_caps_fit_the_entry_ceiling(self) -> "OrchestratorConfig":

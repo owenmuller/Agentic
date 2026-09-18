@@ -38,6 +38,23 @@ research_class_caps:
   class_1: 15
   class_2_3: 20
 
+# CROSS-SOURCE DISPATCH SCORING (AGGRESSION RULING 2026-09-18, step 2 as revised).
+# Diagnosis: selection-constrained, not supply-constrained - form_8k ran 87-254
+# candidates/day against a cap of 6, congressional 70-213 against 5, and each
+# cap was filled by ARRIVAL ORDER. With `scored` on, the dispatch sort ranks
+# every pending signal by the comparable score in config/dispatch_priors.yaml
+# (expected 5d excess by slice, grounded from the forward engine where n
+# permits, ruled defaults flagged where not; minus age/7; plus the convergence
+# bonus), and the filing sources below compete in release windows so the slots
+# spread across the session. Per-source caps stay as ceilings; the class pools
+# stay. Posts and callers dispatch immediately (speed is their edge), scored.
+# `python -m orchestrator priors` regrounds the file; `dispatch-whatif --day`
+# reports what a day's slots would have been.
+dispatch:
+  scored: true
+  pool_release_interval_minutes: 30
+  pooled_sources: [form_8k, form4_insiders, congressional_disclosures, form_13d, form_13f]
+
 # COST TRIPWIRE. Same pattern as the X reads counter: when a day's cumulative
 # estimated research spend (entry passes + exit reviews, rejected passes included
 # because they were paid for) crosses this many dollars, ONE COST warning line is

@@ -1,0 +1,67 @@
+# DISPATCH PRIORS (AGGRESSION RULING 2026-09-18, step 2 as revised).
+#
+# One unit everywhere: expected 5-day excess return over SPY, in percentage
+# points. The dispatch score is  prior(slice) - age_days/7 + convergence bonus,
+# and the 40 daily research slots go to the highest scores across ALL sources
+# (per-source caps stay as ceilings; the class pools stay).
+#
+# GROUNDING: `python -m orchestrator priors` computes every slice's mean forward
+# excess from the forward-return engine over every funnel record - researched or
+# capped - and `--write` replaces a slice's value here ONLY where n >= min_n,
+# marking it `grounded: true` with its n. Everything else is a RULED DEFAULT
+# (`grounded: false`) and says so. A human reviews and commits the result: data
+# argues, humans rule, rulings are dated. Slices the forward engine has not yet
+# resolved (8-K items: first candidates 2026-09-16, no 5d marks yet) keep the
+# ordering the ruling gave them - 5.02 executive change and 1.05 cyber ahead of
+# 1.01 material agreement - until the data can speak.
+#
+# ORDERING ONLY. Nothing here sizes a position or widens a cap.
+version: 1
+horizon_days: 5
+min_n: 20
+# One week of report age costs one point (the 2026-08-26 equivalence).
+freshness_points_per_day: 0.142857
+generated_at: "2026-09-18 (ruled defaults; first grounding pass pending the forward refresh)"
+sources:
+  form_8k:
+    fallback: 0.0
+    slices:
+      "item=5.02": { prior: 0.50, grounded: false, n: 0, note: "ruled default: executive departure/appointment, the most informative whitelisted item" }
+      "item=1.05": { prior: 0.50, grounded: false, n: 0, note: "ruled default: cyber incident (bearish, measurement-only today)" }
+      "item=4.02": { prior: 0.25, grounded: false, n: 0, note: "ruled default: restatement (bearish, measurement-only today)" }
+      "item=2.05": { prior: 0.25, grounded: false, n: 0, note: "ruled default: restructuring" }
+      "item=1.01": { prior: 0.10, grounded: false, n: 0, note: "ruled default: material agreement - frequent, least specific of the five" }
+      "item=other": { prior: 0.0, grounded: false, n: 0, note: "no whitelisted item parsed" }
+  form4_insiders:
+    fallback: 0.0
+    slices:
+      "qual=cluster": { prior: 0.50, grounded: false, n: 0, note: "ruled default: the cluster rule is the source's claim" }
+      "qual=c_suite_single": { prior: 0.25, grounded: false, n: 0, note: "ruled default: C-suite single door (ruling 2026-09-15)" }
+      "qual=single": { prior: 0.0, grounded: false, n: 0, note: "control group; researched only through the door rules" }
+  congressional_disclosures:
+    fallback: 0.0
+    slices:
+      "amount=<=15K": { prior: 0.0, grounded: false, n: 0, note: "ruled default; the old log10(amount) weight put these last" }
+      "amount=<=50K": { prior: 0.10, grounded: false, n: 0, note: "ruled default" }
+      "amount=<=100K": { prior: 0.20, grounded: false, n: 0, note: "ruled default" }
+      "amount=<=250K": { prior: 0.30, grounded: false, n: 0, note: "ruled default" }
+      "amount=<=1M": { prior: 0.40, grounded: false, n: 0, note: "ruled default" }
+      "amount=<=5M": { prior: 0.50, grounded: false, n: 0, note: "ruled default" }
+      "amount=>5M": { prior: 0.50, grounded: false, n: 0, note: "ruled default" }
+  form_13d:
+    fallback: 0.25
+    slices:
+      "stake=>=10%": { prior: 0.50, grounded: false, n: 0, note: "ruled default: a large activist stake" }
+      "stake=5-10%": { prior: 0.25, grounded: false, n: 0, note: "ruled default" }
+  trump_posts:
+    fallback: 0.25
+  nolimitgains:
+    fallback: 0.0
+  unusual_whales:
+    fallback: 0.0
+  optionshawk:
+    fallback: 0.0
+  citrini:
+    fallback: 0.0
+  form_13f:
+    fallback: 0.0

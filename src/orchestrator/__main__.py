@@ -526,6 +526,105 @@ def golden() -> int:
         return 1
 
 
+def priors() -> int:
+    """Ground the dispatch priors in the forward-return engine (ruling
+    2026-09-18, revised step 2). READ-ONLY by default: prints every slice's
+    measured mean excess with n and whether it clears min_n. ``--write``
+    rewrites config/dispatch_priors.yaml with grounded slices replaced by their
+    measurement and everything else left as ruled - a human commits it. Uses the
+    cached forward rows (the weekly report refreshes them); ``--refresh`` fetches
+    marks first (Alpaca bars, minutes).
+
+        python -m orchestrator priors [--write] [--refresh]
+    """
+    import yaml as _yaml
+
+    from orchestrator.scoring import (
+        PRIORS_PATH,
+        DispatchPriors,
+        compute_slice_stats,
+        merged_priors_mapping,
+        render_slice_stats,
+    )
+    from orchestrator.whatif import load_cached_rows
+
+    args = sys.argv[2:]
+    write = "--write" in args
+    refresh = "--refresh" in args
+    audit = AuditLog(default_data_dir() / "audit.jsonl")
+    records = list(audit.records())
+    rows = load_cached_rows(audit.path.parent / "forward_returns.jsonl")
+    if refresh:
+        from execution.environment import load_environment as _load_env
+        from execution.market_data import AlpacaDailyBars
+        from forward import ForwardReturns, funnel_entries, wanted_pairs
+
+        _load_env()
+        bars = AlpacaDailyBars(feed="sip")
+        engine = ForwardReturns(bars.bars, audit.path.parent / "forward_returns.jsonl")
+        rows = engine.rows_for(wanted_pairs(funnel_entries(records)))
+    current = DispatchPriors.load()
+    stats = compute_slice_stats(records, rows, current.horizon_days)
+    print(render_slice_stats(stats, current))
+    if write:
+        raw = _yaml.safe_load(PRIORS_PATH.read_text(encoding="utf-8")) or {}
+        merged = merged_priors_mapping(
+            raw, stats, datetime.now(timezone.utc).isoformat(timespec="seconds")
+        )
+        header = "\n".join(
+            line for line in PRIORS_PATH.read_text(encoding="utf-8").splitlines() if line.startswith("#")
+        )
+        PRIORS_PATH.write_text(
+            header + "\n" + _yaml.safe_dump(merged, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+        grounded = sum(
+            1 for s in stats if s.facet and s.grounded(current.min_n)
+        )
+        print(f"\nwrote {PRIORS_PATH} - {grounded} slice(s) grounded; review and commit")
+    return 0
+
+
+def dispatch_whatif() -> int:
+    """What a day's research slots WOULD have gone to under global scoring
+    versus what they went to (ruling 2026-09-18, revised step 2, item 3).
+    READ-ONLY.
+
+        python -m orchestrator dispatch-whatif --day 2026-09-18
+    """
+    from datetime import date
+
+    from orchestrator.config import OrchestratorConfig
+    from orchestrator.scoring import DispatchPriors, whatif_dispatch
+    from orchestrator.whatif import load_cached_rows
+    from signals import SignalsConfig
+
+    args = sys.argv[2:]
+    day = date.today()
+    if "--day" in args:
+        day = date.fromisoformat(args[args.index("--day") + 1])
+    audit = AuditLog(default_data_dir() / "audit.jsonl")
+    signals_config = SignalsConfig.load()
+    orchestrator_config = OrchestratorConfig.load()
+    source_caps = {
+        source.id: source.daily_research_cap
+        for klass in signals_config.classes.values()
+        for source in klass.sources
+        if source.daily_research_cap is not None
+    }
+    print(
+        whatif_dispatch(
+            audit.records(),
+            day,
+            DispatchPriors.load(),
+            source_caps,
+            orchestrator_config.research_class_caps,
+            load_cached_rows(audit.path.parent / "forward_returns.jsonl"),
+        )
+    )
+    return 0
+
+
 def run() -> int:
     """One supervised-by-schedule trading session: open to close, then shut down."""
     data_dir = default_data_dir()
@@ -1157,6 +1256,10 @@ def main() -> int:
         return weekly()
     if command == "replay":
         return replay()
+    if command == "priors":
+        return priors()
+    if command == "dispatch-whatif":
+        return dispatch_whatif()
     if command == "golden":
         return golden()
     if command == "halt":

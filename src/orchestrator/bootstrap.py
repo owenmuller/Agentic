@@ -641,6 +641,8 @@ def start(
         source_pass_day=now.date(),
         class_caps=checks.orchestrator_config.research_class_caps,
         class_passes=_class_passes_today(checks, now.date()),
+        scorer=_dispatch_scorer(checks, registry),
+        dispatch=checks.orchestrator_config.dispatch,
         previously_capped=checks.audit.capped_external_ids(),
         budget=checks.budget,
         session=checks.session,
@@ -684,3 +686,15 @@ def _class_passes_today(checks, today) -> dict[str, int]:
         bucket = caps.bucket(class_of.get(source_id, "class_2"))
         passes[bucket] = passes.get(bucket, 0) + count
     return passes
+
+
+def _dispatch_scorer(checks, registry):
+    """The cross-source scorer (ruling 2026-09-18, revised step 2) when scored
+    dispatch is on: priors from config/dispatch_priors.yaml, the registry's
+    convergence bonus riding along. None keeps the dispatch-weight sort."""
+    if not checks.orchestrator_config.dispatch.scored:
+        return None
+    from orchestrator.scoring import DispatchPriors, DispatchScorer
+
+    bonus = registry.bonus_for if registry is not None else None
+    return DispatchScorer(DispatchPriors.load(), bonus=bonus)
