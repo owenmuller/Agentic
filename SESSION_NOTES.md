@@ -4102,6 +4102,24 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### FINAL floor ruling — $15,001 (2026-09-18); the $15K–$50K band tagged for 2026-10-15
+
+**Ruled:** `prefilter.min_amount_max` → **15001**. Exclude the confident, measured-worst population
+(≤$15K: −0.79%, 33% hit, n=1541). The $15K–$50K band's −0.67 is n=223 of August backfill — too
+thin to cut the source to ~1 candidate/week, which would end the ability to measure it and starve
+the mechanical control arm's refill. ~15/week keep flowing (48 of the last 16 days' 1,546
+purchases: 44 in $15K–$50K, 4 above); both arms move together (funnel-identity rule 2026-08-27).
+
+**Tagging, so the review reads live data:**
+- Weekly attribution (`AttributionReport.congressional_bands`): judged congressional decisions by
+  floor band — `<=15K (prefiltered since 2026-09-18)`, `15-50K (UNDER REVIEW)`, `>50K` — with
+  decisions, traded, and the expectancy of the closed ones, since inception.
+- Forward report: EVERY congressional purchase in the funnel, researched or capped, by the same
+  three bands at 5d and 20d — the slice 2026-10-15 rules on.
+- Tests: `tests/test_floor_band.py` (2); the prefilter floor tests pin 15,001 (`$1,001 – $15,000`
+  skipped, `$15,001 – $50,000` researched). CLAUDE.md Class 2 bullet rewritten as final, with the
+  two superseded same-day values recorded.
+
 ### Correction — congressional floor $100K → $50K (2026-09-18, same day), and what the live flow says
 
 **Ruled:** `prefilter.min_amount_max` 100001 → **50001** (strictly-below): the "$15,001 – $50,000"

@@ -517,20 +517,22 @@ classes:
         # RESEARCH PRE-FILTER (cost pass, 2026-08-19): free deterministic checks
         # before the LLM spends a pass. A disclosure is skipped (recorded as a
         # pre_filter stage rejection, never silently dropped) when:
-        #   - the amount range tops out at or below $50,000 (the range MAX
-        #     must be strictly below the 50,001 threshold to skip) — HUMAN
-        #     RULING 2026-09-18, corrected the same day from $100K. From the
-        #     forward engine's grounding pass: purchases up to $15K were 82% of
-        #     candidates at -0.79% mean 5d excess (33% hit, n=1541) and
-        #     $15K-$50K measured -0.67 (n=223) — the confident, measured-worst
-        #     population, excluded. Above $50K the evidence is thin ($50K-$100K
-        #     -0.88 at n=34; $100K-$1M positive at n=34/36, mostly August
-        #     backfill) and a $100K floor would have passed 4 candidates in 16
-        #     days — not a source, and it took the mechanical control arm's
-        #     intake with it. $50K keeps enough flow to keep measuring. Was
-        #     15000 (2026-08-19 to 2026-09-18). SAME CODE PATH AS THE
-        #     MECHANICAL ARM (ruling 2026-08-27: the funnels never diverge).
-        #     Dated so attribution partitions before/after.
+        #   - the amount range tops out at or below $15,000 (the range MAX
+        #     must be strictly below the 15,001 threshold to skip) — HUMAN
+        #     RULING 2026-09-18, FINAL after two same-day revisions ($100K,
+        #     then $50K). From the forward engine's grounding pass: purchases
+        #     up to $15K were 82% of candidates at -0.79% mean 5d excess (33%
+        #     hit, n=1541) — the confident, measured-worst population, excluded.
+        #     The $15K-$50K band measured -0.67 but on n=223 of August backfill:
+        #     too thin to justify cutting the source to ~1 candidate/week,
+        #     which the live flow showed both $50K and $100K would have done
+        #     (nothing lives between $50K and $250K; 4 records in 16 days) —
+        #     ending the ability to measure it and starving the mechanical
+        #     control arm's refill. ~15/week keep flowing; the $15K-$50K band
+        #     is TAGGED in attribution and the forward report so 2026-10-15 can
+        #     rule on it with live data. Was 15000 (2026-08-19 to 2026-09-18).
+        #     SAME CODE PATH AS THE MECHANICAL ARM (ruling 2026-08-27: the
+        #     funnels never diverge). Dated so attribution partitions.
         #   - the observed lag between trade and report exceeds 75 days (STOCK
         #     Act allows 45; far beyond that the move is long priced in), or
         #   - it is a SALE in a name the system does not hold (someone else's
@@ -538,7 +540,7 @@ classes:
         # Unparseable amounts/lags fail OPEN to research - the budget bounds the
         # cost of erring toward research; erring away silently drops signal.
         prefilter:
-          min_amount_max: 50001
+          min_amount_max: 15001
           max_lag_days: 75
           # Disclosure->today staleness (ruling 2026-08-26), DISTINCT from the
           # trade->disclosure lag rule above. Steady-state hourly polling sees

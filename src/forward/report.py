@@ -45,6 +45,25 @@ _NUMBER = re.compile(r"\d[\d,]*")
 _REACTION_HORIZONS = (1, 3, 5)
 
 
+#: The floor bands of the 2026-09-18 ruling, by range max.
+_FLOOR_BANDS = (
+    (15_000, "<=15K"),
+    (50_000, "15-50K"),
+    (10**12, ">50K"),
+)
+
+
+def _floor_band(rendered: str) -> Optional[str]:
+    figures = [int(match.replace(",", "")) for match in _NUMBER.findall(rendered or "")]
+    if not figures:
+        return None
+    top = max(figures)
+    for ceiling, label in _FLOOR_BANDS:
+        if top <= ceiling:
+            return label
+    return None
+
+
 def _amount_band(rendered: str) -> Optional[str]:
     """Band by the range MAX; None when nothing numeric can be read."""
     figures = [int(match.replace(",", "")) for match in _NUMBER.findall(rendered)]
@@ -307,6 +326,35 @@ def render_forward_report(
                     lines.append(
                         "  " + _stat_line(label, _excess_values(members, rows, 3))
                     )
+
+    # Congressional floor band (human ruling 2026-09-18, final at $15,001):
+    # EVERY congressional purchase in the funnel, researched or not, by the
+    # range max — <=15K (prefiltered since the ruling), 15-50K (under review
+    # for 2026-10-15), >50K — at 5d and 20d. The slice the review rules on.
+    purchases = [
+        e
+        for e in with_ticker
+        if e.source_id == "congressional_disclosures"
+        and e.transaction.lower().startswith("purchase")
+    ]
+    if purchases:
+        lines.extend(
+            [
+                "",
+                "Congressional floor band (ruling 2026-09-18: <=15K prefiltered, "
+                "15-50K UNDER REVIEW, >50K kept) — every purchase in the funnel, "
+                "excess at 5d / 20d:",
+            ]
+        )
+        for ceiling, label in _FLOOR_BANDS:
+            members = [
+                e
+                for e in purchases
+                if (band := _floor_band(e.amount_range)) is not None and band == label
+            ]
+            if members:
+                lines.append("  " + _stat_line(f"{label}, 5d", _excess_values(members, rows, 5)))
+                lines.append("  " + _stat_line(f"{label}, 20d", _excess_values(members, rows, 20)))
 
     # Form 4 cluster rule (ruling 2026-09-02): the prefiltered singles are the
     # control group. If singles' forward returns match clusters', the >=2-insider

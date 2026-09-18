@@ -335,25 +335,21 @@ def filing_signal(period_of_report: str):
 
 
 def test_a_small_disclosure_is_skipped_with_the_threshold_in_the_reason(prefilter):
-    """Ruling 2026-09-18 (corrected from $100K the same day): the floor is
-    $50K — the measured-worst bands (<=15K -0.79 n=1541, 15K-50K -0.67 n=223)
-    are excluded; above it the flow is kept so the size effect can be measured."""
-    for amount in ("$1,001 - $15,000", "$15,001 - $50,000"):
-        reason = prefilter.skip_reason(disclosure_signal(amount_range=amount), now=NOW)
-        assert reason is not None, amount
-        assert "min_amount_max" in reason
-    assert "$50,000" in prefilter.skip_reason(
-        disclosure_signal(amount_range="$15,001 - $50,000"), now=NOW
-    )
+    """Final ruling 2026-09-18: the floor is $15,001 — the confident,
+    measured-worst band (<=15K, -0.79 at n=1541) is excluded; the $15K-$50K
+    band keeps flowing, tagged, so 2026-10-15 can rule on it with live data."""
+    reason = prefilter.skip_reason(disclosure_signal(amount_range="$1,001 - $15,000"), now=NOW)
+    assert reason is not None and "min_amount_max" in reason and "$15,000" in reason
+    assert prefilter.skip_reason(disclosure_signal(amount_range="$1,001 - $14,999"), now=NOW) is not None
 
 
 def test_the_amount_floor_is_strictly_below(prefilter):
-    """$50,001 - $100,000 tops out above the 50,001 threshold and researches;
-    $15,001 - $50,000 tops out at 50,000, strictly below it, and is skipped.
+    """$15,001 - $50,000 tops out above the 15,001 threshold and researches;
+    $1,001 - $15,000 tops out at 15,000, strictly below it, and is skipped.
     Constraint #6 does not apply — the yaml states 'strictly below to skip'."""
+    assert prefilter.skip_reason(disclosure_signal(amount_range="$15,001 - $50,000"), now=NOW) is None
     assert prefilter.skip_reason(disclosure_signal(amount_range="$50,001 - $100,000"), now=NOW) is None
-    assert prefilter.skip_reason(disclosure_signal(amount_range="$100,001 - $250,000"), now=NOW) is None
-    assert prefilter.skip_reason(disclosure_signal(amount_range="$15,001 - $50,000"), now=NOW) is not None
+    assert prefilter.skip_reason(disclosure_signal(amount_range="$1,001 - $15,000"), now=NOW) is not None
 
 
 def test_an_unparseable_amount_fails_open_to_research(prefilter):

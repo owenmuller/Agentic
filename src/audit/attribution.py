@@ -376,6 +376,59 @@ class CashManagementAttribution:
         )
 
 
+
+#: The congressional floor bands (human ruling 2026-09-18, final): by the
+#: disclosure's range MAX. <=15K is prefiltered since the ruling; 15-50K flows
+#: under review; >50K flows. Rendered from every judged congressional decision
+#: so the review reads live data, not the August backfill.
+CONGRESSIONAL_FLOOR_BANDS: tuple[tuple[int, str], ...] = (
+    (15_000, "<=15K (prefiltered since 2026-09-18)"),
+    (50_000, "15-50K (UNDER REVIEW)"),
+    (10**12, ">50K"),
+)
+
+
+def congressional_floor_band(amount_range: str) -> Optional[str]:
+    """The floor band a rendered amount range falls in, by its max; None when
+    nothing numeric can be read."""
+    import re as _re
+
+    figures = [int(m.replace(",", "")) for m in _re.findall(r"\d[\d,]*", amount_range or "")]
+    if not figures:
+        return None
+    top = max(figures)
+    for ceiling, label in CONGRESSIONAL_FLOOR_BANDS:
+        if top <= ceiling:
+            return label
+    return None
+
+
+def _congressional_bands(trails) -> tuple[tuple[str, int, int, "ExpectancyStats"], ...]:
+    """Judged congressional decisions by floor band: decisions, traded, and the
+    expectancy of the closed ones. Empty when the source has no decisions."""
+    from audit.records import snapshot_amount_range
+
+    decisions: dict[str, int] = {}
+    traded: dict[str, int] = {}
+    pnls: dict[str, list[Decimal]] = {}
+    for trail in trails:
+        decision = trail.decision
+        if decision.signal.source_id != "congressional_disclosures":
+            continue
+        band = congressional_floor_band(snapshot_amount_range(decision.signal))
+        if band is None:
+            continue
+        decisions[band] = decisions.get(band, 0) + 1
+        if decision.was_approved:
+            traded[band] = traded.get(band, 0) + 1
+        if trail.outcome is not None:
+            pnls.setdefault(band, []).append(trail.outcome.realised_pnl)
+    return tuple(
+        (label, decisions[label], traded.get(label, 0), ExpectancyStats.of(tuple(pnls.get(label, ()))))
+        for _, label in CONGRESSIONAL_FLOOR_BANDS
+        if label in decisions
+    )
+
 #: Below this many resolved positions a calibration cell is noise, and the report
 #: says "insufficient" instead of printing a hit rate someone might tune on
 #: (human ruling 2026-09-01).
@@ -529,6 +582,11 @@ class AttributionReport:
     calibration: tuple["ConfidenceBandCalibration", ...] = ()
     #: Expectancy per source, since inception (2026-09-02): (source_id, stats).
     source_expectancy: tuple[tuple[str, "ExpectancyStats"], ...] = ()
+    #: Congressional floor band under review (human ruling 2026-09-18): the
+    #: judged sleeve's congressional decisions split by the disclosure's amount
+    #: band — (band label, decisions, traded, expectancy of the closed ones) —
+    #: so the 2026-10-15 review can rule on the $15K-$50K band with live data.
+    congressional_bands: tuple[tuple[str, int, int, "ExpectancyStats"], ...] = ()
     #: Per judged exit: realised vs held-to-365-days, the mechanical arm's clock.
     counterfactuals: tuple["CounterfactualHold", ...] = ()
     #: One line per paid source: what it costs monthly, when its bill started,
@@ -659,6 +717,20 @@ class AttributionReport:
                     *(
                         f"  {source}: {stats.wins}/{stats.n} won; {stats.line()}"
                         for source, stats in self.source_expectancy
+                    ),
+                ]
+            )
+        if self.congressional_bands:
+            lines.extend(
+                [
+                    "",
+                    "Congressional purchases by amount band (floor ruling "
+                    "2026-09-18: <=15K prefiltered, 15-50K UNDER REVIEW for "
+                    "2026-10-15, >50K kept; judged decisions since inception):",
+                    *(
+                        f"  {label}: {decisions} decisions, {traded} traded; "
+                        f"{stats.wins}/{stats.n} closed won; {stats.line()}"
+                        for label, decisions, traded, stats in self.congressional_bands
                     ),
                 ]
             )
@@ -1282,6 +1354,7 @@ def build_attribution(
         (source, ExpectancyStats.of(tuple(pnls)))
         for source, pnls in sorted(by_source.items())
     )
+    congressional_bands = _congressional_bands(trails)
 
     return AttributionReport(
         by_exit_reason=_by_exit_reason(judged_closed),
@@ -1291,6 +1364,7 @@ def build_attribution(
         # quarter, and windowing it would reset the sample every 90 days.
         calibration=_calibration(trails),
         source_expectancy=source_expectancy,
+        congressional_bands=congressional_bands,
         counterfactuals=_counterfactuals(judged_closed, generated_at, price_on),
         generated_at=generated_at,
         window_days=window_days,
