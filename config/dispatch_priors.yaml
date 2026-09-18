@@ -16,52 +16,258 @@
 # 1.01 material agreement - until the data can speak.
 #
 # ORDERING ONLY. Nothing here sizes a position or widens a cap.
-version: 1
-horizon_days: 5
-min_n: 20
 # One week of report age costs one point (the 2026-08-26 equivalence).
 freshness_points_per_day: 0.142857
-generated_at: "2026-09-18 (ruled defaults; first grounding pass pending the forward refresh)"
+generated_at: '2026-09-18T19:14:16+00:00'
+horizon_days: 5
+min_n: 20
 sources:
-  form_8k:
+  citrini:
     fallback: 0.0
-    slices:
-      "item=5.02": { prior: 0.50, grounded: false, n: 0, note: "ruled default: executive departure/appointment, the most informative whitelisted item" }
-      "item=1.05": { prior: 0.50, grounded: false, n: 0, note: "ruled default: cyber incident (bearish, measurement-only today)" }
-      "item=4.02": { prior: 0.25, grounded: false, n: 0, note: "ruled default: restatement (bearish, measurement-only today)" }
-      "item=2.05": { prior: 0.25, grounded: false, n: 0, note: "ruled default: restructuring" }
-      "item=1.01": { prior: 0.10, grounded: false, n: 0, note: "ruled default: material agreement - frequent, least specific of the five" }
-      "item=other": { prior: 0.0, grounded: false, n: 0, note: "no whitelisted item parsed" }
-  form4_insiders:
-    fallback: 0.0
-    slices:
-      "qual=cluster": { prior: 0.50, grounded: false, n: 0, note: "ruled default: the cluster rule is the source's claim" }
-      "qual=c_suite_single": { prior: 0.25, grounded: false, n: 0, note: "ruled default: C-suite single door (ruling 2026-09-15)" }
-      "qual=single": { prior: 0.0, grounded: false, n: 0, note: "control group; researched only through the door rules" }
   congressional_disclosures:
     fallback: 0.0
     slices:
-      "amount=<=15K": { prior: 0.0, grounded: false, n: 0, note: "ruled default; the old log10(amount) weight put these last" }
-      "amount=<=50K": { prior: 0.10, grounded: false, n: 0, note: "ruled default" }
-      "amount=<=100K": { prior: 0.20, grounded: false, n: 0, note: "ruled default" }
-      "amount=<=250K": { prior: 0.30, grounded: false, n: 0, note: "ruled default" }
-      "amount=<=1M": { prior: 0.40, grounded: false, n: 0, note: "ruled default" }
-      "amount=<=5M": { prior: 0.50, grounded: false, n: 0, note: "ruled default" }
-      "amount=>5M": { prior: 0.50, grounded: false, n: 0, note: "ruled default" }
+      amount=<=100K:
+        grounded: true
+        n: 34
+        note: measured mean 5d excess, 2026-09-18
+        prior: -0.88
+        hit_rate: 0.21
+      amount=<=15K:
+        grounded: true
+        n: 1541
+        note: measured mean 5d excess, 2026-09-18
+        prior: -0.79
+        hit_rate: 0.33
+      amount=<=1M:
+        grounded: true
+        n: 36
+        note: measured mean 5d excess, 2026-09-18
+        prior: 0.76
+        hit_rate: 0.69
+      amount=<=250K:
+        grounded: true
+        n: 34
+        note: measured mean 5d excess, 2026-09-18
+        prior: 0.58
+        hit_rate: 0.59
+      amount=<=50K:
+        grounded: true
+        n: 223
+        note: measured mean 5d excess, 2026-09-18
+        prior: -0.67
+        hit_rate: 0.34
+      amount=<=5M:
+        grounded: false
+        n: 9
+        note: ruled default
+        prior: 0.5
+      amount=>5M:
+        grounded: false
+        n: 1
+        note: ruled default
+        prior: 0.5
+      amount=<=15K|lag=<=20d:
+        prior: -0.9
+        grounded: true
+        n: 392
+        hit_rate: 0.32
+        note: measured mean 5d excess, 2026-09-18
+      amount=<=15K|lag=<=35d:
+        prior: -0.55
+        grounded: true
+        n: 313
+        hit_rate: 0.39
+        note: measured mean 5d excess, 2026-09-18
+      amount=<=15K|lag=<=7d:
+        prior: -1.38
+        grounded: true
+        n: 194
+        hit_rate: 0.25
+        note: measured mean 5d excess, 2026-09-18
+      amount=<=15K|lag=>35d:
+        prior: -0.67
+        grounded: true
+        n: 642
+        hit_rate: 0.34
+        note: measured mean 5d excess, 2026-09-18
+      amount=<=1M|lag=<=35d:
+        prior: 1.01
+        grounded: true
+        n: 23
+        hit_rate: 0.7
+        note: measured mean 5d excess, 2026-09-18
+      amount=<=250K|lag=<=20d:
+        prior: 0.64
+        grounded: true
+        n: 27
+        hit_rate: 0.63
+        note: measured mean 5d excess, 2026-09-18
+      amount=<=50K|lag=<=20d:
+        prior: -0.87
+        grounded: true
+        n: 56
+        hit_rate: 0.41
+        note: measured mean 5d excess, 2026-09-18
+      amount=<=50K|lag=<=35d:
+        prior: -0.16
+        grounded: true
+        n: 48
+        hit_rate: 0.27
+        note: measured mean 5d excess, 2026-09-18
+      amount=<=50K|lag=<=7d:
+        prior: -2.23
+        grounded: true
+        n: 36
+        hit_rate: 0.31
+        note: measured mean 5d excess, 2026-09-18
+      amount=<=50K|lag=>35d:
+        prior: -0.15
+        grounded: true
+        n: 83
+        hit_rate: 0.35
+        note: measured mean 5d excess, 2026-09-18
+      lag=<=20d:
+        prior: -0.79
+        grounded: true
+        n: 496
+        hit_rate: 0.35
+        note: measured mean 5d excess, 2026-09-18
+      lag=<=35d:
+        prior: -0.42
+        grounded: true
+        n: 400
+        hit_rate: 0.4
+        note: measured mean 5d excess, 2026-09-18
+      lag=<=7d:
+        prior: -1.47
+        grounded: true
+        n: 238
+        hit_rate: 0.26
+        note: measured mean 5d excess, 2026-09-18
+      lag=>35d:
+        prior: -0.61
+        grounded: true
+        n: 744
+        hit_rate: 0.34
+        note: measured mean 5d excess, 2026-09-18
+  form4_insiders:
+    fallback: 0.0
+    slices:
+      qual=c_suite_single:
+        grounded: false
+        n: 0
+        note: 'ruled default: C-suite single door (ruling 2026-09-15)'
+        prior: 0.25
+      qual=cluster:
+        grounded: false
+        n: 12
+        note: 'ruled default: the cluster rule is the source''s claim'
+        prior: 0.5
+      qual=single:
+        grounded: true
+        n: 98
+        note: measured mean 5d excess, 2026-09-18
+        prior: -1.8
+        hit_rate: 0.43
+      qual=single|size=<=100K:
+        prior: -0.1
+        grounded: true
+        n: 21
+        hit_rate: 0.52
+        note: measured mean 5d excess, 2026-09-18
+      qual=single|size=<=1M:
+        prior: -2.38
+        grounded: true
+        n: 22
+        hit_rate: 0.41
+        note: measured mean 5d excess, 2026-09-18
+      qual=single|size=<=5M:
+        prior: -1.91
+        grounded: true
+        n: 21
+        hit_rate: 0.48
+        note: measured mean 5d excess, 2026-09-18
+      size=<=100K:
+        prior: -0.1
+        grounded: true
+        n: 21
+        hit_rate: 0.52
+        note: measured mean 5d excess, 2026-09-18
+      size=<=1M:
+        prior: -2.18
+        grounded: true
+        n: 23
+        hit_rate: 0.43
+        note: measured mean 5d excess, 2026-09-18
+      size=<=250K:
+        prior: -1.41
+        grounded: true
+        n: 20
+        hit_rate: 0.4
+        note: measured mean 5d excess, 2026-09-18
+      size=<=5M:
+        prior: -1.68
+        grounded: true
+        n: 29
+        hit_rate: 0.45
+        note: measured mean 5d excess, 2026-09-18
   form_13d:
     fallback: 0.25
     slices:
-      "stake=>=10%": { prior: 0.50, grounded: false, n: 0, note: "ruled default: a large activist stake" }
-      "stake=5-10%": { prior: 0.25, grounded: false, n: 0, note: "ruled default" }
-  trump_posts:
-    fallback: 0.25
-  nolimitgains:
+      stake=5-10%:
+        grounded: false
+        n: 0
+        note: ruled default
+        prior: 0.25
+      stake=>=10%:
+        grounded: false
+        n: 0
+        note: 'ruled default: a large activist stake'
+        prior: 0.5
+  form_13f:
     fallback: 0.0
-  unusual_whales:
+  form_8k:
+    fallback: 0.0
+    slices:
+      item=1.01:
+        grounded: false
+        n: 0
+        note: 'ruled default: material agreement - frequent, least specific of the
+          five'
+        prior: 0.1
+      item=1.05:
+        grounded: false
+        n: 0
+        note: 'ruled default: cyber incident (bearish, measurement-only today)'
+        prior: 0.5
+      item=2.05:
+        grounded: false
+        n: 0
+        note: 'ruled default: restructuring'
+        prior: 0.25
+      item=4.02:
+        grounded: false
+        n: 0
+        note: 'ruled default: restatement (bearish, measurement-only today)'
+        prior: 0.25
+      item=5.02:
+        grounded: false
+        n: 0
+        note: 'ruled default: executive departure/appointment, the most informative
+          whitelisted item'
+        prior: 0.5
+      item=other:
+        grounded: false
+        n: 0
+        note: no whitelisted item parsed
+        prior: 0.0
+  nolimitgains:
     fallback: 0.0
   optionshawk:
     fallback: 0.0
-  citrini:
+  trump_posts:
+    fallback: 0.25
+  unusual_whales:
     fallback: 0.0
-  form_13f:
-    fallback: 0.0
+version: 1
