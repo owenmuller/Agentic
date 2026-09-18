@@ -4018,6 +4018,90 @@ the HIGH-volume items — 2.02 (earnings) and 8.01 (other events) alone dwarf th
 widening adds candidates to a source already 20-40x over its 6-pass cap; volume and crowding are
 reported before it ships. Baseline sleeve and new sources: pending, in order.
 
+### AGGRESSION RULING 2026-09-18 — step 2 REVISED: 8-K widening cancelled; cross-source dispatch scoring shipped
+
+**Revised ruling (same day).** The crowding data changed the diagnosis: selection-constrained, not
+supply-constrained (form_8k 87 / 254 / 67 candidates a day against a cap of 6; congressional
+70-213 against 5; every cap filled by arrival order). Widening the 8-K whitelist would only dilute
+the pool with the least informative items (2.02, 8.01). Whitelist stays at five. Replaced by:
+(1) global competition for the 40 slots on a comparable score, per-source caps kept as ceilings;
+(2) priors grounded in the forward-return engine, flagged where n does not permit; (3) a
+what-if of yesterday's slots under scoring versus what they were.
+
+**Shipped (`4751c42` code, `202eead` merge fix, `3d200a2` grounded priors; VERIFIED origin/vps/HEAD,
+droplet pulled, 1289 passed / 3 skipped both sides):**
+
+- `orchestrator/scoring.py`: `score = prior(slice) − age_days/7 + convergence bonus`, one unit
+  (expected 5d excess, pct-points). Slices from the structured fields each fetcher stamps, with
+  content parsers as fallback so audit records grade identically: 8-K by highest-ranked whitelisted
+  item (5.02 > 1.05 > 4.02 > 2.05 > 1.01 by ruling); Form 4 by door × aggregate-size band;
+  congressional by amount band × lag band; 13D by stake band; posts/callers at the source fallback.
+  Resolution: exact facet → each single facet → source fallback → 0, and every answer says
+  grounded or ruled.
+- `config/dispatch_priors.yaml`: every value ruled and flagged `grounded: false` until
+  `python -m orchestrator priors --write` replaces it with the measured mean where n ≥ 20.
+  Merge fix (`202eead`): an ungrounded compound slice is never written at the fallback — it would
+  shadow the single-facet resolution (cluster|size at 0.0 hid cluster at 0.5); the loader ignores
+  prior-less entries.
+- Loop: with `dispatch.scored` the sort key is the score (Class 1 still first). Pooled filing
+  sources (8-K, Form 4, congressional, 13D, 13F) wait for 30-minute release windows, are ranked
+  together at each window with class priority set aside, and each source spends at most
+  ceil(remaining cap / remaining windows today) per window — slots spread across the session, and
+  a strong 14:00 filing is not shut out by a mediocre 09:31 one. Posts and callers dispatch at once,
+  scored. `scored: false` (the harness default) is the 2026-08-26 behaviour byte for byte. Honest
+  limit: the competition is per window, not per day — a full-day ranking would mean researching
+  nothing until the close.
+- `python -m orchestrator priors [--write] [--refresh]`, `python -m orchestrator dispatch-whatif
+  --day D`. Tests: `tests/test_dispatch_scoring.py` (10).
+
+**First grounding pass (forward cache refreshed by the weekly report to 5,238 rows; 27 slices
+grounded at 5d):**
+
+| slice | n | mean 5d excess | hit |
+|---|---|---|---|
+| congressional, all | 1878 | −0.73 | 34% |
+| congressional amount ≤15K (82% of candidates) | 1541 | −0.79 | 33% |
+| congressional ≤50K | 223 | −0.67 | 34% |
+| congressional ≤250K | 34 | **+0.58** | 59% |
+| congressional ≤1M | 36 | **+0.76** | 69% |
+| congressional ≤1M & lag ≤35d | 23 | **+1.01** | 70% |
+| congressional lag ≤7d (freshest) | 238 | −1.47 | 26% |
+| congressional lag ≤35d | 400 | −0.42 | 40% |
+| Form 4 single (the control) | 98 | −1.80 | 43% |
+| Form 4 cluster | 12 | −0.14 (n<20, ruled +0.50 stands) | 50% |
+| Form 4 C-suite single | 0 | ruled +0.25 stands | — |
+| 8-K, every item | 427 | no 5d marks yet (first candidates 09-16) | — |
+| 13D | 0 | — | — |
+
+Findings that matter beyond dispatch: (a) the congressional source as researched is a NEGATIVE
+5-day-excess population, and the bulk of it (≤15K) is the worst part; the size effect the old
+log10(amount) weight assumed is real but only above $100K, and the freshest disclosures (lag ≤7d)
+are the worst, not the best — the −age/7 freshness term runs the wrong way for this source at 5d
+and is now dominated by the grounded lag cells; (b) Form 4 singles at −1.80 (n=98) confirm the
+control group; the cluster claim is unmeasured at n=12; (c) 8-K priors cannot be grounded before
+~09-23, so the item ordering is ruled until then. 20d marks exist for almost nothing yet — the
+5d horizon is the grounding horizon by necessity, stated in the file.
+
+**Item 3 — what the slots would have been (`dispatch-whatif`, grounded priors):**
+
+| day | candidates | slots | same picks | summed prior actual → scored | realised 1d excess actual vs scored |
+|---|---|---|---|---|---|
+| 2026-09-17 | 476 | 19 | 7 of 19 | +2.70 → +3.50 | −0.06 vs **+0.68** (n=15 each) |
+| 2026-09-18 | 166 | 23 | 9 of 23 | +2.50 → +4.64 | unresolved |
+
+Composition by source is identical both days — the per-source caps are ceilings and the total
+slot count is fixed, so scoring changes WHICH candidates each source spends its ceiling on, not
+how many. That is the ruled shape (no source takes all 40); the reallocation lever, if wanted, is
+the ceilings themselves. Within sources the change is large: on 09-17, twelve of nineteen picks
+differ, and the picks scoring would have made beat the actual ones by 0.74 pct-points at one day
+on n=15 — one day, one horizon, suggestive not conclusive; the 5d and 20d marks land next week and
+every replay accumulates the tally. Also visible in the what-if: production researched SBLK three
+times on 09-17 (three separate Form 4 filings on the same name); scoring would have done the same.
+Same-name-same-day de-duplication is a separate ruling — flagged, not built.
+
+**Service note.** The running service still predates every commit of the last two days
+(staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
+
 ## Standing reminders
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in
