@@ -45,9 +45,9 @@ from test_orchestrator import (
     structured,
 )
 
-#: The entry: REPORT (long NUE, 71 -> 5% of the 45,000 judged sleeve = 2,250 ->
-#: 16 shares at 140 = 2,240 (45/15/40/0 allocation, ruling 2026-09-18).
-ENTRY_SHARES = Decimal("16")
+#: The entry: REPORT (long NUE, 71 -> 5% of the 55,000 judged sleeve = 2,750 ->
+#: 19 shares at 140 = 2,660 (55/15/30/0 allocation, rulings 2026-09-18/21).
+ENTRY_SHARES = Decimal("19")
 ENTRY_COST = ENTRY_SHARES * QUOTE
 
 ADD_REPORT = {
@@ -206,11 +206,11 @@ def test_a_signal_on_a_held_name_is_an_add_decision_not_a_second_position(
     assert position.decision_id == "dec-1"
     assert len(position.lots) == 2
     assert position.lots[0].decision_id == "dec-1" and position.lots[1].decision_id == "dec-2"
-    # Combined cap (rule 2): confidence 86 -> 10% band = 4,500; held 2,240 ->
-    # headroom 2,260 x add_fraction 0.5 = 1,130 -> 8 shares at 140.
-    assert position.lots[1].quantity == Decimal("8")
-    assert position.quantity == ENTRY_SHARES + 8
-    assert position.entry_cost == ENTRY_COST + 8 * QUOTE
+    # Combined cap (rule 2): confidence 86 -> 10% band = 5,500; held 2,660 ->
+    # headroom 2,840 x add_fraction 0.5 = 1,420 -> 10 shares at 140.
+    assert position.lots[1].quantity == Decimal("10")
+    assert position.quantity == ENTRY_SHARES + 10
+    assert position.entry_cost == ENTRY_COST + 10 * QUOTE
     assert position.entry_price == QUOTE  # same price both lots: the blend is 140
     decision = started.audit.trail("dec-2").decision
     assert decision.add is not None
@@ -219,8 +219,8 @@ def test_a_signal_on_a_held_name_is_an_add_decision_not_a_second_position(
     assert decision.add.family_bump is False  # 10% is already the top band
     assert decision.add.combined_cap_fraction == Decimal("0.10")
     assert decision.add.held_value == ENTRY_COST
-    assert decision.add.headroom == Decimal("4500") - ENTRY_COST
-    assert decision.sizing.capital == Decimal("1130.00")
+    assert decision.add.headroom == Decimal("5500") - ENTRY_COST
+    assert decision.sizing.capital == Decimal("1420.00")
     assert decision.research.add_verdict == "add"
     # The leash moved to the later resolution date (rule 3): entry stated none
     # (weeks fallback 45), the add stated 2026-10-30 = day 74 from 2026-08-17.
@@ -231,8 +231,8 @@ def test_a_signal_on_a_held_name_is_an_add_decision_not_a_second_position(
 def test_an_independent_family_bumps_the_combined_cap_one_band(
     tmp_path, limits, signals_config, research_config
 ):
-    """Confidence 75 is the 5% band (2,250): with the position at 2,240 that is
-    10 of headroom — nothing. The insider-filings family is independent of the
+    """Confidence 75 is the 5% band (2,750): with the position at 2,660 that is
+    90 of headroom — nothing. The insider-filings family is independent of the
     Trump-post family that opened it, so the cap is the 10% band instead."""
     llm = AddAwareLLM(add=structured({**ADD_REPORT, "confidence": 75}))
     started, feeds, prices, clock, llm = enter_nue(
@@ -243,7 +243,7 @@ def test_an_independent_family_bumps_the_combined_cap_one_band(
     decision = started.audit.trail("dec-2").decision
     assert decision.add.family_bump is True
     assert decision.add.combined_cap_fraction == Decimal("0.10")
-    assert decision.sizing.capital == Decimal("1130.00")
+    assert decision.sizing.capital == Decimal("1420.00")
     assert "one band up" in decision.sizing.rationale
 
 
@@ -251,7 +251,7 @@ def test_the_same_family_gets_no_bump_and_a_full_band_is_no_headroom(
     tmp_path, limits, signals_config, research_config
 ):
     """A second Trump post on the same name: same family, no bump. At 62 the
-    combined cap is the 2% band (900) and the position already holds 2,240 —
+    combined cap is the 2% band (1,100) and the position already holds 2,660 —
     no headroom, no add, convergence recorded, review owed."""
     llm = AddAwareLLM(add=structured({**ADD_REPORT, "confidence": 62}))
     started, feeds, prices, clock, llm = enter_nue(
@@ -356,9 +356,9 @@ def test_adds_never_exceed_the_hard_cap(tmp_path, limits, signals_config, resear
     assert decision.add.combined_cap_fraction == limits.sizing.hard_cap == Decimal("0.10")
     assert decision.add.family_bump is False
     position = started.exits.tracked[0]
-    # 4,500 - 2,240 = 2,260 -> 16 shares at 140 = 2,240; total 4,480 <= 4,500.
-    assert position.entry_cost <= Decimal("4500")
-    assert position.quantity == ENTRY_SHARES + 16
+    # 5,500 - 2,660 = 2,840 -> 20 shares at 140 = 2,800; total 5,460 <= 5,500.
+    assert position.entry_cost <= Decimal("5500")
+    assert position.quantity == ENTRY_SHARES + 20
 
 
 # ================================================================================
@@ -414,8 +414,8 @@ def test_a_close_resolves_every_lot_to_its_own_outcome(
     outcomes = {r.decision_id: r for r in started.audit.records() if isinstance(r, OutcomeRecord)}
     assert set(outcomes) == {"dec-1", "dec-2"}
     # FIFO relief of a full close: each lot's own cost against its own proceeds.
-    assert outcomes["dec-1"].realised_pnl == 16 * Decimal("100") - ENTRY_COST
-    assert outcomes["dec-2"].realised_pnl == 8 * Decimal("100") - 8 * QUOTE
+    assert outcomes["dec-1"].realised_pnl == 19 * Decimal("100") - ENTRY_COST
+    assert outcomes["dec-2"].realised_pnl == 10 * Decimal("100") - 10 * QUOTE
     assert "lot 1 of 2" in outcomes["dec-1"].note and "lot 2 of 2" in outcomes["dec-2"].note
     assert started.audit.trail("dec-1").is_complete and started.audit.trail("dec-2").is_complete
 
@@ -456,7 +456,7 @@ def test_a_merged_position_is_rebuilt_from_the_log_after_a_restart(
     position = restarted.exits.tracked[0]
     assert position.decision_id == "dec-1"
     assert [lot.decision_id for lot in position.lots] == ["dec-1", "dec-2"]
-    assert [lot.quantity for lot in position.lots] == [ENTRY_SHARES, Decimal("8")]
+    assert [lot.quantity for lot in position.lots] == [ENTRY_SHARES, Decimal("10")]
     assert position.quantity == live.quantity
     assert position.entry_cost == live.entry_cost
     assert position.entry_price == live.entry_price
@@ -478,7 +478,7 @@ def test_a_held_add_decision_survives_a_restart_as_convergence_and_an_owed_revie
     started.loop.shutdown()
 
     broker = FakeBroker(
-        cash=Decimal("97760"),
+        cash=Decimal("97340"),
         positions=[BrokerPosition("NUE", ENTRY_SHARES, ENTRY_COST, ENTRY_COST)],
     )
     restarted = start(
@@ -591,7 +591,7 @@ def test_health_renders_lots_and_convergence(tmp_path, limits, signals_config, r
     second_signal(started, feeds, clock)
     position = started.exits.tracked[0]
     rendered = _fmt_position(position, clock())
-    assert "lots: dec-1 16@140.00 (trump_posts, 71) | dec-2 8@140.00 (insider_filings, 86)" in rendered
+    assert "lots: dec-1 19@140.00 (trump_posts, 71) | dec-2 10@140.00 (insider_filings, 86)" in rendered
 
 
 def test_the_mechanical_arm_is_untouched(tmp_path, limits, signals_config, research_config):

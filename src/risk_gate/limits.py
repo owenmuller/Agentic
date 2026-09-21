@@ -28,7 +28,7 @@ class SleeveWeights(_Strict):
     prediction: Fraction
     #: The baseline market-beta sleeve (aggression ruling 2026-09-18, lever
     #: 4): target fraction of NAV held in one index ETF. Defaults to zero so a
-    #: cap table written before the ruling still parses; the live file says 0.40.
+    #: cap table written before the ruling still parses; the live file says 0.30.
     baseline: Fraction = Decimal("0")
 
     @model_validator(mode="after")
@@ -184,7 +184,7 @@ class BaselineSleeveLimits(_Strict):
     #: The broad-market ETF the sleeve holds (SPY).
     symbol: str
     #: Drift from target, as a fraction of NAV, beyond which the weekly check
-    #: rebalances. 0.05 = the sleeve may sit anywhere in [35%, 45%] of NAV.
+    #: rebalances. 0.05 = the sleeve may sit anywhere in [25%, 35%] of NAV.
     rebalance_band: Fraction
     #: Smallest rebalance order, so the sleeve never churns dust.
     min_order_notional_usd: Annotated[Decimal, Field(gt=Decimal("0"))]

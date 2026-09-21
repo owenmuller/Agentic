@@ -1127,19 +1127,19 @@ ALPHA_SECTOR = SectorMap(
 def test_three_same_sector_positions_within_the_cap_are_approved(limits):
     gate = make_gate(limits, sectors=ALPHA_SECTOR)
     for symbol in ("AL1", "AL2", "AL3"):
-        decision = gate.submit(equity_buy(symbol=symbol, qty=37, price="100.00"))
+        decision = gate.submit(equity_buy(symbol=symbol, qty=45, price="100.00"))
         assert decision.is_approved, decision
 
 
 def test_the_fourth_position_breaching_the_sector_cap_is_rejected(limits):
     gate = make_gate(limits, sectors=ALPHA_SECTOR)
-    # 3 x 3,700 = 11,100 sits inside the 25% sector cap (11,250 of the 45k
-    # judged sleeve, 45/15/40/0 ruling 2026-09-18) and under the 4,500 single
-    # cap; the fourth carries the sector to 14,800.
+    # 3 x 4,500 = 13,500 sits inside the 25% sector cap (13,750 of the 55k
+    # judged sleeve, 55/15/30/0 rulings 2026-09-18/21) and under the 5,500
+    # single cap; the fourth carries the sector to 18,000.
     for symbol in ("AL1", "AL2", "AL3"):
-        assert gate.submit(equity_buy(symbol=symbol, qty=37, price="100.00")).is_approved
+        assert gate.submit(equity_buy(symbol=symbol, qty=45, price="100.00")).is_approved
 
-    fourth = gate.submit(equity_buy(symbol="AL4", qty=37, price="100.00"))
+    fourth = gate.submit(equity_buy(symbol="AL4", qty=45, price="100.00"))
     assert isinstance(fourth, Rejection)
     assert fourth.code is RejectionCode.SECTOR_CONCENTRATION
     assert "alpha" in fourth.message
@@ -1160,8 +1160,10 @@ def test_exactly_at_the_sector_cap_is_approved(limits):
     single_cap = (
         gate.sleeve_nav(Sleeve.EQUITY) * limits.equity_sleeve.max_single_position
     )
-    per_position = min(single_cap, sector_cap / 3)
-    qty = per_position / Decimal("100.00")  # fractional shares make it exact
+    # Whole cents: a 55% sleeve makes cap / 3 a repeating decimal, and the order
+    # schema caps quantity precision (fractional shares still make it exact).
+    per_position = min(single_cap, sector_cap / 3).quantize(Decimal("0.01"))
+    qty = per_position / Decimal("100.00")
     for symbol in ("AL1", "AL2", "AL3"):
         decision = gate.submit(equity_buy(symbol=symbol, qty=qty, price="100.00"))
         assert decision.is_approved, decision
@@ -1176,7 +1178,7 @@ def test_unmapped_tickers_never_share_a_bucket(limits):
     if unknown tickers silently shared a sector, the third would breach it."""
     gate = make_gate(limits, sectors=SectorMap({}))
     for symbol in ("ZZ1", "ZZ2", "ZZ3"):
-        decision = gate.submit(equity_buy(symbol=symbol, qty=37, price="100.00"))
+        decision = gate.submit(equity_buy(symbol=symbol, qty=45, price="100.00"))
         assert decision.is_approved, decision
     assert SectorMap({}).sector_of("ZZ1") == "unmapped:ZZ1"
     assert SectorMap({}).sector_of("zz1") == "unmapped:ZZ1"  # case-insensitive
@@ -1322,16 +1324,16 @@ def test_a_zero_weight_sleeve_rejects_orders_with_a_typed_rejection(limits):
     assert gate.buying_power == START_CASH
 
 
-def test_the_judged_sleeve_spans_under_half_of_nav(limits):
-    """45/15/40/0 (2026-09-18; 75/25/0 before it): the judged 10% cap is 10% of
-    a 45% sleeve — 4.5% of account NAV, not 10%. The baseline sleeve's 40% is
-    an allotment the judged caps never see."""
+def test_the_judged_sleeve_spans_just_over_half_of_nav(limits):
+    """55/15/30/0 (rulings 2026-09-18/21; 75/25/0 before): the judged 10% cap
+    is 10% of a 55% sleeve — 5.5% of account NAV, not 10%. The baseline
+    sleeve's 30% is an allotment the judged caps never see."""
     gate = make_gate(limits)
-    assert gate.sleeve_nav(Sleeve.EQUITY) == START_CASH * Decimal("0.45")
+    assert gate.sleeve_nav(Sleeve.EQUITY) == START_CASH * Decimal("0.55")
     assert gate.sleeve_nav(Sleeve.MECHANICAL) == START_CASH * Decimal("0.15")
-    assert gate.sleeve_nav(Sleeve.BASELINE) == START_CASH * Decimal("0.40")
-    approve(gate, equity_buy(qty=Decimal("45"), price="100.00"))  # == the cap
-    rejection = reject(gate, equity_buy(symbol="MSFT", qty=46, price="100.00"))
+    assert gate.sleeve_nav(Sleeve.BASELINE) == START_CASH * Decimal("0.30")
+    approve(gate, equity_buy(qty=Decimal("55"), price="100.00"))  # == the cap
+    rejection = reject(gate, equity_buy(symbol="MSFT", qty=56, price="100.00"))
     assert rejection.code is RejectionCode.MAX_SINGLE_POSITION_EXCEEDED
 
 
@@ -1372,7 +1374,7 @@ def test_the_mechanical_sleeve_has_its_own_daily_budget(limits):
     clock = FakeClock()
     gate = make_gate(limits, clock=clock)
     judged_cap = gate.sleeve_nav(Sleeve.EQUITY) * limits.equity_sleeve.max_daily_deployment
-    per = judged_cap / 3
+    per = (judged_cap / 3).quantize(Decimal("0.01"))  # whole cents; see the sector test
     for symbol in ("JA", "JB", "JC"):
         approve(gate, equity_buy(symbol=symbol, qty=per / Decimal("100"), price="100.00"))
     over = reject(gate, equity_buy(symbol="JD", qty=1, price="100.00"))
@@ -1381,7 +1383,7 @@ def test_the_mechanical_sleeve_has_its_own_daily_budget(limits):
     # The mechanical sleeve still opens — its budget is untouched.
     approve(gate, equity_buy(symbol="MA", qty=7, price="100.00", sleeve="mechanical"))
     assert gate.state.mechanical_deployed_today == Decimal("700.00")
-    assert gate.state.deployed_today == judged_cap  # unchanged by the mechanical entry
+    assert gate.state.deployed_today == per * 3  # unchanged by the mechanical entry
 
 
 def test_mechanical_allocation_cannot_exceed_its_target_plus_drift(limits):

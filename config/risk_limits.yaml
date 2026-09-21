@@ -24,19 +24,23 @@ portfolio:
   # follower runs as its own sleeve, a controlled experiment alongside the
   # judged system. Restoring the prediction sleeve when a venue ships remains
   # its own human ruling and will re-cut these weights.
-  # AGGRESSION RULING 2026-09-18, lever 4 (human): 45/15/40/0 — the baseline
-  # market-beta sleeve deploys the idle cash: 40% of NAV in SPY, deterministic,
-  # rebalanced weekly to target +/-5 points of NAV, its own attribution bucket
-  # subtracted from every alpha line, frozen both ways under a tripped kill
-  # switch. The mechanical arm's weight moves 25 -> 15 with NO forced trims:
-  # its 30 slices ride to their time exits and the gate's allocation ceiling
-  # (15 + 3 drift) refuses refills until the sleeve is back under it. Judged
-  # sizing bands now read off a 45% sleeve. SGOV holds what the judged sleeve
-  # has not deployed. Dated so attribution partitions before/after.
+  # AGGRESSION RULING 2026-09-18, lever 4 (human), weights FIXED at shipping
+  # (human ruling 2026-09-21): 55/15/30/0 — the baseline market-beta sleeve
+  # deploys idle cash: 30% of NAV in SPY, deterministic, rebalanced weekly to
+  # target +/-5 points of NAV, its own attribution bucket subtracted from every
+  # alpha line, frozen both ways under a tripped kill switch. The ruling's first
+  # cut (judged 45 / baseline 40) would have shrunk every judged position 40%
+  # while lever 1 asked for more shots; 55/30 keeps judged sizing near its
+  # pre-ruling level (2/5/10% of 55% = 1.1/2.75/5.5% of NAV vs 1.5/3.75/7.5%).
+  # The mechanical arm's weight moves 25 -> 15 with NO forced trims: its 30
+  # slices ride to their time exits and the gate's allocation ceiling (15 + 3
+  # drift) refuses refills until the sleeve is back under it, then refills at
+  # the new slice. SGOV holds what the judged sleeve has not deployed. Dated so
+  # attribution partitions before/after.
   sleeves:
-    equity: 0.45 # the JUDGED sleeve: equities & long options (was 0.75)
+    equity: 0.55 # the JUDGED sleeve: equities & long options (was 0.75)
     mechanical: 0.15 # deterministic disclosure follower — no LLM in the path (was 0.25)
-    baseline: 0.40 # market beta in SPY, weekly rebalance — no LLM, no thesis
+    baseline: 0.30 # market beta in SPY, weekly rebalance — no LLM, no thesis
     prediction: 0.00 # event contracts — INACTIVE, no venue (design target: 0.10)
   drift_tolerance: 0.03 # +/-3% from target triggers rebalance
   rebalance: weekly_at_next_session_open
@@ -164,7 +168,8 @@ cash_management:
   min_order_notional_usd: 500
 
 # Baseline market-beta sleeve (AGGRESSION RULING 2026-09-18, lever 4; kill-switch
-# semantics revised the same day). Target = portfolio.sleeves.baseline x NAV in
+# semantics revised the same day; weight 30% by the 2026-09-21 shipping ruling).
+# Target = portfolio.sleeves.baseline x NAV in
 # the symbol below. Checked once per ISO week; outside rebalance_band of NAV
 # (percentage points — Constraint #6 reads "+/-5%" as the wider band, fewer
 # trades) it trades back TO target over the following ticks, buying only with

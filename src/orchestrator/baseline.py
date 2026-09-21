@@ -11,11 +11,13 @@ every alpha calculation before the headline (beta-adjusted excess) is computed.
 
 The rules, all from the ruling
 ------------------------------
-  target        ``portfolio.sleeves.baseline`` x NAV (40%).
+  target        ``portfolio.sleeves.baseline`` x NAV (30% — human ruling
+                2026-09-21 at shipping; the 2026-09-18 draft said 40%).
   cadence       one check per ISO week, at the first tick of the week the loop
                 runs with a usable quote. Outside ``rebalance_band`` of NAV
                 (+/-5 percentage points of NAV — Constraint #6 reads "+/-5%"
-                as the WIDER band, fewer trades) the sleeve trades TO TARGET
+                as the WIDER band, fewer trades; approved 2026-09-21) the
+                sleeve trades TO TARGET
                 over the following ticks; inside it, nothing happens until
                 next week. The first check after the sleeve is switched on is
                 its initial build, from 0% — one rebalance, not a staged one.
@@ -36,7 +38,7 @@ The rules, all from the ruling
                 else, the dust floor, the sleeve's own allocation ceiling
                 (target + drift tolerance); exempt from the alpha caps (single
                 position, sector, daily deployment) exactly like the sweep —
-                those bound concentration risk, and a 40% index position IS
+                those bound concentration risk, and a 30% index position IS
                 the ruling.
 
 Lots and the audit story mirror the sweep: each buy is a DecisionRecord

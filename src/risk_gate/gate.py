@@ -363,7 +363,7 @@ class RiskGate:
         # else; the kill-switch halt above already stops its buys. Exempt from
         # the alpha caps (single position, sector, daily deployment) for the
         # same reason the sweep is — those bound concentration in judged
-        # names, and a 40% index position IS the ruling — but NOT from its
+        # names, and a 30% index position IS the ruling — but NOT from its
         # allocation ceiling: target plus drift is as far as it may be bought,
         # so a rebalance can never quietly grow the beta sleeve past its weight.
         if sleeve is Sleeve.BASELINE:

@@ -309,17 +309,17 @@ def test_a_catalyst_backed_thesis_buys_the_selected_call(
     result = started.loop.tick().processed[0]
     assert result.traded
 
-    # Sized on the HALVED options table: 5% x 45k / 2 = 1,125 premium at risk
-    # (45/15/40/0 allocation, ruling 2026-09-18; table 2/5/10%, 2026-09-15).
+    # Sized on the HALVED options table: 5% x 55k / 2 = 1,375 premium at risk
+    # (55/15/30/0 allocation, rulings 2026-09-18/21; table 2/5/10%, 2026-09-15).
     trail = started.audit.trail(result.decision_id)
     assert trail.decision.sizing.instrument == "option"
-    assert trail.decision.sizing.capital == Decimal("1125.00")
+    assert trail.decision.sizing.capital == Decimal("1375.00")
 
-    # 1,125 at mid 2.50 x 100 = 4 contracts; the gate reserved exactly that.
+    # 1,375 at mid 2.50 x 100 = 5 contracts; the gate reserved exactly that.
     order = trail.decision.gate.order
     assert order["kind"] == "option_buy_to_open"
-    assert order["contracts"] == 4
-    assert trail.decision.gate.max_loss == Decimal("1000.00")  # 4 x 2.50 x 100
+    assert order["contracts"] == 5
+    assert trail.decision.gate.max_loss == Decimal("1250.00")  # 5 x 2.50 x 100
 
     # The expression snapshot reproduces the pick.
     expression = trail.decision.expression
@@ -331,7 +331,7 @@ def test_a_catalyst_backed_thesis_buys_the_selected_call(
     assert chain.requests == [("NUE", TODAY + timedelta(days=60))]
 
     # Settlement carried the contract multiplier into real cash.
-    assert started.gate.state.cash == Decimal("100000") - Decimal("1000.00")
+    assert started.gate.state.cash == Decimal("100000") - Decimal("1250.00")
 
 
 def test_an_illiquid_chain_falls_back_to_equity_at_the_full_table(
@@ -348,7 +348,7 @@ def test_an_illiquid_chain_falls_back_to_equity_at_the_full_table(
 
     trail = started.audit.trail(result.decision_id)
     assert trail.decision.sizing.instrument == "equity"
-    assert trail.decision.sizing.capital == Decimal("2250.00")  # FULL 5%, not 1,125
+    assert trail.decision.sizing.capital == Decimal("2750.00")  # FULL 5%, not 1,375
     assert trail.decision.gate.order["kind"] == "equity_buy"
 
     expression = trail.decision.expression
@@ -373,7 +373,7 @@ def test_a_patient_thesis_expresses_as_stock_even_on_a_perfect_chain(
 
     trail = started.audit.trail(result.decision_id)
     assert trail.decision.gate.order["kind"] == "equity_buy"
-    assert trail.decision.sizing.capital == Decimal("2250.00")
+    assert trail.decision.sizing.capital == Decimal("2750.00")
     assert trail.decision.expression.fallback_reason == "no_catalyst"
     assert chain.requests == []  # the gate refused before any fetch
 
@@ -457,7 +457,7 @@ def test_premium_exceeding_sized_capital_falls_back_to_equity(
     trail = started.audit.trail(result.decision_id)
     assert trail.decision.gate.order["kind"] == "equity_buy"
     assert trail.decision.expression.fallback_reason == "premium_exceeds_size"
-    assert trail.decision.sizing.capital == Decimal("2250.00")
+    assert trail.decision.sizing.capital == Decimal("2750.00")
 
 
 # ================================================================================
@@ -542,8 +542,8 @@ def test_an_option_stop_fires_on_premium_at_the_equity_fraction(
     assert first.positions_closed + second.positions_closed == 1
     trail = started.audit.trail("dec-1")
     assert trail.exits[-1].reason is ExitReason.MAX_LOSS_STOP
-    # 4 contracts: in at 2.50 x 100, out at 1.20 x 100 -> -520.00.
-    assert trail.outcome.realised_pnl == Decimal("-520.00")
+    # 5 contracts: in at 2.50 x 100, out at 1.20 x 100 -> -650.00.
+    assert trail.outcome.realised_pnl == Decimal("-650.00")
 
 
 def test_an_option_position_survives_a_restart_with_its_contract_identity(

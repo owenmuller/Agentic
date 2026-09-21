@@ -1,7 +1,7 @@
 """The baseline market-beta sleeve (AGGRESSION RULING 2026-09-18, lever 4;
 kill-switch semantics revised the same day).
 
-The claims: the weights are 45/15/40/0 and sum to one; a baseline buy is
+The claims: the weights are 55/15/30/0 and sum to one; a baseline buy is
 cash-secured and bound by its own allocation ceiling but exempt from the alpha
 caps; the sleeve builds to target from cash above the liquidity floor with the
 sweeper unparking SGOV for the rest; the check is WEEKLY and trades only when
@@ -62,7 +62,7 @@ def research_config():
     return ResearchConfig.load()
 
 
-def spy_buy(quantity="80", price="500.00"):
+def spy_buy(quantity="60", price="500.00"):
     return EquityBuyOrder(
         symbol="SPY",
         quantity=Decimal(quantity),
@@ -94,10 +94,10 @@ def quiet_build(tmp_path, limits, signals_config, research_config, **kwargs):
 # ================================================================================
 
 
-def test_the_weights_are_45_15_40_0_and_the_sleeve_is_configured(limits):
+def test_the_weights_are_55_15_30_0_and_the_sleeve_is_configured(limits):
     sleeves = limits.portfolio.sleeves
     assert (sleeves.equity, sleeves.mechanical, sleeves.baseline, sleeves.prediction) == (
-        Decimal("0.45"), Decimal("0.15"), Decimal("0.40"), Decimal("0"),
+        Decimal("0.55"), Decimal("0.15"), Decimal("0.30"), Decimal("0"),
     )
     assert limits.baseline_sleeve.enabled is True
     assert limits.baseline_sleeve.symbol == "SPY"
@@ -122,15 +122,15 @@ def test_a_baseline_buy_skips_alpha_caps_but_never_cash_securing_or_its_ceiling(
         AccountState(cash=Decimal("100000"), high_water_mark=Decimal("100000")),
         FakeClock(),
     )
-    # 40,000 of SPY: far beyond the judged 10% single-position cap, the 25%
+    # 30,000 of SPY: far beyond the judged 10% single-position cap, the 25%
     # daily deployment and the sector cap — none of which bind the beta sleeve.
     decision = gate.submit(spy_buy())
     assert decision.is_approved
-    assert gate.state.reserved_cash == Decimal("40000.00")  # cash-secured
+    assert gate.state.reserved_cash == Decimal("30000.00")  # cash-secured
     assert gate.state.deployed_today == ZERO
     assert gate.state.mechanical_deployed_today == ZERO
-    # But its own allocation ceiling binds: 40% + 3% drift = 43% of NAV.
-    over = gate.submit(spy_buy(quantity="8"))  # would reach 44%
+    # But its own allocation ceiling binds: 30% + 3% drift = 33% of NAV.
+    over = gate.submit(spy_buy(quantity="8"))  # would reach 34%
     assert not over.is_approved
     assert over.code is RejectionCode.SLEEVE_ALLOCATION_EXCEEDED
     # And never-negative is as binding as anywhere: 120,000 more is refused.
@@ -191,19 +191,19 @@ def test_the_initial_build_buys_to_target_and_the_sweeper_parks_the_rest(
     # Weekly check ran (never checked before): 0% vs 40% is outside the band.
     assert baseline.week_checked == iso_week(clock.now) == "2026-W34"
     assert baseline.rebalancing is True
-    # The buy: 40,000 target, all of it above the 16,000 liquidity floor.
+    # The buy: 30,000 target, all of it above the 18,500 liquidity floor.
     assert report.baseline_orders == 1
     spy = [p for p in broker.payloads if p["symbol"] == "SPY"]
-    assert spy and spy[0]["qty"] == 80 and spy[0]["limit_price"] == Decimal("500.00")
+    assert spy and spy[0]["qty"] == 60 and spy[0]["limit_price"] == Decimal("500.00")
     # The sweep ran AFTER it, on cash net of the baseline's reservation:
-    # 100,000 - 16,000 floor - 40,000 reserved = 44,000 -> 438 SGOV at 100.40.
+    # 100,000 - 18,500 floor - 30,000 reserved = 51,500 -> 512 SGOV at 100.40.
     assert report.sweep_orders == 1
     sgov = [p for p in broker.payloads if p["symbol"] == "SGOV"]
-    assert sgov[0]["qty"] == 438
+    assert sgov[0]["qty"] == 512
 
     report = started.loop.tick()  # both settle; the sleeve is at target
     position = started.gate.state.position(("baseline", "SPY"))
-    assert position is not None and position.quantity == Decimal("80")
+    assert position is not None and position.quantity == Decimal("60")
     assert position.sleeve is Sleeve.BASELINE
     assert baseline.rebalancing is False
     assert baseline.funding_need() == ZERO
@@ -237,14 +237,14 @@ def test_the_live_transition_unparks_sgov_to_fund_the_build(
     )
     assert first.loop.baseline is None
     first.loop.tick()
-    first.loop.tick()  # 84,000 parked: 836 SGOV at 100.40; cash 16,065.60
-    assert first.gate.state.position(("cash_management", "SGOV")).quantity == Decimal("836")
+    first.loop.tick()  # 81,500 parked: 811 SGOV at 100.40; cash 18,575.60
+    assert first.gate.state.position(("cash_management", "SGOV")).quantity == Decimal("811")
     first.loop.shutdown()
 
     venue = FakeBroker(
-        cash=Decimal("16065.60"),
+        cash=Decimal("18575.60"),
         positions=[
-            BrokerPosition("SGOV", Decimal("836"), Decimal("83934.40"), Decimal("83934.40"))
+            BrokerPosition("SGOV", Decimal("811"), Decimal("81424.40"), Decimal("81424.40"))
         ],
     )
     restarted = start(
@@ -259,34 +259,36 @@ def test_the_live_transition_unparks_sgov_to_fund_the_build(
     sweeper = restarted.loop.sweeper
 
     # Tick 1: the check opens the rebalance. Nothing sits above the floor, so
-    # no SPY buy yet — but the sweeper's buffer now carries the 40,000 owed and
-    # it unsweeps: 16,000 + 40,000 - 16,065.60 = 39,934.40 at the 100.39 bid.
+    # no SPY buy yet — but the sweeper's buffer now carries the 30,000 owed and
+    # it unsweeps: 18,500 + 30,000 - 18,575.60 = 29,924.40 at the 100.39 bid.
     report = restarted.loop.tick()
     assert baseline.rebalancing is True
     assert report.baseline_orders == 0
-    assert baseline.funding_need() == Decimal("40000.000")
-    assert sweeper.buffer() == Decimal("56000.000")
+    assert baseline.funding_need() == Decimal("30000.000")
+    assert sweeper.buffer() == Decimal("48500.000")
     assert report.sweep_orders == 1
     unsweep = venue.payloads[-1]
     assert unsweep["symbol"] == "SGOV" and unsweep["limit_price"] == Decimal("100.39")
-    assert unsweep["qty"] == Decimal("398")  # 39,934.40 / 100.39 rounded up
+    assert unsweep["qty"] == Decimal("299")  # 29,924.40 / 100.39 rounded up
 
-    # Tick 2: the unsweep is settled BEFORE the baseline runs (398 x 100.39 =
-    # 39,955.22 lands), so the SPY buy goes out this tick: the whole gap at 500
-    # is 79 shares, the ~500 remainder under the min notional.
+    # Tick 2: the unsweep is settled BEFORE the baseline runs (299 x 100.39 =
+    # 30,016.61 lands), so the SPY buy goes out this tick: the whole gap at 500
+    # is 59 shares, the ~500 remainder under the min notional.
     report = restarted.loop.tick()
     assert report.baseline_orders == 1
     spy = [p for p in venue.payloads if p["symbol"] == "SPY"]
-    assert len(spy) == 1 and spy[0]["qty"] == 79
+    assert len(spy) == 1 and spy[0]["qty"] == 59
 
     # Tick 3: settled; the sleeve is at target and the rebalance closes.
     restarted.loop.tick()
     held = restarted.gate.state.position(("baseline", "SPY"))
-    assert held.quantity == Decimal("79")
+    assert held.quantity == Decimal("59")
     assert baseline.rebalancing is False
     assert baseline.funding_need() == ZERO
     sgov = restarted.gate.state.position(("cash_management", "SGOV"))
-    assert sgov.quantity < Decimal("836")  # what funded the build
+    # 811 less the 299 that funded the build, plus 5 the sweeper re-parked from
+    # the ~590 the unsweep over-delivered (rounded UP to cover the deficit).
+    assert sgov.quantity == Decimal("517")
     assert restarted.gate.state.cash >= sweeper.base_buffer()
     assert restarted.loop.tick().baseline_orders == 0
     # One rebalance, three ticks, no staging: exactly one SPY order was placed.
@@ -315,7 +317,7 @@ def test_mid_week_drift_waits_and_the_weekly_check_trades_back_to_target(
         tmp_path, limits, signals_config, research_config
     )
     baseline = started.loop.baseline
-    # SPY 500 -> 650: 52,000 of a 112,000 NAV = 46.4%, outside the 35-45% band.
+    # SPY 500 -> 650: 39,000 of a 109,000 NAV = 35.8%, outside the 25-35% band.
     prices.table["SPY"] = Decimal("650.00")
     clock.advance(days=1)
     assert started.loop.tick().baseline_orders == 0  # same week: no check
@@ -328,17 +330,17 @@ def test_mid_week_drift_waits_and_the_weekly_check_trades_back_to_target(
     assert report.baseline_orders == 1
     sell = broker.payloads[-1]
     assert sell["symbol"] == "SPY"
-    # Target 44,800; excess 7,200 at the 649.99 bid -> 11 shares (rounded down).
-    assert sell["qty"] == Decimal("11") and sell["limit_price"] == Decimal("649.99")
+    # Target 32,700; excess 6,300 at the 649.99 bid -> 9 shares (rounded down).
+    assert sell["qty"] == Decimal("9") and sell["limit_price"] == Decimal("649.99")
     trail = started.audit.trail(baseline.lots[0].decision_id)
     assert trail.exits[-1].reason is ExitReason.BASELINE_REBALANCE
     assert trail.exits[-1].submitted is True
 
-    started.loop.tick()  # settles: 69 shares = 44,850 of ~112,000 = 40.0%
+    started.loop.tick()  # settles: 51 shares = 33,150 of ~109,000 = 30.4%
     held = started.gate.state.position(("baseline", "SPY"))
-    assert held.quantity == Decimal("69")
+    assert held.quantity == Decimal("51")
     assert baseline.rebalancing is False
-    assert baseline.lots[0].quantity == Decimal("69")
+    assert baseline.lots[0].quantity == Decimal("51")
 
 
 def test_inside_the_band_the_weekly_check_does_nothing(
@@ -349,7 +351,7 @@ def test_inside_the_band_the_weekly_check_does_nothing(
     )
     baseline = started.loop.baseline
     orders_before = len(broker.payloads)
-    # SPY 500 -> 550: 44,000 of 104,000 = 42.3%, inside the band.
+    # SPY 500 -> 550: 33,000 of 103,000 = 32.0%, inside the band.
     prices.table["SPY"] = Decimal("550.00")
     clock.advance(days=7)
     assert started.loop.tick().baseline_orders == 0
@@ -374,30 +376,30 @@ def test_sells_relieve_lots_oldest_first_and_a_flat_lot_resolves_as_beta(
         tmp_path, limits, signals_config, research_config, broker=broker
     )
     baseline = started.loop.baseline
-    started.loop.tick()  # lot 1: only 14,000 sits above the 16,000 floor -> 28 shares
+    started.loop.tick()  # lot 1: only 11,500 sits above the 18,500 floor -> 23 shares
     started.loop.tick()
-    assert [lot.quantity for lot in baseline.lots] == [Decimal("28")]
-    assert baseline.rebalancing is True  # still 26,000 short, nothing to unpark
+    assert [lot.quantity for lot in baseline.lots] == [Decimal("23")]
+    assert baseline.rebalancing is True  # still 18,500 short, nothing to unpark
 
     started.gate.state.cash += Decimal("60000")  # a deposit; NAV 160,000
-    started.loop.tick()  # lot 2: target 64,000 - 14,000 held = 50,000 -> 100 shares
+    started.loop.tick()  # lot 2: target 48,000 - 11,500 held = 36,500 -> 73 shares
     started.loop.tick()
-    assert [lot.quantity for lot in baseline.lots] == [Decimal("28"), Decimal("100")]
+    assert [lot.quantity for lot in baseline.lots] == [Decimal("23"), Decimal("73")]
     assert baseline.rebalancing is False
     first_lot, second_lot = (lot.decision_id for lot in baseline.lots)
 
-    # SPY 500 -> 2000: 256,000 of a ~352,000 NAV; target ~140,800; the excess
-    # is ~57 shares at the 1999.99 bid — but one lot per tick, oldest first:
-    # the 28-share lot goes flat first.
+    # SPY 500 -> 2000: 192,000 of a ~304,000 NAV; target ~91,200; the excess
+    # is ~50 shares at the 1999.99 bid — but one lot per tick, oldest first:
+    # the 23-share lot goes flat first.
     prices.table["SPY"] = Decimal("2000.00")
     clock.advance(days=7)
     assert started.loop.tick().baseline_orders == 1
     started.loop.tick()  # settles; the second tranche (16 more) goes out
     trail = started.audit.trail(first_lot)
     assert [f.side for f in trail.fills] == ["buy", "sell"]
-    assert trail.fills[-1].filled_quantity == Decimal("28")
+    assert trail.fills[-1].filled_quantity == Decimal("23")
     assert trail.outcome is not None
-    assert trail.outcome.realised_pnl == Decimal("28") * (Decimal("1999.99") - Decimal("500"))
+    assert trail.outcome.realised_pnl == Decimal("23") * (Decimal("1999.99") - Decimal("500"))
     assert "baseline lot sold flat" in trail.outcome.note
     assert [lot.decision_id for lot in baseline.lots] == [second_lot]
     outcomes = [r for r in started.audit.records() if isinstance(r, OutcomeRecord)]
@@ -405,7 +407,7 @@ def test_sells_relieve_lots_oldest_first_and_a_flat_lot_resolves_as_beta(
     # The second lot is trimmed, not closed: no outcome for it.
     started.loop.tick()
     assert started.audit.trail(second_lot).outcome is None
-    assert baseline.lots[0].quantity == Decimal("71")  # 100 less the 29 trimmed
+    assert baseline.lots[0].quantity == Decimal("46")  # 73 less the 27 trimmed
 
 
 # ================================================================================
@@ -437,10 +439,9 @@ def test_a_tripped_kill_switch_freezes_the_sleeve_in_both_directions(
     assert baseline.week_checked == "2026-W34"  # the week's check did not run
     assert baseline.frozen is True and baseline.funding_need() == ZERO
     # Below the band, still tripped: no buy either (the gate would refuse it
-    # anyway; the sleeve does not even ask). SPY 400 = 32,000 of 92,000 =
-    # 34.8%, and an 8.7% drawdown from the 100,800 high-water mark — under
-    # the 12% trip, so a human reset below is not immediately re-tripped.
-    prices.table["SPY"] = Decimal("400.00")
+    # anyway; the sleeve does not even ask). SPY 380 = 22,800 of 92,800 =
+    # 24.6%, outside the 25-35% band on the low side.
+    prices.table["SPY"] = Decimal("380.00")
     assert started.loop.tick().baseline_orders == 0
     assert [p for p in broker.payloads[orders_before:] if p["symbol"] == "SPY"] == []
     assert started.audit.trail(lot_id).exits == ()
@@ -448,11 +449,11 @@ def test_a_tripped_kill_switch_freezes_the_sleeve_in_both_directions(
         len([d for d in started.audit.decisions() if d.sizing.strategy == "baseline"])
         == baseline_records_before
     )
-    assert started.gate.state.position(("baseline", "SPY")).quantity == Decimal("80")
+    assert started.gate.state.position(("baseline", "SPY")).quantity == Decimal("60")
     report = health_report(
         started.preflight, started.exits.tracked, RunLog(tmp_path / "run.log")
     )
-    assert "baseline (SPY): 80 units" in report
+    assert "baseline (SPY): 60 units" in report
     assert "FROZEN: kill switch tripped" in report
 
     # A human resets the switch (simulated): the missed check runs at once and
@@ -490,17 +491,17 @@ def test_lots_and_cadence_survive_a_restart_in_their_own_sleeve(
         prices=TwoSidedPrices(SPY="510.00", SGOV="100.40"),
         llm_client=RoutingLLM(),
         adapter=FakeBroker(
-            cash=Decimal("16024.80"),
+            cash=Decimal("18595.20"),
             positions=[
-                BrokerPosition("SPY", Decimal("80"), Decimal("40800"), Decimal("40000")),
-                BrokerPosition("SGOV", Decimal("438"), Decimal("43975.20"), Decimal("43975.20")),
+                BrokerPosition("SPY", Decimal("60"), Decimal("30600"), Decimal("30000")),
+                BrokerPosition("SGOV", Decimal("512"), Decimal("51404.80"), Decimal("51404.80")),
             ],
         ),
         id_factory=counter("b"),
         **restart_kwargs(tmp_path, limits, signals_config, research_config, clock),
     )
     position = restarted.gate.state.position(("baseline", "SPY"))
-    assert position is not None and position.quantity == Decimal("80")
+    assert position is not None and position.quantity == Decimal("60")
     assert position.sleeve is Sleeve.BASELINE
     assert restarted.gate.state.position(("equity", "SPY")) is None
     assert len(restarted.loop.baseline.lots) == 1
@@ -510,9 +511,9 @@ def test_lots_and_cadence_survive_a_restart_in_their_own_sleeve(
     report = health_report(
         restarted.preflight, restarted.exits.tracked, RunLog(tmp_path / "run.log")
     )
-    assert "sleeves: equity 45%, mechanical 15%, baseline 40%, prediction 0% (inactive)" in report
-    assert "baseline (SPY): 80 units, value 40800.00 = 40.5% of NAV (target 40% +/-5%)" in report
-    assert "P&L +800.00 (market beta, not alpha)" in report
+    assert "sleeves: equity 55%, mechanical 15%, baseline 30%, prediction 0% (inactive)" in report
+    assert "baseline (SPY): 60 units, value 30600.00 = 30.4% of NAV (target 30% +/-5%)" in report
+    assert "P&L +600.00 (market beta, not alpha)" in report
     assert "weekly check 2026-W34" in report and "log agrees" in report
     assert "UNMANAGED" not in report
     # Same week, at target: the restart re-runs nothing.
@@ -571,8 +572,8 @@ def test_the_baseline_never_reaches_a_class_the_funnel_or_the_budget(
     )
     assert report.by_class == {}
     assert report.baseline is not None
-    assert report.baseline.symbol == "SPY" and report.baseline.open_units == Decimal("80")
-    assert report.baseline.pnl == Decimal("800.00")  # 80 x (510 - 500)
+    assert report.baseline.symbol == "SPY" and report.baseline.open_units == Decimal("60")
+    assert report.baseline.pnl == Decimal("600.00")  # 60 x (510 - 500)
     assert "EXCLUDED from every alpha line" in report.baseline.summary()
     assert report.total_pnl == ZERO  # not a cent of beta in the judged total
     assert "HEADLINE ALPHA: not computable" in report.render()

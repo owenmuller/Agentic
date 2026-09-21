@@ -340,7 +340,7 @@ def test_unmanaged_exposure_math(tmp_path, limits, signals_config, research_conf
     )
     started.loop.shutdown()
 
-    # The broker holds 33 NUE but the trail only accounts for 16 — plus 100 AAPL
+    # The broker holds 33 NUE but the trail only accounts for 19 — plus 100 AAPL
     # nothing accounts for at all.
     checks = preflight(
         adapter=FakeBroker(
@@ -354,7 +354,7 @@ def test_unmanaged_exposure_math(tmp_path, limits, signals_config, research_conf
     )
     engine = inert_engine(checks)
 
-    assert unmanaged_exposure(checks.gate, engine.tracked) == {"NUE": 17, "AAPL": 100}
+    assert unmanaged_exposure(checks.gate, engine.tracked) == {"NUE": 14, "AAPL": 100}
 
 
 # ================================================================================
@@ -509,6 +509,6 @@ def test_health_report_shows_the_allocation_with_the_inactive_marker(
         checks, inert_engine(checks).tracked, RunLog(tmp_path / "run.log")
     )
     assert (
-        "sleeves: equity 45%, mechanical 15%, baseline 40%, prediction 0% (inactive)"
+        "sleeves: equity 55%, mechanical 15%, baseline 30%, prediction 0% (inactive)"
         in report
     )
