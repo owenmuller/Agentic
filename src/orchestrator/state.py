@@ -82,6 +82,13 @@ class SessionState:
     mechanical_high_water_mark: Optional[Decimal] = None
     mechanical_halted: bool = False
     mechanical_halted_at: Optional[datetime] = None
+    #: The baseline sleeve's cadence (aggression ruling 2026-09-18, lever 4):
+    #: the ISO week whose check has run, and whether a rebalance opened by
+    #: that check is still trading toward target. Neither is derivable from
+    #: the log — a restart must not re-run a week's check or abandon a
+    #: rebalance it was in the middle of.
+    baseline_week_checked: Optional[str] = None
+    baseline_rebalancing: bool = False
     #: Per-position marks the exit layer cannot rebuild from the audit log
     #: (ruling 2026-08-31): the ratchet's high-water mark and the price at the last
     #: review, keyed by decision id. The log records decisions, fills and reviews —
@@ -124,6 +131,12 @@ class SessionState:
             mechanical_halted_at=(
                 datetime.fromisoformat(mech_at) if mech_at else None
             ),
+            baseline_week_checked=(
+                str(raw["baseline_week_checked"])
+                if raw.get("baseline_week_checked")
+                else None
+            ),
+            baseline_rebalancing=bool(raw.get("baseline_rebalancing", False)),
             position_marks={
                 decision_id: {
                     name: Decimal(str(value))
@@ -157,6 +170,11 @@ class SessionState:
         elif not engine.halted:
             self.mechanical_halted_at = None
 
+    def capture_baseline(self, engine) -> None:
+        """Take the baseline sleeve's cadence state. Does not write."""
+        self.baseline_week_checked = engine.week_checked
+        self.baseline_rebalancing = engine.rebalancing
+
     def save(self) -> None:
         """Write via a temporary file and replace, so a crash mid-write cannot truncate."""
         payload = {
@@ -186,6 +204,8 @@ class SessionState:
                 if self.mechanical_halted_at
                 else None
             ),
+            "baseline_week_checked": self.baseline_week_checked,
+            "baseline_rebalancing": self.baseline_rebalancing,
             "position_marks": {
                 decision_id: {name: str(value) for name, value in marks.items()}
                 for decision_id, marks in self.position_marks.items()
@@ -309,6 +329,7 @@ def seed_account_state(
     mechanical_deployed_today: Decimal = ZERO,
     mechanical_open: Optional[dict[str, tuple[Decimal, Decimal]]] = None,
     cash_management_open: Optional[dict[str, tuple[Decimal, Decimal]]] = None,
+    baseline_open: Optional[dict[str, tuple[Decimal, Decimal]]] = None,
 ) -> AccountState:
     """Assemble the state a restarted gate should wake up holding.
 
@@ -336,6 +357,7 @@ def seed_account_state(
                 Sleeve.CASH_MANAGEMENT,
                 (cash_management_open or {}).get(holding.symbol),
             ),
+            (Sleeve.BASELINE, (baseline_open or {}).get(holding.symbol)),
         )
         for sleeve, claim in splits:
             if claim is None or holding.is_option or position.quantity <= 0:

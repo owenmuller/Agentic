@@ -104,6 +104,8 @@ class TickReport:
     filer_events: int = 0
     #: Cash-management sweep/unsweep orders placed this tick (ruling 2026-09-02).
     sweep_orders: int = 0
+    #: Baseline sleeve rebalance orders placed this tick (ruling 2026-09-18).
+    baseline_orders: int = 0
     halted: bool = False
 
     @property
@@ -136,6 +138,7 @@ class TradingLoop:
         previously_capped: Optional[set[tuple[str, str]]] = None,
         mechanical: Optional[object] = None,
         sweeper: Optional[object] = None,
+        baseline: Optional[object] = None,
         budget: ResearchBudget,
         session: SessionState,
         gate: RiskGate,
@@ -197,6 +200,9 @@ class TradingLoop:
         #: The idle-cash yield sweeper (ruling 2026-09-02). None when
         #: cash_management.enabled is false.
         self._sweeper = sweeper
+        #: The baseline market-beta sleeve (ruling 2026-09-18). None when its
+        #: weight is zero or baseline_sleeve.enabled is false.
+        self._baseline = baseline
         self._budget = budget
         self._session = session
         self._gate = gate
@@ -223,6 +229,10 @@ class TradingLoop:
     @property
     def sweeper(self):
         return self._sweeper
+
+    @property
+    def baseline(self):
+        return self._baseline
 
     @property
     def deferred(self) -> tuple[Signal, ...]:
@@ -315,6 +325,8 @@ class TradingLoop:
                 released += len(self._mechanical.cancel_working())
             if self._sweeper is not None:
                 released += len(self._sweeper.cancel_working())
+            if self._baseline is not None:
+                released += len(self._baseline.cancel_working())
             report.settled += released
             self._session.persist(self._gate, self._clock())
             message = (
@@ -623,6 +635,17 @@ class TradingLoop:
             report.mechanical_exits = mechanical_report.exits_started
             self._session.capture_mechanical(self._mechanical, now)
 
+        # The baseline sleeve (ruling 2026-09-18) runs after the trading
+        # sleeves and BEFORE the sweep: it spends only cash above the sweep's
+        # floor, and what it still owes goes into the sweep's buffer this same
+        # tick so the unsweep that funds it is placed now, not a tick late.
+        if self._baseline is not None:
+            if self._sweeper is not None:
+                # Cash an unsweep freed since last tick is spendable NOW.
+                report.settled += self._sweeper.settle(now)
+            report.baseline_orders = self._baseline.tick(now)
+            self._session.capture_baseline(self._baseline)
+
         # The sweep runs LAST, after every trading decision this tick has made
         # its reservations — the buffer it defends includes them, so ordering
         # it after the entries is what keeps it from racing them.
@@ -764,6 +787,9 @@ class TradingLoop:
             self._session.capture_mechanical(self._mechanical, self._clock())
         if self._sweeper is not None:
             report.settled += len(self._sweeper.cancel_working())
+        if self._baseline is not None:
+            report.settled += len(self._baseline.cancel_working())
+            self._session.capture_baseline(self._baseline)
         report.halted = self._gate.kill_switch_tripped
         self._session.capture_exits(self._exits)
         self._session.persist(self._gate, self._clock())

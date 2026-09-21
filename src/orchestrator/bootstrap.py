@@ -57,7 +57,8 @@ from orchestrator.prefilter import ResearchPreFilter
 from orchestrator.recovery import recover_unsettled_orders
 from orchestrator.registry import SignalRegistry
 from orchestrator.scalars import SizingScalars
-from orchestrator.sweep import CashSweeper
+from orchestrator.sweep import CashSweeper, liquidity_buffer
+from orchestrator.baseline import BaselineSleeve
 from signals.themes import ThemeEtfMap
 from orchestrator.state import (
     SessionState,
@@ -166,6 +167,7 @@ class Preflight:
                 f"kill switch:       {halt}",
                 f"sleeves:           equity {_sleeve_label(sleeves.equity)}, "
                 f"mechanical {_sleeve_label(sleeves.mechanical)}, "
+                f"baseline {_sleeve_label(sleeves.baseline)}, "
                 f"prediction {_sleeve_label(sleeves.prediction)}",
                 f"deployed today:    {state.deployed_today}",
                 f"research budget:   {self.budget.spent} of "
@@ -194,6 +196,9 @@ class Startup:
     preflight: Preflight
     #: The mechanical arm, or None when its sleeve weight is zero.
     mechanical: object = None
+    #: The baseline market-beta sleeve (ruling 2026-09-18), or None when its
+    #: weight is zero or it is switched off.
+    baseline: object = None
 
     @property
     def gate(self) -> RiskGate:
@@ -310,6 +315,8 @@ def preflight(
         # and the cash-management sleeve its parked ETF (ruling 2026-09-02).
         mechanical_open=audit.mechanical_open_positions(),
         cash_management_open=audit.strategy_open_positions("cash_sweep"),
+        # The baseline sleeve's index ETF (ruling 2026-09-18), likewise.
+        baseline_open=audit.strategy_open_positions("baseline"),
         today=today,
         account_type=orchestrator_config.account_type,
     )
@@ -596,12 +603,39 @@ def start(
         )
         mechanical.replay(checks.audit.mechanical_trails())
 
+    import uuid as _uuid
+
+    # The baseline market-beta sleeve (aggression ruling 2026-09-18, lever 4):
+    # deterministic, weight- and config-switched, replayed from its own
+    # trails. It spends only cash above the sweep's liquidity floor, and what
+    # it still owes rides in the sweeper's buffer so SGOV unsweeps fund it.
+    baseline = None
+    baseline_limits = checks.limits.baseline_sleeve
+    if baseline_limits.enabled and checks.limits.portfolio.sleeves.baseline > 0:
+        baseline = BaselineSleeve(
+            gate=checks.gate,
+            adapter=checks.adapter,
+            audit=checks.audit,
+            prices=prices,
+            bids=getattr(prices, "bid", None),
+            config=baseline_limits,
+            weight=checks.limits.portfolio.sleeves.baseline,
+            liquidity_floor=lambda: liquidity_buffer(
+                checks.gate, checks.limits.cash_management
+            ),
+            clock=checks.clock,
+            id_factory=id_factory or (lambda: _uuid.uuid4().hex[:16]),
+            note=mechanical_sink,
+            week_checked=checks.session.baseline_week_checked,
+            rebalancing=checks.session.baseline_rebalancing,
+        )
+        if any(d.sizing.strategy == "baseline" for d in checks.audit.decisions()):
+            baseline.replay(checks.audit.trails())
+
     # The idle-cash yield sweeper (ruling 2026-09-02): deterministic, config-
     # switched, replayed from its own trails. Never buying power, never alpha.
     sweeper = None
     if checks.limits.cash_management.enabled:
-        import uuid as _uuid
-
         sweeper = CashSweeper(
             gate=checks.gate,
             adapter=checks.adapter,
@@ -612,6 +646,7 @@ def start(
             clock=checks.clock,
             id_factory=id_factory or (lambda: _uuid.uuid4().hex[:16]),
             note=mechanical_sink,
+            extra_buffer=baseline.funding_need if baseline is not None else None,
         )
         # Replay only when sweep history exists: trails() assembly is the
         # expensive part of startup, and a log with no sweeps has no lots.
@@ -629,6 +664,7 @@ def start(
         registry=registry,
         mechanical=mechanical,
         sweeper=sweeper,
+        baseline=baseline,
         cost_meter=cost_meter,
         error_sink=error_sink,
         source_caps={
@@ -664,6 +700,7 @@ def start(
         exits=exits,
         credibility=credibility,
         mechanical=mechanical,
+        baseline=baseline,
         preflight=checks,
     )
 

@@ -968,7 +968,7 @@ class ExitEngine:
         groups: dict[tuple[str, str], list[AuditTrail]] = {}
         for trail in trails:
             decision = trail.decision
-            if decision.sizing.strategy in ("mechanical", "cash_sweep"):
+            if decision.sizing.strategy in ("mechanical", "cash_sweep", "baseline"):
                 # Not this engine's: the mechanical engine replays its own
                 # positions (no stops, its own exit regime) and the cash sweeper
                 # owns its parked lots (sleeve cash_management, keyed apart from

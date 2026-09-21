@@ -150,8 +150,8 @@ def test_a_conviction_verdict_buys_an_option_without_a_catalyst(
     order = trail.decision.gate.order
     assert order["kind"] == "option_buy_to_open"
     assert trail.decision.sizing.instrument == "option"
-    assert trail.decision.sizing.capital == Decimal("3750.00")  # 10% / 2 of 75k
-    assert order["contracts"] == 15  # 3,750 at mid 2.50 x 100
+    assert trail.decision.sizing.capital == Decimal("2250.00")  # 10% / 2 of 45k
+    assert order["contracts"] == 9  # 2,250 at mid 2.50 x 100
     expression = trail.decision.expression
     assert (expression.door, expression.tag) == ("conviction", "conviction_option")
     assert expression.underlying_price == Decimal("140.00")
@@ -288,7 +288,7 @@ def test_a_standard_contract_still_closes_at_t_minus_five(
 
 
 def test_the_short_dated_pool_is_capped_inside_the_aggregate(limits):
-    """5% of the 75k sleeve = 3,750 of short-dated premium. A 10-DTE buy over it
+    """5% of the 45k sleeve = 2,250 of short-dated premium. A 10-DTE buy over it
     is refused with its own code while a 60-DTE buy of the same premium passes
     on the 20% aggregate alone."""
     clock = FakeClock()
@@ -311,22 +311,22 @@ def test_the_short_dated_pool_is_capped_inside_the_aggregate(limits):
             execution=LimitExecution(limit_price=Decimal(price)),
         )
 
-    # 15 x 2.00 x 100 = 3,000 short-dated: inside the 3,750 pool.
-    first = gate.submit(contract(10, 15))
+    # 10 x 2.00 x 100 = 2,000 short-dated: inside the 2,250 pool.
+    first = gate.submit(contract(10, 10))
     assert first.is_approved, first
     position = gate.state.position(("option", first.order.symbol))
     assert position.short_dated_at_entry is True and position.expiration == today + timedelta(days=10)
-    # Another 1,000 short-dated would reach 4,000 > 3,750: refused, by the sub-cap.
+    # Another 1,000 short-dated would reach 3,000 > 2,250: refused, by the sub-cap.
     over = gate.submit(contract(12, 5, root="AAPL"))
     assert not over.is_approved
     assert over.code is RejectionCode.MAX_SHORT_DATED_PREMIUM_EXCEEDED
-    assert over.limit == Decimal("3750.00")
-    # The same 1,000 at 60 DTE is ordinary premium: 4,000 of 15,000 aggregate.
+    assert over.limit == Decimal("2250.00")
+    # The same 1,000 at 60 DTE is ordinary premium: 3,000 of 9,000 aggregate.
     standard = gate.submit(contract(60, 5, root="AAPL"))
     assert standard.is_approved, standard
     assert gate.state.position(("option", standard.order.symbol)).short_dated_at_entry is False
-    assert gate.state.short_dated_premium_at_risk(today, 21) == Decimal("3000.00")
-    assert gate.state.options_premium_at_risk == Decimal("4000.00")
+    assert gate.state.short_dated_premium_at_risk(today, 21) == Decimal("2000.00")
+    assert gate.state.options_premium_at_risk == Decimal("3000.00")
 
 
 def test_a_seeded_contract_inside_the_window_counts_toward_the_pool():

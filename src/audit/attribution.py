@@ -334,6 +334,62 @@ class ExitReasonAttribution:
 
 
 @dataclass(frozen=True, slots=True)
+class BaselineAttribution:
+    """The baseline sleeve's own line (aggression ruling 2026-09-18, lever 4):
+    market beta held on purpose, reported apart and subtracted from every
+    alpha calculation — the sleeve's trails are partitioned out of the judged
+    classes before any excess or beta-adjusted line is computed, so a rising
+    index can never read as a signal class earning. Realised P&L from lots
+    sold flat plus the mark-to-market on what is held, against cost."""
+
+    symbol: str
+    #: Cost of every baseline buy fill in the log.
+    deployed: Decimal
+    #: Proceeds of every rebalance sell fill.
+    proceeds: Decimal
+    #: Units held.
+    open_units: Decimal
+    #: A recent close for the open units. None = no mark available.
+    mark: Optional[Decimal]
+    #: SPY over the report window, for the side-by-side; None when unavailable.
+    benchmark_return_pct: Optional[Decimal] = None
+
+    @property
+    def pnl(self) -> Optional[Decimal]:
+        """(proceeds + open value) - cost. None when units are held but no
+        mark exists — absent, never guessed."""
+        if self.open_units > ZERO and self.mark is None:
+            return None
+        open_value = self.open_units * self.mark if self.mark is not None else ZERO
+        return (self.proceeds + open_value - self.deployed).quantize(CENTS)
+
+    @property
+    def return_pct(self) -> Optional[Decimal]:
+        pnl = self.pnl
+        if pnl is None or self.deployed <= ZERO:
+            return None
+        return (pnl / self.deployed * 100).quantize(CENTS)
+
+    def summary(self) -> str:
+        pnl = self.pnl
+        if pnl is None:
+            body = f"{self.open_units} units held, no mark available — P&L not computed"
+        else:
+            body = f"{pnl:+.2f} on {self.deployed:.2f} deployed"
+            ret = self.return_pct
+            if ret is not None:
+                body += f" ({ret:+.2f}%"
+                if self.benchmark_return_pct is not None:
+                    body += f"; SPY {self.benchmark_return_pct:+.2f}% over the window"
+                body += ")"
+        return (
+            f"baseline ({self.symbol}, ruling 2026-09-18): {body} — market beta "
+            f"held by design; its own bucket, EXCLUDED from every alpha line and "
+            f"from the book beta"
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class CashManagementAttribution:
     """The sweep's own line (ruling 2026-09-02): what parked cash earned.
 
@@ -569,6 +625,9 @@ class AttributionReport:
     mechanical: Optional[MechanicalAttribution] = None
     #: The idle-cash sweep's own line (2026-09-02); None when nothing swept.
     cash_management: Optional[CashManagementAttribution] = None
+    #: The baseline market-beta sleeve's own line (ruling 2026-09-18); None
+    #: until its first buy fills. Never in by_class, never in an alpha line.
+    baseline: Optional[BaselineAttribution] = None
     #: Judged-sleeve P&L grouped by exit reason (2026-08-31).
     by_exit_reason: tuple["ExitReasonAttribution", ...] = ()
     #: The options doors and theme->ETF expressions (ruling 2026-09-15), since
@@ -639,6 +698,44 @@ class AttributionReport:
         return sum((c.net_pnl for c in self.by_class.values()), ZERO)
 
     @property
+    def judged_return_pct(self) -> Optional[Decimal]:
+        """Gross judged return on resolved deployed capital, percent."""
+        if self.total_deployed <= ZERO:
+            return None
+        return (self.total_pnl / self.total_deployed * 100).quantize(CENTS)
+
+    @property
+    def headline_alpha_pct(self) -> Optional[Decimal]:
+        """THE alpha line (ruling 2026-09-18): the judged book's return minus
+        its book beta x SPY over the window. The baseline sleeve, the sweep and
+        the mechanical arm are partitioned out of the classes before the return
+        is computed and out of the book beta before it is weighted, so market
+        beta held on purpose can never launder into this number. None when any
+        input is missing — absent, never guessed."""
+        ours = self.judged_return_pct
+        if ours is None or self.benchmark_return_pct is None or self.book_beta is None:
+            return None
+        return (ours - self.book_beta * self.benchmark_return_pct).quantize(CENTS)
+
+    def headline_alpha_line(self) -> str:
+        headline = self.headline_alpha_pct
+        if headline is not None:
+            return (
+                f"HEADLINE ALPHA: beta-adjusted excess {headline:+.2f}% "
+                f"(judged return {self.judged_return_pct:+.2f}% minus book beta "
+                f"{self.book_beta} x SPY {self.benchmark_return_pct:+.2f}%); the "
+                f"baseline sleeve's beta is excluded by construction"
+            )
+        missing = []
+        if self.judged_return_pct is None:
+            missing.append("nothing resolved in the judged book")
+        if self.benchmark_return_pct is None:
+            missing.append("SPY unavailable for the window")
+        if self.book_beta is None:
+            missing.append("book beta not measurable")
+        return "HEADLINE ALPHA: not computable this window (" + "; ".join(missing) + ")"
+
+    @property
     def flagged_classes(self) -> tuple[SignalClass, ...]:
         """Classes NET-negative over the window. For human review, not auto-removal."""
         return tuple(
@@ -654,6 +751,7 @@ class AttributionReport:
             f"Total: {self.total_pnl:+.2f} gross, {self.total_feed_cost:.2f} feed "
             f"costs, {self.total_research_cost:.2f} research costs, "
             f"{self.total_net_pnl:+.2f} net",
+            self.headline_alpha_line(),
         ]
         if self.haircut_bps is not None:
             deduction = (
@@ -812,17 +910,11 @@ class AttributionReport:
                     f"; portfolio excess return {excess:+.2f}% "
                     f"(a bull market must not flatter a signal class)"
                 )
-            if (
-                self.book_beta is not None
-                and self.total_deployed > ZERO
-            ):
-                ours = (self.total_pnl / self.total_deployed * 100).quantize(CENTS)
-                beta_adjusted = (
-                    ours - self.book_beta * self.benchmark_return_pct
-                ).quantize(CENTS)
+            beta_adjusted = self.headline_alpha_pct
+            if beta_adjusted is not None:
                 benchmark_line += (
                     f"; beta-adjusted excess {beta_adjusted:+.2f}% "
-                    f"(return minus beta x SPY — the honest alpha line for a "
+                    f"(return minus beta x SPY — the headline alpha line for a "
                     f"long-biased book)"
                 )
             lines.append(benchmark_line)
@@ -838,6 +930,8 @@ class AttributionReport:
             lines.append(f"  {self.mechanical.summary()}")
         if self.cash_management is not None:
             lines.append(f"  {self.cash_management.summary()}")
+        if self.baseline is not None:
+            lines.append(f"  {self.baseline.summary()}")
 
         if self.flagged_classes:
             lines.extend(
@@ -1170,10 +1264,15 @@ def build_attribution(
     sweep_trails = [
         t for t in trails if t.decision.sizing.strategy == "cash_sweep"
     ]
+    # And the baseline sleeve (ruling 2026-09-18) — market beta held on
+    # purpose is the one thing that must never be counted as a class earning.
+    baseline_trails = [
+        t for t in trails if t.decision.sizing.strategy == "baseline"
+    ]
     trails = [
         t
         for t in trails
-        if t.decision.sizing.strategy not in ("mechanical", "cash_sweep")
+        if t.decision.sizing.strategy not in ("mechanical", "cash_sweep", "baseline")
     ]
     buckets: dict[SignalClass, dict[str, object]] = {}
 
@@ -1337,6 +1436,34 @@ def build_attribution(
             mark=mark,
         )
 
+    baseline = None
+    if baseline_trails:
+        deployed = proceeds = units = ZERO
+        symbol = ""
+        for trail in baseline_trails:
+            symbol = str((trail.decision.gate.order or {}).get("symbol") or symbol)
+            for fill in trail.fills:
+                if fill.side == "buy":
+                    deployed += fill.filled_value
+                    units += fill.filled_quantity
+                else:
+                    proceeds += fill.filled_value
+                    units -= fill.filled_quantity
+        mark = None
+        if price_on is not None and symbol:
+            for days_back in (1, 2, 4, 6):
+                mark = price_on(symbol, generated_at - timedelta(days=days_back))
+                if mark is not None:
+                    break
+        baseline = BaselineAttribution(
+            symbol=symbol or "?",
+            deployed=deployed,
+            proceeds=proceeds,
+            open_units=units,
+            mark=mark,
+            benchmark_return_pct=benchmark_return_pct,
+        )
+
     judged_closed = [
         t
         for t in trails
@@ -1374,6 +1501,7 @@ def build_attribution(
         mtd_research_cost=mtd_research_cost,
         mechanical=mechanical,
         cash_management=cash_management,
+        baseline=baseline,
         feed_cost_detail=feed_cost_detail,
         scalar_forgone=scalar_forgone,
         scalar_scaled_entries=scalar_scaled_entries,

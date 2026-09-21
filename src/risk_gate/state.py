@@ -50,12 +50,17 @@ class Sleeve(StrEnum):
     event-contract sleeve (inactive until a venue ships); CASH_MANAGEMENT is
     the idle-cash yield sweep (human ruling 2026-09-02) — a cash-equivalent
     parking position, never buying power, with no allocation weight and no
-    alpha caps of its own."""
+    alpha caps of its own; BASELINE is the market-beta sleeve (aggression
+    ruling 2026-09-18, lever 4) — a weighted allotment held in one index ETF,
+    rebalanced weekly, deterministic, exempt from the alpha caps like the
+    sweep but bound by its own allocation ceiling, and partitioned out of
+    every alpha line so beta is never reported as alpha."""
 
     EQUITY = "equity"
     MECHANICAL = "mechanical"
     PREDICTION = "prediction"
     CASH_MANAGEMENT = "cash_management"
+    BASELINE = "baseline"
 
 
 class AccountType(StrEnum):

@@ -4102,6 +4102,45 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### Aggression step 3 — the baseline sleeve, BUILT 2026-09-21 (held for the transition ruling)
+
+**Ruled (2026-09-18, revised same day):** 40% of NAV in SPY, deterministic, weekly to target
+±5%, its own attribution bucket subtracted from every alpha line, weights 45/15/40/0, SGOV holds
+the judged sleeve's undeployed cash; kill switch tripped = neither buys nor sells, frozen until
+manual reset, inside NAV and drawdown. Report before shipping: the transition, and whether
+25 → 15 forces a mechanical trim (human preference: freeze the 30 slices, no forced sells).
+
+**Built:** `orchestrator/baseline.py` (`BaselineSleeve`: ISO-week check, band in NAV points
+per Constraint #6, trade-to-target episodes, FIFO lots, one working order, freeze both ways),
+`Sleeve.BASELINE` + gate branch (cash-secured, dust floor, own allocation ceiling 43%, alpha caps
+waived), `SleeveWeights.baseline`, `BaselineSleeveLimits`, `record_baseline`,
+`ExitReason.BASELINE_REBALANCE`, sweeper `liquidity_buffer()` + `extra_buffer` (the baseline's
+`funding_need`) + `settle()` before the baseline runs, session `baseline_week_checked` /
+`baseline_rebalancing`, `seed_account_state(baseline_open=)`, health line, stress book,
+`BaselineAttribution` + `headline_alpha_line()` (judged return − judged book beta × SPY; the
+beta weighting now uses JUDGED trails only — SGOV and the mechanical slices had been diluting
+it), partition at every strategy filter. Tests: `tests/test_baseline.py` (15); the 45/15/40
+weights re-pinned 56 existing asserts (judged 5% band 3,750 → 2,250 etc.).
+
+**(a) Transition on the 2026-09-21 book (NAV 100,256; cash 25,035; SGOV 47,292; mech 24,165;
+judged 3,750):** target SPY 40,102. The liquidity buffer falls 25,058 → 16,035 (judged
+25%×45% + mech 15%×15% + 2,500), so ~9,000 of today's cash is spendable at once; the remaining
+~31,100 comes from ONE SGOV unsweep (the 2026-09-02 lot, ~310 of its 449 units). End state:
+SPY 40,100 (40.0%), SGOV ~16,190 (16.1%), cash ~16,035 (16.0%), mechanical 24,165 (24.1%),
+judged 3,750 (3.7%). One rebalance, ~3 ticks (90 s) once SPY quotes, no staging — a beta
+sleeve has no thesis to time, and Constraint #6 prefers the fewer trades. Runs at the first
+tick after the bounce (the week has never been checked).
+
+**(b) Mechanical 25 → 15:** NO trim is forced and none is built. The gate never touches held
+positions; the 30 slices ride to their 2027-08-29+ time exits. Refill is blocked by the
+allocation ceiling (15% + 3% = 18% of NAV vs 24.1% held; `sleeve_allocation_exceeded`) until
+~7 exits land, then resumes at the new ~$500 slice. Breaker and ledger unaffected (value-based).
+The floor ruling's "keep the control arm's refill alive" therefore matters from Aug 2027, not
+now. **Flag:** judged bands are now 2/5/10% of 45,115 = 902 / 2,256 / 4,512 (were 1,504 /
+3,760 / 7,519) — 40% smaller judged shots, the ruling's arithmetic, stated for the record.
+
+**Status:** committed locally, NOT pushed; suite green (1310 passed). Ships on the ruling.
+
 ### FINAL floor ruling — $15,001 (2026-09-18); the $15K–$50K band tagged for 2026-10-15
 
 **Ruled:** `prefilter.min_amount_max` → **15001**. Exclude the confident, measured-worst population

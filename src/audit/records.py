@@ -823,6 +823,11 @@ class ExitReason(StrEnum):
     #: T-bill ETF to restore the liquidity buffer. Risk-reducing by nature,
     #: permitted under a kill-switch halt like every close.
     CASH_UNSWEEP = "cash_unsweep"
+    #: Baseline sleeve sell toward target (aggression ruling 2026-09-18, lever
+    #: 4): the weekly rebalance trimming the index ETF back to its weight.
+    #: Frozen with the buys while the kill switch is tripped — by the sleeve's
+    #: own rule, not the gate's, which passes every risk-reducing close.
+    BASELINE_REBALANCE = "baseline_rebalance"
     #: The trim half of position scaling (ruling 2026-09-02): a review verdict
     #: of resolution=partial on a position in profit sells a human-configured
     #: fraction of the lot, at most once per position. Risk-reducing, so exempt

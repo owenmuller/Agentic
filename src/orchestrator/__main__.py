@@ -250,6 +250,17 @@ def _attribution_text(checks) -> str:
             for trail in checks.audit.trails():
                 if trail.outcome is not None or not trail.fills:
                     continue
+                # The JUDGED book only (ruling 2026-09-18): the beta this feeds
+                # multiplies the judged return in the headline alpha line, so
+                # the baseline sleeve's SPY (beta 1 by construction), the parked
+                # T-bill ETF and the mechanical arm's slices are all excluded —
+                # any of them in the weighting would launder beta into alpha.
+                if trail.decision.sizing.strategy in (
+                    "mechanical",
+                    "cash_sweep",
+                    "baseline",
+                ):
+                    continue
                 symbol = str((trail.decision.gate.order or {}).get("symbol") or "")
                 if not symbol or "/" in symbol or len(symbol) > 6:
                     continue  # options carry OCC symbols; beta is an equity fact
@@ -1085,11 +1096,12 @@ def stress() -> int:
             is_option=p.is_option,
         )
         for p in state.positions.values()
-        if p.quantity > 0 and p.sleeve in (Sleeve.EQUITY, Sleeve.MECHANICAL)
+        if p.quantity > 0
+        and p.sleeve in (Sleeve.EQUITY, Sleeve.MECHANICAL, Sleeve.BASELINE)
     ]
     held = {
         sleeve: sum((p.market_value for p in positions if p.sleeve == sleeve), Decimal("0"))
-        for sleeve in ("equity", "mechanical")
+        for sleeve in ("equity", "mechanical", "baseline")
     }
     # Each sleeve's cash is its allotment less what it holds (floored at zero);
     # the mechanical ledger is authoritative for its own sleeve when seeded.
@@ -1100,7 +1112,9 @@ def stress() -> int:
             Decimal("0"), checks.gate.sleeve_nav(Sleeve.MECHANICAL) - held["mechanical"]
         )
     # Whatever the sleeves do not account for — including the cash-sweep ETF,
-    # which is cash in another form — rides flat in the total.
+    # which is cash in another form — rides flat in the total. The baseline
+    # sleeve's index ETF (ruling 2026-09-18) is replayed like any position: it
+    # is the book's market beta and a stress window must show it falling.
     other = state.nav - sum(held.values()) - equity_cash - mechanical_cash
     bars = AlpacaDailyBars(feed="sip", unserved=_unserved_memo())
 
@@ -1126,7 +1140,7 @@ def stress() -> int:
     try:
         results = stress_book(
             positions,
-            {"equity": equity_cash, "mechanical": mechanical_cash},
+            {"equity": equity_cash, "mechanical": mechanical_cash, "baseline": Decimal("0")},
             other,
             closes,
             windows,

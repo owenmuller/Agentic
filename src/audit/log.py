@@ -223,6 +223,54 @@ class AuditLog:
         self._append(record)
         return record
 
+    def record_baseline(
+        self,
+        *,
+        side: str,
+        detail: str,
+        gate_decision: object,
+        capital: Decimal,
+        decision_id: Optional[str] = None,
+    ) -> DecisionRecord:
+        """A baseline-sleeve buy (aggression ruling 2026-09-18, lever 4): a
+        DecisionRecord with no research snapshot and ``strategy="baseline"``.
+        Synthetic signal, like the sweep's — the sleeve's own target arithmetic
+        stated as content. No external_id, so it can never seal anything; every
+        counter partitions it out by strategy, and attribution renders it on
+        its own line and subtracts it from every alpha calculation."""
+        now = self._clock()
+        record_id = decision_id or self._id_factory()
+        snapshot = SignalSnapshot(
+            signal_id=f"baseline-{record_id}",
+            source_id="baseline_sleeve",
+            signal_class=SignalClass.CLASS_3_THESIS,
+            observed_at=now,
+            content=detail,
+            raw_content=detail,
+        )
+        record = DecisionRecord(
+            decision_id=record_id,
+            recorded_at=now,
+            signal=snapshot,
+            research=None,
+            sizing=SizingSnapshot(
+                instrument="equity",
+                sleeve="baseline",
+                confidence=0,  # not applicable: no research ran, by design
+                sleeve_nav=capital,
+                fraction_of_sleeve_nav=Decimal("1"),
+                capital=capital,
+                rationale=(
+                    f"baseline market-beta sleeve ({side}): deterministic weekly "
+                    f"rebalance to target, no LLM in the path — {detail}"
+                ),
+                strategy="baseline",
+            ),
+            gate=GateSnapshot.of(gate_decision),  # type: ignore[arg-type]
+        )
+        self._append(record)
+        return record
+
     def record_stage_rejection(
         self,
         decision_id: str,
@@ -821,7 +869,7 @@ class AuditLog:
             if record.recorded_at.date() != day:
                 continue
             if isinstance(record, DecisionRecord):
-                if record.sizing.strategy in ("mechanical", "cash_sweep"):
+                if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline"):
                     # No LLM ran (defect fix 2026-09-02): a mechanical entry or
                     # a cash sweep spent no pass, and counting it here was
                     # quietly consuming the judged source cap on every restart.
@@ -849,7 +897,7 @@ class AuditLog:
             if record.recorded_at.date() != day:
                 continue
             if isinstance(record, DecisionRecord):
-                if record.sizing.strategy in ("mechanical", "cash_sweep"):
+                if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline"):
                     continue
             elif isinstance(record, StageRejectionRecord):
                 if record.stage in (RejectedStage.PRE_FILTER, RejectedStage.TRIAGE):
@@ -904,7 +952,7 @@ class AuditLog:
             # quietly shrinking the day's research budget after every restart.
             and not (
                 isinstance(record, DecisionRecord)
-                and record.sizing.strategy in ("mechanical", "cash_sweep")
+                and record.sizing.strategy in ("mechanical", "cash_sweep", "baseline")
             )
         )
         return new_ids + reviews

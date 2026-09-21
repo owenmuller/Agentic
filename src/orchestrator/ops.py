@@ -573,6 +573,54 @@ def _cash_management_line(checks) -> str:
     )
 
 
+def _baseline_line(checks) -> str:
+    """The baseline sleeve's line (ruling 2026-09-18): what is held against
+    the target, its P&L labelled as beta, the weekly cadence, and — the part
+    that must reach a human — the freeze while the kill switch is tripped."""
+    limits = checks.gate.limits
+    config = limits.baseline_sleeve
+    weight = limits.portfolio.sleeves.baseline
+    state = checks.gate.state
+    if weight <= 0 or not config.enabled:
+        return (
+            f"baseline ({config.symbol}): inactive (weight {weight:.0%}, "
+            f"enabled {config.enabled})"
+        )
+    session = checks.session
+    cadence = f"weekly check {session.baseline_week_checked or 'not yet run'}"
+    if session.baseline_rebalancing:
+        cadence += " (rebalance in progress)"
+    frozen = (
+        "  |  FROZEN: kill switch tripped - no rebalance, no unwind until manual reset"
+        if checks.gate.kill_switch_tripped
+        else ""
+    )
+    position = state.position(("baseline", config.symbol))
+    logged = checks.audit.strategy_open_positions("baseline").get(config.symbol)
+    log_units = logged[0] if logged else Decimal("0")
+    target = state.nav * weight
+    if position is None or position.quantity <= 0:
+        line = (
+            f"baseline ({config.symbol}): nothing held; target {weight:.0%} of NAV "
+            f"= {target:.2f}; {cadence}"
+        )
+        if log_units > 0:
+            line += f"  [LOG SAYS {log_units} units — MISMATCH, needs a human]"
+        return line + frozen
+    if abs(log_units - position.quantity) <= Decimal("0.000001"):
+        match = "log agrees"
+    else:
+        match = f"LOG SAYS {log_units} units — MISMATCH, needs a human"
+    fraction = position.market_value / state.nav if state.nav > 0 else Decimal("0")
+    pnl = position.market_value - position.cost_basis
+    return (
+        f"baseline ({config.symbol}): {position.quantity} units, value "
+        f"{position.market_value:.2f} = {fraction:.1%} of NAV (target {weight:.0%} "
+        f"+/-{config.rebalance_band:.0%}), cost {position.cost_basis:.2f}, P&L "
+        f"{pnl:+.2f} (market beta, not alpha); {cadence}  [{match}]{frozen}"
+    )
+
+
 def health_report(
     checks: Preflight,
     positions: Iterable[TrackedPosition],
@@ -598,8 +646,10 @@ def health_report(
         f"drawdown {state.drawdown():.2%} (high-water {state.high_water_mark})",
         f"sleeves: equity {_sleeve_label(checks.gate.limits.portfolio.sleeves.equity)}, "
         f"mechanical {_sleeve_label(checks.gate.limits.portfolio.sleeves.mechanical)}, "
+        f"baseline {_sleeve_label(checks.gate.limits.portfolio.sleeves.baseline)}, "
         f"prediction {_sleeve_label(checks.gate.limits.portfolio.sleeves.prediction)}",
         _mechanical_line(checks, state),
+        _baseline_line(checks),
         _cash_management_line(checks),
         f"deployed today: {state.deployed_today}  |  research budget: "
         f"{checks.budget.spent} of {checks.budget.max_per_day} spent for "

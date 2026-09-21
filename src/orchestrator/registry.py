@@ -150,7 +150,7 @@ class SignalRegistry:
                 continue  # shares its decision's id: the decision already seeded it
             snapshot = record.signal
             if isinstance(record, DecisionRecord):
-                if record.sizing.strategy in ("mechanical", "cash_sweep"):
+                if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline"):
                     continue  # the judged record of the disclosure seeds it;
                     # parked cash is not a signal at all
                 outcome = "traded" if record.was_approved else "gate_rejected"

@@ -194,7 +194,9 @@ def test_a_missing_adv_fails_closed(limits):
 
 def test_the_mechanical_arm_is_bound_too(limits):
     gate = gate_with(limits, lambda symbol: Decimal("50000"))
-    decision = gate.submit(buy(qty=10, price="100.00", sleeve="mechanical"))
+    # 700 sits under the mechanical single-position cap (5% of the 15,000
+    # sleeve = 750) so the liquidity gate is the check that fires.
+    decision = gate.submit(buy(qty=7, price="100.00", sleeve="mechanical"))
     assert not decision.is_approved
     assert decision.code is RejectionCode.ILLIQUID_POSITION
 

@@ -26,10 +26,14 @@ class SleeveWeights(_Strict):
     #: The mechanical disclosure follower (human ruling 2026-08-27).
     mechanical: Fraction
     prediction: Fraction
+    #: The baseline market-beta sleeve (aggression ruling 2026-09-18, lever
+    #: 4): target fraction of NAV held in one index ETF. Defaults to zero so a
+    #: cap table written before the ruling still parses; the live file says 0.40.
+    baseline: Fraction = Decimal("0")
 
     @model_validator(mode="after")
     def _weights_sum_to_one(self) -> "SleeveWeights":
-        total = self.equity + self.mechanical + self.prediction
+        total = self.equity + self.mechanical + self.prediction + self.baseline
         if total != Decimal("1"):
             raise ValueError(f"sleeve weights must sum to 1, got {total}")
         return self
@@ -159,6 +163,30 @@ class CashManagementLimits(_Strict):
     #: Extra cushion above the deterministic buffer components, in dollars.
     buffer_margin_usd: Annotated[Decimal, Field(ge=Decimal("0"))]
     #: Smallest sweep or unsweep order, so the sweeper never churns dust.
+    min_order_notional_usd: Annotated[Decimal, Field(gt=Decimal("0"))]
+
+
+class BaselineSleeveLimits(_Strict):
+    """The baseline market-beta sleeve (aggression ruling 2026-09-18, lever 4;
+    kill-switch semantics revised the same day).
+
+    Design pins, all from the ruling: the target is ``portfolio.sleeves.baseline``
+    x NAV in ``symbol``; the sleeve is checked once a week and, when it sits
+    outside ``rebalance_band`` of NAV (percentage points — Constraint #6 reads
+    "+/-5%" as the wider band, fewer trades), trades back TO target; buys spend
+    only cash above the sweep's liquidity buffer and the sweeper unparks SGOV
+    for the rest; while the kill switch is tripped the sleeve neither buys nor
+    sells — frozen at current holdings, inside NAV and the drawdown; no LLM,
+    no thesis, no research spend, no signal class; its own attribution line,
+    subtracted from every alpha calculation."""
+
+    enabled: bool
+    #: The broad-market ETF the sleeve holds (SPY).
+    symbol: str
+    #: Drift from target, as a fraction of NAV, beyond which the weekly check
+    #: rebalances. 0.05 = the sleeve may sit anywhere in [35%, 45%] of NAV.
+    rebalance_band: Fraction
+    #: Smallest rebalance order, so the sleeve never churns dust.
     min_order_notional_usd: Annotated[Decimal, Field(gt=Decimal("0"))]
 
 
@@ -377,6 +405,8 @@ class RiskLimits(_Strict):
     pdt: PdtLimits
     sizing: SizingLimits
     mechanical_sleeve: MechanicalSleeveLimits
+    #: The baseline market-beta sleeve (aggression ruling 2026-09-18, lever 4).
+    baseline_sleeve: BaselineSleeveLimits
     prediction_sleeve: PredictionSleeveLimits
     cash_management: CashManagementLimits
     options_selection: OptionsSelectionLimits

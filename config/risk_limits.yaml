@@ -24,9 +24,19 @@ portfolio:
   # follower runs as its own sleeve, a controlled experiment alongside the
   # judged system. Restoring the prediction sleeve when a venue ships remains
   # its own human ruling and will re-cut these weights.
+  # AGGRESSION RULING 2026-09-18, lever 4 (human): 45/15/40/0 — the baseline
+  # market-beta sleeve deploys the idle cash: 40% of NAV in SPY, deterministic,
+  # rebalanced weekly to target +/-5 points of NAV, its own attribution bucket
+  # subtracted from every alpha line, frozen both ways under a tripped kill
+  # switch. The mechanical arm's weight moves 25 -> 15 with NO forced trims:
+  # its 30 slices ride to their time exits and the gate's allocation ceiling
+  # (15 + 3 drift) refuses refills until the sleeve is back under it. Judged
+  # sizing bands now read off a 45% sleeve. SGOV holds what the judged sleeve
+  # has not deployed. Dated so attribution partitions before/after.
   sleeves:
-    equity: 0.75 # the JUDGED sleeve: equities & long options
-    mechanical: 0.25 # deterministic disclosure follower — no LLM in the path
+    equity: 0.45 # the JUDGED sleeve: equities & long options (was 0.75)
+    mechanical: 0.15 # deterministic disclosure follower — no LLM in the path (was 0.25)
+    baseline: 0.40 # market beta in SPY, weekly rebalance — no LLM, no thesis
     prediction: 0.00 # event contracts — INACTIVE, no venue (design target: 0.10)
   drift_tolerance: 0.03 # +/-3% from target triggers rebalance
   rebalance: weekly_at_next_session_open
@@ -151,6 +161,23 @@ cash_management:
   enabled: true
   symbol: SGOV
   buffer_margin_usd: 2500
+  min_order_notional_usd: 500
+
+# Baseline market-beta sleeve (AGGRESSION RULING 2026-09-18, lever 4; kill-switch
+# semantics revised the same day). Target = portfolio.sleeves.baseline x NAV in
+# the symbol below. Checked once per ISO week; outside rebalance_band of NAV
+# (percentage points — Constraint #6 reads "+/-5%" as the wider band, fewer
+# trades) it trades back TO target over the following ticks, buying only with
+# cash above the sweep's liquidity buffer while the sweeper unparks SGOV for
+# the rest. Kill switch tripped: NEITHER buys NOR sells — frozen at current
+# holdings until manual reset, still inside NAV and the 12% drawdown trip.
+# Exempt from the alpha caps like the sweep; bound by its own allocation
+# ceiling (weight + drift_tolerance). Its own attribution bucket, subtracted
+# from every alpha line; beta-adjusted excess is the headline alpha.
+baseline_sleeve:
+  enabled: true
+  symbol: SPY
+  rebalance_band: 0.05
   min_order_notional_usd: 500
 
 prediction_sleeve:

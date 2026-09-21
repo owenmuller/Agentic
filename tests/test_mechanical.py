@@ -85,20 +85,21 @@ def test_a_qualified_disclosure_becomes_an_equal_weight_mechanical_entry(
     report = started.loop.tick()
     assert report.mechanical_entries == 1
 
-    # Slice: 25% of 100k NAV / 30 slots = 833.33; at 140, 5 whole shares.
+    # Slice: 15% of 100k NAV / 30 slots = 500; at 140, 3 whole shares
+    # (45/15/40/0 allocation, ruling 2026-09-18).
     payload = broker.payloads[0]
     assert payload["symbol"] == "NUE"
-    assert payload["qty"] == 5
+    assert payload["qty"] == 3
     position = started.gate.state.position(("mechanical", "NUE"))
-    assert position is not None and position.quantity == 5
-    assert started.gate.state.mechanical_deployed_today == Decimal("700.00")
+    assert position is not None and position.quantity == 3
+    assert started.gate.state.mechanical_deployed_today == Decimal("420.00")
     # The judged sleeve's daily budget is untouched by the mechanical entry.
     assert started.gate.state.deployed_today == ZERO
 
     engine = started.loop.mechanical
     assert len(engine.tracked) == 1
     # The ledger anchored at the sleeve allocation and paid for the fill.
-    assert engine.virtual_cash == Decimal("25000") - Decimal("700.00")
+    assert engine.virtual_cash == Decimal("15000") - Decimal("420.00")
 
 
 def test_the_entry_record_is_a_decision_with_no_research_and_the_ruleset(
@@ -405,11 +406,11 @@ def test_the_time_exit_closes_at_hold_days_and_resolves_the_outcome(
     trail = started.audit.mechanical_trails()[0]
     assert trail.exits[0].reason is ExitReason.MECHANICAL_TIME_EXIT
     assert trail.outcome is not None
-    assert trail.outcome.realised_pnl == Decimal("50.00")  # 5 x (150 - 140)
+    assert trail.outcome.realised_pnl == Decimal("30.00")  # 3 x (150 - 140)
     assert started.gate.state.position(("mechanical", "NUE")) is None
     # Proceeds returned to the sleeve ledger for the next qualifier.
-    assert started.loop.mechanical.virtual_cash == Decimal("25000") + Decimal(
-        "50.00"
+    assert started.loop.mechanical.virtual_cash == Decimal("15000") + Decimal(
+        "30.00"
     )
 
 
@@ -487,28 +488,28 @@ def test_a_restart_splits_the_broker_position_and_does_not_rebuy(
     started, clock = enter_one(tmp_path, signals_config)
     started.loop.shutdown()
 
-    # The broker now holds 5 NUE; the audit log knows they are mechanical.
+    # The broker now holds 3 NUE; the audit log knows they are mechanical.
     restarted = build_mechanical(
         tmp_path,
         signals_config,
         items=[disclosure_item("row-1", "NUE", "$100,001 - $250,000", "2026-08-17")],
         broker=FakeBroker(
-            cash=Decimal("99300"),
+            cash=Decimal("99580"),
             positions=[
-                BrokerPosition("NUE", Decimal("5"), Decimal("700"), Decimal("700"))
+                BrokerPosition("NUE", Decimal("3"), Decimal("420"), Decimal("420"))
             ],
         ),
         clock=clock,
     )
     gate_state = restarted.gate.state
-    assert gate_state.position(("mechanical", "NUE")).quantity == 5
+    assert gate_state.position(("mechanical", "NUE")).quantity == 3
     assert gate_state.position(("equity", "NUE")) is None  # fully attributed
 
     engine = restarted.loop.mechanical
     assert len(engine.tracked) == 1
     assert engine.tracked[0].opened_at is not None
     # The ledger survived via session state.
-    assert engine.virtual_cash == Decimal("24300.00")
+    assert engine.virtual_cash == Decimal("14580.00")
 
     report = restarted.loop.tick()
     assert report.mechanical_entries == 0  # row-1 already entered; not re-bought
@@ -598,7 +599,7 @@ def test_a_mechanical_fill_lost_to_a_crash_is_recovered_at_next_startup(
 
     # The venue fills it; this process dies before its next settle tick.
     broker.set_status(
-        "brk-1", OrderStatus("brk-1", "filled", Decimal("5"), Decimal("140.00"))
+        "brk-1", OrderStatus("brk-1", "filled", Decimal("3"), Decimal("140.00"))
     )
     started.loop.mechanical._working.clear()
     assert started.audit.trail(decision_id).fills == ()  # the window
@@ -609,17 +610,17 @@ def test_a_mechanical_fill_lost_to_a_crash_is_recovered_at_next_startup(
         items=[],
         broker=venue_across_restart(
             broker,
-            [BrokerPosition("NUE", Decimal("5"), Decimal("700"), Decimal("700"))],
-            Decimal("99300"),
+            [BrokerPosition("NUE", Decimal("3"), Decimal("420"), Decimal("420"))],
+            Decimal("99580"),
         ),
     )
     recovered = restarted.audit.trail(decision_id)
     assert [f.side for f in recovered.fills] == ["buy"]
-    assert recovered.fills[0].filled_quantity == Decimal("5")
+    assert recovered.fills[0].filled_quantity == Decimal("3")
     # The sleeve owns it again: attributed, tracked, ledger reconstructed.
-    assert restarted.gate.state.position(("mechanical", "NUE")).quantity == 5
+    assert restarted.gate.state.position(("mechanical", "NUE")).quantity == 3
     assert len(restarted.loop.mechanical.tracked) == 1
-    assert restarted.loop.mechanical.virtual_cash == Decimal("25000") - Decimal("700")
+    assert restarted.loop.mechanical.virtual_cash == Decimal("15000") - Decimal("420")
 
 
 def test_a_judged_fill_lost_to_a_crash_recovers_with_its_stop_armed(
@@ -745,9 +746,9 @@ def test_pending_settlement_reads_differently_from_unmanaged(
 
     checks = preflight(
         adapter=SilentBroker(
-            cash=Decimal("99300"),
+            cash=Decimal("99580"),
             positions=[
-                BrokerPosition("NUE", Decimal("5"), Decimal("700"), Decimal("700"))
+                BrokerPosition("NUE", Decimal("3"), Decimal("420"), Decimal("420"))
             ],
         ),
         data_dir=tmp_path,
@@ -803,9 +804,9 @@ def test_the_mechanical_entries_switch_stops_slices_while_exits_still_fire(
         ),
         prices=prices,
         broker=FakeBroker(
-            cash=Decimal("99300"),
+            cash=Decimal("99580"),
             positions=[
-                BrokerPosition("NUE", Decimal("5"), Decimal("700"), Decimal("700"))
+                BrokerPosition("NUE", Decimal("3"), Decimal("420"), Decimal("420"))
             ],
         ),
         clock=clock,

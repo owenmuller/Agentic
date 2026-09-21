@@ -80,6 +80,21 @@ CENTS = Decimal("0.01")
 logger = logging.getLogger("orchestrator.sweep")
 
 
+def liquidity_buffer(gate: RiskGate, config: CashManagementLimits) -> Decimal:
+    """The cash floor the sweep defends. Deterministic, per the ruling: both
+    trading sleeves' FULL daily deployment caps, working-order reservations,
+    and the configured margin. Module-level so the baseline sleeve (ruling
+    2026-09-18) spends only cash above the same floor."""
+    limits = gate.limits
+    return (
+        gate.sleeve_nav(Sleeve.EQUITY) * limits.equity_sleeve.max_daily_deployment
+        + gate.sleeve_nav(Sleeve.MECHANICAL)
+        * limits.mechanical_sleeve.max_daily_deployment
+        + gate.state.reserved_cash
+        + config.buffer_margin_usd
+    )
+
+
 @dataclass(slots=True)
 class SweepLot:
     """One sweep buy, tracked until sold flat."""
@@ -113,6 +128,7 @@ class CashSweeper:
         id_factory: Callable[[], str],
         note: Optional[Callable[[str], None]] = None,
         bids: Optional[Callable[[str], Optional[Decimal]]] = None,
+        extra_buffer: Optional[Callable[[], Decimal]] = None,
     ) -> None:
         self._gate = gate
         self._adapter = adapter
@@ -121,6 +137,10 @@ class CashSweeper:
         #: The bid side, for unsweep sells. Optional: a price source without
         #: one (the test doubles) sells a cent under the ask instead.
         self._bids = bids
+        #: Cash another deterministic sleeve is owed on top of the ruled
+        #: buffer — the baseline sleeve's outstanding funding (ruling
+        #: 2026-09-18) — so an unsweep supplies it. None = nothing extra.
+        self._extra_buffer = extra_buffer
         self._config = config
         self._clock = clock
         self._id_factory = id_factory
@@ -139,17 +159,17 @@ class CashSweeper:
     def symbol(self) -> str:
         return self._config.symbol
 
+    def base_buffer(self) -> Decimal:
+        """The ruled liquidity floor alone (``liquidity_buffer``)."""
+        return liquidity_buffer(self._gate, self._config)
+
     def buffer(self) -> Decimal:
-        """The cash floor the sweeper defends. Deterministic, per the ruling."""
-        limits = self._gate.limits
-        return (
-            self._gate.sleeve_nav(Sleeve.EQUITY)
-            * limits.equity_sleeve.max_daily_deployment
-            + self._gate.sleeve_nav(Sleeve.MECHANICAL)
-            * limits.mechanical_sleeve.max_daily_deployment
-            + self._gate.state.reserved_cash
-            + self._config.buffer_margin_usd
-        )
+        """The cash floor the sweeper defends: the ruled buffer plus whatever
+        the baseline sleeve is still owed for an open rebalance (ruling
+        2026-09-18) — so SGOV unsweeps supply the index buy a lot at a time,
+        and SGOV holds only what the JUDGED sleeve has not deployed."""
+        extra = self._extra_buffer() if self._extra_buffer is not None else ZERO
+        return self.base_buffer() + max(extra, ZERO)
 
     # -- replay ------------------------------------------------------------------------
 
@@ -194,6 +214,12 @@ class CashSweeper:
         return restored
 
     # -- one pass ----------------------------------------------------------------------
+
+    def settle(self, now: datetime) -> int:
+        """Settle working orders without placing any. The loop calls this before
+        the baseline sleeve runs (ruling 2026-09-18) so an unsweep that landed
+        overnight or last tick is cash the baseline can see this tick, not next."""
+        return self._reconcile(now)
 
     def tick(self, now: datetime) -> int:
         """Settle, mark, then correct toward the buffer. Returns orders placed."""

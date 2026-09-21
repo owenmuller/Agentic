@@ -37,7 +37,7 @@ MECHANICAL_BREAKER_DRAWDOWN = Decimal("0.25")
 
 @dataclass(frozen=True, slots=True)
 class BookPosition:
-    sleeve: str  # "equity" (judged) | "mechanical" | "cash_management"
+    sleeve: str  # "equity" (judged) | "mechanical" | "baseline" | "cash_management"
     symbol: str
     quantity: Decimal
     market_value: Decimal

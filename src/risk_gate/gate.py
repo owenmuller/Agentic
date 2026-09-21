@@ -191,6 +191,7 @@ class RiskGate:
             Sleeve.EQUITY: weights.equity,
             Sleeve.MECHANICAL: weights.mechanical,
             Sleeve.PREDICTION: weights.prediction,
+            Sleeve.BASELINE: weights.baseline,
         }[sleeve]
         return self._state.nav * weight
 
@@ -357,6 +358,40 @@ class RiskGate:
             target_position.last_open_date = today
             return self._approve(order, cost, now)
 
+        # Baseline market-beta sleeve (aggression ruling 2026-09-18, lever 4):
+        # one index ETF at a target weight. Cash-secured above like everything
+        # else; the kill-switch halt above already stops its buys. Exempt from
+        # the alpha caps (single position, sector, daily deployment) for the
+        # same reason the sweep is — those bound concentration in judged
+        # names, and a 40% index position IS the ruling — but NOT from its
+        # allocation ceiling: target plus drift is as far as it may be bought,
+        # so a rebalance can never quietly grow the beta sleeve past its weight.
+        if sleeve is Sleeve.BASELINE:
+            nav = state.nav
+            if nav > ZERO:
+                target = limits.portfolio.sleeves.baseline
+                ceiling_fraction = target + limits.portfolio.drift_tolerance
+                resulting_fraction = (state.sleeve_exposure(sleeve) + cost) / nav
+                if resulting_fraction > ceiling_fraction:
+                    return Rejection(
+                        code=RejectionCode.SLEEVE_ALLOCATION_EXCEEDED,
+                        message=(
+                            f"baseline sleeve would reach {resulting_fraction} of "
+                            f"NAV, above target {target} plus drift "
+                            f"{limits.portfolio.drift_tolerance}"
+                        ),
+                        limit=ceiling_fraction,
+                        observed=resulting_fraction,
+                    )
+            target_position = state.ensure_position(
+                key, sleeve, unit_multiplier(order), is_option(order)
+            )
+            state.reserved_cash += cost
+            target_position.pending_open_units += units_of(order)
+            target_position.pending_open_cost += cost
+            target_position.last_open_date = today
+            return self._approve(order, cost, now)
+
         sleeve_nav = self.sleeve_nav(sleeve)
 
         # Max single position.
@@ -509,6 +544,7 @@ class RiskGate:
                 Sleeve.EQUITY: limits.portfolio.sleeves.equity,
                 Sleeve.MECHANICAL: limits.portfolio.sleeves.mechanical,
                 Sleeve.PREDICTION: limits.portfolio.sleeves.prediction,
+                Sleeve.BASELINE: limits.portfolio.sleeves.baseline,
             }[sleeve]
             ceiling_fraction = target + limits.portfolio.drift_tolerance
             resulting_fraction = (state.sleeve_exposure(sleeve) + cost) / nav

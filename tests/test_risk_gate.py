@@ -1127,18 +1127,19 @@ ALPHA_SECTOR = SectorMap(
 def test_three_same_sector_positions_within_the_cap_are_approved(limits):
     gate = make_gate(limits, sectors=ALPHA_SECTOR)
     for symbol in ("AL1", "AL2", "AL3"):
-        decision = gate.submit(equity_buy(symbol=symbol, qty=62, price="100.00"))
+        decision = gate.submit(equity_buy(symbol=symbol, qty=37, price="100.00"))
         assert decision.is_approved, decision
 
 
 def test_the_fourth_position_breaching_the_sector_cap_is_rejected(limits):
     gate = make_gate(limits, sectors=ALPHA_SECTOR)
-    # 3 x 6,200 = 18,600 sits inside the 25% sector cap (18,750 of 75k); the
-    # fourth carries it to 24,800 (caps 15% -> 25%, recalibration 2026-09-15).
+    # 3 x 3,700 = 11,100 sits inside the 25% sector cap (11,250 of the 45k
+    # judged sleeve, 45/15/40/0 ruling 2026-09-18) and under the 4,500 single
+    # cap; the fourth carries the sector to 14,800.
     for symbol in ("AL1", "AL2", "AL3"):
-        assert gate.submit(equity_buy(symbol=symbol, qty=62, price="100.00")).is_approved
+        assert gate.submit(equity_buy(symbol=symbol, qty=37, price="100.00")).is_approved
 
-    fourth = gate.submit(equity_buy(symbol="AL4", qty=62, price="100.00"))
+    fourth = gate.submit(equity_buy(symbol="AL4", qty=37, price="100.00"))
     assert isinstance(fourth, Rejection)
     assert fourth.code is RejectionCode.SECTOR_CONCENTRATION
     assert "alpha" in fourth.message
@@ -1175,7 +1176,7 @@ def test_unmapped_tickers_never_share_a_bucket(limits):
     if unknown tickers silently shared a sector, the third would breach it."""
     gate = make_gate(limits, sectors=SectorMap({}))
     for symbol in ("ZZ1", "ZZ2", "ZZ3"):
-        decision = gate.submit(equity_buy(symbol=symbol, qty=62, price="100.00"))
+        decision = gate.submit(equity_buy(symbol=symbol, qty=37, price="100.00"))
         assert decision.is_approved, decision
     assert SectorMap({}).sector_of("ZZ1") == "unmapped:ZZ1"
     assert SectorMap({}).sector_of("zz1") == "unmapped:ZZ1"  # case-insensitive
@@ -1321,14 +1322,16 @@ def test_a_zero_weight_sleeve_rejects_orders_with_a_typed_rejection(limits):
     assert gate.buying_power == START_CASH
 
 
-def test_the_judged_sleeve_spans_three_quarters_of_nav(limits):
-    """75/25/0 (2026-08-27): the judged 10% cap (2026-09-15; was 7%) is 10% of
-    a 75% sleeve — 7.5% of account NAV, not 10%."""
+def test_the_judged_sleeve_spans_under_half_of_nav(limits):
+    """45/15/40/0 (2026-09-18; 75/25/0 before it): the judged 10% cap is 10% of
+    a 45% sleeve — 4.5% of account NAV, not 10%. The baseline sleeve's 40% is
+    an allotment the judged caps never see."""
     gate = make_gate(limits)
-    assert gate.sleeve_nav(Sleeve.EQUITY) == START_CASH * Decimal("0.75")
-    assert gate.sleeve_nav(Sleeve.MECHANICAL) == START_CASH * Decimal("0.25")
-    approve(gate, equity_buy(qty=Decimal("75"), price="100.00"))  # == the cap
-    rejection = reject(gate, equity_buy(symbol="MSFT", qty=76, price="100.00"))
+    assert gate.sleeve_nav(Sleeve.EQUITY) == START_CASH * Decimal("0.45")
+    assert gate.sleeve_nav(Sleeve.MECHANICAL) == START_CASH * Decimal("0.15")
+    assert gate.sleeve_nav(Sleeve.BASELINE) == START_CASH * Decimal("0.40")
+    approve(gate, equity_buy(qty=Decimal("45"), price="100.00"))  # == the cap
+    rejection = reject(gate, equity_buy(symbol="MSFT", qty=46, price="100.00"))
     assert rejection.code is RejectionCode.MAX_SINGLE_POSITION_EXCEEDED
 
 
@@ -1348,19 +1351,19 @@ def test_the_sleeves_hold_the_same_symbol_as_separate_positions(limits):
     )
     gate.record_fill(
         approve(
-            gate, equity_buy(symbol="NUE", qty=8, price="100.00", sleeve="mechanical")
+            gate, equity_buy(symbol="NUE", qty=7, price="100.00", sleeve="mechanical")
         ),
         Decimal("100.00"),
     )
     assert gate.state.position(("equity", "NUE")).quantity == 10
-    assert gate.state.position(("mechanical", "NUE")).quantity == 8
+    assert gate.state.position(("mechanical", "NUE")).quantity == 7
 
     # A judged close bigger than the judged holding is a synthetic short even
-    # though the account holds 18 NUE across sleeves.
-    rejection = reject(gate, equity_sell(symbol="NUE", qty=18))
+    # though the account holds 17 NUE across sleeves.
+    rejection = reject(gate, equity_sell(symbol="NUE", qty=17))
     assert rejection.code is RejectionCode.CLOSE_EXCEEDS_HELD_QUANTITY
     # And the mechanical shares close only through a mechanical sell.
-    approve(gate, equity_sell(symbol="NUE", qty=8, sleeve="mechanical"))
+    approve(gate, equity_sell(symbol="NUE", qty=7, sleeve="mechanical"))
 
 
 def test_the_mechanical_sleeve_has_its_own_daily_budget(limits):
@@ -1376,14 +1379,15 @@ def test_the_mechanical_sleeve_has_its_own_daily_budget(limits):
     assert over.code is RejectionCode.MAX_DAILY_DEPLOYMENT_EXCEEDED
 
     # The mechanical sleeve still opens — its budget is untouched.
-    approve(gate, equity_buy(symbol="MA", qty=8, price="100.00", sleeve="mechanical"))
-    assert gate.state.mechanical_deployed_today == Decimal("800.00")
+    approve(gate, equity_buy(symbol="MA", qty=7, price="100.00", sleeve="mechanical"))
+    assert gate.state.mechanical_deployed_today == Decimal("700.00")
     assert gate.state.deployed_today == judged_cap  # unchanged by the mechanical entry
 
 
 def test_mechanical_allocation_cannot_exceed_its_target_plus_drift(limits):
     """The isolation primitive: no sequence of mechanical entries can consume
-    beyond 25% + 3% of NAV, so judged capital is structurally out of reach."""
+    beyond 15% + 3% of NAV (25% before the 2026-09-18 ruling), so judged and
+    baseline capital are structurally out of reach."""
     clock = FakeClock()
     gate = make_gate(limits, clock=clock)
     codes = []
@@ -1391,7 +1395,7 @@ def test_mechanical_allocation_cannot_exceed_its_target_plus_drift(limits):
         clock.advance_days(1)
         for n in range(4):
             order = equity_buy(
-                symbol=f"M{day:02d}{n}", qty=9, price="100.00", sleeve="mechanical"
+                symbol=f"M{day:02d}{n}", qty=7, price="100.00", sleeve="mechanical"
             )
             decision = gate.submit(order)
             if decision.is_approved:
