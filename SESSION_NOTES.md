@@ -4102,6 +4102,50 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### Forward-return integrity incidents (2026-09-22) and the first longer-horizon read
+
+Two defects surfaced while running the Form 4 cluster read; both fixed, shipped (348d5db,
+e1c7847), cache repaired on the droplet.
+
+1. **Mid-session refresh 403ed on every symbol.** Alpaca's free plan refuses a SIP bars query
+   whose window reaches into the last 15 minutes. The Friday weekly runs after the close and
+   always worked; a manual `priors --refresh` at 13:00 ET appended nothing (46 baseless rows).
+   Fix: `AlpacaDailyBars.bars` clamps the query end with `completed_bars_end` — before today's
+   bar until 16:16 New York (an intraday print must never become a mark), then now−16 min.
+2. **Displaced bases/marks.** The overreaction screen's backfilled 2018/2020 events took their
+   base from the first bar the fetch returned (months late: the client read only the first
+   page of a multi-year history) and every horizon collapsed onto that bar — 66% of the slice
+   read excess 0.00. 929 rows dropped (backup `forward_returns.jsonl.bak-2026-09-22`),
+   recomputed. Fix: `MAX_MARK_GAP_DAYS = 4` (base or mark more than 4 calendar days after its
+   day is ABSENT), and the bars client follows `next_page_token`. 2008 history is not served:
+   those events stay absent.
+
+**The read (2026-09-22, excess vs SPY in points; hit = share > 0; THIN = n<20):**
+
+| slice | 5d | 20d | 60d |
+|---|---|---|---|
+| Form 4 clusters (all funnel rows) | −0.61, hit 50%, n=24 (~17 distinct ticker-days) | not yet (source began 09-03; first marks 09-23) | — |
+| Form 4 singles control | −1.69, hit 38%, n=136 | not yet | — |
+| Form 4 C-suite singles | n=1 | — | — |
+| Form 4 sell clusters (bearish) | −1.29, hit 35%, n=162 | not yet | — |
+| Congressional ≤15K | −1.23, 29%, n=1768 | **−2.66, 31%, n=816** (365 tickers; ticker-weighted −2.40) | not yet |
+| Congressional 15–50K | −0.76, 31%, n=129 | −0.69, 46%, n=95 (59 tickers; only 3 observation days) | not yet |
+| Congressional >50K | +0.02, 47%, n=51 | +11.93, 78%, n=49 — **13 tickers, INTC and BE are 28 of 49 rows**; ticker-weighted +2.86 | not yet |
+| Congressional lag ≤7d / >35d | −1.81 / −1.01 | −2.04 / −2.66 | — |
+| 13D | n=1 | — | — |
+| Overreaction broad tier | −0.32, 48%, n=1318 | −0.14, 53%, n=1315 | +0.25, 51%, n=1302 |
+| Overreaction core tier | +1.69, 54%, n=68 | +1.53, 53%, n=68 | +7.11, 63%, n=67 |
+| 8-K (all) | +3.47 mean / −2.44 median, 38%, n=88 (AEMD +339 drives the mean; trimmed −0.09) | not yet | — |
+
+Reading: the congressional pattern does NOT reverse at 20d — the ≤15K bulk deepens from −1.2
+to −2.7 and the short-lag slice stays negative; the >50K band's +12 is two names (INTC, BE) in
+the August backfill, not a band effect. Form 4 clusters at 5d are not positive (−0.61) but sit
+1.1 points above the singles control on ~17 effective observations — inside one standard
+error; the 20d cluster marks begin 2026-09-23 and reach n≈20 around 2026-10-06. The
+overreaction screen is the one slice with three horizons: broad flat, core tier positive and
+growing with horizon (n=67 at 60d) — the first longer-horizon signal in the book, measurement
+only. 60d congressional and any Form 4 / 8-K 20d cells: not yet.
+
 ### Aggression step 3 — the baseline sleeve, SHIPPED 2026-09-21 at 55/30/15
 
 **Ruled (2026-09-18, revised same day; weights FIXED 2026-09-21 at shipping — judged 55 /
