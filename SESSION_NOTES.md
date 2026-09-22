@@ -4102,6 +4102,42 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### Oct-15 congressional verdict package and the overreaction core-tier check (2026-09-22)
+
+**Built:** the forward report's congressional band section now renders 5d/20d/60d with row
+means BESIDE ticker-weighted means, distinct-ticker and observation-day counts and the top-2
+tickers' share of rows (`_weighted_line`), plus "all purchases" and "live flow only" lines; the
+overreaction section adds a core-tier-by-year regime line. Every Friday weekly carries the
+package from here.
+
+**Congressional (repaired cache, excess vs SPY, points):**
+
+| band | 5d rows / ticker-weighted (tickers) | 20d rows / ticker-weighted (tickers) | 60d |
+|---|---|---|---|
+| ≤15K | −1.23 / −1.18 (408), hit 29% | **−2.66 / −2.42 (364)**, hit 31% | not yet |
+| 15–50K | −0.76 / −0.56 (67) | −0.69 / −0.75 (59), hit 46% | not yet |
+| >50K | +0.02 / −0.25 (13) | +11.93 / **+2.86** (13); INTC+BE = 57% of rows; without them −0.85 / −0.53 (11) | not yet |
+| all purchases | −1.16 / −1.17 (444) | −1.72 / −2.31 (395), hit 30% | not yet |
+| live flow (Sep) | −1.27 / −1.04 (108) | 7 rows only | — |
+
+Caveats the ruling must carry: (1) 852 of the 960 rows with 20d marks were observed on ONE day
+(2026-08-26, the backfill drop) — the 20d congressional read is a single 3-week market path,
+however many tickers it spans; the live Sep flow has 7 rows at 20d. (2) 60d marks for the
+backfill bulk land ~2026-10-25 — Oct 15 rules on 5d/20d unless it waits ten days. (3) 648 sales
+in the funnel are not graded here.
+
+**Overreaction core tier — survives the repaired marks numerically, not the composition check.**
+68 events, 16 distinct tickers; ticker-weighted 60d +4.56 (row +7.11), hit 67%. But: 27
+covid_2020 (+16.4 rows / +20.2 ticker-weighted at 60d, 89% hit), 25 rates_2022 (+7.7 / +5.5),
+15 q4_2018 (**−10.6 / −8.6**), 1 live. And the split that matters for the deferred LLM half:
+market-day drops (SPY also down) +11.8 / +13.1 at 60d, 86% hit — idiosyncratic drops −4.5
+ticker-weighted at 60d, 25% hit, negative at 20d too. The "core" universe is the 2026 judged
+book (AMZN, BE, INTC, AAPL, AVGO, NVDA, AMD, IBP…) projected onto past windows: survivors with
+beta > 1 rebounding harder than SPY after two V-shaped crashes. That is a high-beta regime
+rebound in names known today to have survived, not idiosyncratic overreaction; the slice the
+fundamental-vs-non-fundamental classifier would trade is the one that loses. Broad tier
+(343 tickers) is flat at every horizon in every window. Stated, not ruled.
+
 ### Forward-return integrity incidents (2026-09-22) and the first longer-horizon read
 
 Two defects surfaced while running the Form 4 cluster read; both fixed, shipped (348d5db,

@@ -75,6 +75,15 @@ def test_the_forward_report_renders_every_purchase_by_floor_band():
     report = render_forward_report(entries, rows)
     assert "Congressional floor band (ruling 2026-09-18" in report
     assert "<=15K, 5d" in report and "15-50K, 5d" in report and ">50K, 20d" in report
+    # The 2026-10-15 verdict package: ticker-weighted beside row means, with
+    # distinct-ticker and observation-day counts, and the top contributors.
+    band_line = next(l for l in report.splitlines() if l.strip().startswith("<=15K, 5d"))
+    assert "rows mean -1.00%" in band_line
+    assert "ticker-weighted mean -1.00%" in band_line
+    assert "1 tickers, 1 observation day" in band_line
+    assert "top-2 tickers 100% of rows: AAA x1 (-1.0%)" in band_line
+    assert ">50K, 60d: no resolved marks yet" in report
+    assert "all purchases, 20d" in report and "live flow only" in report
     # The sale is not a purchase and is not in the slice.
     section = report[report.index("Congressional floor band"):]
     section = section[: section.index("Form 4") if "Form 4" in section else len(section)]

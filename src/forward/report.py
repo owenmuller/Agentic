@@ -115,6 +115,52 @@ def _raw_values(
     return values
 
 
+def _weighted_line(
+    label: str,
+    entries: list[FunnelEntry],
+    rows: dict[tuple[str, date], ForwardRow],
+    horizon: int,
+) -> str:
+    """Row mean AND ticker-weighted mean, side by side (verdict package for
+    2026-10-15, requested 2026-09-22): a disclosure re-emitted by several
+    filers, or one filer's spree, is many funnel rows on one name, and two
+    names carried the >50K band to +12% at 20d while the other eleven read
+    negative. The line also counts distinct tickers and observation days, so a
+    cell that is one date's cross-section says so."""
+    marked: list[tuple[FunnelEntry, float]] = []
+    for entry in entries:
+        ticker = entry.primary_ticker
+        if ticker is None:
+            continue
+        row = rows.get((ticker.upper(), entry.observed_at.date()))
+        mark = row.marks.get(horizon) if row is not None else None
+        if mark is not None and mark.excess_pct is not None:
+            marked.append((entry, float(mark.excess_pct)))
+    if not marked:
+        return f"  {label}, {horizon}d: no resolved marks yet"
+    values = [v for _, v in marked]
+    by_ticker: dict[str, list[float]] = {}
+    for entry, value in marked:
+        by_ticker.setdefault(entry.primary_ticker.upper(), []).append(value)  # type: ignore[union-attr]
+    weighted = [statistics.mean(v) for v in by_ticker.values()]
+    top = sorted(by_ticker.items(), key=lambda kv: -len(kv[1]))[:2]
+    top_share = sum(len(v) for _, v in top) / len(values)
+    days = len({entry.observed_at.date() for entry, _ in marked})
+    hit = sum(1 for v in values if v > 0) / len(values)
+    weighted_hit = sum(1 for v in weighted if v > 0) / len(weighted)
+    note = " (small sample)" if len(by_ticker) < 20 else ""
+    return (
+        f"  {label}, {horizon}d: rows mean {statistics.mean(values):+.2f}%, median "
+        f"{statistics.median(values):+.2f}%, hit {hit:.0%} (n={len(values)}) | "
+        f"ticker-weighted mean {statistics.mean(weighted):+.2f}%, median "
+        f"{statistics.median(weighted):+.2f}%, hit {weighted_hit:.0%} "
+        f"({len(by_ticker)} tickers, {days} observation day{'s' if days != 1 else ''}) | "
+        f"top-2 tickers {top_share:.0%} of rows: "
+        + ", ".join(f"{t} x{len(v)} ({statistics.mean(v):+.1f}%)" for t, v in top)
+        + note
+    )
+
+
 def _stat_line(label: str, values: list[float], suffix: str = "") -> str:
     if not values:
         return f"  {label}: no resolved marks yet{suffix}"
@@ -343,7 +389,9 @@ def render_forward_report(
                 "",
                 "Congressional floor band (ruling 2026-09-18: <=15K prefiltered, "
                 "15-50K UNDER REVIEW, >50K kept) — every purchase in the funnel, "
-                "excess at 5d / 20d:",
+                "excess at 5d / 20d / 60d; the 2026-10-15 verdict package: row "
+                "means beside ticker-weighted means, so no band is carried by two "
+                "names:",
             ]
         )
         for ceiling, label in _FLOOR_BANDS:
@@ -353,8 +401,13 @@ def render_forward_report(
                 if (band := _floor_band(e.amount_range)) is not None and band == label
             ]
             if members:
-                lines.append("  " + _stat_line(f"{label}, 5d", _excess_values(members, rows, 5)))
-                lines.append("  " + _stat_line(f"{label}, 20d", _excess_values(members, rows, 20)))
+                for horizon in (5, 20, 60):
+                    lines.append("  " + _weighted_line(label, members, rows, horizon))
+        lines.append("  " + _weighted_line("all purchases", purchases, rows, 20))
+        live = [e for e in purchases if e.observed_at.date() >= date(2026, 9, 1)]
+        lines.append(
+            "  " + _weighted_line("live flow only (observed since 2026-09-01)", live, rows, 20)
+        )
 
     # Form 4 cluster rule (ruling 2026-09-02): the prefiltered singles are the
     # control group. If singles' forward returns match clusters', the >=2-insider
@@ -473,6 +526,19 @@ def render_forward_report(
         ]
         for label, members in slices:
             lines.append(_overreaction_line(label, members, rows))
+        # Regime concentration (2026-09-22 check): the backfilled stress windows
+        # are three market paths, not a sample of them — a tier that pays in the
+        # 2020 V-recovery and loses in Q4 2018 is a regime read. By observation
+        # year, core tier, with the ticker-weighted mean beside the row mean.
+        core = [e for e in overreaction if facts(e) and facts(e).tier == "core"]
+        if core:
+            lines.append(
+                "  core tier by observation year (regime concentration; ticker-"
+                "weighted beside rows):"
+            )
+            for year in sorted({e.observed_at.year for e in core}):
+                members = [e for e in core if e.observed_at.year == year]
+                lines.append("  " + _weighted_line(f"core {year}", members, rows, 60))
 
     thirteen_d = sorted(
         (
