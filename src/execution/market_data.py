@@ -36,6 +36,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -236,6 +237,37 @@ class AlpacaPriceSource:
 #: (rate) and 5xx are transient and are NOT memoised.
 _UNSERVED_STATUSES = frozenset({400, 404, 422})
 
+_MARKET_TZ = ZoneInfo("America/New_York")
+#: Alpaca's free data plan refuses a SIP query whose window reaches into the
+#: last 15 minutes (HTTP 403 on EVERY symbol, SPY included) — the 2026-09-22
+#: incident: a mid-session forward-return refresh 403ed on all ~2,000 symbols
+#: and appended nothing, while the Friday weekly, run after the close, had
+#: always worked. One minute of margin over the rule.
+SIP_RECENT_MINUTES = 16
+
+
+def completed_bars_end(end: datetime, now: datetime) -> datetime:
+    """Clamp a daily-bars query end to the last COMPLETED session.
+
+    Two reasons, one clamp. The plan rule above: never ask past ``now`` minus
+    ``SIP_RECENT_MINUTES``. And measurement fidelity: until 16 minutes after
+    the 16:00 New York close, today's daily bar is an unfinished intraday print,
+    not a close — a forward-return mark taken from it would be a number no
+    later run recomputes — so during the session the query ends before today's
+    bar (Alpaca stamps a daily bar at midnight New York). A caller's earlier
+    ``end`` is kept as is."""
+    local = now.astimezone(_MARKET_TZ)
+    final_at = local.replace(hour=16, minute=SIP_RECENT_MINUTES, second=0, microsecond=0)
+    if local < final_at:
+        cutoff = local.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(
+            seconds=1
+        )
+    else:
+        cutoff = local - timedelta(minutes=SIP_RECENT_MINUTES)
+    cutoff_utc = cutoff.astimezone(timezone.utc)
+    end_utc = end if end.tzinfo is not None else end.replace(tzinfo=timezone.utc)
+    return min(end_utc, cutoff_utc)
+
 
 class UnservedSymbols:
     """Symbols the data API has told us it does not serve (ruling 2026-09-04:
@@ -298,9 +330,11 @@ class AlpacaDailyBars:
         feed: str = "iex",
         timeout: float = 10.0,
         unserved: Optional[UnservedSymbols] = None,
+        clock: Optional[Callable[[], datetime]] = None,
     ) -> None:
         self._feed = feed
         self._unserved = unserved if unserved is not None else UnservedSymbols()
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
         if client is not None:
             self._client = client
         else:
@@ -318,9 +352,13 @@ class AlpacaDailyBars:
     def bars(
         self, symbol: str, start: datetime, end: datetime
     ) -> list[dict[str, Any]]:
-        """Daily bars, oldest first. Empty on any failure — missing, never zero."""
+        """Daily bars, oldest first. Empty on any failure — missing, never zero.
+        The query never reaches past the last completed session
+        (``completed_bars_end``): the plan's 15-minute SIP rule, and no
+        unfinished bar ever becomes a mark."""
         if symbol in self._unserved:
             return []
+        end = completed_bars_end(end, self._clock())
         try:
             response = self._client.get(
                 f"/v2/stocks/{quote(symbol)}/bars",
