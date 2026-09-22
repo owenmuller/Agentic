@@ -68,3 +68,31 @@ def test_the_client_sends_the_clamped_end():
     sent_end = datetime.fromisoformat(seen["end"])
     assert sent_end < ny(2026, 9, 22, 0, 0)
     assert seen["feed"] == "sip"
+
+
+def test_a_paged_series_is_followed_to_its_end():
+    """Alpaca pages long daily histories; taking the first page alone is how a
+    2020 event was based on a 2020-07 bar (incident 2026-09-22)."""
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        token = request.url.params.get("page_token")
+        calls.append(token)
+        if token is None:
+            return httpx.Response(
+                200,
+                json={"bars": [{"t": "2020-01-02T05:00:00Z", "c": 1}], "next_page_token": "p2"},
+            )
+        return httpx.Response(
+            200, json={"bars": [{"t": "2021-01-04T05:00:00Z", "c": 2}], "next_page_token": None}
+        )
+
+    now = ny(2026, 9, 22, 17, 0)
+    bars = AlpacaDailyBars(
+        httpx.Client(base_url="https://data.test", transport=httpx.MockTransport(handler)),
+        feed="sip",
+        clock=lambda: now,
+    )
+    rows = bars.bars("AAPL", datetime(2020, 1, 1, tzinfo=timezone.utc), now)
+    assert [r["c"] for r in rows] == [1, 2]
+    assert calls == [None, "p2"]

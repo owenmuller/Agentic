@@ -162,11 +162,26 @@ def _closes_of(bars: list[dict[str, Any]]) -> list[tuple[date, Decimal]]:
     return out
 
 
+#: How far past its intended day a base or a mark may land and still count:
+#: a Friday observation marks on Monday (3 days), a Friday before a Monday
+#: holiday on Tuesday (4). Beyond that the series simply did not cover the day
+#: — a late-starting history, a halt, a hole in the feed — and the answer is
+#: ABSENT, never a bar from weeks later. Incident 2026-09-22: the overreaction
+#: screen's backfilled 2018/2020 events took their base from the first bar the
+#: fetch returned (months late), every horizon collapsed onto that same bar,
+#: and 66% of the slice read an excess of exactly 0.00.
+MAX_MARK_GAP_DAYS = 4
+
+
 def _first_close_on_or_after(
-    closes: list[tuple[date, Decimal]], day: date
+    closes: list[tuple[date, Decimal]],
+    day: date,
+    max_gap_days: Optional[int] = MAX_MARK_GAP_DAYS,
 ) -> Optional[tuple[date, Decimal]]:
     for session, close in closes:
         if session >= day:
+            if max_gap_days is not None and (session - day).days > max_gap_days:
+                return None
             return session, close
     return None
 

@@ -461,3 +461,45 @@ def test_the_report_says_no_marks_rather_than_zero(tmp_path):
 def test_horizons_are_the_ruled_set():
     # 3d added by the disclosure-reaction ruling (2026-09-02).
     assert HORIZONS == (1, 3, 5, 20, 60, 120)
+
+
+# ================================================================================
+# A base or a mark must land near its day (incident 2026-09-22)
+# ================================================================================
+
+
+def test_a_late_starting_history_yields_no_base_and_no_zero_marks(tmp_path):
+    """The overreaction screen's 2020 events took their base from the first bar
+    the fetch returned, months late, and every horizon collapsed onto it at an
+    excess of exactly 0.00. A series that starts more than MAX_MARK_GAP_DAYS
+    after observation has no base: absent, never a fabricated zero."""
+    late_start = OBSERVED + timedelta(days=30)
+    bars = FakeBars(
+        {
+            "LATE": weekday_series(late_start, 40, 100.0, 1.0),
+            "SPY": weekday_series(OBSERVED, 80, 500.0, 0.0),
+        }
+    )
+    rows = engine(tmp_path, bars, now=NOW + timedelta(days=90)).rows_for({("LATE", OBSERVED)})
+    row = rows[("LATE", OBSERVED)]
+    assert not row.has_base
+    assert row.marks == {}
+
+
+def test_a_hole_in_the_series_around_a_horizon_leaves_that_mark_absent(tmp_path):
+    """Sessions missing for more than the tolerance around D+5 (a halt, a feed
+    gap): the 5d mark is absent while 1d and 20d, which the series covers,
+    resolve normally."""
+    series = weekday_series(OBSERVED, 40, 100.0, 1.0)
+    d5 = OBSERVED + timedelta(days=5)
+    holed = [
+        (day, close)
+        for day, close in series
+        if not (d5 <= date.fromisoformat(day) <= d5 + timedelta(days=6))
+    ]
+    bars = FakeBars({"HOLE": holed, "SPY": weekday_series(OBSERVED, 40, 500.0, 0.0)})
+    row = engine(tmp_path, bars).rows_for({("HOLE", OBSERVED)})[("HOLE", OBSERVED)]
+    assert row.has_base and row.base_date == OBSERVED
+    assert 1 in row.marks
+    assert 5 not in row.marks  # the first close after D+5 is 7+ days late
+    assert 20 in row.marks

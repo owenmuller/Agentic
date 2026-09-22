@@ -244,6 +244,9 @@ _MARKET_TZ = ZoneInfo("America/New_York")
 #: and appended nothing, while the Friday weekly, run after the close, had
 #: always worked. One minute of margin over the rule.
 SIP_RECENT_MINUTES = 16
+#: Pages of daily bars followed per symbol before giving up: 20 x 10,000 bars
+#: is decades of history; the cap only bounds a misbehaving token.
+_MAX_BAR_PAGES = 20
 
 
 def completed_bars_end(end: datetime, now: datetime) -> datetime:
@@ -359,44 +362,58 @@ class AlpacaDailyBars:
         if symbol in self._unserved:
             return []
         end = completed_bars_end(end, self._clock())
-        try:
-            response = self._client.get(
-                f"/v2/stocks/{quote(symbol)}/bars",
-                params={
-                    "timeframe": "1Day",
-                    "start": start.isoformat(),
-                    "end": end.isoformat(),
-                    "feed": self._feed,
-                    "limit": 10_000,
-                    "adjustment": "split",
-                },
+        collected: list[dict[str, Any]] = []
+        page_token: Optional[str] = None
+        # Alpaca pages long series (``next_page_token``); a multi-year daily
+        # history is several pages, and taking only the first is how a 2020
+        # event ended up based on a 2020-07 bar (incident 2026-09-22). Follow
+        # the pages; a partial series on failure is returned as far as it got.
+        for _page in range(_MAX_BAR_PAGES):
+            params: dict[str, Any] = {
+                "timeframe": "1Day",
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "feed": self._feed,
+                "limit": 10_000,
+                "adjustment": "split",
+            }
+            if page_token:
+                params["page_token"] = page_token
+            try:
+                response = self._client.get(
+                    f"/v2/stocks/{quote(symbol)}/bars", params=params
+                )
+            except Exception as error:  # noqa: BLE001 - an outage is missing data
+                logger.warning("bars request for %s failed: %s", symbol, error)
+                return collected
+            if response.status_code >= 400:
+                if response.status_code in _UNSERVED_STATUSES:
+                    logger.warning(
+                        "bars for %s returned HTTP %d: the venue does not serve it; "
+                        "memoised, not requested again",
+                        symbol,
+                        response.status_code,
+                    )
+                    self._unserved.add(symbol, response.status_code)
+                else:
+                    logger.warning(
+                        "bars for %s returned HTTP %d", symbol, response.status_code
+                    )
+                return collected
+            try:
+                payload: Any = response.json()
+            except ValueError:
+                logger.warning("bars for %s were not JSON", symbol)
+                return collected
+            bars = payload.get("bars") if isinstance(payload, dict) else None
+            if isinstance(bars, list):
+                collected.extend(bar for bar in bars if isinstance(bar, dict))
+            page_token = (
+                payload.get("next_page_token") if isinstance(payload, dict) else None
             )
-        except Exception as error:  # noqa: BLE001 - an outage is missing data
-            logger.warning("bars request for %s failed: %s", symbol, error)
-            return []
-        if response.status_code >= 400:
-            if response.status_code in _UNSERVED_STATUSES:
-                logger.warning(
-                    "bars for %s returned HTTP %d: the venue does not serve it; "
-                    "memoised, not requested again",
-                    symbol,
-                    response.status_code,
-                )
-                self._unserved.add(symbol, response.status_code)
-            else:
-                logger.warning(
-                    "bars for %s returned HTTP %d", symbol, response.status_code
-                )
-            return []
-        try:
-            payload: Any = response.json()
-        except ValueError:
-            logger.warning("bars for %s were not JSON", symbol)
-            return []
-        bars = payload.get("bars") if isinstance(payload, dict) else None
-        if not isinstance(bars, list):
-            return []
-        return [bar for bar in bars if isinstance(bar, dict)]
+            if not page_token:
+                break
+        return collected
 
     def window_return_pct(
         self, symbol: str, start: datetime, end: datetime
