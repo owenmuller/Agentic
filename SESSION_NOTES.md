@@ -4102,6 +4102,73 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### Two scheduling rulings for the review dates (2026-09-29) — feed spend 10-15, congressional quality 10-27
+
+**Ruled (human, 2026-09-29):**
+
+1. **Congressional signal-quality verdict: 2026-10-15 → 2026-10-27.** The 60-day marks for the
+   August backfill bulk land ~2026-10-25 and belong in the package. The 20-day read is 852 of 960
+   rows from ONE observation date (2026-08-26) — a single three-week market path — and must not
+   carry a source-retirement decision on its own. The forward report's congressional band section
+   and the weekly's band table now say 2026-10-27; the Form 4 / 8-K / 13D hard review stays
+   2026-10-15 (unchanged by this ruling). **CLAUDE.md still reads "the 2026-10-15 review" in the
+   Class 2 amount-floor bullet — a constitution edit, left for the human.**
+2. **Feed spend rules SEPARATELY on 2026-10-15, on spend alone.** The X-fed callers (nolimitgains,
+   unusual_whales, optionshawk, citrini) are decidable on candidates, passes and trades — not on
+   forward returns they have never produced a position to measure.
+
+**Built (this entry):** the weekly's feed-spend table (`audit/spend.py`, `orchestrator weekly`)
+gains two columns and one line: **cands** (funnel candidates the source delivered at all —
+the forward report's rule, first record per decision id, pre-filtered included because the feed
+delivered and billed them), **next 90d $** (feed × 3 months + research at the source's observed
+daily rate since its start_date — a projection of the rate, nothing more), and an **X-fed callers**
+subtotal line (sources whose only platform is X and which are not a mirror). The paid-feeds line
+now carries candidates, passes and the 90-day projection with its base. Tests:
+`tests/test_feed_spend.py` (+1, the projection's edge cases; the pipeline test asserts the new
+columns and the group line). Suite green on the droplet in a scratch clone (this box has no
+Python).
+
+**The per-source table for 2026-10-15 (droplet audit log, 2026-09-29; realised is gross; research
+$ are estimates — the 09-02..09-15 window understates by ~one pass per floor-band entry; the
+console bill is truth):**
+
+| source | feed $/mo | feed to date | research $ | candidates | passes | trades | closed / won | realised $ | net $ | next 90d $ (feed + research) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| congressional_disclosures | 30 | 43.00 | 11.28 | 3,221 | 87 | 1 | 1 / 1 | +102.06 | +47.78 | 113.61 (90.00 + 23.61) |
+| unusual_whales | 25 | 29.17 | 0.37 | 34 | 3 | 0 | 0 | 0.00 | −29.54 | 75.95 (75.00 + 0.95) |
+| nolimitgains | 10 | 14.33 | 0.50 | 17 | 1 | 0 | 0 | 0.00 | −14.83 | 31.05 (30.00 + 1.05) |
+| optionshawk | 10 | 11.67 | 0.42 | 13 | 4 | 0 | 0 | 0.00 | −12.09 | 31.08 (30.00 + 1.08) |
+| citrini | 5 | 5.83 | 0.00 | 0 | 0 | 0 | 0 | 0.00 | −5.83 | 15.00 (15.00 + 0.00) |
+| form4_insiders | 0 | 0 | 32.15 | 536 | 57 | 8 | 4 / 2 | −51.26 | −83.41 | 107.17 |
+| trump_posts | 0 | 0 | 23.68 | 259 | 77 | 0 | 0 | 0.00 | −23.68 | 49.56 |
+| form_8k | 0 | 0 | 9.26 | 470 | 60 | 0 | 0 | 0.00 | −9.26 | 59.53 (14 days of base) |
+| form_13f | 0 | 0 | 1.16 | 10 | 10 | 0 | 0 | 0.00 | −1.16 | 2.43 |
+| form_13d | 0 | 0 | 0.48 | 3 | 3 | 0 | 0 | 0.00 | −0.48 | 1.60 |
+| **X-fed callers** | **50** | **61.00** | **1.29** | **64** | **8** | **0** | **0** | **0.00** | **−62.29** | **153.08 (150.00 + 3.08)** |
+| all sources | 80 | 104.00 | 79.30 | 4,563 | 302 | 9 | 5 / 3 | +50.80 | −132.50 | 486.98 |
+
+Candidate → pass funnel for the callers: nolimitgains 17 → 1 (16 prefiltered: instrument-less),
+unusual_whales 34 → 3 (31 prefiltered), optionshawk 13 → 4 (9 prefiltered), citrini 0 → 0 (87
+polls, never an item; a direct `from:Citrini7` query returns nothing — quiet or wrong handle,
+unresolved since 09-28). All 8 passes declined. Since the 09-28 read, realised moved +32.73 →
++50.80 (a Form 4 position closed as a win; Form 4 is now 4 closed, 2 won).
+
+**Two facts the 10-15 spend ruling must carry:**
+
+- **The callers' feed lines are BUDGET figures for the X pay-per-use meter, not invoices.**
+  `signals.yaml` says so on each: reads cost ~$0.005 per post, requests with `since_id` are free,
+  and $10 / $25 / $5 a month are "the conservative budget figure" the attribution bills by the
+  2026-08-28 ruling. At the measured rate the callers' 64 delivered posts metered on the order of
+  $0.30; the Trump mirrors' reads bill on the same meter (config carries it as the $25
+  unusual_whales line). So cutting the four callers saves ~$150 of BUDGETED feed over 90 days and
+  ~$3 of research, but the metered X bill barely moves while the mirrors stay — and the
+  developer-console bill, not this table, is the number to read before ruling. The X meter
+  itself is the Trump leg's delivery and is not on the table.
+- **Zero trades is the finding, not the P&L.** 64 candidates in 35–43 days, 8 researched, 0 taken:
+  the callers cannot be graded on forward returns because they have never produced a position.
+  Keep-or-cut is a spend and attention decision (the 8 passes cost $1.29), and a cut source can
+  be re-wired later — adding it back is a source approval like any other.
+
 ### The four defects fixed (2026-09-28, b41397b)
 
 1. **Exit pricing:** `ExitEngine` and `MechanicalEngine` take `bids`; equity sells limit at the

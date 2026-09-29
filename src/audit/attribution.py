@@ -824,7 +824,7 @@ class AttributionReport:
                     "",
                     "Congressional purchases by amount band (floor ruling "
                     "2026-09-18: <=15K prefiltered, 15-50K UNDER REVIEW for "
-                    "2026-10-15, >50K kept; judged decisions since inception):",
+                    "2026-10-27, >50K kept; judged decisions since inception):",
                     *(
                         f"  {label}: {decisions} decisions, {traded} traded; "
                         f"{stats.wins}/{stats.n} closed won; {stats.line()}"

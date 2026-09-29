@@ -427,7 +427,9 @@ def render_forward_report(
     # Congressional floor band (human ruling 2026-09-18, final at $15,001):
     # EVERY congressional purchase in the funnel, researched or not, by the
     # range max — <=15K (prefiltered since the ruling), 15-50K (under review
-    # for 2026-10-15), >50K — at 5d and 20d. The slice the review rules on.
+    # for 2026-10-27; moved from 10-15 by the scheduling ruling 2026-09-29 so
+    # the 60d marks landing ~10-25 are in the package), >50K — at 5d, 20d
+    # and 60d. The slice the review rules on.
     purchases = [
         e
         for e in with_ticker
@@ -440,7 +442,8 @@ def render_forward_report(
                 "",
                 "Congressional floor band (ruling 2026-09-18: <=15K prefiltered, "
                 "15-50K UNDER REVIEW, >50K kept) — every purchase in the funnel, "
-                "excess at 5d / 20d / 60d; the 2026-10-15 verdict package: row "
+                "excess at 5d / 20d / 60d; the 2026-10-27 verdict package (moved "
+                "from 10-15 so the 60d marks are in it): row "
                 "means beside ticker-weighted means, so no band is carried by two "
                 "names:",
             ]

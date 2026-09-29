@@ -70,12 +70,17 @@ def test_a_traded_and_closed_signal_lands_in_its_sources_row(
         row.source_id: row.cost
         for row in signals_config.feed_cost_breakdown(now - timedelta(days=400), now)
     }
+    start_dates = {
+        s.id: s.start_date for klass in signals_config.classes.values() for s in klass.sources
+    }
     rows = feed_spend_rows(
         started.audit.records(),
         started.audit.trails(),
         sources,
         feed_to_date,
         {"trump_posts": {5: (-1.25, 1)}},
+        start_dates=start_dates,
+        as_of=now,
     )
     by_id = {r.source_id: r for r in rows}
     trump = by_id["trump_posts"]
@@ -83,21 +88,78 @@ def test_a_traded_and_closed_signal_lands_in_its_sources_row(
     assert trump.realised_pnl == Decimal("-399.00")  # 19 x (119 - 140)
     assert trump.forward_5d == (-1.25, 1) and trump.forward_20d is None
     assert trump.net == trump.realised_pnl - trump.research_cost - trump.feed_to_date
+    # The one signal is one candidate; a candidate count never sits below the
+    # passes it bought.
+    assert trump.candidates == 1
+    assert all(r.candidates >= r.passes for r in rows)
+    # The 90-day projection: three months of feed, research at the observed
+    # rate over the source's elapsed days from its start_date.
+    assert trump.elapsed_days == max(1, (now.date() - start_dates["trump_posts"]).days)
+    assert trump.feed_next_90 == Decimal("0.00")
+    assert trump.research_next_90 == (
+        trump.research_cost * Decimal(90) / Decimal(trump.elapsed_days)
+    ).quantize(Decimal("0.01"))
     # The sweep's SGOV buy and any mechanical/baseline row never count as a
     # source's trade: only the judged trail did.
     assert sum(r.traded for r in rows) == 1
     assert "cash_management" not in by_id and "baseline_sleeve" not in by_id
     # Every configured source has a row, paid or free.
     assert len(rows) == len(sources)
-    # A paid feed is billed from its start date, not from the beginning of time.
+    # A paid feed is billed from its start date, not from the beginning of time,
+    # and another 90 days of it is three months of the subscription.
     paid = [r for r in rows if r.monthly_cost > 0]
     assert paid and all(r.feed_to_date >= 0 for r in paid)
+    assert all(r.feed_next_90 == (r.monthly_cost * 3).quantize(Decimal("0.01")) for r in paid)
 
-    text = render_feed_spend(rows, now)
+    groups = {"X-fed callers": ("nolimitgains", "unusual_whales", "optionshawk", "citrini")}
+    text = render_feed_spend(rows, now, groups)
     assert "Feed spend against what it bought" in text
     assert "trump_posts" in text and "realised" in text
-    assert "paid feeds:" in text
-    assert "all sources: feed" in text
+    assert "cands" in text and "next 90d $" in text
+    assert "paid feeds:" in text and "next 90d" in text
+    assert "X-fed callers: 0 candidates, 0 passes, 0 trades" in text
+    assert "all sources: feed" in text and "next 90d" in text
+
+
+def test_a_source_with_no_history_projects_no_research_and_three_months_of_feed():
+    from audit.spend import FeedSpendRow
+
+    row = FeedSpendRow(
+        source_id="citrini",
+        class_key="class_2",
+        monthly_cost=Decimal("5"),
+        feed_to_date=Decimal("5.83"),
+        research_cost=Decimal("0"),
+        passes=0,
+        traded=0,
+        open_positions=0,
+        closed=0,
+        wins=0,
+        realised_pnl=Decimal("0"),
+        candidates=0,
+        elapsed_days=0,
+    )
+    assert row.research_next_90 == Decimal("0")
+    assert row.feed_next_90 == Decimal("15.00")
+    assert row.next_90 == Decimal("15.00")
+
+    running = FeedSpendRow(
+        source_id="optionshawk",
+        class_key="class_1",
+        monthly_cost=Decimal("10"),
+        feed_to_date=Decimal("11.67"),
+        research_cost=Decimal("0.42"),
+        passes=4,
+        traded=0,
+        open_positions=0,
+        closed=0,
+        wins=0,
+        realised_pnl=Decimal("0"),
+        candidates=13,
+        elapsed_days=35,
+    )
+    assert running.research_next_90 == Decimal("1.08")  # 0.42 x 90 / 35
+    assert running.next_90 == Decimal("31.08")
 
 
 def test_the_form4_package_names_when_its_60d_cells_populate():

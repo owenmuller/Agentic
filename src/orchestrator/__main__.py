@@ -384,9 +384,12 @@ def _attribution_text(checks) -> str:
         sections.append("forward returns unavailable: no market data this run")
 
     # Feed spend against what it bought (requested 2026-09-28 for the
-    # 2026-10-15 review): per source, the subscription, the research it
-    # caused, the trades it produced and what they realised, with the source's
-    # forward excess when the rows above exist.
+    # 2026-10-15 feed-spend ruling, which rules on spend alone; the
+    # congressional signal-quality verdict moved to 2026-10-27, ruling
+    # 2026-09-29): per source, the subscription, the research it caused, the
+    # candidates and passes, the trades it produced and what they realised,
+    # the next 90 days' cost, with the source's forward excess when the rows
+    # above exist.
     try:
         sections.append(_feed_spend_section(checks, generated_at, entries, rows))
     except Exception as error:  # noqa: BLE001 - the table must never sink the report
@@ -412,10 +415,32 @@ def _feed_spend_section(checks, generated_at, entries=None, rows=None) -> str:
         for row in config.feed_cost_breakdown(since_inception, generated_at)
     }
     forward = source_excess_summary(entries, rows) if entries is not None and rows else None
+    start_dates = {
+        source.id: source.start_date
+        for klass in config.classes.values()
+        for source in klass.sources
+    }
     table = feed_spend_rows(
-        checks.audit.records(), checks.audit.trails(), sources, feed_to_date, forward
+        checks.audit.records(),
+        checks.audit.trails(),
+        sources,
+        feed_to_date,
+        forward,
+        start_dates=start_dates,
+        as_of=generated_at,
     )
-    return render_feed_spend(table, generated_at)
+    # The X-fed trade-callers as one line (scheduling ruling 2026-09-29): the
+    # accounts whose only platform is X and which are not a mirror of a
+    # principal. Their $ lines carry the X pay-per-use meter that also
+    # delivers the Trump mirrors — cutting a caller does not cut the meter.
+    callers = [
+        source.id
+        for klass in config.classes.values()
+        for source in klass.sources
+        if tuple(source.platforms) == ("x",) and source.type != "mirror"
+    ]
+    groups = {"X-fed callers (2026-10-15 feed-spend ruling)": callers} if callers else None
+    return render_feed_spend(table, generated_at, groups)
 
 
 def replay() -> int:

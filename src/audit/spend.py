@@ -1,10 +1,26 @@
 """Feed spend against what it bought (requested 2026-09-28 for the 2026-10-15
-review): one row per source — the subscription, the LLM research it caused,
-the passes it took, the trades it produced, what those trades realised, and
-the source's own forward excess — so the ruling "does this feed buy anything
-measurable" is answerable from one table.
+feed-spend ruling): one row per source — the subscription, the LLM research it
+caused, the candidates it delivered, the passes it took, the trades it
+produced, what those trades realised, the source's own forward excess, and
+what another 90 days of it would cost — so the ruling "does this feed buy
+anything measurable" is answerable from one table.
+
+Scheduling ruling 2026-09-29: feed spend rules on 2026-10-15 on spend alone
+(the X-fed callers are decidable on passes and trades, not forward returns);
+the congressional signal-quality verdict moved to 2026-10-27 so its 60-day
+marks are in the package.
 
 Counting rules, all deterministic and all mirrored from the existing counters:
+  candidates     distinct decision ids the source delivered to the funnel at
+                 all — the forward report's funnel rule: a judged
+                 DecisionRecord or a StageRejectionRecord at a funnel stage
+                 (pre-filter, triage, research, sizing, order construction),
+                 first record per id. Pre-filtered signals count: they were
+                 delivered and paid for by the feed, just never researched.
+  next 90 days   feed = monthly_cost x 3; research = research $ to date
+                 scaled from the source's elapsed days (its start_date, or
+                 its first funnel record without one) to 90 days. A
+                 projection of the observed rate, nothing more.
   passes         distinct decision ids that bought a research pass — a
                  DecisionRecord (mechanical, sweep and baseline strategies
                  excluded: no LLM ran) or a StageRejectionRecord past the
@@ -27,7 +43,7 @@ from __future__ import annotations
 
 import statistics
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Iterable, Mapping, Optional
 
@@ -43,6 +59,21 @@ from audit.records import (
 ZERO = Decimal("0")
 CENTS = Decimal("0.01")
 NON_JUDGED_STRATEGIES = ("mechanical", "cash_sweep", "baseline")
+#: The stages at which a StageRejectionRecord is a funnel candidate — the
+#: forward report's rule (forward.funnel._STAGE_BUCKETS), restated here because
+#: audit may not import forward. Execution shares a decision's id and
+#: internal_error is a bug, so neither is a candidate.
+FUNNEL_STAGES = frozenset(
+    {
+        RejectedStage.PRE_FILTER,
+        RejectedStage.TRIAGE,
+        RejectedStage.RESEARCH,
+        RejectedStage.SIZING,
+        RejectedStage.ORDER_CONSTRUCTION,
+    }
+)
+PROJECTION_DAYS = 90
+PRORATION_MONTH_DAYS = 30
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,10 +93,36 @@ class FeedSpendRow:
     #: (mean excess %, n) over every funnel row of the source, or None.
     forward_5d: Optional[tuple[float, int]] = None
     forward_20d: Optional[tuple[float, int]] = None
+    #: Funnel candidates the source delivered, researched or not.
+    candidates: int = 0
+    #: Days the source has been running (start_date, else first funnel record,
+    #: to the report's as-of), at least 1; the base of the 90-day projection.
+    elapsed_days: int = 0
 
     @property
     def net(self) -> Decimal:
         return (self.realised_pnl - self.research_cost - self.feed_to_date).quantize(CENTS)
+
+    @property
+    def feed_next_90(self) -> Decimal:
+        """Another 90 days of the subscription."""
+        return (
+            self.monthly_cost * Decimal(PROJECTION_DAYS) / Decimal(PRORATION_MONTH_DAYS)
+        ).quantize(CENTS)
+
+    @property
+    def research_next_90(self) -> Decimal:
+        """Research spend at the observed rate, scaled to 90 days; zero when
+        the source has no history to scale from."""
+        if self.elapsed_days <= 0:
+            return ZERO
+        return (
+            self.research_cost * Decimal(PROJECTION_DAYS) / Decimal(self.elapsed_days)
+        ).quantize(CENTS)
+
+    @property
+    def next_90(self) -> Decimal:
+        return (self.feed_next_90 + self.research_next_90).quantize(CENTS)
 
     @property
     def cost_per_trade(self) -> Optional[Decimal]:
@@ -80,14 +137,21 @@ def feed_spend_rows(
     sources: Iterable[tuple[str, str, Decimal]],
     feed_to_date: Mapping[str, Decimal],
     forward_by_source: Optional[Mapping[str, Mapping[int, tuple[float, int]]]] = None,
+    start_dates: Optional[Mapping[str, Optional[date]]] = None,
+    as_of: Optional[datetime] = None,
 ) -> tuple[FeedSpendRow, ...]:
     """One row per configured source (``(source_id, class_key, monthly_cost)``),
-    since inception, sorted by feed cost then research cost, descending."""
+    since inception, sorted by feed cost then research cost, descending.
+    ``start_dates`` (source id -> config start_date) and ``as_of`` feed the
+    90-day projection; without them a source's elapsed days run from its first
+    funnel record to now."""
     records = list(records)
     passes: dict[str, set[str]] = {}
     cost: dict[str, Decimal] = {}
     source_of: dict[str, str] = {}
     entry_costed: set[str] = set()
+    candidates: dict[str, set[str]] = {}
+    first_seen: dict[str, date] = {}
     for record in records:
         if isinstance(record, (DecisionRecord, StageRejectionRecord)):
             source_of.setdefault(record.decision_id, record.signal.source_id)
@@ -96,8 +160,11 @@ def feed_spend_rows(
             if record.sizing.strategy in NON_JUDGED_STRATEGIES:
                 continue
             source = record.signal.source_id
+            _note_candidate(candidates, first_seen, record)
             passes.setdefault(source, set()).add(record.decision_id)
         elif isinstance(record, StageRejectionRecord):
+            if record.stage in FUNNEL_STAGES:
+                _note_candidate(candidates, first_seen, record)
             if record.stage in (RejectedStage.PRE_FILTER, RejectedStage.TRIAGE):
                 # Triage spends dollars but not a pass; its screen cost is
                 # picked up below through the record's own estimate.
@@ -140,9 +207,13 @@ def feed_spend_rows(
                 wins[source] = wins.get(source, 0) + 1
 
     forward_by_source = forward_by_source or {}
+    start_dates = start_dates or {}
+    today = (as_of or datetime.now(timezone.utc)).date()
     rows = []
     for source_id, class_key, monthly in sources:
         forward = forward_by_source.get(source_id, {})
+        started = start_dates.get(source_id) or first_seen.get(source_id)
+        elapsed = max(1, (today - started).days) if started is not None else 0
         rows.append(
             FeedSpendRow(
                 source_id=source_id,
@@ -158,10 +229,26 @@ def feed_spend_rows(
                 realised_pnl=realised.get(source_id, ZERO).quantize(CENTS),
                 forward_5d=forward.get(5),
                 forward_20d=forward.get(20),
+                candidates=len(candidates.get(source_id, ())),
+                elapsed_days=elapsed,
             )
         )
     rows.sort(key=lambda r: (-r.feed_to_date, -r.research_cost, r.source_id))
     return tuple(rows)
+
+
+def _note_candidate(
+    candidates: dict[str, set[str]], first_seen: dict[str, date], record
+) -> None:
+    """A funnel candidate: first record per decision id, keyed on the source."""
+    source = record.signal.source_id
+    ids = candidates.setdefault(source, set())
+    if record.decision_id in ids:
+        return
+    ids.add(record.decision_id)
+    observed = record.signal.observed_at.date()
+    if source not in first_seen or observed < first_seen[source]:
+        first_seen[source] = observed
 
 
 def _add_cost(cost: dict[str, Decimal], source: str, record, costed: set[str]) -> None:
@@ -179,41 +266,69 @@ def _add_cost(cost: dict[str, Decimal], source: str, record, costed: set[str]) -
         cost[source] = cost.get(source, ZERO) + total
 
 
-def render_feed_spend(rows: Iterable[FeedSpendRow], generated_at: datetime) -> str:
+def render_feed_spend(
+    rows: Iterable[FeedSpendRow],
+    generated_at: datetime,
+    groups: Optional[Mapping[str, Iterable[str]]] = None,
+) -> str:
+    """The table, then one subtotal line per named group of sources (the
+    2026-10-15 feed-spend ruling reads the X-fed callers as one line)."""
     rows = list(rows)
     lines = [
         f"Feed spend against what it bought (since inception, to {generated_at.date()}; "
-        f"for the 2026-10-15 review — judged arm only, the mechanical arm's copies "
-        f"are on the attribution's own line; research $ are estimates, the console "
-        f"bill is truth):",
-        "  source                      class    feed $/mo  feed $ to date  research $   passes  traded  open  closed  won  realised $   net $      5d excess (n)     20d excess (n)",
+        f"for the 2026-10-15 feed-spend ruling, which rules on spend alone — the "
+        f"congressional signal-quality verdict is 2026-10-27; judged arm only, the "
+        f"mechanical arm's copies are on the attribution's own line; research $ are "
+        f"estimates, the console bill is truth; next 90d = feed x 3 months + "
+        f"research at the observed daily rate):",
+        "  source                      class    feed $/mo  feed $ to date  research $  cands  passes  traded  open  closed  won  realised $   net $    next 90d $     5d excess (n)     20d excess (n)",
     ]
     for r in rows:
         f5 = f"{r.forward_5d[0]:+.2f}% ({r.forward_5d[1]})" if r.forward_5d else "—"
         f20 = f"{r.forward_20d[0]:+.2f}% ({r.forward_20d[1]})" if r.forward_20d else "—"
         lines.append(
             f"  {r.source_id:26} {r.class_key:8} {r.monthly_cost:>8.2f}  {r.feed_to_date:>14.2f}  "
-            f"{r.research_cost:>10.2f}  {r.passes:>6d}  {r.traded:>6d}  {r.open_positions:>4d}  "
-            f"{r.closed:>6d}  {r.wins:>3d}  {r.realised_pnl:>+10.2f}  {r.net:>+9.2f}  "
-            f"{f5:>16}  {f20:>16}"
+            f"{r.research_cost:>10.2f}  {r.candidates:>5d}  {r.passes:>6d}  {r.traded:>6d}  "
+            f"{r.open_positions:>4d}  {r.closed:>6d}  {r.wins:>3d}  {r.realised_pnl:>+10.2f}  "
+            f"{r.net:>+9.2f}  {r.next_90:>11.2f}  {f5:>16}  {f20:>16}"
         )
     paid = [r for r in rows if r.monthly_cost > ZERO]
     if paid:
         lines.append(
             "  paid feeds: "
             + "; ".join(
-                f"{r.source_id} ${r.monthly_cost}/mo -> {r.traded} trade(s), "
+                f"{r.source_id} ${r.monthly_cost}/mo -> {r.candidates} candidate(s), "
+                f"{r.passes} pass(es), {r.traded} trade(s), "
                 f"{r.closed} closed, realised {r.realised_pnl:+.2f}, net {r.net:+.2f}"
                 + (f", cost per trade {r.cost_per_trade}" if r.cost_per_trade is not None else "")
+                + f", next 90d {r.next_90:.2f} (feed {r.feed_next_90:.2f} + research "
+                f"{r.research_next_90:.2f} over {r.elapsed_days}d observed)"
                 for r in paid
             )
+        )
+    by_id = {r.source_id: r for r in rows}
+    for label, members in (groups or {}).items():
+        group = [by_id[m] for m in members if m in by_id]
+        if not group:
+            continue
+        lines.append(
+            f"  {label}: {sum(r.candidates for r in group)} candidates, "
+            f"{sum(r.passes for r in group)} passes, {sum(r.traded for r in group)} trades, "
+            f"realised {sum((r.realised_pnl for r in group), ZERO):+.2f}; "
+            f"feed {sum((r.feed_to_date for r in group), ZERO):.2f} + research "
+            f"{sum((r.research_cost for r in group), ZERO):.2f} to date; "
+            f"next 90d {sum((r.next_90 for r in group), ZERO):.2f} "
+            f"(feed {sum((r.feed_next_90 for r in group), ZERO):.2f} + research "
+            f"{sum((r.research_next_90 for r in group), ZERO):.2f})"
         )
     total_feed = sum((r.feed_to_date for r in rows), ZERO)
     total_research = sum((r.research_cost for r in rows), ZERO)
     total_realised = sum((r.realised_pnl for r in rows), ZERO)
+    total_next = sum((r.next_90 for r in rows), ZERO)
     lines.append(
         f"  all sources: feed {total_feed:.2f} + research {total_research:.2f} = "
         f"{(total_feed + total_research):.2f} spent; realised {total_realised:+.2f}; "
-        f"net {(total_realised - total_feed - total_research):+.2f}"
+        f"net {(total_realised - total_feed - total_research):+.2f}; "
+        f"next 90d {total_next:.2f}"
     )
     return "\n".join(lines)
