@@ -4102,6 +4102,24 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### The four defects fixed (2026-09-28, b41397b)
+
+1. **Exit pricing:** `ExitEngine` and `MechanicalEngine` take `bids`; equity sells limit at the
+   bid rounded down (mark rounded down without one); wired from `prices.bid` in bootstrap.
+   A working exit no longer removes a position from `_review_queue` (only a review's own close
+   verdict does); `_close_position` still refuses a second order while one works. TPVG's three
+   cancelled attempts had already released their reservations; the next attempt prices at the
+   bid. Tests: bid limit, no-bid fallback, review-while-pending.
+2. **Unserved memo:** strikes counted once per day, `UNSERVED_STRIKES` 3 on distinct days
+   blacklists, a 200 clears the strikes, legacy entries stand. INTC/BBD/RWT/SBLK purged on the
+   droplet (`data/purge_memo.py`); AXIA3 kept.
+3. **Overreaction timer:** `ops/vps/agentic-overreaction.{service,timer}` (weekdays 16:45 ET)
+   were already in the repo, never installed. Install needs root — see the unit header. The
+   missed sessions 09-04..09-28 were backfilled by hand (`overreaction --backfill`).
+4. **Alerts:** `SENDGRID_API_KEY` (+ `ALERT_FROM` verified sender, `ALERT_TO`) adds an HTTPS
+   transport tried before SMTP; outcomes land in `data/alerts_status.json`; health prints an
+   `alerts:` line (never delivered / last failure / consecutive failures). Operator sets the key.
+
 ### Connectivity/integrity check, two verdict packages, and four open defects (2026-09-28)
 
 **Connectivity (every credential exercised live, no values printed):** Alpaca trading + SIP
