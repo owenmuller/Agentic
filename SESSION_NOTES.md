@@ -4102,6 +4102,66 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### Connectivity/integrity check, two verdict packages, and four open defects (2026-09-28)
+
+**Connectivity (every credential exercised live, no values printed):** Alpaca trading + SIP
+data, Anthropic Models API (all three pinned models present), Quiver (newest report 09-25), X
+(449 reads left in window), Finnhub, EDGAR FTS + current feed, Robinhood refresh grant — all
+PASS. **SMTP FAIL: outbound 465/587 time out and there is no IPv6 route (DigitalOcean's default
+SMTP egress block). 28 alert send failures since alerts went live 09-04, zero successes ever;
+the four "weekly report emailed" lines are the queue acknowledgement, not delivery.** Every
+urgent alert (exits started, scanner errors) has been lost. Remedy: DO support ticket to
+unblock SMTP, or an HTTPS mail API. Nothing changed.
+
+**Sources:** all delivered items today except 13F (quiet by season, next window mid-Nov),
+citrini (87 polls, never an item; a direct `from:Citrini7` query returns 0 posts/7d with no
+error — quiet or wrong handle), and the overreaction screen (last record 09-03: it has NO
+timer and runs by hand — the live 2026 slice is not accumulating). Truth Social has no fetcher
+by design. **Timers:** five units (paper, earnings, weekly, backup, the elapsed one-shot
+rh-refresh), all fired on schedule this week, exit 0. **Data:** audit 6,102 lines, credibility
+1,505, forward cache refreshed 09-25 (weekly) and 09-28 (manual), session state clean, droplet
+== origin. **Journal-only this week:** the SMTP failures; 354 "triggered review of BBD deferred"
+warnings on 09-22 — the same-day dedupe attached each Form 4 echo as convergence and each echo
+owed a review: BBD was reviewed FIVE times in two hours on day 0, all five concluding "same
+filing" (spend the dedupe was meant to avoid); MSB stale quotes; 9 EDGAR 500s retried fine.
+
+**Open defects found (none fixed — report-only run):**
+1. **Exit pricing (TPVG 77e61df2):** guardrail/review sells limit at the LAST quote rounded
+   down (`exits.py` ~1837; the mechanical time exit likewise). TPVG's trailing stop (HWM 5.60,
+   stop 5.04) fired 09-24; three day orders at 4.89/4.88/4.84 rested unfilled on a thin $4.8
+   BDC in a falling tape and were cancelled at the close. A pending exit skips the review queue,
+   hence "reviewed never". Same class as the 2026-09-04 unsweep incident. Fix: sell at the bid
+   rounded down (a cent under the ask without one); the bid source exists and feeds the sweep
+   and baseline. The max-loss stop at 4.49 is still armed.
+2. **Unserved memo poisoned:** INTC, BBD, RWT, SBLK memoised as "HTTP 400, never again" by
+   the weekly at 21:01 UTC 09-25; the same request succeeds now. The Friday weekly will skip
+   the forward marks of four judged names until the entries are deleted and 400 stops being
+   permanent. (My manual refresh bypasses the memo, so their rows are current tonight.)
+3. **Overreaction screen unscheduled** (above).
+4. **This dev box has no Python** (venv points at a missing 3.12.10); suites ran on the
+   droplet in a scratch clone this session. Bounce: not possible from the agentic account
+   (sudo needs a password) and not needed — the paper unit is a fresh process each morning.
+
+**BBD (3b12cf52):** opened 09-22 at 3.51, 314 sh, weeks, conf 60, five-insider $5.69M cluster;
+five same-day echo reviews + one cadence hold; 09-24 review: close, `thesis_invalidated` —
+3.38 below the thesis's own ~3.43 insider-price floor, the "meaningful volume" qualifier not
+used to rescue it, confidence pushed ≤50; filled 3.38 same tick; realised **−40.86 (−3.7%)**.
+
+**Built (b3b09b5):** Form 4 verdict package in the forward report (5/20/60d, row beside
+ticker-weighted, caveats printed, 60d population dates: clusters first mark 2026-11-02, 20
+tickers from 2026-11-16 — neither Oct 15 nor Oct 27 has a 60d Form 4 cell) and the feed-spend
+table in the weekly (`audit/spend.py`). Today's read: clusters 5d −2.85 rows / −2.00
+ticker-weighted (24 tickers, 25% hit) vs singles −1.57 / −1.60 (150 tickers, 34%); clusters
+now WORSE than the control at 5d; the 20d cluster cell is one row (GROV +0.67; the 09-09..11
+cohort's marks land Friday 10-02); singles 20d −7.21 / −7.12 on 50 tickers but 3 observation
+days (one market path). Feed spend since inception: congressional $30/mo → 87 passes, 1 trade,
++102.06 realised, net +47.78 (one INTC trade carries the source); unusual_whales $25 → 3
+passes, 0 trades, net −29.54; nolimitgains $10 → 1 pass, 0 trades; optionshawk $10 → 4 passes,
+0 trades; citrini $5 → 0 passes; Form 4 (free) → 53 passes, 8 trades, 3 closed, −69.33;
+trump_posts (free, X-metered) → 77 passes, 0 trades, $23.68 research. All sources: $104 feed +
+$75.64 research = $179.64 spent, +32.73 realised, net −146.91. Note the X pay-per-use meter is
+carried as the $25 line on unusual_whales by config; the mirrors' reads bill there.
+
 ### Oct-15 congressional verdict package and the overreaction core-tier check (2026-09-22)
 
 **Built:** the forward report's congressional band section now renders 5d/20d/60d with row
