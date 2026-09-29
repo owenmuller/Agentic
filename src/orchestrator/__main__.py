@@ -688,7 +688,8 @@ def run() -> int:
     # loaded here (idempotently — preflight loads it again) so the credentials
     # are visible. Unconfigured = disabled with one log line, nothing changes.
     load_environment()
-    alerter = Alerter()
+    # Delivery outcomes go to a status file health reads (ruling 2026-09-28).
+    alerter = Alerter(status_path=data_dir / "alerts_status.json")
 
     def observe(event: str, detail: str) -> None:
         """Run-log events that must reach a phone: errors, cost tripwires,

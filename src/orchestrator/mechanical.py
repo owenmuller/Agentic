@@ -102,6 +102,7 @@ class MechanicalEngine:
         audit: AuditLog,
         prices: Callable[[str], Optional[Decimal]],
         limits,  # RiskLimits — mechanical_sleeve + portfolio weights are read
+        bids: Optional[Callable[[str], Optional[Decimal]]] = None,
         prefilter,  # THE SAME ResearchPreFilter instance the loop uses
         sectors: Optional[SectorMap] = None,
         clock: Optional[Callable[[], datetime]] = None,
@@ -115,6 +116,10 @@ class MechanicalEngine:
         self._adapter = adapter
         self._audit = audit
         self._prices = prices
+        #: The bid side for time-exit sells (defect 2026-09-28, with the judged
+        #: exit engine): a sell resting at the ask does not print in a falling
+        #: tape. None = the quote rounded down, as before.
+        self._bids = bids
         self._caps = limits.mechanical_sleeve
         self._prefilter = prefilter
         self._sectors = sectors if sectors is not None else SectorMap.load()
@@ -589,6 +594,20 @@ class MechanicalEngine:
                 f"session_state.json."
             )
 
+    def _sell_limit(self, symbol: str, quote: Decimal) -> Decimal:
+        """Marketable: the bid rounded down when quoted, else the quote rounded
+        down; never below one cent."""
+        limit = quote.quantize(CENTS, rounding=ROUND_DOWN)
+        if self._bids is not None:
+            try:
+                bid = self._bids(symbol)
+            except Exception:  # noqa: BLE001 - a price bug must not kill the exit
+                logger.exception("bid failed for %s; limiting at the quote", symbol)
+                bid = None
+            if bid is not None and bid > ZERO:
+                limit = bid.quantize(CENTS, rounding=ROUND_DOWN)
+        return max(limit, CENTS)
+
     def _check_time_exits(self, now: datetime) -> int:
         started = 0
         closing = {w.decision_id for w in self._working.values() if w.side == "close"}
@@ -609,7 +628,7 @@ class MechanicalEngine:
                 symbol=position.symbol,
                 quantity=position.quantity,
                 execution=LimitExecution(
-                    limit_price=quote.quantize(CENTS, rounding=ROUND_DOWN)
+                    limit_price=self._sell_limit(position.symbol, quote)
                 ),
                 sleeve="mechanical",
             )

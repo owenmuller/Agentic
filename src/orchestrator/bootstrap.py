@@ -471,6 +471,8 @@ def start(
         adapter=checks.adapter,
         audit=checks.audit,
         prices=prices,
+        # The bid side for sells (defect 2026-09-28): a marketable exit limit.
+        bids=getattr(prices, "bid", None),
         review_pass=ExitReviewPass(client, checks.clock),
         budget=checks.budget,
         config=checks.orchestrator_config.exits,
@@ -592,6 +594,7 @@ def start(
             adapter=checks.adapter,
             audit=checks.audit,
             prices=prices,
+            bids=getattr(prices, "bid", None),
             limits=checks.limits,
             prefilter=research_prefilter,
             clock=checks.clock,

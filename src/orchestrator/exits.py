@@ -362,6 +362,7 @@ class ExitEngine:
         credibility=None,
         cost_sink=None,
         option_prices=None,
+        bids: Optional[Callable[[str], Optional[Decimal]]] = None,
         close_before_expiry_days: Optional[int] = None,
         short_dated_dte: Optional[int] = None,
         short_dated_close_before_expiry_days: Optional[int] = None,
@@ -374,6 +375,12 @@ class ExitEngine:
         self._adapter = adapter
         self._audit = audit
         self._prices = prices
+        #: The bid side, for sells (defect 2026-09-28: TPVG's trailing-stop exit
+        #: limited at the ask three sessions running on a thin $4.8 BDC in a
+        #: falling tape and never printed — the 2026-09-08 unsweep fix had not
+        #: reached the judged exit engine). None = the test doubles; the quote
+        #: rounded down is then the limit, as before.
+        self._bids = bids
         #: Called with each review's estimated cost (None = unpriced/no call),
         #: so the daily cost tripwire sees reviews as well as entry passes.
         self._cost_sink = cost_sink
@@ -1499,7 +1506,13 @@ class ExitEngine:
         triggered: list[TrackedPosition] = []
         cadence: list[TrackedPosition] = []
         for position in self._tracked.values():
-            if position.pending_exit is not None or position.close_verdict:
+            # A position whose exit is WORKING stays in the review cycle (defect
+            # 2026-09-28: TPVG sat three sessions "reviewed never" behind an exit
+            # that could not fill). A review verdict of close is a no-op while
+            # the exit works (_close_position refuses a second order); a hold
+            # does not cancel a guardrail — the deterministic layer still wins.
+            # Only a review's OWN close verdict retires a position from review.
+            if position.close_verdict:
                 continue
             if position.review_due_reason:
                 triggered.append(position)
@@ -1832,9 +1845,11 @@ class ExitEngine:
             del self._tracked[position.decision_id]
             return False
 
-        # Rounded DOWN: the limit is the worst proceeds the order may accept, and for
-        # a risk-reducing exit a marginally worse floor beats resting unfilled.
-        order = self._order_for(position, quantity, price.quantize(CENTS, ROUND_DOWN))
+        # Marketable: the BID rounded down where a bid is quoted, else the quote
+        # rounded down. The limit is the worst proceeds the order may accept, and
+        # for a risk-reducing exit a marginally worse floor beats resting unfilled
+        # — which is exactly what a sell resting at the ask does in a falling tape.
+        order = self._order_for(position, quantity, self._sell_limit(position, price))
         decision = self._gate.submit(order)
 
         if not decision.is_approved:
@@ -1891,6 +1906,22 @@ class ExitEngine:
             detail=detail,
         )
         return True
+
+    def _sell_limit(self, position: TrackedPosition, price: Decimal) -> Decimal:
+        """A marketable sell limit for an equity exit: the bid rounded down when
+        the price source quotes one, otherwise the mark rounded down. Options
+        keep the premium mid rounded down (their price source has no bid side
+        here). Never below one cent — the schema refuses a zero price."""
+        limit = price.quantize(CENTS, ROUND_DOWN)
+        if not position.is_option and self._bids is not None:
+            try:
+                bid = self._bids(position.symbol)
+            except Exception:  # noqa: BLE001 - a price bug must not kill the exit
+                logger.exception("bid failed for %s; limiting at the mark", position.symbol)
+                bid = None
+            if bid is not None and bid > ZERO:
+                limit = bid.quantize(CENTS, ROUND_DOWN)
+        return max(limit, CENTS)
 
     def _order_for(self, position: TrackedPosition, quantity: Decimal, limit: Decimal):
         # A deep-loss premium can round to zero; the schema (rightly) refuses a

@@ -68,7 +68,10 @@ def test_the_screen_universe_never_admits_a_foreign_symbol():
     assert set(universe) == {"INTC", "AMRN"}
 
 
-def test_an_unserved_symbol_is_asked_once_and_persisted(tmp_path):
+def test_an_unserved_symbol_is_blacklisted_after_three_days_and_persisted(tmp_path):
+    """Ruling 2026-09-28 (revising 2026-09-04's ask-once): a client error is a
+    STRIKE, counted once per day; three strikes on distinct days blacklist the
+    symbol and it is never asked again. One 400 blacklisted four judged names."""
     requests = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -83,21 +86,30 @@ def test_an_unserved_symbol_is_asked_once_and_persisted(tmp_path):
 
     memo_path = tmp_path / "unserved_symbols.json"
     client = httpx.Client(base_url=DATA_BASE_URL, transport=httpx.MockTransport(handler))
-    bars = AlpacaDailyBars(client, unserved=UnservedSymbols(memo_path))
-    now = datetime.now(timezone.utc)
+    moment = {"now": datetime(2026, 9, 25, 21, 0, tzinfo=timezone.utc)}
+    bars = AlpacaDailyBars(client, unserved=UnservedSymbols(memo_path), clock=lambda: moment["now"])
+    now = moment["now"]
     start = now - timedelta(days=30)
     assert bars.bars("AXIA3", start, now) == []
-    assert bars.bars("AXIA3", start, now) == []  # memoised: no second request
-    assert sum(1 for p in requests if "AXIA3" in p) == 1
-    # Transient statuses are NOT memoised: the next run may succeed.
+    assert bars.bars("AXIA3", start, now) == []  # same day: asked again, one strike
+    assert sum(1 for p in requests if "AXIA3" in p) == 2
+    for days in (1, 2):
+        moment["now"] = now + timedelta(days=days)
+        assert bars.bars("AXIA3", start, moment["now"]) == []
+    asked = sum(1 for p in requests if "AXIA3" in p)
+    assert bars.bars("AXIA3", start, moment["now"]) == []  # blacklisted: no request
+    assert sum(1 for p in requests if "AXIA3" in p) == asked
+    # Transient statuses are NOT strikes: the next run may succeed.
     assert bars.bars("RATE", start, now) == [] and bars.bars("RATE", start, now) == []
     assert sum(1 for p in requests if "RATE" in p) == 2
     assert bars.bars("PLAN", start, now) == [] and bars.bars("PLAN", start, now) == []
     assert sum(1 for p in requests if "PLAN" in p) == 2
     assert len(bars.bars("AAPL", start, now)) == 1
-    # Persisted for the next process.
+    # Persisted for the next process, strikes and all.
     saved = json.loads(memo_path.read_text(encoding="utf-8"))
     assert set(saved) == {"AXIA3"} and saved["AXIA3"]["status"] == 400
+    assert saved["AXIA3"]["strikes"] == 3
+    assert "AXIA3" in UnservedSymbols(memo_path)
     fresh = AlpacaDailyBars(client, unserved=UnservedSymbols(memo_path))
     before = len(requests)
     assert fresh.bars("AXIA3", start, now) == []

@@ -272,10 +272,22 @@ def completed_bars_end(end: datetime, now: datetime) -> datetime:
     return min(end_utc, cutoff_utc)
 
 
+#: Distinct DAYS a symbol must fail with a client error before it is
+#: blacklisted (ruling 2026-09-28). One 400 is not a verdict: on 2026-09-25 a
+#: transient 400 blacklisted INTC, BBD, RWT and SBLK — four judged names the
+#: venue serves every day — and the weekly skipped their forward marks.
+UNSERVED_STRIKES = 3
+
+
 class UnservedSymbols:
     """Symbols the data API has told us it does not serve (ruling 2026-09-04:
     AXIA3 400ed on every weekly report). Memoised for the process and, when a
-    path is given, persisted as JSON so the next run does not ask again."""
+    path is given, persisted as JSON so the next run does not ask again.
+
+    Blacklisting takes ``UNSERVED_STRIKES`` client errors on distinct days; a
+    successful fetch in between clears the strikes. Entries written before the
+    2026-09-28 ruling (no ``strikes`` field) stay blacklisted as recorded —
+    the operator purges any that were wrong."""
 
     def __init__(self, path: Optional[Path] = None) -> None:
         self._path = path
@@ -288,28 +300,70 @@ class UnservedSymbols:
             except (OSError, ValueError):
                 self._symbols = {}
 
+    @staticmethod
+    def _blacklisted(entry: dict[str, Any]) -> bool:
+        if "strikes" not in entry:
+            return True  # legacy entry: permanent as written
+        return int(entry.get("strikes", 0)) >= UNSERVED_STRIKES
+
     def __contains__(self, symbol: str) -> bool:
-        return symbol.upper() in self._symbols
+        entry = self._symbols.get(symbol.upper())
+        return entry is not None and self._blacklisted(entry)
 
     def __len__(self) -> int:
-        return len(self._symbols)
+        return sum(1 for entry in self._symbols.values() if self._blacklisted(entry))
 
     def symbols(self) -> tuple[str, ...]:
-        return tuple(sorted(self._symbols))
+        return tuple(sorted(s for s, e in self._symbols.items() if self._blacklisted(e)))
 
-    def add(self, symbol: str, status: int) -> None:
-        self._symbols[symbol.upper()] = {
-            "status": status,
-            "first_seen": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        }
-        if self._path is not None:
-            try:
-                self._path.parent.mkdir(parents=True, exist_ok=True)
-                self._path.write_text(
-                    json.dumps(self._symbols, indent=2, sort_keys=True), encoding="utf-8"
-                )
-            except OSError as error:  # a memo that cannot persist still memoises
-                logger.warning("could not persist unserved symbols: %s", error)
+    def strikes(self, symbol: str) -> int:
+        entry = self._symbols.get(symbol.upper())
+        if entry is None:
+            return 0
+        return UNSERVED_STRIKES if "strikes" not in entry else int(entry.get("strikes", 0))
+
+    def add(self, symbol: str, status: int, now: Optional[datetime] = None) -> None:
+        """One strike, counted at most once per calendar day."""
+        moment = now or datetime.now(timezone.utc)
+        key = symbol.upper()
+        entry = self._symbols.get(key)
+        today = moment.date().isoformat()
+        if entry is None or "strikes" not in entry:
+            if entry is not None:
+                return  # legacy, already permanent
+            entry = {"strikes": 0, "first_seen": moment.isoformat(timespec="seconds")}
+        if str(entry.get("last_seen", ""))[:10] != today:
+            entry["strikes"] = int(entry.get("strikes", 0)) + 1
+        entry["last_seen"] = moment.isoformat(timespec="seconds")
+        entry["status"] = status
+        self._symbols[key] = entry
+        if self._blacklisted(entry):
+            logger.warning(
+                "bars for %s: %d client errors on distinct days; blacklisted",
+                key,
+                entry["strikes"],
+            )
+        self._persist()
+
+    def served(self, symbol: str) -> None:
+        """A successful fetch clears a symbol's strikes (never a legacy entry)."""
+        key = symbol.upper()
+        entry = self._symbols.get(key)
+        if entry is None or "strikes" not in entry:
+            return
+        del self._symbols[key]
+        self._persist()
+
+    def _persist(self) -> None:
+        if self._path is None:
+            return
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(
+                json.dumps(self._symbols, indent=2, sort_keys=True), encoding="utf-8"
+            )
+        except OSError as error:  # a memo that cannot persist still memoises
+            logger.warning("could not persist unserved symbols: %s", error)
 
 
 class AlpacaDailyBars:
@@ -389,12 +443,14 @@ class AlpacaDailyBars:
             if response.status_code >= 400:
                 if response.status_code in _UNSERVED_STATUSES:
                     logger.warning(
-                        "bars for %s returned HTTP %d: the venue does not serve it; "
-                        "memoised, not requested again",
+                        "bars for %s returned HTTP %d: strike %d of %d before the "
+                        "venue is taken not to serve it",
                         symbol,
                         response.status_code,
+                        self._unserved.strikes(symbol) + 1,
+                        UNSERVED_STRIKES,
                     )
-                    self._unserved.add(symbol, response.status_code)
+                    self._unserved.add(symbol, response.status_code, self._clock())
                 else:
                     logger.warning(
                         "bars for %s returned HTTP %d", symbol, response.status_code
@@ -413,6 +469,8 @@ class AlpacaDailyBars:
             )
             if not page_token:
                 break
+        if collected:
+            self._unserved.served(symbol)
         return collected
 
     def window_return_pct(

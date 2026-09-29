@@ -621,6 +621,31 @@ def _baseline_line(checks) -> str:
     )
 
 
+def _alerts_line(checks) -> str:
+    """Alert delivery, from the status file the alerter writes (ruling
+    2026-09-28: 28 silent SMTP failures in three weeks had reached neither
+    run.log nor health). Never written = the session has not tried to send."""
+    from execution.alerts import Alerter
+
+    status = Alerter.read_status(checks.audit.path.parent / "alerts_status.json")
+    if status is None:
+        return "alerts: no delivery attempted yet this install (status file absent)"
+    success = status.get("last_success") or {}
+    failure = status.get("last_failure") or {}
+    streak = int(status.get("consecutive_failures", 0))
+    parts = [
+        f"last delivered {success.get('at')} via {success.get('transport')}"
+        if success
+        else "NEVER delivered"
+    ]
+    if failure:
+        parts.append(f"last failure {failure.get('at')}: {str(failure.get('detail'))[:120]}")
+    if streak:
+        parts.append(f"{streak} consecutive failure(s) - needs a human")
+    parts.append(f"transports {', '.join(status.get('transports') or []) or 'none'}")
+    return "alerts: " + "  |  ".join(parts)
+
+
 def health_report(
     checks: Preflight,
     positions: Iterable[TrackedPosition],
@@ -655,6 +680,7 @@ def health_report(
         f"{checks.budget.spent} of {checks.budget.max_per_day} spent for "
         f"{checks.budget.day}",
         _cost_line(checks, moment),
+        _alerts_line(checks),
         f"broker permits: {checks.permissions.describe()}"
         + (
             "  [EXCEEDS the code - schema is the enforcement]"
