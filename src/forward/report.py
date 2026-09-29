@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 import statistics
-from datetime import date
+from datetime import date, timedelta
 from typing import Iterable, Optional
 
 from forward.funnel import FunnelEntry
@@ -159,6 +159,57 @@ def _weighted_line(
         + ", ".join(f"{t} x{len(v)} ({statistics.mean(v):+.1f}%)" for t, v in top)
         + note
     )
+
+
+def _populates_line(
+    label: str, entries: list[FunnelEntry], horizon: int, min_tickers: int = 20
+) -> str:
+    """When a slice's ``horizon``-day cell first exists and when it reaches
+    ``min_tickers`` distinct tickers — from the arrivals already in the funnel,
+    so the review knows whether the cell can exist on its date."""
+    seen: set[str] = set()
+    first_due = None
+    enough_due = None
+    for entry in sorted(entries, key=lambda e: e.observed_at):
+        ticker = entry.primary_ticker
+        if ticker is None:
+            continue
+        due = entry.observed_at.date() + timedelta(days=horizon)
+        if first_due is None:
+            first_due = due
+        seen.add(ticker.upper())
+        if len(seen) >= min_tickers:
+            enough_due = due
+            break
+    if first_due is None:
+        return f"{label}, {horizon}d: no arrivals yet"
+    line = f"{label}, {horizon}d cell: first mark due {first_due.isoformat()}"
+    if enough_due is not None:
+        line += f"; {min_tickers} distinct tickers marked from {enough_due.isoformat()}"
+    else:
+        line += (
+            f"; only {len(seen)} distinct ticker(s) have arrived — {min_tickers} "
+            f"needs more arrivals before a date can be named"
+        )
+    return line + " (marks land at the first Friday refresh on or after the due date)"
+
+
+def source_excess_summary(
+    entries: Iterable[FunnelEntry],
+    rows: dict[tuple[str, date], ForwardRow],
+    horizons: tuple[int, ...] = (5, 20),
+) -> dict[str, dict[int, tuple[float, int]]]:
+    """Per source: (mean excess %, n) at each horizon over every funnel row —
+    the forward columns of the feed-spend table."""
+    entries = list(entries)
+    out: dict[str, dict[int, tuple[float, int]]] = {}
+    for source in sorted({e.source_id for e in entries}):
+        members = [e for e in entries if e.source_id == source]
+        for horizon in horizons:
+            values = _excess_values(members, rows, horizon)
+            if values:
+                out.setdefault(source, {})[horizon] = (statistics.mean(values), len(values))
+    return out
 
 
 def _stat_line(label: str, values: list[float], suffix: str = "") -> str:
@@ -412,31 +463,49 @@ def render_forward_report(
     # Form 4 cluster rule (ruling 2026-09-02): the prefiltered singles are the
     # control group. If singles' forward returns match clusters', the >=2-insider
     # requirement is filtering noise-free signal and a human should hear it.
+    # Verdict package for 2026-10-15 / 10-27 (requested 2026-09-28): 5/20/60d,
+    # row means beside ticker-weighted means, distinct tickers and observation
+    # days, the caveats printed, and when the 60d cells populate.
     form4 = [e for e in with_ticker if e.source_id == "form4_insiders"]
     if form4:
         c_suite = [e for e in form4 if e.form4_qualification == "c_suite_single"]
         singles = [e for e in form4 if e.code == "no_cluster"]
+        bearish = [e for e in form4 if e.code == "bearish_measurement"]
         clustered = [
-            e for e in form4 if e.code != "no_cluster" and e not in c_suite
+            e
+            for e in form4
+            if e.code not in ("no_cluster", "bearish_measurement") and e not in c_suite
         ]
+        capped_codes = ("source_cap", "class_cap", "aged_out_capped", "same_name_today")
         lines.extend(
             [
                 "",
-                f"Form 4 doors (excess at {KEY_HORIZON}d — does requiring >=2 "
-                f"insiders earn its keep, and do C-suite singles (ruling "
-                f"2026-09-15) earn theirs? Review 2026-10-15):",
-                _stat_line(
-                    "clustered (researched)",
-                    _excess_values(clustered, rows, KEY_HORIZON),
-                ),
-                _stat_line(
-                    "C-suite singles >= $250K (researched)",
-                    _excess_values(c_suite, rows, KEY_HORIZON),
-                ),
-                _stat_line(
-                    "singles (prefiltered control)",
-                    _excess_values(singles, rows, KEY_HORIZON),
-                ),
+                "Form 4 doors — verdict package (review 2026-10-15 / 10-27): excess "
+                "at 5d / 20d / 60d, row means beside ticker-weighted means. Does "
+                "requiring >=2 insiders earn its keep against the singles control, "
+                "and do C-suite singles (ruling 2026-09-15) earn theirs?",
+            ]
+        )
+        for label, members in (
+            ("clusters (>=2 insiders), all funnel rows", clustered),
+            ("clusters researched", [e for e in clustered if e.code not in capped_codes]),
+            ("clusters capped, never researched", [e for e in clustered if e.code in capped_codes]),
+            ("C-suite singles >= $250K", c_suite),
+            ("singles (prefiltered control)", singles),
+            ("sell clusters (bearish measurement; negative = right)", bearish),
+        ):
+            if not members:
+                continue
+            for horizon in (5, 20, 60):
+                lines.append("  " + _weighted_line(label, members, rows, horizon))
+        lines.extend(
+            [
+                "  caveats: a cell whose observation days are few is ONE market path, "
+                "however many tickers it spans; under 20 distinct tickers is a small "
+                "sample; the literature's cluster effect is measured at 1-12 MONTHS, "
+                "not 20 days — 20d and 60d are the earliest reads, not the test.",
+                "  " + _populates_line("clusters (>=2 insiders)", clustered, 60),
+                "  " + _populates_line("singles control", singles, 60),
             ]
         )
 

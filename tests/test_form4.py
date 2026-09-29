@@ -494,8 +494,13 @@ def test_the_forward_report_slices_the_cluster_rule():
         [entry("d1", ""), entry("d2", "no_cluster")], rows={}
     )
     assert "Form 4 doors" in report
-    assert "clustered (researched)" in report
-    assert "singles (prefiltered control)" in report
+    assert "clusters (>=2 insiders), all funnel rows, 5d" in report
+    assert "clusters researched, 20d" in report
+    assert "singles (prefiltered control), 60d" in report
+    # The verdict package (2026-09-28) prints its caveats and when the 60d
+    # cells can exist, from the arrivals already in the funnel.
+    assert "1-12 MONTHS" in report
+    assert "clusters (>=2 insiders), 60d cell: first mark due" in report
 
 
 # ================================================================================

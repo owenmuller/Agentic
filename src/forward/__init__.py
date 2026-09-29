@@ -14,7 +14,7 @@ humans rule.
 
 from forward.funnel import FunnelEntry, funnel_entries
 from forward.returns import HORIZONS, ForwardReturns, ForwardRow, HorizonMark
-from forward.report import render_forward_report, wanted_pairs
+from forward.report import render_forward_report, source_excess_summary, wanted_pairs
 
 __all__ = [
     "FunnelEntry",
@@ -24,5 +24,6 @@ __all__ = [
     "HorizonMark",
     "funnel_entries",
     "render_forward_report",
+    "source_excess_summary",
     "wanted_pairs",
 ]

@@ -334,6 +334,8 @@ def _attribution_text(checks) -> str:
     # Forward returns (ruling 2026-09-01): the funnel's counterfactual
     # scoreboard, computed lazily from bars and cached append-only. A data
     # outage degrades to a sentence — the attribution above never waits on it.
+    entries = None
+    rows = None
     if bars is not None:
         try:
             from forward import (
@@ -380,7 +382,40 @@ def _attribution_text(checks) -> str:
         bars.close()
     else:
         sections.append("forward returns unavailable: no market data this run")
+
+    # Feed spend against what it bought (requested 2026-09-28 for the
+    # 2026-10-15 review): per source, the subscription, the research it
+    # caused, the trades it produced and what they realised, with the source's
+    # forward excess when the rows above exist.
+    try:
+        sections.append(_feed_spend_section(checks, generated_at, entries, rows))
+    except Exception as error:  # noqa: BLE001 - the table must never sink the report
+        sections.append(f"feed spend table unavailable: {error}")
     return "\n\n".join(sections)
+
+
+def _feed_spend_section(checks, generated_at, entries=None, rows=None) -> str:
+    from audit.spend import feed_spend_rows, render_feed_spend
+    from forward import source_excess_summary
+
+    config = checks.signals_config
+    sources = [
+        (source.id, key, source.monthly_cost)
+        for key, klass in config.classes.items()
+        for source in klass.sources
+    ]
+    # Billed since each source's start date: a window start older than any
+    # feed makes feed_cost_breakdown bill from start_date alone.
+    since_inception = generated_at - timedelta(days=400)
+    feed_to_date = {
+        row.source_id: row.cost
+        for row in config.feed_cost_breakdown(since_inception, generated_at)
+    }
+    forward = source_excess_summary(entries, rows) if entries is not None and rows else None
+    table = feed_spend_rows(
+        checks.audit.records(), checks.audit.trails(), sources, feed_to_date, forward
+    )
+    return render_feed_spend(table, generated_at)
 
 
 def replay() -> int:
