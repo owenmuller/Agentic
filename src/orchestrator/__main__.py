@@ -398,7 +398,7 @@ def _attribution_text(checks) -> str:
 
 
 def _feed_spend_section(checks, generated_at, entries=None, rows=None) -> str:
-    from audit.spend import feed_spend_rows, render_feed_spend
+    from audit.spend import feed_spend_rows, render_feed_spend, split_callers_by_trial
     from forward import source_excess_summary
 
     config = checks.signals_config
@@ -434,13 +434,24 @@ def _feed_spend_section(checks, generated_at, entries=None, rows=None) -> str:
     # principal. Their $ lines carry the X pay-per-use meter that also
     # delivers the Trump mirrors — cutting a caller does not cut the meter.
     callers = [
-        source.id
+        (source.id, source.start_date)
         for klass in config.classes.values()
         for source in klass.sources
         if tuple(source.platforms) == ("x",) and source.type != "mirror"
     ]
-    groups = {"X-fed callers (2026-10-15 feed-spend ruling)": callers} if callers else None
-    return render_feed_spend(table, generated_at, groups)
+    # A caller (re)wired after the table was requested has no trial inside
+    # the ruling's window: its own line, never summed into the finding
+    # (human ruling 2026-09-30, citrini).
+    graded, untried = split_callers_by_trial(callers)
+    groups = {}
+    if graded:
+        groups["X-fed callers (2026-10-15 feed-spend ruling)"] = graded
+    if untried:
+        groups[
+            "X-fed callers re-wired after the ruling was requested — NO trial, "
+            "NOT graded 2026-10-15"
+        ] = untried
+    return render_feed_spend(table, generated_at, groups or None)
 
 
 def replay() -> int:

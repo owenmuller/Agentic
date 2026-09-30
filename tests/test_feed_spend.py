@@ -121,6 +121,43 @@ def test_a_traded_and_closed_signal_lands_in_its_sources_row(
     assert "all sources: feed" in text and "next 90d" in text
 
 
+def test_a_caller_rewired_after_the_ruling_was_requested_is_not_graded(signals_config):
+    """Human ruling 2026-09-30: citrini's handle pointed at a protected
+    stranger from wiring; re-pointed and its start_date reset, it has no trial
+    inside the 10-15 window and is never summed into the callers' finding."""
+    from datetime import date
+
+    from audit.spend import FEED_SPEND_RULING_REQUESTED, split_callers_by_trial
+
+    graded, untried = split_callers_by_trial(
+        [
+            ("nolimitgains", date(2026, 8, 17)),
+            ("unusual_whales", date(2026, 8, 25)),
+            ("optionshawk", FEED_SPEND_RULING_REQUESTED),  # on the day: graded
+            ("citrini", date(2026, 9, 30)),
+            ("legacy", None),  # billed for the whole window: graded
+        ]
+    )
+    assert graded == ["nolimitgains", "unusual_whales", "optionshawk", "legacy"]
+    assert untried == ["citrini"]
+
+    # The shipped config carries the reset: citrini starts 2026-09-30 at @citrini.
+    citrini = next(
+        s for klass in signals_config.classes.values() for s in klass.sources if s.id == "citrini"
+    )
+    assert citrini.handle == "@citrini"
+    assert citrini.start_date == date(2026, 9, 30)
+    live = [
+        (s.id, s.start_date)
+        for klass in signals_config.classes.values()
+        for s in klass.sources
+        if tuple(s.platforms) == ("x",) and s.type != "mirror"
+    ]
+    graded, untried = split_callers_by_trial(live)
+    assert "citrini" in untried and "citrini" not in graded
+    assert {"nolimitgains", "unusual_whales", "optionshawk"} <= set(graded)
+
+
 def test_a_source_with_no_history_projects_no_research_and_three_months_of_feed():
     from audit.spend import FeedSpendRow
 

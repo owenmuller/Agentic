@@ -4102,6 +4102,25 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### Citrini re-pointed to @citrini, trial clock reset — human ruling 2026-09-30
+
+**Ruled:** `signals.yaml` citrini `handle` "@Citrini7" → **"@citrini"**; `start_date` 2026-08-25 →
+**2026-09-30**, so feed billing and the fair trial begin at the fix. **Recorded as ruled: @Citrini7
+(protected, 0 followers, "Citrinitas Research") was never the intended account, and the source has
+had NO trial** — 100 polls from 2026-08-25 returned clean 200s with zero items because a protected
+account's posts are invisible to search. **It must not be graded at 2026-10-15 and must not be
+counted in the callers' 0-trades finding** (64 candidates / 8 passes / 0 trades are nolimitgains,
+unusual_whales and optionshawk; citrini contributed nothing to any of the three numbers).
+
+**Built so the report says the same:** `audit.spend.split_callers_by_trial` — a caller whose
+`start_date` is later than the day the 10-15 table was requested (`FEED_SPEND_RULING_REQUESTED`
+2026-09-28) is rendered on its own line, "re-wired after the ruling was requested — NO trial, NOT
+graded 2026-10-15", never summed into the X-fed callers line. Deterministic from config: when
+citrini's post-fix numbers accrue they appear, labelled, and stay out of the finding. Tests:
+`tests/test_feed_spend.py` (+1; pins the handle and the reset date). First poll of @citrini: the
+next scheduled session (fresh process each morning). Expect ~20 posts/day incl. replies, ~$3/month
+of reads, most dropped by `require_instrument`.
+
 ### Citrini was never wired to Citrini; the real X bill is dollars (2026-09-30, report only — nothing changed)
 
 **1. Citrini diagnosis: the handle is WRONG, the source has never had a trial.** Probed live from
@@ -4526,6 +4545,13 @@ tests now use distinct names.
   CLAUDE.md § LLM Request-Path Changes):** elision/caching/tool-config/model
   changes are not "shipped" until the exact production request shape — full
   search→report — has run against the real API.
+- **Source-wiring check (2026-09-30 ruling):** when wiring ANY X source, verify the
+  handle resolves to the intended account BEFORE the first poll — `users/by/username`
+  from the droplet: follower count, bio, post volume, `protected: false` — and
+  confirm `search/recent from:<handle>` returns posts. A protected or wrong-handle
+  account returns clean 200s with zero items forever, and the fetcher cannot tell
+  that from a quiet account. Origin: citrini polled a protected zero-follower
+  stranger (@Citrini7) for five weeks, 100 polls, 0 items, 0 errors.
 - **Verified pushes (2026-08-21 ruling):** "pushed to both hosts" means CHECKED,
   not attempted — after every push, `git rev-parse HEAD` must match
   `git ls-remote vps refs/heads/main` (and origin). The droplet checkout at

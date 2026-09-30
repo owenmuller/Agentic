@@ -1220,7 +1220,10 @@ def test_the_shipped_config_bills_the_experiment_it_actually_ran():
     billed = config.feed_cost_for_window(WINDOW_START, WINDOW_END)
 
     assert billed["class_1"] == Decimal("7.17")  # was 45/mo x 3 = 135.00
-    assert billed["class_2"] == Decimal("11.50")  # was 35/mo x 3 = 105.00
+    # 11.50 -> 11.00 (ruling 2026-09-30): citrini's start_date reset to
+    # 2026-09-30 when its handle was re-pointed, so it bills nothing in a
+    # window ending 08-28 — only congressional's 11 days at $30/mo remain.
+    assert billed["class_2"] == Decimal("11.00")  # was 35/mo x 3 = 105.00
     assert billed["class_3"] == Decimal("0")  # EDGAR is free, dates or not
     # Every paid source declares when its bill started.
     for klass in config.classes.values():

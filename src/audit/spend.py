@@ -237,6 +237,31 @@ def feed_spend_rows(
     return tuple(rows)
 
 
+#: The day the 2026-10-15 feed-spend table was requested. A caller whose
+#: start_date is later than this was (re)wired after the ruling's window
+#: and has no trial inside it (human ruling 2026-09-30: citrini, re-pointed
+#: from a protected stranger to @citrini, is not graded at 10-15).
+FEED_SPEND_RULING_REQUESTED = date(2026, 9, 28)
+
+
+def split_callers_by_trial(
+    callers: Iterable[tuple[str, Optional[date]]],
+    requested: date = FEED_SPEND_RULING_REQUESTED,
+) -> tuple[list[str], list[str]]:
+    """``(graded, untried)``: callers whose start_date is on or before the
+    request date are graded by the ruling; later ones are reported on their
+    own line and never summed into the callers' finding. A caller with no
+    start_date is graded (it has been billed for the whole window)."""
+    graded: list[str] = []
+    untried: list[str] = []
+    for source_id, started in callers:
+        if started is not None and started > requested:
+            untried.append(source_id)
+        else:
+            graded.append(source_id)
+    return graded, untried
+
+
 def _note_candidate(
     candidates: dict[str, set[str]], first_seen: dict[str, date], record
 ) -> None:

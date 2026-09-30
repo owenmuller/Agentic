@@ -640,7 +640,7 @@ classes:
           - { activist: Sarissa Capital }
 
       - id: citrini
-        # Human-authorized 2026-08-25. Thematic thesis caller (@Citrini7) with
+        # Human-authorized 2026-08-25. Thematic thesis caller (@citrini) with
         # a self-published tracker (the Citrindex) covering ALL published
         # theses from publication date, losers included. Wired at THIS class's
         # cadence per the ruling: medium latency, hourly polling, not 60s —
@@ -654,10 +654,19 @@ classes:
         platforms: [x]
         monthly_cost: 5
         # Feed cost is billed from here, not from the window start
-        # (ruling 2026-08-28): the date this source was wired.
-        start_date: 2026-08-25
+        # (ruling 2026-08-28). RESET 2026-08-25 -> 2026-09-30 (human ruling
+        # 2026-09-30): the handle below read "@Citrini7" from wiring until
+        # this date, which resolves to a PROTECTED zero-follower account
+        # ("Citrinitas Research") whose posts search cannot see — 100 polls,
+        # 0 items, clean 200s. The source had NO trial before this date and
+        # is not graded at the 2026-10-15 review; billing and the trial clock
+        # start here.
+        start_date: 2026-09-30
         daily_read_warning: 200
-        handle: "@Citrini7"
+        # @citrini: "Citrini", verified business, ~291K followers, ~44K posts,
+        # created 2021-02 (resolved live 2026-09-30). Standing rule: verify a
+        # handle resolves to the intended account before its first poll.
+        handle: "@citrini"
         treatment: thesis_input_only
         copy_trade: false
         classification:
