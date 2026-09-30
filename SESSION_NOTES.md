@@ -4102,6 +4102,59 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### Citrini was never wired to Citrini; the real X bill is dollars (2026-09-30, report only — nothing changed)
+
+**1. Citrini diagnosis: the handle is WRONG, the source has never had a trial.** Probed live from
+the droplet (bodies only, never the credential):
+
+- `signals.yaml` handle `@Citrini7` → `users/by/username` resolves to id 1677496020660305920,
+  name **"Citrinitas Research"**, **protected**, 0 followers, 27 posts, created 2023-07-08, empty bio.
+  A protected account's posts are invisible to `search/recent` (the production query
+  `from:Citrini7 -is:retweet` → `result_count: 0`, HTTP 200) and `users/{id}/tweets` answers
+  "not authorized to see the user". 100 polls (29 Aug, 71 Sep), 0 items, 0 errors — the fetcher was
+  working; it was asking about a stranger.
+- The real account is **@citrini** (id 1365809270034477069): "Citrini", bio "Thematic, Cross-Asset
+  Investment Research", verified business, 290,933 followers, 43,998 posts, created 2021-02-27.
+  `from:citrini -is:retweet` returns a full page (10 posts 09-28..09-29 with a next page); its
+  09-29 bearish Truist (TFC) call was quoted across FinTwit the same day. `@CitriniResearch` is a
+  protected placeholder whose bio reads "Follow Citrini Research on X @Citrini"; `@Citrini_7` is
+  forbidden. Whether @Citrini7 was ever theirs cannot be read from the API; what is certain is that
+  it has pointed at a protected zero-follower account since the source was wired 2026-08-25.
+- **Not ruled on, by request.** The fix is one config line (`handle: "@citrini"`), a human ruling
+  because it re-points a watchlist account; if made, restart the source's `start_date` so billing and
+  the fair trial begin at the fix, and keep the 10-15 spend ruling from grading citrini as tried.
+  Expect ~20 posts/day from the real account (replies included — `-is:retweet` does not exclude
+  them), ~$3/month of reads, mostly dropped by `require_instrument`; `daily_read_warning` 200 holds.
+
+**2. X API metered spend, reconciled (usage endpoint `GET /2/usage/tweets`, project 2089801343359741952,
+cap 3,000,000 posts/month; price $0.005 per post read, $0.01 per user lookup — X pay-per-use, live since
+the free tier closed 2026-02-06 and Basic was migrated 2026-06-01):**
+
+| month | posts read (X meter) | of which production polls (run.log POLL items) | diagnostics/probes | metered $ | config "feed" budget |
+|---|---|---|---|---|---|
+| August (08-18..08-31) | 856 | 755 | ~100 (08-18 smoke, 08-19/20 mirror experiments) | **$4.28** | $50/mo across the four callers (prorated ~$12) |
+| September (09-16..09-30; ZERO reads 09-01..09-15) | 2,041 | 1,619 | ~420 (09-16 ttox/tdp 7-day profiles 436; 09-28 connectivity; 09-30 citrini probes ~60) | **$10.21** | $50 |
+| to date | 2,897 | 2,374 | ~520 | **$14.49** | $61.00 billed by the attribution |
+
+Production reads by X source, Aug + Sep: trump_mirror_tdp 831 (**$4.16 — the dormant fallback is the
+dearest line; every post it returns is billed and then dropped as commentary**), unusual_whales 673
+($3.37), trump_mirror_ttox 413 ($2.07), optionshawk 274 ($1.37), nolimitgains 183 ($0.92), citrini 0.
+Run-rate at full polling (09-16..09-30, 11 trading days): ~147 reads/day ≈ **$15/month for all six X
+sources, ~$8/month for the four callers**. Config budgets $50/month for the callers ($25 + 10 + 10 +
+5; trump_posts and both mirrors carry $0 — the config total is $50, not $75). **The metered bill is
+3–4× below the budget lines and the callers' share is single-digit dollars a month.** Not verified:
+the developer console's invoice (a prepaid-credit balance or minimum would show there, not on the
+usage endpoint) — the human reads it before ruling; the usage counts above are the meter's own.
+
+**Two facts that change the 10-15 framing:**
+- **The X leg was dark 2026-09-01 → 09-16 13:15Z (11 trading days): the dead bearer token** of the
+  09-16 diagnosis. Zero reads on the meter, zero X POLL lines in run.log, sessions started and logged
+  LOOKBACK + MIRROR then polled nothing on X. The callers' "35–43 days" of feed billing cover ~20
+  trading days of actual polling (9 in August, 11 in September); the attribution billed the outage.
+- **The ruling is about noise and attention, not cost.** At ~$8/month metered the four callers are not
+  a spend question; the question is whether 64 candidates → 8 passes → 0 trades earns its place in
+  the funnel and the run log. Citrini is excluded from that question until it is pointed at Citrini.
+
 ### Two scheduling rulings for the review dates (2026-09-29) — feed spend 10-15, congressional quality 10-27
 
 **Ruled (human, 2026-09-29):**
