@@ -4112,7 +4112,8 @@ non-public, ~40% unresolved — construction (RQ, Korte, Nan, BL Harbert, Harper
 APL, Liberty Global, National Air Cargo), private services (DCS, SLSCO, Radiance, American Systems,
 M.C. Dean) and JVs (Bell-Boeing, DZSP 21, NAS, BFBC). The three public names in that list (US Foods,
 ECS Federal → ASGN, and the digest's recurring "Northrup Grumman") were added to the map after the
-run; the figures below predate them.
+run; a re-run with them (`contracts_backtest_2026-10-06b.*`) maps 3,728 events and leaves the rule
+group byte-identical (174 events, +0.74 / +0.27 / 54%); groups (ii) and (iii) move by a hundredth.
 
 **Pre-registered groups, excess vs SPY in points, next-open → close (the tradeable path) with
 close → close beside it:**
