@@ -4102,6 +4102,135 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-06 rulings bundle — REPORTS BEFORE SHIPPING (nothing built yet)
+
+Five rulings landed in one session: REWORK (contract awards first, 8-K widening, FDA calendar,
+demote congressional/Form 4), the design amendment (relative size, determinants, leakage,
+measurement-first), AGGRESSION (deployment, floor 45, horizons, momentum adds), WEEKLY TARGET
+(deployment multiplier, never standards), ADAPTIVE STANDARDS (horizon-adjusted R:R,
+opportunity-cost hurdle, calibration feedback, the scoreboard constraint). Each asked for a report
+before shipping. Everything below was measured live from the droplet; no code or config changed.
+
+**A. Government contract awards — design, volume, latency, access**
+
+- **Volume (DoD daily digest, 52 digests 2026-07-21..10-02 read from the Wayback Machine):** 19.9
+  awards/digest (median 16.5). ≥$100M: **4.3/day** (max 22 on a fiscal-year-end day) — $100–250M
+  1.87/day, $250–500M 0.94, $500M–1B 1.00, ≥$1B 0.50; of the ≥$100M, 176 new awards / 48
+  modifications, 20 multiple-award, ~12% small-business (`*`, almost always private). Agencies
+  ≥$100M: Navy 81, Army 76, Air Force 37, DLA 16, MDA 5.
+- **Latency:** the digest publishes at **21:00 UTC (17:00 ET) ±5 min every business day — after
+  the close.** The first tradeable print is the next open. Our session polls 13:30–20:00 UTC, so the
+  design needs an evening poll (17:05 ET one-shot timer: fetch → parse → research inside caps →
+  opening limit orders for 9:30, the pass told the post is ~16h old at the open) or it reads the
+  digest at the 9:30 first-poll lookback and enters after the gap. Recommend the evening timer.
+- **Access — the real cost:** war.gov sits behind Akamai Bot Manager. **HTTP 403 for curl/urllib
+  from the droplet AND this box, browser headers or not, even robots.txt.** The RSS works (titles
+  only, no body). Wayback has every digest but days late (backfill only; save-page-now returned 520).
+  **The r.jina.ai reader proxy fetched today's digest in full, live** — a third-party dependency.
+  Options, in order: (1) headless Chromium on the droplet (Playwright, ~300 MB install, self-
+  contained), (2) r.jina.ai as fallback, (3) Wayback for history. All three feed one parser.
+- **FPDS public ATOM feed (no key) is the structured second feed:** same-day for civilian agencies,
+  with action type, reason-for-modification, extent competed, number of offers, signed/effective/
+  completion dates, obligated vs base-and-all-options value, department — exactly the determinants.
+  **But DoD is withheld 90 days**: 0 of 136 large actions signed in the last 10 days were DoD; 131 of
+  200 in June. So FPDS = civilian live + DoD determinants 90 days late. USAspending inherits the lag.
+  SAM.gov needs a key (none in `.env`) and carries award notices sparsely.
+- **Awardee → ticker:** a curated parent map (primes, subsidiaries, known-private/foreign/nonprofit
+  drops) resolved 225 of 512 awards ≥$100M (2015–2026 archive), EDGAR exact-name 8, two-word prefix
+  5, 42 dropped as known non-public, **232 unresolved — nearly all JVs, small-business `*` names,
+  private contractors (SRC, MTSI, Mortenson, Haskell).** The map is a human-editable config table
+  like `sectors.yaml`; a `*` awardee drops at parse. Primes dominate: 171 of 218 mapped 2026 events
+  were ≥$50B market cap.
+- **Drift measurement (2026 live window, 218 mapped events ≥$100M on 42 tickers, excess vs SPY,
+  points; t0 = digest day, announcement after that close):**
+
+| slice | pre t-5→t0 | t0→t+1 | t0→t+5 | t0→t+20 |
+|---|---|---|---|---|
+| all mapped | −1.08 (hit 36%, n=78) | +0.17 (54%, n=79) | −0.22 (39%, n=71) | −4.78 (13%, n=45) |
+| award / market cap 1–5% | −0.93 | **+0.88 (73%, n=15)** | +2.36 (med −0.34) | −0.97 |
+| award / market cap ≥5% | −0.34 | +0.13 (64%, n=14) | −0.12 (med +0.98) | −6.38 |
+| <0.2% of market cap | −0.81 | −0.01 (45%) | −1.24 | −7.44 (0%) |
+| awardee market cap $5–50B | **−2.88 (17%)** | **+1.21 (85%, n=13)** | +2.01 | +0.60 |
+| awardee ≥$50B | −1.18 | −0.01 (46%, n=57) | −0.79 | −5.64 |
+| new award | −0.79 | +0.24 (58%) | +0.89 | −3.61 |
+| modification / option | −1.47 | +0.07 (50%) | −1.74 | −7.14 (0%) |
+| sole-source flagged | −2.07 (18%) | 0.00 (42%) | −0.77 | −6.06 |
+| Air Force | −2.44 | **+0.99 (88%, n=16)** | −1.26 | −3.93 |
+| new + single awardee + rel ≥1% | +0.19 | +0.32 (65%, n=17) | **+2.29 (med +1.47, 56%, n=16)** | −1.30 |
+
+  Reading: the category average is the literature's ~0 (t+1 +0.17); **no positive pre-announcement
+  leakage is visible — the five days before an award run −1.1 on average**, so the digest is not
+  structurally late; the subtype with a pulse is **mid-cap awardee, new award, ≥1% of market cap**
+  (+2.3 at five days on 16 events), and modifications to primes are noise at every horizon. The 20d
+  column is the September defense tape, not the awards. **The 16% mover was not found:** last
+  week's ≥$4B DoD awards were the $4.22B TRANSCOM team (FDX, t+1 +1.1%) and HII's $5.1B (t+1 +1.0%,
+  +3.9% at t+2); the largest t+1 move in the mapped set was HDSN **−9.1%** (a $0.21B DLA award worth
+  96% of its market cap). If the example was a civilian-agency award it is in FPDS live — name the
+  ticker and it can be checked.
+- **Proposed design (amended per the relative-size ruling):** source `gov_contract_awards`,
+  Class 1, two fetchers behind one parser (DoD digest; FPDS civilian ≥$25M), measurement-only for
+  30 days with a weekly subtype table. **Primary filter: award / market cap ≥ 1% researches
+  (cap 6/day, Class 1 pool); 0.2–1% emits measurement-only; below 0.2% and all `*` small-business,
+  JV and unresolved awardees drop free at the prefilter.** A $50M parser floor only. Market cap
+  from Finnhub `profile2` (verified live: LMT $116.9B, LDOS $15.0B, KTOS $7.9B); trailing revenue
+  from SEC companyfacts (verified: LMT FY2025 $75.05B) so award/revenue is stamped too. Stamped
+  determinants: amount, award/mcap, award/revenue, awardee mcap band, new vs modification,
+  multiple-award, sole-source flag + offers (FPDS gives both; the digest gives sole-source
+  language only), agency and military/civilian, term in months from the completion date, feed,
+  publish timestamp and age at observation. Forward report: pre-drift and post by every
+  determinant from day one. Cost: $0 feed; ≤6 passes/day ≈ $1.3/day.
+
+**B. The binding constraint on position count (last 10 sessions, 2026-09-23..10-06) — answers the
+AGGRESSION report, the WEEKLY-TARGET question and the ADAPTIVE-STANDARDS replay together**
+
+- 152 research passes, **11–20/day of the 40 cap — the budget is not binding.** 131 verdicts were
+  `no_position` (86%), 122 of them at confidence ≥70. **21 long verdicts, every one from
+  form4_insiders, every one in the 50–69 band:** 4 approved and bought (ADC, TPVG, DKS, BPRE),
+  7 `insufficient_reward_risk`, 6 `unconfirmed_boundary` (5 reversed by the second pass, 1 upstream
+  error), 4 `no_price` (SKIL, NYAX ×3 — unserved symbols). **Zero long verdicts below 50**, so the
+  floor 50→45 admits nothing on this data and the [45,70) boundary band costs nothing. 8-K: 60 of
+  60 passes no_position. Trump: 2–8/day, all no_position. Callers: ~0. Congressional: ~0 since the
+  floor. **No concurrent-position cap exists for the judged sleeve** (only the mechanical arm's 30
+  slots); the count — 2 open today, CELH and BPRE, ~4% of the sleeve — is limited by verdicts, not
+  by any cap, not by sizing, not by the budget. A 1.3× deployment multiplier would have multiplied
+  four 2%-band entries: **inert.** The honest answer to the weekly-target ruling's question 4 is
+  that the target is unreachable until an event source produces long verdicts; the multiplier and
+  the reporting lines are cheap to build and should not be reported as deployment.
+- **Projected research spend under the whole bundle:** unchanged at ~$3–4/day (today $3.38, 17/40)
+  plus ≤$1.3/day for the contract source; the FDA calendar would add its own cap later. The floor,
+  the boundary band and the multiplier add $0 on the measured flow.
+- **ADAPTIVE STANDARDS replay:** the last 30 declines (10-02..10-06) are 29 `no_position` and 1
+  reversed boundary — **no R:R or floor variant changes any of them.** Over all 20 R:R rejections
+  since 2026-09-02, annualized expected return on capital ((target−entry)/entry ÷ days/365, days from
+  `expected_resolution_date`) runs −102% to +171%: **8 of 20 clear a 25% annualized hurdle with
+  R:R ≥0.8, 7 clear 40%/0.8, 5 clear 60%/1.0** (RWT +121%, COO +159%, DMRA +162%, GME +112%, XENE
+  +171%, INBX +79%, TFC +80%, BORR +80% among the clearers; the months-horizon ones — UBER +21%, GIII
+  +30%, BCBP +11%, FTHY +6% — are what the flat 1.3 was wrongly treating the same as a 5-week move).
+  **Proposal:** hurdle 40% annualized on expected move, floored by absolute R:R ≥ 0.8, days
+  clamped into the leash bounds; **opportunity-cost scaling** `hurdle = base × (1 + 0.5 × u)`,
+  `u = max(judged deployed / sleeve target, min(1, candidates-above-base in today's scored queue /
+  free slots))`, computed in the orchestrator from deployment and dispatch scores only (today u≈0.07
+  → the floor). **Calibration feedback:** a fenced `MEASURED RECORD` block per source × confidence
+  band × horizon class — n, hit rate, mean 5d/20d excess from the forward engine — rendered only at
+  n ≥ 20, framed as evidence. **Scoreboard constraint:** a topology test that the hurdle, multiplier
+  and prompt builders import nothing from attribution, P&L or the target module.
+- **Momentum adds:** `ThesisProgress.AHEAD` already exists in the review schema; the add is
+  deterministic (intact + ahead → add up to the position's own band cap, mark above blended cost
+  plus one ATR, never past hard_cap 0.10, `EntryReason.REVIEW_ADD`, same ATR/scalars). Note the
+  only source producing longs today is the one the REWORK ruling demotes.
+- **Demotion numbers proposed:** congressional research cap 5 → 1 (the $15,001 floor already starves
+  it; the control arm's refill is untouched), Form 4 cap 5 → 2 (it is the only long-verdict source
+  until the event source exists — cutting it to 0 means zero entries in the interim), 8-K stays 6
+  until the widening is ruled with volume.
+
+**Proposed shipping order after approval:** (1) contract-awards source, measurement-only, evening
+timer, FPDS civilian feed, mapping table, subtype forward table; (2) CLAUDE.md standing constraints
+(target never in prompts; nothing a function of P&L / target distance / elapsed time) with the
+topology tests, the horizon-adjusted hurdle, the inert-today multiplier and its health/weekly
+lines; (3) floor 45 + boundary [45,70) + leash floor 5 + deployment/sector caps (cheap, zero
+projected spend); (4) momentum adds; (5) demotions; (6) 8-K widening and the FDA calendar with
+their own volume reports. Golden replay + live round trip for each prompt-touching step.
+
 ### Are the declines selling strength? Run-up declines vs the rest, forward excess (2026-10-06, report only — nothing changed)
 
 **Asked** on the VSTS decline 178299cfb0104e21 ("would be a pure momentum/narrative continuation
