@@ -148,6 +148,15 @@ _SOLE_SOURCE_RE = re.compile(
     r"10 U\.S\.C\. (?:2304|3204)|FAR 6\.302|limited sources|brand[- ]name justification",
     re.I,
 )
+#: Recompete / incumbent-retained language (ruling 2026-10-06 post-ship, 2d):
+#: stamped and measured, never a filter. The digest rarely says it; the
+#: honest stamp needs a prior-award lookup, which is a later build.
+_RECOMPETE_RE = re.compile(
+    r"re-?compet|follow-?on|incumbent|bridge contract|continuation of|"
+    r"successor (?:contract|to)|replaces (?:the )?(?:existing|current|expiring)|"
+    r"extends? (?:the )?(?:current|existing)|renewal|renews",
+    re.I,
+)
 _OFFERS_RE = re.compile(
     r"\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d+)\s+"
     r"(?:offers?|bids?|proposals?|quotes?)\s+(?:was|were)\s+received"
@@ -194,6 +203,8 @@ class AwardFacts:
     text: str
     #: Position within the digest, for a stable external id.
     index: int = 0
+    #: Recompete / incumbent-retained language present (stamped, never a filter).
+    recompete_language: bool = False
 
     @property
     def ceiling_stated(self) -> bool:
@@ -356,6 +367,7 @@ def parse_digest_paragraphs(paragraphs: Iterable[str]) -> list[AwardFacts]:
                     small_business=small,
                     text=paragraph,
                     index=index,
+                    recompete_language=bool(_RECOMPETE_RE.search(paragraph)),
                 )
             )
             index += 1
@@ -808,6 +820,7 @@ def build_item(
             + (f" ({size.revenue_period})" if size and size.revenue_period else ""),
             f"award / revenue: {_pct(rel_rev)}",
             f"ceiling suspect: {'yes' if ceiling_suspect else 'no'}",
+            f"recompete: {'yes' if facts.recompete_language else 'unstated'}",
             f"size tier: {tier}",
             f"event date: {event_date.isoformat()}",
             f"published: {published_at.isoformat()}"
@@ -846,6 +859,7 @@ def build_item(
         "rel_revenue": str(rel_rev) if rel_rev is not None else "",
         "size_tier": tier,
         "ceiling_suspect": "true" if ceiling_suspect else "false",
+        "recompete": "true" if facts.recompete_language else "false",
         "event_date": event_date.isoformat(),
         "report_date": event_date.isoformat(),
         "published_at": published_at.isoformat(),
@@ -1183,6 +1197,7 @@ def facts_from_fpds(action: FpdsAction) -> AwardFacts:
         contract_number=action.piid,
         small_business=False,
         text=text,
+        recompete_language=bool(_RECOMPETE_RE.search(f"{action.description} {action.modification_reason} {action.action_type}")),
     )
 
 

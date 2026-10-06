@@ -803,6 +803,7 @@ def gov_award_section(
         ("multiple-award or IDIQ", [e for e in awards if facts(e).multiple_award or facts(e).idiq]),
         ("ceiling value stated", [e for e in awards if facts(e).ceiling_stated]),
         ("ceiling-suspect (award > awardee market cap)", [e for e in awards if getattr(facts(e), "ceiling_suspect", False)]),
+        ("recompete / incumbent language (stamped, never a filter)", [e for e in awards if getattr(facts(e), "recompete", False)]),
         ("sole-source language", [e for e in awards if facts(e).sole_source]),
         ("military", [e for e in awards if facts(e).military]),
         ("civilian", [e for e in awards if not facts(e).military]),
@@ -828,12 +829,59 @@ def gov_award_section(
     pre = _pre_drift_values(awards, rows)
     if pre:
         lines.append(_stat_line("  pre-announcement drift t-5->t0 (where the cache holds the earlier row)", pre))
+    lines.append(sizing_unlock_line(awards, rows))
     researched = [e for e in awards if e.confidence is not None]
     lines.append(
         f"  researched: {len(researched)} rows; verdict codes: "
         + ", ".join(f"{code}={n}" for code, n in sorted(_count_codes(researched).items()))
     )
     return lines
+
+
+#: GO-LIVE CRITERION, pre-registered 2026-10-06 (post-ship ruling 2b): sizing
+#: unlocks only when LIVE rule events reach n >= 25, the pooled live mean
+#: next-open -> t+5 excess NET of a 15bp round trip is >= +0.40, and the live
+#: gross mean sits inside the backtest's ticker-cluster bootstrap CI. Meeting
+#: them is evidence for a human ruling, never an automatic unlock.
+UNLOCK_MIN_EVENTS = 25
+UNLOCK_MIN_NET_MEAN = Decimal("0.40")
+UNLOCK_ROUND_TRIP_COST = Decimal("0.15")
+UNLOCK_BACKTEST_CI = (Decimal("0.17"), Decimal("1.37"))
+
+
+def sizing_unlock_line(
+    awards: list[FunnelEntry], rows: dict[tuple[str, date], ForwardRow]
+) -> str:
+    """The three pre-registered conditions against the live rows, every week."""
+    live = [
+        e for e in awards
+        if e.gov_award is not None
+        and e.gov_award.kind == "new"
+        and not e.gov_award.multiple_award
+        and not getattr(e.gov_award, "ceiling_suspect", False)
+        and e.gov_award.rel_mcap is not None
+        and e.gov_award.rel_mcap >= Decimal("1")
+    ]
+    values = _open_excess_values(live, rows, 5)
+    n = len(values)
+    if n == 0:
+        return (
+            f"  SIZING UNLOCK (pre-registered 2026-10-06): LOCKED — 0 live rule events with a "
+            f"next-open->t+5 mark yet (need n>={UNLOCK_MIN_EVENTS}, net mean >= +{UNLOCK_MIN_NET_MEAN}, "
+            f"gross mean inside [{UNLOCK_BACKTEST_CI[0]:+}, {UNLOCK_BACKTEST_CI[1]:+}])"
+        )
+    gross = Decimal(str(statistics.mean(values)))
+    net = gross - UNLOCK_ROUND_TRIP_COST
+    c_n = n >= UNLOCK_MIN_EVENTS
+    c_net = net >= UNLOCK_MIN_NET_MEAN
+    c_ci = UNLOCK_BACKTEST_CI[0] <= gross <= UNLOCK_BACKTEST_CI[1]
+    state = "CONDITIONS MET — a human ruling may unlock sizing" if (c_n and c_net and c_ci) else "LOCKED"
+    return (
+        f"  SIZING UNLOCK (pre-registered 2026-10-06): {state} — live rule events n={n} "
+        f"({'ok' if c_n else 'need ' + str(UNLOCK_MIN_EVENTS)}); next-open->t+5 mean gross {gross:+.2f}, "
+        f"net of 15bp {net:+.2f} ({'ok' if c_net else 'need >= +' + str(UNLOCK_MIN_NET_MEAN)}); "
+        f"inside backtest CI [{UNLOCK_BACKTEST_CI[0]:+}, {UNLOCK_BACKTEST_CI[1]:+}]: {'yes' if c_ci else 'no'}"
+    )
 
 
 def _count_codes(entries: Iterable[FunnelEntry]) -> dict[str, int]:

@@ -202,6 +202,12 @@ def test_tiers_are_relative_size_and_only_new_single_awards_research():
     # reported per awardee (backtest ceiling audit): measured, never researched.
     assert size_tier(_facts(), Decimal("1.5"), rules) == TIER_MEASURE
     assert size_tier(_facts(), Decimal("0.99"), rules) == TIER_RESEARCH
+    # Recompete / incumbent language is stamped, never a filter (post-ship 2d).
+    bridge = parse_digest("<p>ARMY</p><p>SAIC Inc., Reston, Virginia, has been awarded a maximum $90,000,000 firm-fixed-price bridge contract for facilities maintenance.</p>")
+    assert bridge and bridge[0].recompete_language
+    fresh = parse_digest("<p>ARMY</p><p>SAIC Inc., Reston, Virginia, has been awarded a $90,000,000 firm-fixed-price contract for facilities maintenance.</p>")
+    assert fresh and not fresh[0].recompete_language
+    assert size_tier(bridge[0], Decimal("0.02"), rules) == TIER_RESEARCH  # stamped, still researches
 
 
 def test_build_item_stamps_the_determinants_and_the_funnel_parses_them_back():
@@ -435,3 +441,5 @@ def test_the_weekly_renders_the_award_subtype_table(signals_config, source, cont
     assert "Government contract awards by subtype" in text
     assert "tier research: 1 rows" in text and "PRE-REGISTERED RULE" in text
     assert "next-open->close" in text and "close->close" in text
+    # The go-live criterion (post-ship 2b) prints every week; one live event is LOCKED.
+    assert "SIZING UNLOCK (pre-registered 2026-10-06): LOCKED" in text and "n=1" in text

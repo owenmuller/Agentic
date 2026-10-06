@@ -4102,6 +4102,64 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### POST-SHIP RULINGS 2026-10-06 — multiplier retired; backtest accepted as modest; the go-live criterion re-registered
+
+**1. Multiplier:** Constraint #6 governs permanently; the 1.3× deployment multiplier is RETIRED. The
+weekly 0–1% target is a reporting line only and may never feed a threshold, prompt or sizing input.
+Recorded in CLAUDE.md beside the constraint.
+
+**2a. The rule group's next-open → t+5 mean, properly (174 events, 46 tickers, `rule_stats`):**
+
+| statistic | value |
+|---|---|
+| mean / median | **+0.74 / +0.27** points |
+| naive SE / **ticker-clustered SE** (46 clusters, LMT 22, OSK 14, SAIC 13, HII 12) | 0.27 / **0.31**, clustered t = +2.41, normal CI [+0.14, +1.34] |
+| 10,000-draw bootstrap 95% CI, event resampling | [+0.22, +1.27], P(mean ≤ 0) = 0.003 |
+| **10,000-draw bootstrap 95% CI, ticker-cluster resampling** | **[+0.17, +1.37]**, P(mean ≤ 0) = 0.005 |
+| mean excluding the top 5 events (OSK 2020-03-27 +15.3 ×2 — one award parsed from two paragraphs, MRNA 2022-07-29 +12.5, OSK 2020-04-24 +9.9, KTOS 2021-03-25 +8.7) | **+0.39** (n=169) |
+| mean / median / hit **net of a 15bp round trip** | **+0.59 / +0.12 / 51%** |
+| ticker-weighted mean, gross / net | +1.01 / +0.86 |
+
+Read: significant at the cluster level, small, and a quarter of it is five events; net of cost the
+median event earns twelve basis points over SPY in a week.
+
+**2b. GO-LIVE CRITERION, PRE-REGISTERED NOW (replaces the backtest criterion):** sizing unlocks only
+when LIVE rule events (new, single awardee, ≥1% of point-in-time cap, not ceiling-suspect) reach
+**n ≥ 25** AND the pooled live mean next-open → t+5 excess **net of 15bp is ≥ +0.40** AND the live
+mean (gross) sits **inside the backtest ticker-cluster bootstrap CI [+0.17, +1.37]**. Until then:
+measurement-only with research passes as built. The weekly's award section prints the three
+conditions against the live rows every Friday (`SIZING UNLOCK` line); meeting them is evidence for a
+human ruling, never an automatic unlock. Live events accrue from 2026-10-07; at ~1 rule event a
+week the earliest n = 25 is ~2027-04.
+
+**2c.** Competed vs sole-source is NOT a filter (found after the fact). It is stamped (`sole source:`
+line) and measured live like every other determinant.
+
+**2d. Recompete / incumbent-retained:** the digest almost never says it — the only language the
+174 rule paragraphs carry is "bridge contract" (7 events, all SAIC facilities-maintenance bridges
+2019–2020; oc5 mean −0.07, hit 43%). **Rule mean excluding them: +0.77 / median +0.33 / hit 54%
+(n=167).** Stamped from now on: `recompete: yes` when the paragraph or the FPDS action carries
+recompete / follow-on / incumbent / bridge / continuation / renewal language, `unstated` otherwise;
+reported as its own slice, no filter. **Limit stated:** McKesson's VA award is the prime-vendor
+recompete the ruling suspects, and neither feed SAYS so — the honest stamp needs a prior-award
+lookup (same vendor, same contracting office, same product code, within ~5 years, on FPDS), a
+deterministic recipe for a later build; the text stamp will under-count.
+
+**3.** The two drifted golden cases do NOT carry the calibration block — it was never built (it was
+item 3 of the adaptive-standards design, not in the shipped bundle). Rerun three times each; result
+below when the runs land. Their history already shows drift before any 2026-10-06 change:
+`pelosi-uber-priced-in` graded no_position/62, no_position/74, **long/58 (DRIFT, 2026-09-17)**,
+long/62 (today); `moskowitz-amat-max-lag` no_position/82, **no_position/18 (DRIFT)**, 82, 28
+(today).
+
+**4.** No DOE Loan Programs Office source. The VST lesson folds into step 4's 8-K widening: Items
+1.01 and 8.01 with counterparty and dollar extraction and relative size on the contract tiers; the
+volume report checks whether VST filed an 8-K for the Google deal or the DOE loan, the filing time
+against the move, and what the widened list would have done.
+
+**5.** Evening timer and Chromium libraries stay uninstalled; the morning fetcher suffices while
+measurement-only; re-raise the timer when 2b unlocks sizing.
+
 ### CONTRACT AWARDS BACKTEST — the pre-registered run (2026-10-06, 1,899 digests 2019-01-02..2026-10-02)
 
 Run through the production parser on the Wayback harvest (`data/contracts_backtest_2026-10-06.{json,log,events.jsonl}`
