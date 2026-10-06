@@ -4102,6 +4102,75 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### RULINGS ON THE FIVE REPORTS (2026-10-06) — accepted; build order; backtest PRE-REGISTRATION; the VST finding
+
+**Ruled (human, 2026-10-06, after the reports below):** verdicts are the binding constraint; contract
+awards is the bet; everything else is plumbing and is never reported as deployment.
+1. Contract awards APPROVED with amendments: (a) reader proxy primary, Wayback history, one parser;
+   test plain headless Chromium from the droplet (no stealth/fingerprint spoofing), stay on the proxy
+   if it fails; (b) historical backtest in parallel, rule pre-registered here before running, through
+   the same parser on Wayback digests back to 2019 or as far as the map supports — the 2026 slices
+   were found on the data they are judged on; (c) every forward return split at the open: next-open →
+   t+1/t+5/t+20 close as the tradeable numbers beside close-to-close; (d) ceiling audit: IDIQ,
+   multiple-award and ceiling-value awards flagged apart; check Hudson Technologies (96% of cap) for a
+   ceiling/mapping error; (e) find the VST ~$4B 16% mover; (f) everything else as proposed; (g) backtest
+   market cap POINT-IN-TIME (SEC companyfacts shares outstanding × close on the award day), extend the
+   parent map for historical awardees, report resolution rate by year.
+2. ADAPTIVE STANDARDS approved as designed (40% annualized hurdle, absolute R:R floor 0.8, horizon from
+   the resolution date clamped to leash bounds, base × (1 + 0.5 × u), calibration block at n ≥ 20, both
+   CLAUDE.md constraints with topology tests).
+3. Floor 45, boundary band [45,70), weeks leash floor 5, 1.3× multiplier, caps 35%/30%: approved as
+   config; weekly and health must state plainly that deployment is verdict-limited.
+4. Demotions now: congressional cap 5 → 1, Form 4 5 → 2, 8-K stays 6. Accepted consequence: judged
+   entries near zero until an event source earns its way in.
+5. Momentum adds DEFERRED (they only apply to the demoted source).
+Shipping order: (1) parser, mapping table, live measurement-only feed + evening timer, FPDS civilian
+feed, Wayback backtest with open split and ceiling audit — in parallel; (2) CLAUDE.md constraints,
+topology tests, hurdle, demotions; (3) the config bundle; (4) 8-K widening and FDA calendar with their
+own volume reports and pre-registered backtests. Golden replay + live round trip on every prompt-
+touching step. Backtest and VST finding reported before 2026-10-15.
+
+**BACKTEST PRE-REGISTRATION (written before any historical run; the rule may not move after the data
+is seen):**
+- Universe: every award in every DoD daily digest archived by the Wayback Machine, 2019-01-01 → 2026-10-02,
+  parsed by the production parser (`signals/contracts.py`), one row per award paragraph, duplicate
+  digests for one day collapsed to the fuller one.
+- Rule under test: **new award (not a modification, option exercise or ceiling increase) AND single
+  awardee (no "multiple award"/IDIQ pool language, one named awardee) AND award value ≥ 1% of the
+  awardee's point-in-time market cap AND awardee resolves to a public US-listed parent through the
+  mapping table.** Small-business (`*`) awardees, JVs, unresolved names: excluded (reported as the
+  resolution rate by year, not graded).
+- Market cap: SEC companyfacts `dei:EntityCommonStockSharesOutstanding` (latest value on or before the
+  award date) × the awardee's close on the digest day. No current-cap lookups.
+- Returns: event day t0 = digest publication day (17:00 ET, after the close). Tradeable path: **next
+  session OPEN → t+1 close, t+5 close, t+20 close**, excess over SPY on the same path; alongside close
+  (t0) → close (t+1/t+5/t+20) and pre-drift close(t−5) → close(t0). Marks absent if no bar within 4
+  calendar days (the forward engine's rule).
+- Comparison groups fixed in advance: (i) rule-passing events; (ii) modifications/options to the same
+  parents; (iii) new single awards < 1% of cap; (iv) multiple-award / IDIQ / ceiling-stated awards;
+  (v) all mapped awards. Slices reported but NOT used to pick a rule after the fact: agency, military
+  vs civilian, award/revenue, cap band, term, sole-source language, year.
+- Success criterion stated now: the rule-passing group's **next-open → t+5 close excess** is positive
+  with hit rate > 50% on n ≥ 100 events across ≥ 4 calendar years, and beats group (ii) and (iii) at
+  the same horizon. Anything less is "not demonstrated" and the source stays measurement-only.
+- Ceiling audit: for every award with stated cumulative/ceiling language, record both the obligated
+  figure and the ceiling; the ratio uses the obligated figure where both exist. Hudson Technologies
+  (2026-08-05, $0.21B at 96% of cap) is checked by hand first.
+
+**The VST finding (ruling 1e):** Vistra (VST) did not move 16% on a procurement award. The catalyst
+was a **$4.2B federal LOAN from the Department of Energy's Loan Programs Office to add nuclear output**
+(Bloomberg, Fri 2026-10-02 15:27 ET: "US to Offer $4 Billion Loan for Vistra to Boost Nuclear Output";
+Benzinga 10-05 "Vistra Gets $4.2B Federal Loan"), amplified Monday 10-06 by Google's 20-year nuclear
+deal with Constellation lifting every power name. Bars: 10-02 close 140.02 (+0.2% on 12.7M shares, the
+leak landed mid-session), 10-05 144.89 (+3.5%), **10-06 open 151.47 (+4.5% gap), trading 159.55 at
+14:40 ET (+10.1% on the day; +14% from Friday's close; the session high 162.69 is +16.2%).** FPDS has no
+Vistra action (a loan is not a contract); the DoD digest never would. **What the design would have done
+with it: nothing** — it is not a procurement award and neither feed carries it. What WOULD have caught
+it: a DOE Loan Programs Office announcements source (press releases, conditional commitments and
+closings; LPO publishes them) — a sixth event feed, same shape as 8-K items, and the only one of the
+three event sources that would have seen this. Flagged for the ruling, not built. VST's only funnel
+appearances were two 13F no-position passes on 2026-08-26.
+
 ### 2026-10-06 rulings bundle — REPORTS BEFORE SHIPPING (nothing built yet)
 
 Five rulings landed in one session: REWORK (contract awards first, 8-K widening, FDA calendar,
