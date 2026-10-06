@@ -4145,12 +4145,25 @@ recompete the ruling suspects, and neither feed SAYS so — the honest stamp nee
 lookup (same vendor, same contracting office, same product code, within ~5 years, on FPDS), a
 deterministic recipe for a later build; the text stamp will under-count.
 
-**3.** The two drifted golden cases do NOT carry the calibration block — it was never built (it was
-item 3 of the adaptive-standards design, not in the shipped bundle). Rerun three times each; result
-below when the runs land. Their history already shows drift before any 2026-10-06 change:
-`pelosi-uber-priced-in` graded no_position/62, no_position/74, **long/58 (DRIFT, 2026-09-17)**,
-long/62 (today); `moskowitz-amat-max-lag` no_position/82, **no_position/18 (DRIFT)**, 82, 28
-(today).
+**3. Golden drifts — NONDETERMINISTIC, both.** The two cases do NOT carry the calibration block (it
+was item 3 of the adaptive-standards design and was never built), so the ruling's rerun branch
+applied: three runs each, production path, ~$1.10.
+
+| case | history before 2026-10-06 | today's replay | rerun 1 | rerun 2 | rerun 3 |
+|---|---|---|---|---|---|
+| `pelosi-uber-priced-in` (expects: decline, or a long that does not trade) | no_position/62 · no_position/74 · **long/58 DRIFT (09-17)** | long/62, boundary UPHELD → sizes → DRIFT | long/58, boundary second pass no_position/72 → REVERSED → PASS | no_position/72 → PASS | long/52, boundary no_position/72 → REVERSED → PASS |
+| `moskowitz-amat-max-lag` (expects: no_position in [50, 100]) | no_position/82 · **no_position/18 DRIFT** · no_position/82 | no_position/28 → DRIFT | no_position/72 → PASS | no_position/30 → DRIFT | no_position/35 → DRIFT |
+
+Reading: the first-pass verdict on the Pelosi/Uber case flips between a floor-band long and a
+decline from run to run — exactly the stochastic band the boundary confirmation was built for
+(diagnosed 2026-09-02), and the second pass caught all three longs today. The Moskowitz/AMAT case
+never flips direction; its CONFIDENCE swings 18–82 on an identical prompt. Both flip, so per the
+ruling they are marked nondeterministic and no leakage investigation is owed. **Proposal for the
+human (no change made):** grade `moskowitz-amat-max-lag` behaviourally like the other declines (a
+decline at any confidence passes) — the golden set's own 2026-09-17 convention says a decline's
+confidence is recorded, not graded; a [50, 100] band on a decline is grading noise. Leave
+`pelosi-uber-priced-in` as it is: it passes whenever the boundary pass does its job and drifts only
+when two stochastic longs coincide, which is the event the pass exists to measure.
 
 **4.** No DOE Loan Programs Office source. The VST lesson folds into step 4's 8-K widening: Items
 1.01 and 8.01 with counterparty and dollar extraction and relative size on the contract tiers; the
