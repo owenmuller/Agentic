@@ -468,3 +468,39 @@ entries:
   - {prefix: "the air force", ticker: null}
   - {prefix: "the army", ticker: null}
   - {prefix: "the navy", ticker: null}
+  # ---- added from the 2019-2026 backtest's top-unresolved list (2026-10-06) --
+  - {prefix: "us foods", ticker: USFD}
+  - {prefix: "ecs federal", ticker: ASGN}
+  - {prefix: "northrup grumman", ticker: NOC} # the digest's recurring misspelling
+  - {prefix: "united concordia", ticker: null} # Highmark subsidiary, private
+  - {prefix: "rq construction", ticker: null}
+  - {prefix: "korte construction", ticker: null}
+  - {prefix: "nan inc", ticker: null}
+  - {prefix: "nan ", ticker: null}
+  - {prefix: "bl harbert", ticker: null}
+  - {prefix: "b l harbert", ticker: null}
+  - {prefix: "harper construction", ticker: null}
+  - {prefix: "bell boeing", ticker: null} # a BA/TXT joint project office, not a traded parent
+  - {prefix: "valiant global", ticker: null}
+  - {prefix: "national aerospace solutions", ticker: null} # JV
+  - {prefix: "scientific research corp", ticker: null}
+  - {prefix: "scientific research", ticker: null}
+  - {prefix: "liberty global logistics", ticker: null}
+  - {prefix: "farrell lines", ticker: null}
+  - {prefix: "trax international", ticker: null}
+  - {prefix: "dcs corp", ticker: null}
+  - {prefix: "dcs ", ticker: null}
+  - {prefix: "dzsp 21", ticker: null} # JV
+  - {prefix: "indyne", ticker: null}
+  - {prefix: "georgia tech", ticker: null}
+  - {prefix: "american president lines", ticker: null} # CMA CGM
+  - {prefix: "aptim", ticker: null}
+  - {prefix: "slsco", ticker: null}
+  - {prefix: "national air cargo", ticker: null}
+  - {prefix: "archer western", ticker: null}
+  - {prefix: "american systems", ticker: null} # employee-owned
+  - {prefix: "m c dean", ticker: null}
+  - {prefix: "vt milcom", ticker: null} # ST Engineering (SGX)
+  - {prefix: "federal contracting", ticker: null}
+  - {prefix: "radiance technologies", ticker: null}
+  - {prefix: "bfbc", ticker: null} # JV

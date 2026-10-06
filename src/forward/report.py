@@ -802,6 +802,7 @@ def gov_award_section(
         ("single awardee, not IDIQ", [e for e in awards if not facts(e).multiple_award and not facts(e).idiq]),
         ("multiple-award or IDIQ", [e for e in awards if facts(e).multiple_award or facts(e).idiq]),
         ("ceiling value stated", [e for e in awards if facts(e).ceiling_stated]),
+        ("ceiling-suspect (award > awardee market cap)", [e for e in awards if getattr(facts(e), "ceiling_suspect", False)]),
         ("sole-source language", [e for e in awards if facts(e).sole_source]),
         ("military", [e for e in awards if facts(e).military]),
         ("civilian", [e for e in awards if not facts(e).military]),

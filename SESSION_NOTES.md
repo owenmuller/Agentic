@@ -4102,6 +4102,63 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### CONTRACT AWARDS BACKTEST — the pre-registered run (2026-10-06, 1,899 digests 2019-01-02..2026-10-02)
+
+Run through the production parser on the Wayback harvest (`data/contracts_backtest_2026-10-06.{json,log,events.jsonl}`
+on the droplet). 31,202 awards parsed, 12,316 ≥ the $50M parser floor, **3,669 mapped to a US-listed
+parent (30%)**, 3,234 with a point-in-time cap (SEC shares × that day's close), 3,660 with bars.
+Resolution by year is flat at 26–36%: of ≥$50M awards, ~15% are small-business (`*`), ~10% known
+non-public, ~40% unresolved — construction (RQ, Korte, Nan, BL Harbert, Harper), logistics (Farrell,
+APL, Liberty Global, National Air Cargo), private services (DCS, SLSCO, Radiance, American Systems,
+M.C. Dean) and JVs (Bell-Boeing, DZSP 21, NAS, BFBC). The three public names in that list (US Foods,
+ECS Federal → ASGN, and the digest's recurring "Northrup Grumman") were added to the map after the
+run; the figures below predate them.
+
+**Pre-registered groups, excess vs SPY in points, next-open → close (the tradeable path) with
+close → close beside it:**
+
+| group | events / tickers | pre t-5→t0 | gap | t+1 oc | t+5 oc (cc) | t+20 oc | oc5 hit | ticker-wtd oc5 |
+|---|---|---|---|---|---|---|---|---|
+| **(i) RULE: new, single, ≥1% of cap** | **174 / 46, 8 years** | −0.07 | +0.22 (61%) | +0.42 (56%) | **+0.74 med +0.27 (cc +0.97)** | +0.11 | **54%** | **+1.01** |
+| (ii) modifications / options | 1,168 / 48 | −0.28 | +0.04 | −0.03 | −0.03 (cc +0.01) | −0.11 | 49% | +0.49 |
+| (iii) new single < 1% of cap | 604 / 41 | −0.02 | +0.09 | −0.01 | −0.15 (cc −0.06) | −0.55 | 50% | −0.01 |
+| (iv) multi-award / IDIQ / ceiling stated | 1,594 / 130 | −0.22 | +0.05 | −0.07 | +0.06 (cc +0.12) | −0.12 | 48% | +0.31 |
+| unsized (no point-in-time cap) | 129 / 18 | +0.46 | +0.03 | −0.14 | +0.63 | +0.58 | 46% | +0.17 |
+
+**The pre-registered success criterion is MET by its letter:** rule group next-open→t+5 positive
+(+0.74; SE 3.54/√174 ≈ 0.27, ~2.8 SE above zero), hit 54% (> 50%), n = 174 (≥ 100), eight calendar
+years (≥ 4), and it beats (ii) −0.03 and (iii) −0.15 at the same horizon (difference vs (ii) +0.77,
+~2.7 SE). **What the letter does not say and the ruling should weigh:** the edge is modest — a quarter
+of a point at the median, three-quarters at the mean — and it is a one-week effect: t+20 is +0.11
+(hit 50%). Year by year (oc t+5): 2019 +0.26 / 2020 +1.71 / 2021 +1.07 / 2022 +0.60 / **2023 −0.45
+(hit 35%)** / 2024 +0.74 / 2025 +0.97 (hit 65%) / 2026 +0.23 (median −0.95) — positive in seven of
+eight years, 16–30 events a year. No pre-announcement leakage (−0.07) and only a small overnight gap
+(+0.22), so the digest is not structurally late. The out-of-sample read is weaker than the 2026
+in-sample read that motivated the source (+2.3 at five days on 16 events): that sample was the top of
+a noisy distribution, as pre-registration exists to show.
+
+**Slices inside the rule group (reported, not used to pick a rule):** competed/unstated **+0.98
+(hit 56%, n=119)** vs sole-source language +0.22 (49%, n=55); Army +1.03 (n=80), Air Force +0.64
+(n=38), DLA +1.24 (n=10), Navy +0.21 (47%, n=34); awardee cap small +1.23 (median +0.03, n=40), mid
++0.41 (n=80), mega +0.86 (n=54); relative size 1–2% +0.71 (n=79), 2–5% +0.67 (n=52), 5–20% +0.50
+(hit 58%, n=33), ≥20% +2.11 (hit 80%, n=10 — the band the ceiling audit says to distrust).
+
+**Ceiling audit (ruling 1d):** the largest award/cap ratios are shared-pool ceilings reported per
+awardee — TLS $12.5B at 61× its cap, WKC and GEO on a $55B pool, CXW / VVX / KBR / AMTM on a $45B
+pool, PAE / VEC / FLR on LOGCAP-style $6.4–14B vehicles, the TRANSCOM $4.2B pool on JBLU at 2.7×.
+Group (iv) absorbs them when the paragraph carries IDIQ / multiple-award / ceiling language; a few
+pool ceilings whose paragraphs say none of that land in the rule group's ≥20% band (n=10, +2.11).
+Excluding that band leaves the rule group at ~+0.66 on 164 events: the finding does not rest on it.
+**Hudson Technologies (2026-08-05, $0.21B at 96% of cap):** a ten-year DLA IDIQ for refrigerants —
+a ceiling, correctly in group (iv); HDSN fell 9% the next day. **Rule for the live feed:** any award
+above 100% of the awardee's point-in-time cap is tagged ceiling-suspect and never researches.
+
+**Reading for the 2026-10-15 review:** the category average is zero, as the literature says; the
+pre-registered subtype is positive and consistent but small and short-lived. Measurement-only is the
+right state: the live rows accrue under the same rule with the open split, and the trading-path
+ruling should ask for a per-year hit rate above 50% on the live flow before the first sized order,
+with competed new awards to small and mid caps as the slice to watch.
+
 ### SHIPPING ORDER STEP 3 — the config bundle (built 2026-10-06; approved as config the same day)
 
 - `risk_limits.yaml sizing`: floor 50 → **45**; bands **45–55 at 1%** (lower-inclusive; exactly 55 →

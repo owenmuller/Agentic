@@ -198,6 +198,10 @@ def test_tiers_are_relative_size_and_only_new_single_awards_research():
     assert size_tier(_facts(multiple=True), Decimal("0.5"), rules) == TIER_MEASURE
     # Unknown market cap: a row to grade, never a pass to buy.
     assert size_tier(_facts(), None, rules) == TIER_MEASURE
+    # An award larger than the awardee's whole market cap is a pool ceiling
+    # reported per awardee (backtest ceiling audit): measured, never researched.
+    assert size_tier(_facts(), Decimal("1.5"), rules) == TIER_MEASURE
+    assert size_tier(_facts(), Decimal("0.99"), rules) == TIER_RESEARCH
 
 
 def test_build_item_stamps_the_determinants_and_the_funnel_parses_them_back():

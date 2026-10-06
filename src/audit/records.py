@@ -238,6 +238,7 @@ _CONTENT_AWARD_REL_REV = re.compile(r"^award / revenue:\s*([\d.]+)%", re.MULTILI
 _CONTENT_AWARD_TIER = re.compile(r"^size tier:\s*(\w+)", re.MULTILINE)
 _CONTENT_AWARD_EVENT = re.compile(r"^event date:\s*(\d{4}-\d{2}-\d{2})", re.MULTILINE)
 _CONTENT_AWARD_RESOLUTION = re.compile(r"^parent resolution:\s*(\w+)", re.MULTILINE)
+_CONTENT_AWARD_CEILING_SUSPECT = re.compile(r"^ceiling suspect:\s*(yes|no)", re.MULTILINE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,6 +262,9 @@ class GovAwardFacts:
     rel_revenue: Optional[Decimal]
     event_date: Optional[date]
     resolution: str
+    #: Award larger than the awardee's market cap: a pool ceiling reported per
+    #: awardee (backtest ceiling audit 2026-10-06). Never researched.
+    ceiling_suspect: bool = False
 
     @property
     def ceiling_stated(self) -> bool:
@@ -314,6 +318,7 @@ def snapshot_gov_award(snapshot: "SignalSnapshot") -> Optional["GovAwardFacts"]:
     rel_rev = _CONTENT_AWARD_REL_REV.search(content)
     event = _CONTENT_AWARD_EVENT.search(content)
     resolution = _CONTENT_AWARD_RESOLUTION.search(content)
+    suspect = _CONTENT_AWARD_CEILING_SUSPECT.search(content)
     try:
         rel_mcap_value = Decimal(rel_mcap.group(1)) if rel_mcap else None
         rel_rev_value = Decimal(rel_rev.group(1)) if rel_rev else None
@@ -340,6 +345,7 @@ def snapshot_gov_award(snapshot: "SignalSnapshot") -> Optional["GovAwardFacts"]:
         rel_revenue=rel_rev_value,
         event_date=date.fromisoformat(event.group(1)) if event else None,
         resolution=resolution.group(1) if resolution else "",
+        ceiling_suspect=bool(suspect and suspect.group(1) == "yes"),
     )
 
 

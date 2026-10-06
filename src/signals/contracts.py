@@ -709,10 +709,19 @@ class RatioRules:
         )
 
 
+#: An award larger than the awardee's whole market cap is a shared-pool ceiling
+#: reported per awardee, whatever the paragraph says (backtest ceiling audit,
+#: 2026-10-06: TLS at 61x, GEO at 28x, JBLU at 2.7x). Measured, never researched.
+CEILING_SUSPECT_RATIO = Decimal("1.0")
+
+
 def size_tier(facts: AwardFacts, rel_mcap: Optional[Decimal], rules: RatioRules) -> str:
-    """The pre-registered tiers. Multiple-award and non-new awards never research."""
+    """The pre-registered tiers. Multiple-award, non-new and ceiling-suspect
+    awards never research."""
     if rel_mcap is None:
         return TIER_MEASURE  # resolved but unsized: a row to grade, not a pass to buy
+    if rel_mcap > CEILING_SUSPECT_RATIO:
+        return TIER_MEASURE
     if rel_mcap >= rules.research_min and facts.kind == KIND_NEW and not facts.multiple_award:
         return TIER_RESEARCH
     if rel_mcap >= rules.measure_min:
@@ -764,6 +773,7 @@ def build_item(
     tier = size_tier(facts, rel_mcap, rules) if ticker else "no_instrument"
     months = term_months(facts.completion, event_date)
     military = _military(department)
+    ceiling_suspect = rel_mcap is not None and rel_mcap > CEILING_SUSPECT_RATIO
     measurement_only = tier in (TIER_MEASURE, TIER_BELOW_FLOOR)
     measurement_code = (
         MEASUREMENT_CODE_BELOW_FLOOR if tier == TIER_BELOW_FLOOR else MEASUREMENT_CODE_MEASURE if tier == TIER_MEASURE else ""
@@ -797,6 +807,7 @@ def build_item(
             f"awardee revenue: {_fmt_money(size.revenue) if size and size.revenue else 'unknown'}"
             + (f" ({size.revenue_period})" if size and size.revenue_period else ""),
             f"award / revenue: {_pct(rel_rev)}",
+            f"ceiling suspect: {'yes' if ceiling_suspect else 'no'}",
             f"size tier: {tier}",
             f"event date: {event_date.isoformat()}",
             f"published: {published_at.isoformat()}"
@@ -834,6 +845,7 @@ def build_item(
         "rel_mcap": str(rel_mcap) if rel_mcap is not None else "",
         "rel_revenue": str(rel_rev) if rel_rev is not None else "",
         "size_tier": tier,
+        "ceiling_suspect": "true" if ceiling_suspect else "false",
         "event_date": event_date.isoformat(),
         "report_date": event_date.isoformat(),
         "published_at": published_at.isoformat(),
