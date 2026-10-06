@@ -53,7 +53,9 @@ research_class_caps:
 dispatch:
   scored: true
   pool_release_interval_minutes: 30
-  pooled_sources: [form_8k, form4_insiders, congressional_disclosures, form_13d, form_13f]
+  # gov_contract_awards joins the pool (ruling 2026-10-06): a whole digest
+  # arrives at once at the open and must compete in windows, not by arrival.
+  pooled_sources: [form_8k, form4_insiders, congressional_disclosures, form_13d, form_13f, gov_contract_awards]
 
 # COST TRIPWIRE. Same pattern as the X reads counter: when a day's cumulative
 # estimated research spend (entry passes + exit reviews, rejected passes included
@@ -120,7 +122,9 @@ exits:
   # +12%) is untouched.
   fast_class_leash_bounds:
     days: { floor: 3, ceiling: 21 }
-    weeks: { floor: 7, ceiling: 90 }
+    # weeks floor 14 -> 7 (2026-09-18) -> 5 (AGGRESSION RULING 2026-10-06,
+    # lever 3): turnover is where weekly returns come from; Class 1 only.
+    weeks: { floor: 5, ceiling: 90 }
     months: { floor: 60, ceiling: 367 }
 
   # How often each open position gets a thesis review. Reviews spend the daily
@@ -300,7 +304,10 @@ risk_scalars:
 # band once in three. >=70 was stable (spread 4.4) and stays unconfirmed.
 boundary_confirmation:
   enabled: true
-  band_width: 20
+  # band_width 20 -> 25 (AGGRESSION RULING 2026-10-06, lever 2): the floor
+  # moved 50 -> 45 and the confirmation band stays [floor, 70), so every new
+  # admission still buys a second agreeing pass before sizing.
+  band_width: 25
 
 # REWARD:RISK GATE (ruling 2026-09-02, from live LLM-agent trading evidence:
 # expectancy discipline beats verdict accuracy). A judged EQUITY LONG must clear
@@ -317,8 +324,21 @@ boundary_confirmation:
 # min_ratio 1.5 -> 1.3 (human ruling 2026-09-15, risk-on recalibration).
 reward_risk:
   enabled: true
-  min_ratio: 1.3
+  # ADAPTIVE STANDARDS (human ruling 2026-10-06): the flat 1.3 reward:risk
+  # floor is replaced by an ANNUALIZED expected-return hurdle — (target -
+  # entry)/entry x 365/days, days from the report's expected_resolution_date
+  # clamped into the leash bounds — floored by an absolute reward:risk of 0.8.
+  # A 2% move in five days clears; the same move in nine months does not.
+  # The hurdle scales with the OPPORTUNITY SET only: base x (1 + k x u), u =
+  # max(judged deployed fraction, positive-scored queue / free slots toward
+  # target_positions). Never P&L, never distance from a target, never elapsed
+  # time (CLAUDE.md standing constraint; topology-tested). Replay 2026-10-06:
+  # of 20 reward:risk rejections since 09-02, 7 clear 40%/0.8, all fast ones.
+  min_ratio: 0.8
   fallback_stop_fraction: 0.15
+  annualized_hurdle: 0.40
+  opportunity_cost_k: 0.5
+  target_positions: 20
 
 # EXECUTION-FIDELITY HAIRCUT (ruling 2026-09-02). Paper fills are optimistic:
 # no queue position, no adverse selection, no real spread crossing. The weekly

@@ -312,12 +312,25 @@ class RewardRiskConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     enabled: bool = True
+    #: The ABSOLUTE reward:risk floor. Since the adaptive-standards ruling
+    #: (2026-10-06) it guards the annualized test below against a target so
+    #: close to the stop that scaling flatters it; the yaml sets 0.8.
     min_ratio: Decimal = Field(default=Decimal("1.5"), gt=Decimal("0"))
     #: The stop distance assumed when ATR data is missing — mirrors
     #: exits.max_loss_fraction, the regime such a position actually gets.
     fallback_stop_fraction: Decimal = Field(
         default=Decimal("0.15"), gt=Decimal("0"), lt=Decimal("1")
     )
+    #: ADAPTIVE STANDARDS (human ruling 2026-10-06): the base annualized
+    #: expected-return hurdle — (target − entry)/entry × 365/days — where days
+    #: run from the report's expected_resolution_date clamped into the leash
+    #: bounds. None keeps the flat reward:risk test alone (the pre-ruling gate).
+    annualized_hurdle: Optional[Decimal] = Field(default=None, gt=Decimal("0"))
+    #: hurdle = base × (1 + k × u), u = how contested judged capital is
+    #: (deployment and queue pressure — the opportunity set, never P&L).
+    opportunity_cost_k: Decimal = Field(default=Decimal("0.5"), ge=Decimal("0"))
+    #: The judged position-count target the queue-pressure term divides by.
+    target_positions: int = Field(default=20, gt=0)
 
 
 class AtrSizingConfig(BaseModel):

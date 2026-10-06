@@ -44,6 +44,7 @@ import yaml
 
 from audit.records import (
     snapshot_8k_items,
+    snapshot_gov_award,
     snapshot_amount_range,
     snapshot_form4_qualification,
     snapshot_lag_days,
@@ -153,7 +154,31 @@ def facet_of_content(source_id: str, content: str) -> str:
     if source_id == "form_13d":
         match = _STAKE.search(content or "")
         return facet_13d(Decimal(match.group(1)) if match else None)
+    if source_id == "gov_contract_awards":
+        facts = snapshot_gov_award(snap)
+        if facts is None:
+            return ""
+        return facet_gov_award(facts.tier, facts.kind, facts.mcap_band)
     return ""
+
+
+def facet_gov_award(tier: str, kind: str, mcap_band: str) -> str:
+    """Government contract awards (ruling 2026-10-06): the slice is the tier
+    (research / measure / below_floor), the award kind and the awardee's size
+    band — the determinants the pre-registered backtest grades."""
+    return f"tier={tier or 'unparsed'}|kind={kind or 'unparsed'}|mcap={mcap_band or 'unknown'}"
+
+
+def _mcap_band_of(raw: str) -> str:
+    try:
+        value = Decimal(str(raw))
+    except Exception:  # noqa: BLE001 - an unparseable cap is unknown
+        return "unknown"
+    if value < Decimal("5000000000"):
+        return "small"
+    if value < Decimal("50000000000"):
+        return "mid"
+    return "mega"
 
 
 def facet_of_signal(signal: Signal) -> str:
@@ -183,6 +208,12 @@ def facet_of_signal(signal: Signal) -> str:
         except Exception:  # noqa: BLE001 - an unparseable stake is unknown
             stake = None
         return facet_13d(stake)
+    if signal.source_id == "gov_contract_awards":
+        tier = str(meta.get("size_tier") or "")
+        kind = str(meta.get("award_kind") or "")
+        if tier and kind:
+            return facet_gov_award(tier, kind, _mcap_band_of(meta.get("awardee_mcap") or "") if meta.get("awardee_mcap") else "unknown")
+        return facet_of_content(signal.source_id, signal.content)
     return ""
 
 

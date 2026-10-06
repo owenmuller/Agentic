@@ -30,6 +30,7 @@ from orchestrator.scoring import (
     whatif_dispatch,
 )
 from signals.records import Priority, Signal, SignalClass
+from config_overrides import pre_demotion_signals_config
 from test_orchestrator import (
     PURE_FORWARD_CALL,
     FakeBroker,
@@ -248,13 +249,17 @@ def _config(**dispatch):
 def test_the_live_config_turns_scoring_on_with_the_filing_sources_pooled():
     live = OrchestratorConfig.load().dispatch
     assert live.scored and live.pool_release_interval_minutes == 30
-    assert set(live.pooled_sources) == {"form_8k", "form4_insiders", "congressional_disclosures", "form_13d", "form_13f"}
+    # gov_contract_awards joined the pool 2026-10-06: a whole digest lands at
+    # the open and competes in release windows, not by arrival.
+    assert set(live.pooled_sources) == {"form_8k", "form4_insiders", "congressional_disclosures", "form_13d", "form_13f", "gov_contract_awards"}
     assert DispatchConfig().scored is False  # the harness default: pre-ruling behaviour
 
 
 def test_pooled_filings_wait_for_a_window_while_posts_dispatch_at_once(tmp_path, signals_config):
     from research.config import ResearchConfig
     from risk_gate import RiskLimits
+
+    signals_config = pre_demotion_signals_config()  # three congressional slots: the window mechanism, not the 2026-10-06 cap
 
     clock = FakeClock(datetime(2026, 8, 17, 14, 0, tzinfo=timezone.utc))  # 10:00 ET
     disclosures = [
@@ -292,6 +297,8 @@ def test_pooled_filings_wait_for_a_window_while_posts_dispatch_at_once(tmp_path,
 def test_with_scoring_off_the_batch_dispatches_as_before(tmp_path, signals_config):
     from research.config import ResearchConfig
     from risk_gate import RiskLimits
+
+    signals_config = pre_demotion_signals_config()  # three congressional slots: the mechanism, not the 2026-10-06 cap
 
     disclosures = [
         f"Congressional trading disclosure (STOCK Act filing)\nrepresentative: Nancy Pelosi (Representatives)\n"

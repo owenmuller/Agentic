@@ -1,0 +1,25 @@
+# Government contract awards EVENING one-shot (human ruling 2026-10-06),
+# weekdays 17:05 ET — five minutes after the DoD daily contracts digest posts
+# (17:00 ET sharp, after the close). Reads the digest through the reader proxy
+# while it is fresh, writes the free measurement rows (measurement-only tiers
+# and unmapped awardees) to the audit log the same evening, and stashes the
+# research-tier awards in data/contracts_pending.jsonl for the next session's
+# first poll, where the research pass runs inside the normal caps with the
+# post's own publish time rendered. No LLM, no order, no API spend beyond the
+# proxy, Finnhub and SEC lookups. The morning fetcher is self-sufficient (it
+# reads the digest itself if this never ran), so a missed evening costs
+# nothing but the early measurement rows. Idempotent per award id.
+#
+# Register with:
+#   sudo cp ops/vps/agentic-contracts.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now agentic-contracts.timer
+[Unit]
+Description=Agentic government contract awards evening one-shot (weekdays 17:05 ET)
+
+[Timer]
+OnCalendar=Mon..Fri 17:05 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

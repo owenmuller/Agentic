@@ -636,9 +636,11 @@ def test_confidence_bands_resolve_boundaries_toward_less_risk(limits):
     """Constraint #6: exactly-70 takes 2%, exactly-85 takes 5% (table 2/5/10%,
     recalibration 2026-09-15)."""
     sizing = limits.sizing
-    assert sizing.size_for(49) == Decimal("0")  # floor 55 -> 50 (2026-08-28)
-    assert sizing.size_for(50) == Decimal("0.020")
-    assert sizing.size_for(54) == Decimal("0.020")  # the band the ruling opened
+    assert sizing.size_for(44) == Decimal("0")  # floor 55 -> 50 (2026-08-28) -> 45 (2026-10-06)
+    assert sizing.size_for(45) == Decimal("0.010")  # the 45-55 band sizes at 1%
+    assert sizing.size_for(50) == Decimal("0.010")
+    assert sizing.size_for(55) == Decimal("0.010")  # boundary -> smaller band (Constraint #6)
+    assert sizing.size_for(56) == Decimal("0.020")
     assert sizing.size_for(70) == Decimal("0.020")
     assert sizing.size_for(71) == Decimal("0.050")
     assert sizing.size_for(85) == Decimal("0.050")
@@ -1374,16 +1376,18 @@ def test_the_mechanical_sleeve_has_its_own_daily_budget(limits):
     clock = FakeClock()
     gate = make_gate(limits, clock=clock)
     judged_cap = gate.sleeve_nav(Sleeve.EQUITY) * limits.equity_sleeve.max_daily_deployment
-    per = (judged_cap / 3).quantize(Decimal("0.01"))  # whole cents; see the sector test
-    for symbol in ("JA", "JB", "JC"):
+    # Four names: at the 0.35 daily cap (2026-10-06) a third of it would breach
+    # the 10% single-position cap; a quarter (8.75%) does not.
+    per = (judged_cap / 4).quantize(Decimal("0.01"))  # whole cents; see the sector test
+    for symbol in ("JA", "JB", "JC", "JD"):
         approve(gate, equity_buy(symbol=symbol, qty=per / Decimal("100"), price="100.00"))
-    over = reject(gate, equity_buy(symbol="JD", qty=1, price="100.00"))
+    over = reject(gate, equity_buy(symbol="JE", qty=1, price="100.00"))
     assert over.code is RejectionCode.MAX_DAILY_DEPLOYMENT_EXCEEDED
 
     # The mechanical sleeve still opens — its budget is untouched.
     approve(gate, equity_buy(symbol="MA", qty=7, price="100.00", sleeve="mechanical"))
     assert gate.state.mechanical_deployed_today == Decimal("700.00")
-    assert gate.state.deployed_today == per * 3  # unchanged by the mechanical entry
+    assert gate.state.deployed_today == per * 4  # unchanged by the mechanical entry
 
 
 def test_mechanical_allocation_cannot_exceed_its_target_plus_drift(limits):

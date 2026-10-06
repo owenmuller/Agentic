@@ -196,10 +196,11 @@ def test_the_initial_build_buys_to_target_and_the_sweeper_parks_the_rest(
     spy = [p for p in broker.payloads if p["symbol"] == "SPY"]
     assert spy and spy[0]["qty"] == 60 and spy[0]["limit_price"] == Decimal("500.00")
     # The sweep ran AFTER it, on cash net of the baseline's reservation:
-    # 100,000 - 18,500 floor - 30,000 reserved = 51,500 -> 512 SGOV at 100.40.
+    # 100,000 - 24,000 floor - 30,000 reserved = 46,000 -> 458 SGOV at 100.40.
+    # (Floor 18,500 -> 24,000 with the judged daily cap 0.25 -> 0.35, 2026-10-06.)
     assert report.sweep_orders == 1
     sgov = [p for p in broker.payloads if p["symbol"] == "SGOV"]
-    assert sgov[0]["qty"] == 512
+    assert sgov[0]["qty"] == 458
 
     report = started.loop.tick()  # both settle; the sleeve is at target
     position = started.gate.state.position(("baseline", "SPY"))
@@ -237,14 +238,16 @@ def test_the_live_transition_unparks_sgov_to_fund_the_build(
     )
     assert first.loop.baseline is None
     first.loop.tick()
-    first.loop.tick()  # 81,500 parked: 811 SGOV at 100.40; cash 18,575.60
-    assert first.gate.state.position(("cash_management", "SGOV")).quantity == Decimal("811")
+    first.loop.tick()  # 76,000 parked: 756 SGOV at 100.40; cash 24,097.60 (floor 24,000 since 2026-10-06)
+    assert first.gate.state.position(("cash_management", "SGOV")).quantity == Decimal("756")
     first.loop.shutdown()
 
     venue = FakeBroker(
-        cash=Decimal("18575.60"),
+        # 756 SGOV at 100.40 and 24,097.60 cash after the first build (811 and
+        # 18,575.60 before the 24,000 floor, 2026-10-06).
+        cash=Decimal("24097.60"),
         positions=[
-            BrokerPosition("SGOV", Decimal("811"), Decimal("81424.40"), Decimal("81424.40"))
+            BrokerPosition("SGOV", Decimal("756"), Decimal("75902.40"), Decimal("75902.40"))
         ],
     )
     restarted = start(
@@ -260,16 +263,17 @@ def test_the_live_transition_unparks_sgov_to_fund_the_build(
 
     # Tick 1: the check opens the rebalance. Nothing sits above the floor, so
     # no SPY buy yet — but the sweeper's buffer now carries the 30,000 owed and
-    # it unsweeps: 18,500 + 30,000 - 18,575.60 = 29,924.40 at the 100.39 bid.
+    # it unsweeps: 24,000 + 30,000 - 24,097.60 = 29,902.40 at the 100.39 bid.
+    # (Floor 18,500 -> 24,000 with the judged daily cap 0.35, 2026-10-06.)
     report = restarted.loop.tick()
     assert baseline.rebalancing is True
     assert report.baseline_orders == 0
     assert baseline.funding_need() == Decimal("30000.000")
-    assert sweeper.buffer() == Decimal("48500.000")
+    assert sweeper.buffer() == Decimal("54000.000")
     assert report.sweep_orders == 1
     unsweep = venue.payloads[-1]
     assert unsweep["symbol"] == "SGOV" and unsweep["limit_price"] == Decimal("100.39")
-    assert unsweep["qty"] == Decimal("299")  # 29,924.40 / 100.39 rounded up
+    assert unsweep["qty"] == Decimal("298")  # 29,902.40 / 100.39 rounded up (299 before the 24,000 floor)
 
     # Tick 2: the unsweep is settled BEFORE the baseline runs (299 x 100.39 =
     # 30,016.61 lands), so the SPY buy goes out this tick: the whole gap at 500
@@ -286,9 +290,10 @@ def test_the_live_transition_unparks_sgov_to_fund_the_build(
     assert baseline.rebalancing is False
     assert baseline.funding_need() == ZERO
     sgov = restarted.gate.state.position(("cash_management", "SGOV"))
-    # 811 less the 299 that funded the build, plus 5 the sweeper re-parked from
-    # the ~590 the unsweep over-delivered (rounded UP to cover the deficit).
-    assert sgov.quantity == Decimal("517")
+    # 756 less the 298 that funded the build, plus 5 the sweeper re-parked from
+    # what the unsweep over-delivered (rounded UP to cover the deficit).
+    # (811 - 299 + 5 = 517 before the 24,000 floor, 2026-10-06.)
+    assert sgov.quantity == Decimal("463")
     assert restarted.gate.state.cash >= sweeper.base_buffer()
     assert restarted.loop.tick().baseline_orders == 0
     # One rebalance, three ticks, no staging: exactly one SPY order was placed.
@@ -376,15 +381,15 @@ def test_sells_relieve_lots_oldest_first_and_a_flat_lot_resolves_as_beta(
         tmp_path, limits, signals_config, research_config, broker=broker
     )
     baseline = started.loop.baseline
-    started.loop.tick()  # lot 1: only 11,500 sits above the 18,500 floor -> 23 shares
+    started.loop.tick()  # lot 1: only 6,000 sits above the 24,000 floor -> 12 shares
     started.loop.tick()
-    assert [lot.quantity for lot in baseline.lots] == [Decimal("23")]
-    assert baseline.rebalancing is True  # still 18,500 short, nothing to unpark
+    assert [lot.quantity for lot in baseline.lots] == [Decimal("12")]
+    assert baseline.rebalancing is True  # still 24,000 short, nothing to unpark
 
     started.gate.state.cash += Decimal("60000")  # a deposit; NAV 160,000
-    started.loop.tick()  # lot 2: target 48,000 - 11,500 held = 36,500 -> 73 shares
+    started.loop.tick()  # lot 2: target 48,000 - 6,000 held = 42,000 -> 84 shares
     started.loop.tick()
-    assert [lot.quantity for lot in baseline.lots] == [Decimal("23"), Decimal("73")]
+    assert [lot.quantity for lot in baseline.lots] == [Decimal("12"), Decimal("84")]
     assert baseline.rebalancing is False
     first_lot, second_lot = (lot.decision_id for lot in baseline.lots)
 
@@ -397,9 +402,9 @@ def test_sells_relieve_lots_oldest_first_and_a_flat_lot_resolves_as_beta(
     started.loop.tick()  # settles; the second tranche (16 more) goes out
     trail = started.audit.trail(first_lot)
     assert [f.side for f in trail.fills] == ["buy", "sell"]
-    assert trail.fills[-1].filled_quantity == Decimal("23")
+    assert trail.fills[-1].filled_quantity == Decimal("12")  # the first lot is 12 shares since the 24,000 floor
     assert trail.outcome is not None
-    assert trail.outcome.realised_pnl == Decimal("23") * (Decimal("1999.99") - Decimal("500"))
+    assert trail.outcome.realised_pnl == Decimal("12") * (Decimal("1999.99") - Decimal("500"))
     assert "baseline lot sold flat" in trail.outcome.note
     assert [lot.decision_id for lot in baseline.lots] == [second_lot]
     outcomes = [r for r in started.audit.records() if isinstance(r, OutcomeRecord)]
@@ -491,10 +496,13 @@ def test_lots_and_cadence_survive_a_restart_in_their_own_sleeve(
         prices=TwoSidedPrices(SPY="510.00", SGOV="100.40"),
         llm_client=RoutingLLM(),
         adapter=FakeBroker(
-            cash=Decimal("18595.20"),
+            # What the log says the broker holds after the build: 60 SPY, and
+            # 458 SGOV (46,000 above the 24,000 floor at 100.40; 512 before the
+            # 2026-10-06 daily-cap change raised the floor).
+            cash=Decimal("24016.80"),
             positions=[
                 BrokerPosition("SPY", Decimal("60"), Decimal("30600"), Decimal("30000")),
-                BrokerPosition("SGOV", Decimal("512"), Decimal("51404.80"), Decimal("51404.80")),
+                BrokerPosition("SGOV", Decimal("458"), Decimal("45983.20"), Decimal("45983.20")),
             ],
         ),
         id_factory=counter("b"),

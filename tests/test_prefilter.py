@@ -89,6 +89,7 @@ def test_exactly_the_configured_sources_are_filtered(prefilter):
         "form_13d",
         "form_13f",
         "form_8k",  # 8-K source (ruling 2026-09-15): max_report_age_days
+        "gov_contract_awards",  # contract awards (ruling 2026-10-06): max_report_age_days
         "trump_posts",
     )
 

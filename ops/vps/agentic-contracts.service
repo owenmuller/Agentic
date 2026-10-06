@@ -1,0 +1,10 @@
+[Unit]
+Description=Agentic government contract awards evening one-shot (DoD digest at 17:05 ET)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=agentic
+WorkingDirectory=/home/agentic/Agentic
+ExecStart=/home/agentic/Agentic/.venv/bin/python -m orchestrator contracts-evening

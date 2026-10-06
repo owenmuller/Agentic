@@ -4102,6 +4102,143 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### SHIPPING ORDER STEP 3 — the config bundle (built 2026-10-06; approved as config the same day)
+
+- `risk_limits.yaml sizing`: floor 50 → **45**; bands **45–55 at 1%** (lower-inclusive; exactly 55 →
+  1%, Constraint #6), 55–70 2%, 70–85 5%, 85+ 10%; hard cap 0.10 unchanged. Measured before
+  shipping: zero long verdicts below 50 in the last ten sessions — this is the door, not the shots.
+- `risk_limits.yaml equity_sleeve`: `max_daily_deployment` 0.25 → **0.35**, `max_sector_exposure`
+  0.25 → **0.30**. Neither cap has bound an order since inception. **Consequence stated:** the sweep's
+  liquidity buffer is both sleeves' daily caps plus the margin, so it rises 18,541 → ~24,000 on
+  today's NAV (judged 0.35 × 55% = 19,250 + mechanical 2,250 + 2,500); ~5,500 less sits in SGOV and
+  ~5,500 more in cash, by construction. The baseline sleeve's funding math moved with it (tests
+  re-pinned: 512 → 458 SGOV on the first build, 811 → 756 parked lots, unsweep 299 → 298 shares).
+- `orchestrator.yaml boundary_confirmation.band_width` 20 → **25**, so the band stays [45, 70) and
+  every new admission still buys the second agreeing pass. `exits.fast_class_leash_bounds.weeks.floor`
+  7 → **5** (Class 1 only; Class 2/3 untouched).
+- **Health and weekly say deployment is verdict-limited** (`orchestrator.ops.deployment_line`,
+  `verdict_funnel`): "judged deployment: N positions, X% of the judged sleeve — VERDICT-LIMITED (last
+  10 sessions: P research passes, L long verdicts, A approved; long fates: …); caps, budget, sizing
+  and the floor did not bind". Health renders it after the deployed-today line; the weekly right
+  under the headline alpha line. Judged arm only; reads verdict records, never P&L.
+- **The 1.3× deployment multiplier is NOT built** — see step 2: it conflicts with the
+  adaptive-standards constraint as written; the human picks which ruling governs.
+- Tests re-pinned to the ruled numbers: sizing bands and boundaries, recalibration caps, the risk
+  gate's band test and the mechanical daily-budget split (four names at 8.75% each — a third of the
+  0.35 cap would breach the 10% single-position cap), the boundary stamp (45, 20 — the harness keeps
+  band 20), the fast-class leash floor, and the sweep/baseline buffer arithmetic above.
+
+### SHIPPING ORDER STEP 2 — CLAUDE.md constraints, topology tests, the reward hurdle, demotions (built 2026-10-06)
+
+- **CLAUDE.md § "Standards Move With the Opportunity Set, Never With the Scoreboard":** the two
+  standing constraints as ruled. **Conflict surfaced, not resolved (Constraint #6):** the WEEKLY
+  TARGET ruling's 1.3× deployment multiplier is a sizing input that is a function of distance from
+  a return target, which the ADAPTIVE STANDARDS ruling's constraint 4 forbids in so many words. The
+  two rulings landed the same day; the later one is the stricter and the multiplier can only ever
+  enlarge a position, so the smaller-position reading wins until a human says which governs. **The
+  multiplier is NOT built**; CLAUDE.md says so. (It was also measured inert: four 2%-band entries
+  in ten sessions.) The health and weekly lines that state "deployment is verdict-limited" ship
+  with step 3 regardless.
+- **`tests/test_scoreboard_constraint.py`:** AST import fence — `orchestrator/hurdle.py`,
+  `orchestrator/scalars.py`, (`orchestrator/deployment.py` if it ever exists), the research /
+  review / triage prompt builders import nothing from `audit.attribution`, `audit.spend`,
+  `audit.log`, `forward` or any target module; the hurdle's `Opportunity` carries exactly four
+  fields (deployed fraction, positive candidates, open positions, target positions); the prompt
+  sources never contain "weekly target", "shortfall", "behind target", "deployment multiplier",
+  "realized P&L", "4-week return", "beta-adjusted return", "weeks without a trade"; CLAUDE.md states
+  the constraint.
+- **The reward hurdle (`orchestrator/hurdle.py`, wired in `pipeline._reward_risk_reason`):**
+  annualized expected return `(target − entry)/entry × 365/days` must clear
+  `base × (1 + k × u)` with base 0.40, k 0.5; the absolute reward:risk floor is 0.8 (was the flat
+  1.3). Days: the report's `expected_resolution_date` clamped into the leash bounds for the
+  horizon and class (`ExitsConfig.leash_bounds_for`), the horizon's time-stop fallback when the
+  report named none. `u = max(judged deployed / judged sleeve NAV, min(1, positive-scored
+  candidates in today's queue / (target_positions − open positions)))`, computed by the loop each
+  tick from the gate's exposure and the dispatch scores and handed to the pipeline through
+  `set_opportunity` — nothing about P&L or the calendar crosses that call. Today u ≈ 0.07 → the
+  hurdle sits at ~41%. Config `orchestrator.yaml reward_risk` (min_ratio 0.8, annualized_hurdle
+  0.40, opportunity_cost_k 0.5, target_positions 20); `annualized_hurdle: null` would restore the
+  flat test exactly. Tests: `tests/test_hurdle.py` (9: the fast-vs-slow 2% move, the floor's veto,
+  the cap at base × 1.5, the day clamps, the live config numbers, the pipeline's two-part test, the
+  unchanged flat test, the bar moving with the opportunity set).
+- **Demotions (`signals.yaml`):** congressional `daily_research_cap` 5 → 1; Form 4 5 → 2; 8-K stays
+  6. Accepted consequence recorded: judged entries near zero until an event source earns in.
+- No prompt changed in this step: no golden replay owed beyond step 1's.
+
+### SHIPPING ORDER STEP 1 — government contract awards source, measurement-first (built 2026-10-06)
+
+**Built (`gov_contract_awards`, Class 1, probation = measurement-first):**
+- `signals/contracts.py`: ONE parser for the DoD daily digest (site/Wayback HTML and the reader
+  proxy's markdown — paragraph → awardee(s), amount, ceiling language, kind new / modification /
+  option / ceiling_increase, multiple-award and IDIQ flags, sole-source language, offers received,
+  completion → term months, agency header, contract number, small-business `*`); the contractor
+  map (`config/contractors.yaml`, ~440 human-edited prefixes with point-in-time renames `until` /
+  `successor` / `from`, CIKs for delisted tickers, `null` for known private / JV / foreign /
+  nonprofit / government-owned; EDGAR exact-name fallback); live sizing (Finnhub `profile2` cap,
+  SEC companyfacts trailing-FY revenue); `DodDigestFetcher` (RSS → proxy → parse → resolve → size →
+  one RawItem per award, drains the evening pending file first, self-throttles 15 min);
+  `FpdsCivilianFetcher` (public ATOM, same-day civilian actions, DoD excluded — withheld 90 days
+  there); `CombinedAwardsFetcher` behind the router. Tiers are RELATIVE: research = new + single
+  awardee + award/cap ≥ 1%; measure (0.2–1%, or any modification / multi-award / unsized) and
+  below_floor (<0.2%, the control) are measurement-only rows with their own codes
+  (`award_measurement`, `award_below_floor`); unmapped / small-business / non-public awardees die as
+  `no_instrument` with the resolution reason in the content. Every row carries the determinants as
+  labelled lines the funnel parses back (`audit.records.snapshot_gov_award` → `FunnelEntry.gov_award`).
+- Loop: a source that names its own `measurement_code` keeps it. Registry: family
+  `government_awards`; the two codes are measurement codes (outside convergence). Scoring facet
+  `tier|kind|mcap` with ruled priors (in-sample defaults, flagged ungrounded). Pooled dispatch.
+- Forward engine OPEN SPLIT (ruling 1c): every row now carries the next-session open after the
+  observation date and per-mark `open_return_pct` / `open_excess_pct`; rows computed before the
+  split recompute once (`open_checked`). Weekly: "Government contract awards by subtype" — tier,
+  kind, single vs multi/IDIQ, ceiling stated, sole-source, military/civilian, feed, award/cap band,
+  awardee cap band, the PRE-REGISTERED RULE slice — each at 1/5/20/60d with close→close beside
+  next-open→close, plus the pre-drift where the cache can say it and the research verdict codes.
+- Research prompt: an award branch (buyer's announcement; timing per feed; the determinants are
+  data; weigh against size and backlog, not headline dollars; priced_in MANDATORY; decline for
+  demonstrated movement, never elapsed time). Two golden cases from the first live day (AMTM
+  digest research-tier; MCK FPDS research-tier).
+- Evening one-shot `python -m orchestrator contracts-evening` (+ `ops/vps/agentic-contracts.{service,timer}`,
+  17:05 ET, install needs root): reads the fresh digest, writes the free rows the same evening,
+  stashes research-tier awards for the open. The morning fetcher is self-sufficient without it.
+- Backtest `python -m orchestrator contracts-backtest --digests DIR [--out report.json]`: the
+  pre-registered groups, point-in-time caps (SEC shares on/before the day × that day's close),
+  open split, pre-drift, gap, resolution rate by year, ceiling audit, top unresolved names.
+- Tests: `tests/test_contracts.py` (13), pins updated in test_dispatch_scoring / test_prefilter /
+  test_quiver / test_x; suite green on the droplet (scratch clone, scratch source first on the path —
+  the venv's editable install points at the production checkout, so `python -m orchestrator` in a
+  scratch clone needs `PYTHONPATH=<scratch>/src`; recorded here because the first golden launch
+  silently ran the production code).
+
+**Live validation (2026-10-06, droplet, production stack, no LLM):** RSS 30 digests; Oct 1 digest
+54 awards → 33 items: research 1 (Amentum $79M sole-source task order, 1.77% of a $4.46B cap, 0.55%
+of revenue), measure 8 (the $4.22B TRANSCOM multi-award IDIQ pool, one row per carrier — JBLU at
+275% of cap is exactly the ceiling case the audit flags), below_floor 2, no_instrument 22 (20
+unresolved, 2 non-public); FPDS live: 22 actions, 16 DoD excluded, research 1 (McKesson $1.16B VA
+award, 1.09% of cap), measure 1 (SAIC State Dept modification). Finnhub and SEC lookups live.
+**Live round trip (production ResearchPass, AMTM golden case, $0.37):** prompt rendered the award
+frame and the 112h age; verdict `no_position/88`, horizon days, priced_in measured from real prints
+(−1.84% first session, ~−1.3% net; "the 1.77% ratio is inflated by a market cap down ~37% since
+September 2024; $33.8M/yr against $14.4B revenue is immaterial") — the model used the frame exactly
+as intended and declined honestly. Golden grade PASS.
+**Golden replay (29 cases, production path, ~$7):** **27 PASS, 0 FAIL, 2 DRIFT** — both drifts
+are congressional cases the award prompt branch never touches, recorded for human review as the
+ritual requires: `pelosi-uber-priced-in` long/62 (boundary second pass long/62, UPHELD) where the
+case expects a decline, and `moskowitz-amat-max-lag` no_position/28 below the case's confidence
+band. The two award cases pass (AMTM no_position/90, MCK no_position/90). Operational note: the
+whole-set `golden` invocation hung idle (3 s CPU in 36 min, no sockets) in the scratch clone and
+was killed; the per-case loop the 2026-09-18 launcher used ran clean, four workers in parallel.
+**Headless Chromium (ruling 1a):** installed on the droplet without root; `chromium-headless-shell`
+fails to LAUNCH for missing system libraries (`playwright install-deps` needs root) — it never
+reached Akamai. Staying on the proxy as ruled; the test can be repeated after a root install.
+**Partial backtest (588 digests 2019-01-02..2021-05-10, harvest still running):** rule group 62
+events / 25 tickers: next-open→t+5 **+1.32 mean, +0.90 median, hit 61%**, ticker-weighted +1.41;
+t+1 +0.55; t+20 +1.45 (54%); pre-drift +0.27 (no leakage), gap +0.11. Modifications −0.21 (t+5),
+new-single-below-1% −0.36, multi/IDIQ/ceiling +0.16. By year 2019 +0.26 / 2020 +1.71 / 2021 +2.08;
+small caps +3.37 (n=16); competed/unstated +2.28 vs sole-source −0.01; Army +3.00, Navy −0.02.
+Resolution 28–36% of ≥$50M awards (the rest: 15% small-business, 10% known non-public, ~38%
+unresolved — construction JVs, private contractors, a Bell-Boeing JV). Point-in-time cap resolved
+for 993 of 1,127 mapped events. Not the criterion yet (n<100, <4 years); the full run follows.
+
 ### RULINGS ON THE FIVE REPORTS (2026-10-06) — accepted; build order; backtest PRE-REGISTRATION; the VST finding
 
 **Ruled (human, 2026-10-06, after the reports below):** verdicts are the binding constraint; contract

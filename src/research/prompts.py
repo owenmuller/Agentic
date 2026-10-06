@@ -432,6 +432,38 @@ def build_user_prompt(
             "forced departure and a strong appointment are different theses; say which "
             "and why. Form your own view of the company and assign your own confidence."
         )
+    elif signal.source_id == "gov_contract_awards":
+        # Government contract awards (human ruling 2026-10-06): the buyer's
+        # announcement, published after the close (DoD digest, 17:00 ET) or
+        # intraday (FPDS, civilian agencies). The literature's average award
+        # effect is ~0; the determinants that matter are stamped as data.
+        feed = str(signal.metadata.get("feed", ""))
+        timing = (
+            "The DoD digest posts at 17:00 ET, AFTER the close: the first tradeable "
+            "print is the next open, and by the time you read this the overnight "
+            "and pre-market have had it."
+            if feed == "dod_digest"
+            else "FPDS actions post the same day for civilian agencies, usually hours "
+            "after signature; the awardee's own press release may have preceded it."
+        )
+        guidance = (
+            "This is a GOVERNMENT CONTRACT AWARD — the purchasing agency's own "
+            f"announcement, not a filing by anyone with a position. {timing} The "
+            "content states the facts that history says decide whether an award "
+            "moves a stock: the award amount relative to the awardee's MARKET CAP and "
+            "trailing REVENUE (a $4B award to a $20B company is an event; the same award "
+            "to a $150B prime is noise), whether it is a NEW award or a modification / "
+            "option exercise / ceiling increase, whether it is a multiple-award or IDIQ "
+            "vehicle (a ceiling shared among several awardees is not revenue), whether "
+            "any ceiling figure is stated beside the obligated amount, sole-source "
+            "language, the agency, and the term. Weigh the award against the awardee's "
+            "size and backlog, not against the headline dollars; a modification or an "
+            "IDIQ pool ceiling rarely changes what the company earns. The announcement "
+            "is public before you read it: priced_in_analysis is MANDATORY and must "
+            "state what has moved since publication — decline for demonstrated movement, "
+            "never for elapsed time. Form your own view of the company and assign your "
+            "own confidence; the award is an input, not a verdict."
+        )
     elif signal.signal_class is SignalClass.CLASS_2_MOMENTUM and signal.metadata.get(
         "form", ""
     ).startswith("SCHEDULE 13D"):

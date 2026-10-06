@@ -128,6 +128,28 @@ class ThemeEtfConfig(_Strict):
     stems: tuple[str, ...]
 
 
+class ContractAwardsConfig(_Strict):
+    """Relative-size tiers for the government contract awards source (human
+    ruling 2026-10-06): the PRIMARY filter is award / market cap, not dollars.
+    At or above ``research_min`` (new award, single awardee) a candidate
+    researches; at or above ``measure_min`` it is a measurement-only row; below
+    that it is a measurement-only row with its own code (the control group).
+    ``parser_floor_usd`` only keeps sub-threshold paragraphs out of the funnel."""
+
+    research_min: Decimal = Field(default=Decimal("0.01"), gt=Decimal("0"), lt=Decimal("1"))
+    measure_min: Decimal = Field(default=Decimal("0.002"), gt=Decimal("0"), lt=Decimal("1"))
+    parser_floor_usd: Decimal = Field(default=Decimal("50000000"), ge=Decimal("0"))
+    #: FPDS civilian feed: lowest obligated amount queried.
+    fpds_min_obligated_usd: Decimal = Field(default=Decimal("25000000"), ge=Decimal("0"))
+    fpds_enabled: bool = True
+
+    @model_validator(mode="after")
+    def _ordered(self) -> "ContractAwardsConfig":
+        if self.measure_min > self.research_min:
+            raise ValueError("contract_awards.measure_min must not exceed research_min")
+        return self
+
+
 class SourceConfig(_Strict):
     id: str
     platforms: tuple[str, ...] = ()
@@ -223,6 +245,8 @@ class SourceConfig(_Strict):
     #: What this feed costs per month, in dollars. Attribution prorates it against the
     #: class's P&L: a signal class must out-earn its own feed, and the weekly report
     #: is where that verdict lives. Zero for free feeds and for sources not yet built.
+    #: Government contract awards (human ruling 2026-10-06): relative-size tiers.
+    contract_awards: Optional[ContractAwardsConfig] = None
     monthly_cost: Decimal = Field(default=Decimal("0"), ge=Decimal("0"))
     #: When this source started costing money — normally the day it was wired
     #: (human ruling 2026-08-28). Attribution bills a feed only from this date,

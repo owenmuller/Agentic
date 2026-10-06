@@ -56,6 +56,7 @@ from signals import (
     SourceRouter,
     XRecentSearchFetcher,
 )
+from orchestrator.contracts_feed import build_awards_fetcher, pending_path_for
 
 from execution.alerts import Alerter
 from execution.atr import AtrSource
@@ -302,6 +303,15 @@ def _attribution_text(checks) -> str:
         position_betas=tuple(position_betas),
     )
     sections.append(report.render())
+    # Deployment is VERDICT-limited (rulings 2026-10-06): the weekly says so in
+    # numbers — passes, long verdicts, approvals, long fates — right under the
+    # headline, so a thin book is never read as a sizing or budget problem.
+    try:
+        from orchestrator.ops import deployment_line
+
+        sections.append(deployment_line(checks))
+    except Exception as error:  # noqa: BLE001 - a line must never sink the report
+        sections.append(f"judged deployment line unavailable: {error}")
 
     # Research upstream errors (ruling 2026-09-03): the code-execution 400 on
     # the opus search phase is accepted as an intermittent typed rejection and
@@ -758,6 +768,7 @@ def run() -> int:
     form13d = None
     quiver = None
     x_search = None
+    contracts = None
     prices = None
     options_chain = None
     try:
@@ -800,6 +811,14 @@ def run() -> int:
         # Item-filtered 8-Ks (human ruling 2026-09-15): Class 1 cadence, the
         # fetcher self-throttles to the FTS index's own refresh pace.
         form8k = Form8KFetcher(seen=seen_for("form_8k"))
+        # Government contract awards (human ruling 2026-10-06): the DoD digest
+        # through the reader proxy (+ the evening one-shot's pending file) and
+        # the FPDS civilian feed, behind one callable. None when unconfigured.
+        contracts = build_awards_fetcher(
+            checks.signals_config,
+            seen=seen_for("gov_contract_awards"),
+            pending_path=pending_path_for(default_data_dir()),
+        )
         # Session-gap first-poll lookback (ruling 2026-08-26): the old fixed
         # 15-minute window lost every post made between sessions. Floor 15min
         # (a mid-session bounce re-reads almost nothing), cap 24h (X bills per
@@ -852,6 +871,13 @@ def run() -> int:
                 "form_13d": logged("form_13d", form13d),
                 # Item-filtered 8-Ks (human ruling 2026-09-15): Class 1.
                 "form_8k": logged("form_8k", form8k),
+                # Government contract awards (human ruling 2026-10-06): Class 1,
+                # measurement-first; routed only when the source is configured.
+                **(
+                    {"gov_contract_awards": logged("gov_contract_awards", contracts.fetcher)}
+                    if contracts is not None
+                    else {}
+                ),
                 "nolimitgains": logged("nolimitgains", x_search),
                 # Options-flow free taste (human-authorized 2026-08-25).
                 "unusual_whales": logged("unusual_whales", x_search),
@@ -1040,6 +1066,8 @@ def run() -> int:
             quiver.close()
         if x_search is not None:
             x_search.close()
+        if contracts is not None:
+            contracts.close()
         # Let queued alerts drain before the process exits — bounded, so a dead
         # SMTP host cannot hold the shutdown hostage.
         alerter.close()
@@ -1328,8 +1356,98 @@ def overreaction() -> int:
     return 0
 
 
+def contracts_evening() -> int:
+    """Government contract awards evening one-shot (human ruling 2026-10-06):
+    read today's DoD digest at 17:05 ET while it is fresh, write the free
+    measurement rows now, stash the research-tier awards for the next
+    session's first poll. No LLM, no order.
+
+        python -m orchestrator contracts-evening
+    """
+    import uuid as _uuid
+
+    from orchestrator.contracts_feed import run_evening
+
+    logging.basicConfig(level=logging.WARNING)
+    checks = preflight()
+    stack = build_awards_fetcher(
+        checks.signals_config,
+        seen=(),
+        pending_path=pending_path_for(checks.audit.path.parent),
+        clock=checks.clock,
+    )
+    if stack is None:
+        print("gov_contract_awards is not configured in signals.yaml; nothing to do")
+        return 0
+    from audit.records import DecisionRecord as _Decision, StageRejectionRecord as _Stage
+
+    recorded = {
+        record.signal.external_id
+        for record in checks.audit.records()
+        if isinstance(record, (_Decision, _Stage))
+        and record.signal.source_id == "gov_contract_awards"
+        and record.signal.external_id
+    }
+    try:
+        report = run_evening(
+            stack=stack,
+            config=checks.signals_config,
+            audit=checks.audit,
+            id_factory=lambda: _uuid.uuid4().hex[:16],
+            clock=checks.clock,
+            recorded_external_ids=recorded,
+        )
+    finally:
+        stack.close()
+    print(report.render())
+    return 0
+
+
+def contracts_backtest() -> int:
+    """The pre-registered contract-awards backtest (SESSION_NOTES 2026-10-06)
+    over harvested digest HTML, through the production parser, with
+    point-in-time market caps and the open split. Read-only, offline except
+    bars and SEC facts.
+
+        python -m orchestrator contracts-backtest --digests DIR [--out report.json]
+    """
+    from orchestrator.contracts_backtest import run_backtest
+
+    logging.basicConfig(level=logging.WARNING)
+    args = sys.argv[2:]
+    digests = None
+    out = None
+    index = 0
+    while index < len(args):
+        if args[index] == "--digests" and index + 1 < len(args):
+            digests = args[index + 1]
+            index += 2
+        elif args[index] == "--out" and index + 1 < len(args):
+            out = args[index + 1]
+            index += 2
+        else:
+            print(f"unknown argument {args[index]!r}", file=sys.stderr)
+            return 2
+    if digests is None:
+        print("usage: python -m orchestrator contracts-backtest --digests DIR [--out report.json]", file=sys.stderr)
+        return 2
+    from pathlib import Path as _Path
+
+    bars = AlpacaDailyBars(feed="sip")
+    try:
+        text = run_backtest(_Path(digests), bars=bars.bars, out_path=_Path(out) if out else None)
+    finally:
+        bars.close()
+    print(text)
+    return 0
+
+
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "check"
+    if command == "contracts-evening":
+        return contracts_evening()
+    if command == "contracts-backtest":
+        return contracts_backtest()
     if command == "check":
         return check()
     if command == "health":
@@ -1358,7 +1476,8 @@ def main() -> int:
         return overreaction()
     print(
         f"unknown command {command!r}: expected check, health, run, attribution, "
-        f"weekly, replay, golden, halt, resume, stress, or overreaction",
+        f"weekly, replay, golden, halt, resume, stress, overreaction, "
+        f"contracts-evening, or contracts-backtest",
         file=sys.stderr,
     )
     return 2

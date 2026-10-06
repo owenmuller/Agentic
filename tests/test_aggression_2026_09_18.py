@@ -193,7 +193,7 @@ def test_class_1_leashes_clamp_into_the_fast_class_bounds():
     config = OrchestratorConfig.load()
     exits = config.exits
     assert exits.fast_class_leash_bounds is not None
-    assert exits.leash_bounds_for("weeks", "class_1").floor == 7
+    assert exits.leash_bounds_for("weeks", "class_1").floor == 5  # 14 -> 7 (2026-09-18) -> 5 (2026-10-06)
     assert exits.leash_bounds_for("weeks", "class_2").floor == 14
     assert exits.leash_bounds_for("weeks", "").floor == 14  # unstamped = pre-ruling
     assert exits.leash_bounds_for("days", "class_1").floor == 3

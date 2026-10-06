@@ -69,13 +69,17 @@ def family_of(source_id: str, signal_class: SignalClass) -> str:
         # Issuer's own disclosures (ruling 2026-09-15): a sixth family — not an
         # insider's trade, not a fund's stake, not a post.
         return "issuer_filings"
+    if source_id == "gov_contract_awards":
+        # Government contract awards (ruling 2026-10-06): the buyer's
+        # announcement, not the issuer's, not a filing by anyone with a stake.
+        return "government_awards"
     return "x_callers"
 
 logger = logging.getLogger("orchestrator.registry")
 
 #: Prefilter codes of measurement-only rows: outside convergence by ruling.
 MEASUREMENT_CODES: frozenset[str] = frozenset(
-    {"bearish_measurement", "overreaction_candidate"}
+    {"bearish_measurement", "overreaction_candidate", "award_measurement", "award_below_floor"}
 )
 
 

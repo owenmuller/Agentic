@@ -18,6 +18,7 @@ from audit.records import RejectedStage, SignalSnapshot
 from orchestrator.prefilter import ResearchPreFilter
 from research.triage import build_triage_prompt
 from signals import SignalsConfig
+from config_overrides import pre_demotion_signals_config
 from signals.records import Classification, Priority, Signal, SignalClass, sanitize_invisible
 from test_orchestrator import (
     NOW,
@@ -429,7 +430,9 @@ def test_unusual_whales_ships_with_the_governance_it_was_ruled_in_with(
     assert source.copy_trade is False
     assert source.treatment == "thesis_input_only"
     congressional = signals_config.source("class_2", "congressional_disclosures")
-    assert congressional.daily_research_cap == 5
+    # 5 -> 1 (REWORK ruling 2026-10-06): the disclosure source measured negative
+    # across thousands of rows; one pass a day keeps the measurement alive.
+    assert congressional.daily_research_cap == 1
     assert congressional.watchlist == ()
 
 
@@ -895,6 +898,8 @@ def test_the_big_old_disclosure_dispatches_before_the_small_fresh_one(
 
     from test_orchestrator import REPORT, structured
 
+    signals_config = pre_demotion_signals_config()  # two congressional slots: the weight mechanism, not the 2026-10-06 cap
+
     started = build(
         tmp_path,
         RiskLimits.load(),
@@ -972,6 +977,7 @@ def test_aged_out_capped_fires_only_after_a_prior_cap(tmp_path, signals_config):
 
     from test_orchestrator import REPORT, FakeClock, structured
 
+    signals_config = pre_demotion_signals_config()  # five congressional slots: the aged-out mechanism, not the 2026-10-06 cap
     fresh = "2026-08-15"  # 2 days old at NOW; 17 days old after the restart
     day_one = [
         disclosure_item(f"row-{n}", f"TK{n}", "$100,001 - $250,000", fresh)

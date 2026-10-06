@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 import statistics
 from datetime import date, timedelta
+from decimal import Decimal
 from typing import Iterable, Optional
 
 from forward.funnel import FunnelEntry
@@ -695,7 +696,151 @@ def render_forward_report(
             "auto-tune.",
         ]
     )
+    lines.extend(gov_award_section(with_ticker, rows))
     return "\n".join(lines)
+
+
+def _open_excess_values(
+    entries: Iterable[FunnelEntry],
+    rows: dict[tuple[str, date], ForwardRow],
+    horizon: int,
+) -> list[float]:
+    """Excess from the NEXT-SESSION OPEN (ruling 2026-10-06), where the row has it."""
+    values: list[float] = []
+    for entry in entries:
+        ticker = entry.primary_ticker
+        if ticker is None:
+            continue
+        row = rows.get((ticker.upper(), entry.observed_at.date()))
+        if row is None:
+            continue
+        mark = row.marks.get(horizon)
+        if mark is None or mark.open_excess_pct is None:
+            continue
+        values.append(float(mark.open_excess_pct))
+    return values
+
+
+def _pre_drift_values(
+    entries: Iterable[FunnelEntry],
+    rows: dict[tuple[str, date], ForwardRow],
+) -> list[float]:
+    """Close(t-5) -> close(t0) excess, read off the symbol's OWN earlier rows
+    where the funnel happens to hold one five calendar days before; otherwise
+    absent. The backtest computes it directly from bars; the weekly reports
+    what the cache can say."""
+    values: list[float] = []
+    for entry in entries:
+        ticker = entry.primary_ticker
+        if ticker is None:
+            continue
+        earlier = rows.get((ticker.upper(), entry.observed_at.date() - timedelta(days=5)))
+        if earlier is None:
+            continue
+        mark = earlier.marks.get(5)
+        if mark is None or mark.excess_pct is None:
+            continue
+        values.append(float(mark.excess_pct))
+    return values
+
+
+def _award_line(
+    label: str,
+    members: list[FunnelEntry],
+    rows: dict[tuple[str, date], ForwardRow],
+    horizon: int,
+) -> str:
+    """Close-to-close beside open-to-close at one horizon: the gap nobody
+    could trade is the difference between the two."""
+    close_values = _excess_values(members, rows, horizon)
+    open_values = _open_excess_values(members, rows, horizon)
+    if not close_values and not open_values:
+        return f"  {label} {horizon}d: no resolved marks yet"
+
+    def part(name: str, values: list[float]) -> str:
+        if not values:
+            return f"{name} --"
+        hit = sum(1 for v in values if v > 0) / len(values)
+        return (
+            f"{name} mean {statistics.mean(values):+.2f}% med "
+            f"{statistics.median(values):+.2f}% hit {hit:.0%} (n={len(values)})"
+        )
+
+    tickers = len({e.primary_ticker for e in members if e.primary_ticker})
+    return (
+        f"  {label} {horizon}d: {part('close->close', close_values)} | "
+        f"{part('next-open->close', open_values)} | tickers={tickers}"
+    )
+
+
+def gov_award_section(
+    entries: list[FunnelEntry], rows: dict[tuple[str, date], ForwardRow]
+) -> list[str]:
+    """Government contract awards by subtype (ruling 2026-10-06): every award
+    in the funnel, researched or not, by the determinants the literature names
+    — relative size, new vs modification, multiple-award / IDIQ / ceiling,
+    sole-source, agency, awardee size, feed — with the tradeable next-open
+    path beside close-to-close. Measurement-first: this table, not the
+    category average, decides whether a trading path is built."""
+    awards = [e for e in entries if e.source_id == "gov_contract_awards" and e.gov_award is not None]
+    if not awards:
+        return []
+    lines = [
+        "",
+        "Government contract awards by subtype (ruling 2026-10-06, measurement-first; "
+        "excess vs SPY; the digest posts after the close, so next-open->close is the "
+        "tradeable path and close->close includes the gap):",
+    ]
+    facts = lambda e: e.gov_award  # noqa: E731 - local alias for readability
+    slices: list[tuple[str, list[FunnelEntry]]] = [
+        ("all awards", awards),
+        ("tier research", [e for e in awards if facts(e).tier == "research"]),
+        ("tier measure", [e for e in awards if facts(e).tier == "measure"]),
+        ("tier below_floor (control)", [e for e in awards if facts(e).tier == "below_floor"]),
+        ("new award", [e for e in awards if facts(e).kind == "new"]),
+        ("modification / option / ceiling", [e for e in awards if facts(e).kind != "new"]),
+        ("single awardee, not IDIQ", [e for e in awards if not facts(e).multiple_award and not facts(e).idiq]),
+        ("multiple-award or IDIQ", [e for e in awards if facts(e).multiple_award or facts(e).idiq]),
+        ("ceiling value stated", [e for e in awards if facts(e).ceiling_stated]),
+        ("sole-source language", [e for e in awards if facts(e).sole_source]),
+        ("military", [e for e in awards if facts(e).military]),
+        ("civilian", [e for e in awards if not facts(e).military]),
+        ("feed dod_digest", [e for e in awards if facts(e).feed == "dod_digest"]),
+        ("feed fpds", [e for e in awards if facts(e).feed == "fpds"]),
+    ]
+    for band in ("<0.2%", "0.2-1%", "1-5%", ">=5%", "unknown"):
+        slices.append((f"award/mcap {band}", [e for e in awards if facts(e).rel_band == band]))
+    for band in ("small", "mid", "mega", "unknown"):
+        slices.append((f"awardee cap {band}", [e for e in awards if facts(e).mcap_band == band]))
+    slices.append(
+        (
+            "PRE-REGISTERED RULE: new + single + >=1% of cap",
+            [e for e in awards if facts(e).kind == "new" and not facts(e).multiple_award and facts(e).rel_mcap is not None and facts(e).rel_mcap >= Decimal("1")],
+        )
+    )
+    for label, members in slices:
+        if not members:
+            continue
+        lines.append(f"  {label}: {len(members)} rows")
+        for horizon in (1, 5, 20, 60):
+            lines.append(_award_line("   ", members, rows, horizon))
+    pre = _pre_drift_values(awards, rows)
+    if pre:
+        lines.append(_stat_line("  pre-announcement drift t-5->t0 (where the cache holds the earlier row)", pre))
+    researched = [e for e in awards if e.confidence is not None]
+    lines.append(
+        f"  researched: {len(researched)} rows; verdict codes: "
+        + ", ".join(f"{code}={n}" for code, n in sorted(_count_codes(researched).items()))
+    )
+    return lines
+
+
+def _count_codes(entries: Iterable[FunnelEntry]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for entry in entries:
+        key = entry.code or entry.bucket
+        out[key] = out.get(key, 0) + 1
+    return out
 
 
 def wanted_pairs(entries: list[FunnelEntry]) -> set[tuple[str, date]]:

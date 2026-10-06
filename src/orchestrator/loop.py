@@ -40,6 +40,7 @@ import math
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone, timedelta
+from decimal import Decimal
 from typing import TYPE_CHECKING, Callable, Optional, Sequence
 
 from audit.log import AuditLog
@@ -51,7 +52,9 @@ from signals.scanners import Scanner
 
 from orchestrator.budget import ResearchBudget
 from orchestrator.config import DispatchConfig, ResearchClassCaps
+from orchestrator.hurdle import Opportunity
 from orchestrator.scoring import DispatchScorer
+from risk_gate.state import Sleeve
 from signals.classification import extract_tickers
 from orchestrator.exits import ExitEngine
 from orchestrator.pipeline import PipelineResult, SignalPipeline
@@ -180,6 +183,13 @@ class TradingLoop:
         #: key and the release windows for pooled filing sources. None/off =
         #: the dispatch-weight sort and immediate dispatch, exactly as before.
         self._scorer = scorer
+        #: Positive-scored candidates in the current tick's dispatch queue —
+        #: the queue-pressure half of the opportunity set the reward hurdle
+        #: may read (ADAPTIVE STANDARDS ruling 2026-10-06). Deployment is the
+        #: other half; nothing about P&L or the calendar is ever handed over.
+        self._queue_positive = 0
+        if hasattr(pipeline, "set_opportunity"):
+            pipeline.set_opportunity(self._current_opportunity)
         self._dispatch = dispatch if (dispatch is not None and dispatch.scored) else None
         self._pooled_sources = frozenset(dispatch.pooled_sources) if self._dispatch else frozenset()
         self._next_release: Optional[datetime] = None
@@ -244,6 +254,29 @@ class TradingLoop:
         return self._running
 
     # -- one pass -----------------------------------------------------------------
+
+    def _current_opportunity(self) -> Optional[Opportunity]:
+        """The opportunity set the reward hurdle may read (ADAPTIVE STANDARDS
+        ruling 2026-10-06): judged deployment and queue pressure. Computed from
+        the gate's exposure and the dispatch queue — never from P&L, a return
+        target, or elapsed time. A read failure is the base hurdle (None)."""
+        try:
+            sleeve_nav = self._gate.sleeve_nav(Sleeve.EQUITY)
+            deployed = self._gate.state.sleeve_exposure(Sleeve.EQUITY)
+            fraction = (deployed / sleeve_nav) if sleeve_nav > 0 else Decimal("0")
+            open_positions = sum(1 for p in self._exits.tracked if not getattr(p, "is_option", False))
+        except Exception:  # noqa: BLE001 - an unreadable book is the base hurdle
+            return None
+        target = 20
+        rr = getattr(getattr(self._pipeline, "_rr_config", None), "target_positions", None)
+        if isinstance(rr, int) and rr > 0:
+            target = rr
+        return Opportunity(
+            deployed_fraction=fraction,
+            positive_candidates=self._queue_positive,
+            open_positions=open_positions,
+            target_positions=target,
+        )
 
     def _release_pooled(
         self, pending: list[Signal], now: datetime
@@ -411,6 +444,15 @@ class TradingLoop:
             pending, held_back = self._release_pooled(pending, sort_now)
             self._deferred = held_back
 
+        # Queue pressure for the reward hurdle (ruling 2026-10-06): how many
+        # candidates with a positive dispatch score are waiting right now.
+        if self._scorer is not None:
+            self._queue_positive = sum(
+                1 for signal in pending if self._scorer.score(signal, sort_now).total > 0
+            )
+        else:
+            self._queue_positive = len(pending)
+
         held = self._exits.held_symbols()
         dispatch_now = self._clock()
         # Filer events first (ruling 2026-09-01), on the raw drained queue: a new
@@ -458,6 +500,12 @@ class TradingLoop:
                         "cluster": "no_cluster",
                         "measurement": "bearish_measurement",
                     }.get(rule, "pre_filter")
+                    # A source that names its own measurement code (contract
+                    # awards, ruling 2026-10-06: award_measurement /
+                    # award_below_floor) keeps it, so the forward report
+                    # grades the tiers apart.
+                    if rule == "measurement" and signal.metadata.get("measurement_code"):
+                        code = str(signal.metadata["measurement_code"])
                     if (
                         rule == "report_staleness"
                         and signal.external_id

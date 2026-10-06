@@ -43,6 +43,7 @@ from signals.filers import canonical_credibility_key
 from audit.records import (  # noqa: E402 - keep the original import block intact
     snapshot_8k_items,
     snapshot_form4_qualification,
+    snapshot_gov_award,
     snapshot_tickers,
     snapshot_transaction,
 )
@@ -96,6 +97,9 @@ class FunnelEntry:
     #: An add decision that ADDED (ruling 2026-09-16): the entry joined a held
     #: position's lots instead of opening one. Holds carry their own codes.
     is_add: bool = False
+    #: Government contract award facts (ruling 2026-10-06); None on every
+    #: other source. Parsed from the content the fetcher wrote.
+    gov_award: Optional[object] = None
 
     @property
     def primary_ticker(self) -> Optional[str]:
@@ -134,6 +138,7 @@ def funnel_entries(
                     tickers=snapshot_tickers(record.signal),
                     form4_qualification=snapshot_form4_qualification(record.signal),
                     form8k_items=snapshot_8k_items(record.signal),
+                    gov_award=snapshot_gov_award(record.signal),
                     bucket="traded" if record.was_approved else "gate_rejected",
                     code="" if record.was_approved else (record.gate.rejection_code or ""),
                     expression_tag=(
@@ -168,6 +173,7 @@ def funnel_entries(
                     tickers=snapshot_tickers(record.signal),
                     form4_qualification=snapshot_form4_qualification(record.signal),
                     form8k_items=snapshot_8k_items(record.signal),
+                    gov_award=snapshot_gov_award(record.signal),
                     bucket=bucket,
                     code=record.code,
                     confidence=(

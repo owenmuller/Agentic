@@ -184,10 +184,11 @@ def test_idle_cash_above_the_buffer_sweeps_into_the_etf(
     )
     sweeper = started.loop.sweeper
     assert sweeper is not None
-    # Buffer on a quiet $100K NAV: 55000 x 0.25 + 15000 x 0.15 + 0 + 2500
-    # (55/15/30/0 allocation, rulings 2026-09-18/21; judged daily deployment 0.25).
+    # Buffer on a quiet $100K NAV: 55000 x 0.35 + 15000 x 0.15 + 0 + 2500
+    # (55/15/30/0 allocation, rulings 2026-09-18/21; judged daily deployment
+    # 0.25 -> 0.35 on 2026-10-06, so the floor rose 18,500 -> 24,000).
     # No SPY quote in this session, so the baseline sleeve owes nothing yet.
-    assert sweeper.buffer() == Decimal("18500.00")
+    assert sweeper.buffer() == Decimal("24000.00")
 
     report = started.loop.tick()
     assert report.sweep_orders == 1
@@ -197,8 +198,9 @@ def test_idle_cash_above_the_buffer_sweeps_into_the_etf(
     report = started.loop.tick()  # the buy settles
     position = started.gate.state.position(("cash_management", "SGOV"))
     assert position is not None
-    # 81500 of excess at a 100.40 limit -> 811 whole shares on this venue.
-    assert position.quantity == Decimal("811")
+    # 76,000 of excess at a 100.40 limit -> 756 whole shares on this venue
+    # (81,500 -> 811 before the floor rose to 24,000 on 2026-10-06).
+    assert position.quantity == Decimal("756")
     assert len(sweeper.lots) == 1
     # NAV is unchanged by parking: cash became ETF at cost.
     assert started.gate.state.nav == Decimal("100000")
@@ -283,7 +285,7 @@ def test_swept_lots_survive_a_restart_in_their_own_sleeve(
         tmp_path, limits, signals_config, research_config, clock=clock
     )
     first.loop.tick()
-    first.loop.tick()  # settle: 811 shares at 100.40
+    first.loop.tick()  # settle: 756 shares at 100.40 (811 before the 24,000 floor, 2026-10-06)
     first.loop.shutdown()
 
     restarted = start(
@@ -291,10 +293,10 @@ def test_swept_lots_survive_a_restart_in_their_own_sleeve(
         prices=MutablePrices(SGOV="100.40"),
         llm_client=RoutingLLM(),
         adapter=FakeBroker(
-            cash=Decimal("18575.60"),
+            cash=Decimal("24097.60"),
             positions=[
                 BrokerPosition(
-                    "SGOV", Decimal("811"), Decimal("81424.40"), Decimal("81424.40")
+                    "SGOV", Decimal("756"), Decimal("75902.40"), Decimal("75902.40")
                 )
             ],
         ),
@@ -302,7 +304,7 @@ def test_swept_lots_survive_a_restart_in_their_own_sleeve(
         **restart_kwargs(tmp_path, limits, signals_config, research_config, clock),
     )
     position = restarted.gate.state.position(("cash_management", "SGOV"))
-    assert position is not None and position.quantity == Decimal("811")
+    assert position is not None and position.quantity == Decimal("756")  # 811 -> 756: floor 24,000 (2026-10-06)
     assert position.sleeve is Sleeve.CASH_MANAGEMENT
     # The judged sleeve holds none of it: no unmanaged-exposure warning, no
     # phantom equity position.
@@ -332,13 +334,13 @@ def test_the_exit_engine_ignores_sweep_lots_and_health_shows_parked_cash(
     with caplog.at_level(_logging.WARNING, logger="orchestrator.exits"):
         restarted = start(
             fetcher=feed(),
-            prices=MutablePrices(SGOV="100.45"),  # 811 x 0.05 = 40.55 accrued
+            prices=MutablePrices(SGOV="100.45"),  # 756 x 0.05 = 37.80 accrued (811 lots before the 24,000 floor)
             llm_client=RoutingLLM(),
             adapter=FakeBroker(
-                cash=Decimal("18575.60"),
+                cash=Decimal("24097.60"),
                 positions=[
                     BrokerPosition(
-                        "SGOV", Decimal("811"), Decimal("81464.95"), Decimal("81424.40")
+                        "SGOV", Decimal("756"), Decimal("75940.20"), Decimal("75902.40")
                     )
                 ],
             ),
@@ -351,8 +353,8 @@ def test_the_exit_engine_ignores_sweep_lots_and_health_shows_parked_cash(
     report = health_report(
         restarted.preflight, restarted.exits.tracked, RunLog(tmp_path / "run.log")
     )
-    assert "cash management (SGOV): 811 units parked" in report
-    assert "accrued +40.55" in report  # 81464.95 value - 81424.40 cost
+    assert "cash management (SGOV): 756 units parked" in report
+    assert "accrued +37.80" in report  # 756 x (100.45 - 100.40); 811 lots before the 24,000 floor
     assert "log agrees" in report
 
 
@@ -466,14 +468,14 @@ def test_an_unsweep_sizes_to_the_deficit_and_limits_at_the_bid(
     assert payload["qty"] == (deficit / Decimal("100.47")).quantize(
         Decimal("1"), rounding=ROUND_UP
     )
-    assert payload["qty"] == Decimal("34")
+    assert payload["qty"] == Decimal("32")  # 34 before the 24,000 floor (2026-10-06)
     assert payload["qty"] * payload["limit_price"] >= deficit
 
     started.loop.tick()  # the sell settles
     assert started.gate.state.cash >= sweeper.buffer()
     trail = started.audit.trail(sweeper.lots[0].decision_id)
     assert [f.side for f in trail.fills] == ["buy", "sell"]
-    assert trail.fills[-1].filled_quantity == Decimal("34")
+    assert trail.fills[-1].filled_quantity == Decimal("32")  # 34 before the 24,000 floor (2026-10-06)
 
 
 def test_without_a_bid_the_unsweep_limits_a_cent_under_the_ask(
@@ -532,11 +534,11 @@ def test_an_unsweep_cancelled_unfilled_at_the_close_is_released_and_retried(
     assert started.loop.tick().sweep_orders == 1
     exit_id = broker.submitted[-1].broker_order_id
     asked = broker.payloads[-1]["qty"]
-    assert asked == Decimal("34")
+    assert asked == Decimal("32")  # 34 before the 24,000 floor (2026-10-06)
     # While it works, health shows the quantity the order ASKED for, never 0.
     pending = [p for p in pending_settlement(started.audit) if p.side == "sell"]
     assert [(p.quantity, p.broker_order_id) for p in pending] == [(asked, exit_id)]
-    assert f"sell 34 SGOV (cash_management sleeve) order {exit_id}" in pending[0].describe()
+    assert f"sell 32 SGOV (cash_management sleeve) order {exit_id}" in pending[0].describe()
 
     broker.set_status(exit_id, OrderStatus(exit_id, "canceled", ZERO, None))
     broker.fill = "filled"
@@ -552,7 +554,7 @@ def test_an_unsweep_cancelled_unfilled_at_the_close_is_released_and_retried(
     # The cancelled attempt is gone from pending; the retry is pending until it settles.
     still = [p.broker_order_id for p in pending_settlement(started.audit) if p.side == "sell"]
     assert exit_id not in still and len(still) == 1
-    assert sweeper.lots[0].quantity == Decimal("811")  # nothing sold, still held
+    assert sweeper.lots[0].quantity == Decimal("756")  # nothing sold, still held (811 before the 24,000 floor)
     assert started.gate.state.reserved_cash == ZERO  # nothing left reserved
 
     started.loop.tick()  # the retry settles
@@ -589,10 +591,12 @@ def test_startup_recovery_clears_an_unsweep_the_venue_cancelled(
     assert [p.side for p in pending_settlement(first.audit)] == ["sell"]
 
     venue = FakeBroker(
-        cash=Decimal("14464.43"),
+        # 24,097.60 after the build less the 4,046.29 withdrawal; the 756-lot
+        # marked at 100.48 (811 / 81,489.28 before the 24,000 floor, 2026-10-06).
+        cash=Decimal("20051.31"),
         positions=[
             BrokerPosition(
-                "SGOV", Decimal("811"), Decimal("81489.28"), Decimal("81489.28")
+                "SGOV", Decimal("756"), Decimal("75962.88"), Decimal("75962.88")
             )
         ],
     )
@@ -609,7 +613,7 @@ def test_startup_recovery_clears_an_unsweep_the_venue_cancelled(
     release = [r for r in trail.stage_rejections if r.broker_order_id == exit_id]
     assert len(release) == 1 and "recovered at startup" in release[0].message
     assert pending_settlement(restarted.audit) == []
-    assert restarted.loop.sweeper.lots[0].quantity == Decimal("811")
+    assert restarted.loop.sweeper.lots[0].quantity == Decimal("756")  # 811 before the 24,000 floor (2026-10-06)
     # And the deficit is still there, so the first pass retries — at the bid.
     assert restarted.loop.tick().sweep_orders == 1
     assert venue.payloads[-1]["limit_price"] == Decimal("100.47")

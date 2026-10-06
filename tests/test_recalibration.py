@@ -105,14 +105,16 @@ def short_dated_config():
 
 def test_the_shipped_caps_carry_the_recalibration(limits):
     sizing = limits.sizing
-    assert (sizing.size_for(50), sizing.size_for(71), sizing.size_for(86)) == (
-        Decimal("0.020"), Decimal("0.050"), Decimal("0.100")
+    # 50 sits in the new 45-55 band at 1% (ruling 2026-10-06); 56-70 keeps 2%.
+    assert (sizing.size_for(50), sizing.size_for(56), sizing.size_for(71), sizing.size_for(86)) == (
+        Decimal("0.010"), Decimal("0.020"), Decimal("0.050"), Decimal("0.100")
     )
     assert sizing.hard_cap == Decimal("0.10")
     sleeve = limits.equity_sleeve
     assert sleeve.max_single_position == Decimal("0.10")
-    assert sleeve.max_daily_deployment == Decimal("0.25")
-    assert sleeve.max_sector_exposure == Decimal("0.25")
+    # 0.25 -> 0.35 and 0.25 -> 0.30 (AGGRESSION RULING 2026-10-06, lever 1).
+    assert sleeve.max_daily_deployment == Decimal("0.35")
+    assert sleeve.max_sector_exposure == Decimal("0.30")
     assert sleeve.max_short_dated_premium_at_risk == Decimal("0.05")
     assert sleeve.max_options_premium_at_risk == Decimal("0.20")
     options = limits.options_selection

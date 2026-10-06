@@ -56,10 +56,13 @@ def report(confidence: int) -> ResearchReport:
     "confidence,expected",
     [
         (0, "0"),
-        (49, "0"),  # below the floor (risk-on calibration 2026-08-28: 55 -> 50)
+        (44, "0"),  # below the floor (55 -> 50 on 2026-08-28; 50 -> 45 on 2026-10-06)
+        (45, "0.010"),  # floor is inclusive; the 45-55 band sizes at 1% (2026-10-06)
+        (49, "0.010"),
         # Table 1/2.5/7% -> 2/5/10% (risk-on recalibration 2026-09-15).
-        (50, "0.020"),  # floor is inclusive: "< 50 | No trade" is explicit
-        (54, "0.020"),  # the band the calibration opened: small shot, not none
+        (50, "0.010"),
+        (54, "0.010"),
+        (55, "0.010"),  # boundary -> smaller band (Constraint #6)
         (56, "0.020"),
         (70, "0.020"),  # boundary -> smaller band (Constraint #6)
         (71, "0.050"),
@@ -75,10 +78,10 @@ def test_every_band_boundary(engine, confidence, expected):
 
 def test_below_the_floor_is_no_trade_not_a_token_position(engine):
     """CLAUDE.md: "Do not take token positions on weak signals.\""""
-    proposal = engine.propose_equity(report(49), EQUITY_SLEEVE_NAV)
+    proposal = engine.propose_equity(report(44), EQUITY_SLEEVE_NAV)
     assert proposal.capital == 0
     assert proposal.is_tradeable is False
-    assert "below the 50 floor" in proposal.rationale
+    assert "below the 45 floor" in proposal.rationale
 
 
 def test_capital_is_the_fraction_of_the_nav_it_was_given(engine):
@@ -91,7 +94,7 @@ def test_capital_is_the_fraction_of_the_nav_it_was_given(engine):
 def test_rounding_never_increases_exposure(engine):
     """An awkward NAV must round the dollars down, not to nearest."""
     proposal = engine.propose_equity(report(55), Decimal("1234.567"))
-    assert proposal.capital == Decimal("24.69")  # 2% = 24.69134, rounded down
+    assert proposal.capital == Decimal("12.34")  # 1% = 12.34567, rounded down (45-55 band, 2026-10-06)
     assert proposal.capital <= proposal.sleeve_nav * proposal.fraction_of_sleeve_nav
 
 
@@ -118,7 +121,7 @@ def test_option_at_maximum_confidence_is_capped_at_half_the_top_band(engine):
 
 
 def test_a_weak_signal_buys_no_options_either(engine):
-    assert engine.propose_option(report(49), EQUITY_SLEEVE_NAV).capital == 0
+    assert engine.propose_option(report(44), EQUITY_SLEEVE_NAV).capital == 0
 
 
 def test_option_capital_is_premium_at_risk(engine):
@@ -168,7 +171,7 @@ def test_the_same_confidence_sizes_differently_by_strategy_tag(engine):
 def test_confidence_still_gates_event_contracts(engine):
     """The strategy cap is a ceiling, not a floor — a weak signal still trades nothing."""
     proposal = engine.propose_event_contract(
-        report(49), PREDICTION_SLEEVE_NAV, EventStrategy.ARB
+        report(44), PREDICTION_SLEEVE_NAV, EventStrategy.ARB
     )
     assert proposal.capital == 0
 

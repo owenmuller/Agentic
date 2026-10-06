@@ -227,6 +227,45 @@ sources:
         prior: 0.5
   form_13f:
     fallback: 0.0
+  gov_contract_awards:
+    # Government contract awards (human ruling 2026-10-06). Ruled defaults
+    # from the 2026-07..10 in-sample read (218 mapped DoD events, excess vs
+    # SPY at five days): mid-cap awardee + new award >= 1% of market cap
+    # +2.3; primes and modifications ~0 or negative. In-sample, so every
+    # value here is a RULED default until the pre-registered backtest and the
+    # live forward rows ground it (priors --write at n >= 20).
+    fallback: 0.0
+    slices:
+      tier=research:
+        grounded: false
+        n: 0
+        note: 'ruled default: new award, single awardee, >= 1% of market cap'
+        prior: 0.5
+      tier=research|kind=new|mcap=mid:
+        grounded: false
+        n: 0
+        note: 'ruled default: the one subtype with a pulse in the 2026 in-sample read (+2.3 at 5d, n=16)'
+        prior: 1.0
+      tier=research|kind=new|mcap=small:
+        grounded: false
+        n: 0
+        note: 'ruled default: small-cap awardee, same sign as mid, thinner'
+        prior: 0.75
+      tier=research|kind=new|mcap=mega:
+        grounded: false
+        n: 0
+        note: 'ruled default: a prime winning a large award measured ~0 at every horizon'
+        prior: 0.0
+      tier=measure:
+        grounded: false
+        n: 0
+        note: measurement-only tier never dispatches to research
+        prior: 0.0
+      tier=below_floor:
+        grounded: false
+        n: 0
+        note: measurement-only control tier
+        prior: 0.0
   form_8k:
     fallback: 0.0
     slices:

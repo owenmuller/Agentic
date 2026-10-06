@@ -1,0 +1,470 @@
+# Government contractor -> public parent ticker map (ruling 2026-10-06, contract awards source).
+#
+# HUMAN-EDITED. The parser matches the awardee string (lower-cased, punctuation and
+# corporate suffixes stripped, "doing business as ..." dropped) against `prefix` by
+# word-prefix, longest prefix first. `ticker: null` marks a KNOWN non-public awardee
+# (private, JV, foreign-listed, nonprofit, government-owned) so it drops at the
+# prefilter as `no_instrument` with reason `known_nonpublic` instead of `unresolved`.
+# Foreign parents whose only US line is an OTC ADR are null: the pre-registered backtest
+# rule and the gate both want a US-listed parent. Small-business awardees carry `*` in the
+# digest and drop before this table is consulted.
+#
+# Historical renames (point-in-time, for the backtest): `until` is the last trading day
+# under `ticker`; `successor` is what the parent became. An award dated after `until`
+# resolves to the successor; before it, to `ticker` (bars may not exist for a delisted
+# symbol — then the event is reported as no-bars, never silently remapped).
+#
+# Adding or changing an entry is a human ruling (CLAUDE.md: watchlists are human-edited).
+
+version: 2026-10-06
+entries:
+  # ---- primes and their subsidiaries -------------------------------------------
+  - {prefix: "lockheed martin", ticker: LMT}
+  - {prefix: "sikorsky", ticker: LMT}
+  - {prefix: "terran orbital", ticker: LMT, from: "2024-10-29"}
+  - {prefix: "rtx", ticker: RTX}
+  - {prefix: "raytheon technologies", ticker: RTX}
+  - {prefix: "raytheon", ticker: RTN, cik: 1047122, until: "2020-04-03", successor: RTX}
+  - {prefix: "united technologies", ticker: UTX, cik: 101829, until: "2020-04-03", successor: RTX}
+  - {prefix: "collins aerospace", ticker: RTX}
+  - {prefix: "rockwell collins", ticker: COL, cik: 1137411, until: "2018-11-26", successor: RTX}
+  - {prefix: "pratt whitney", ticker: RTX}
+  - {prefix: "pratt and whitney", ticker: RTX}
+  - {prefix: "hamilton sundstrand", ticker: RTX}
+  - {prefix: "goodrich", ticker: RTX}
+  - {prefix: "boeing", ticker: BA}
+  - {prefix: "insitu", ticker: BA}
+  - {prefix: "aurora flight sciences", ticker: BA}
+  - {prefix: "general dynamics", ticker: GD}
+  - {prefix: "gulfstream", ticker: GD}
+  - {prefix: "electric boat", ticker: GD}
+  - {prefix: "bath iron works", ticker: GD}
+  - {prefix: "national steel and shipbuilding", ticker: GD}
+  - {prefix: "nassco", ticker: GD}
+  - {prefix: "northrop grumman", ticker: NOC}
+  - {prefix: "orbital atk", ticker: NOC}
+  - {prefix: "orbital sciences", ticker: NOC}
+  - {prefix: "alliant techsystems", ticker: NOC}
+  - {prefix: "l3harris", ticker: LHX}
+  - {prefix: "l3 harris", ticker: LHX}
+  - {prefix: "l3 technologies", ticker: LLL, cik: 1056239, until: "2019-06-28", successor: LHX}
+  - {prefix: "l 3 technologies", ticker: LLL, cik: 1056239, until: "2019-06-28", successor: LHX}
+  - {prefix: "l 3 communications", ticker: LLL, cik: 1056239, until: "2019-06-28", successor: LHX}
+  - {prefix: "harris corp", ticker: HRS, cik: 202058, until: "2019-06-28", successor: LHX}
+  - {prefix: "harris", ticker: HRS, cik: 202058, until: "2019-06-28", successor: LHX}
+  - {prefix: "aerojet rocketdyne", ticker: AJRD, cik: 40888, until: "2023-07-27", successor: LHX}
+  - {prefix: "huntington ingalls", ticker: HII}
+  - {prefix: "ingalls shipbuilding", ticker: HII}
+  - {prefix: "newport news shipbuilding", ticker: HII}
+  - {prefix: "alion science", ticker: HII, from: "2021-08-19"}
+  - {prefix: "leidos", ticker: LDOS}
+  - {prefix: "dynetics", ticker: LDOS, from: "2020-01-31"}
+  - {prefix: "gibbs cox", ticker: LDOS, from: "2021-05-07"}
+  - {prefix: "science applications international", ticker: SAIC}
+  - {prefix: "saic", ticker: SAIC}
+  - {prefix: "engility", ticker: EGL, cik: 1544229, until: "2019-01-14", successor: SAIC}
+  - {prefix: "booz allen", ticker: BAH}
+  - {prefix: "caci", ticker: CACI}
+  - {prefix: "parsons", ticker: PSN, from: "2019-05-08"}
+  - {prefix: "kbr", ticker: KBR}
+  - {prefix: "amentum", ticker: AMTM, from: "2024-09-30"}
+  - {prefix: "pae ", ticker: PAE, cik: 1720821, until: "2022-02-15", successor: null}
+  - {prefix: "pacific architects", ticker: PAE, cik: 1720821, until: "2022-02-15", successor: null}
+  - {prefix: "dyncorp", ticker: null}
+  - {prefix: "v2x", ticker: VVX}
+  - {prefix: "vectrus", ticker: VEC, cik: 1601548, until: "2022-07-05", successor: VVX}
+  - {prefix: "vertex aerospace", ticker: null}
+  - {prefix: "mantech", ticker: MANT, cik: 892537, until: "2022-09-14", successor: null}
+  - {prefix: "perspecta", ticker: PRSP, cik: 1724670, until: "2021-05-06", successor: null}
+  - {prefix: "peraton", ticker: null}
+  - {prefix: "cubic", ticker: CUB, cik: 26076, until: "2021-05-25", successor: null}
+  - {prefix: "kratos", ticker: KTOS}
+  - {prefix: "aerovironment", ticker: AVAV}
+  - {prefix: "mercury systems", ticker: MRCY}
+  - {prefix: "mercury mission", ticker: MRCY}
+  - {prefix: "curtiss wright", ticker: CW}
+  - {prefix: "moog", ticker: MOG.A}
+  - {prefix: "woodward", ticker: WWD}
+  - {prefix: "transdigm", ticker: TDG}
+  - {prefix: "esterline", ticker: ESL, cik: 33619, until: "2019-03-14", successor: TDG}
+  - {prefix: "howmet", ticker: HWM}
+  - {prefix: "arconic", ticker: ARNC, cik: 4281, until: "2020-03-31", successor: HWM}
+  - {prefix: "textron", ticker: TXT}
+  - {prefix: "bell textron", ticker: TXT}
+  - {prefix: "bell helicopter", ticker: TXT}
+  - {prefix: "general electric", ticker: GE}
+  - {prefix: "ge aerospace", ticker: GE}
+  - {prefix: "ge aviation", ticker: GE}
+  - {prefix: "honeywell", ticker: HON}
+  - {prefix: "oshkosh", ticker: OSK}
+  - {prefix: "bwx technologies", ticker: BWXT}
+  - {prefix: "bwxt", ticker: BWXT}
+  - {prefix: "leonardo drs", ticker: DRS, from: "2022-11-29"}
+  - {prefix: "drs ", ticker: DRS, from: "2022-11-29"}
+  - {prefix: "rada technologies", ticker: DRS, from: "2022-11-29"}
+  - {prefix: "palantir", ticker: PLTR, from: "2020-09-30"}
+  - {prefix: "axon", ticker: AXON}
+  - {prefix: "teledyne", ticker: TDY}
+  - {prefix: "flir", ticker: FLIR, cik: 354908, until: "2021-05-13", successor: TDY}
+  - {prefix: "kaman", ticker: KAMN, cik: 54381, until: "2024-04-18", successor: null}
+  - {prefix: "ducommun", ticker: DCO}
+  - {prefix: "astronics", ticker: ATRO}
+  - {prefix: "triumph group", ticker: TGI}
+  - {prefix: "spirit aerosystems", ticker: SPR}
+  - {prefix: "hexcel", ticker: HXL}
+  - {prefix: "aar corp", ticker: AIR}
+  - {prefix: "aar ", ticker: AIR}
+  - {prefix: "vse corp", ticker: VSEC}
+  - {prefix: "cae ", ticker: CAE}
+  - {prefix: "cae usa", ticker: CAE}
+  - {prefix: "standardaero", ticker: SARO, from: "2024-10-02"}
+  - {prefix: "loar", ticker: LOAR, from: "2024-04-25"}
+  - {prefix: "karman", ticker: KRMN, from: "2025-02-13"}
+  - {prefix: "voyager", ticker: VOYG, from: "2025-06-11"}
+  - {prefix: "firefly aerospace", ticker: FLY, from: "2025-08-07"}
+  - {prefix: "rocket lab", ticker: RKLB, from: "2021-08-25"}
+  - {prefix: "intuitive machines", ticker: LUNR, from: "2023-02-14"}
+  - {prefix: "redwire", ticker: RDW, from: "2021-09-03"}
+  - {prefix: "planet labs", ticker: PL, from: "2021-12-08"}
+  - {prefix: "blacksky", ticker: BKSY, from: "2021-09-10"}
+  - {prefix: "spire global", ticker: SPIR, from: "2021-08-17"}
+  - {prefix: "bigbear ai", ticker: BBAI, from: "2021-12-08"}
+  - {prefix: "iridium", ticker: IRDM}
+  - {prefix: "viasat", ticker: VSAT}
+  - {prefix: "echostar", ticker: SATS}
+  - {prefix: "hughes network", ticker: SATS}
+  - {prefix: "globalstar", ticker: GSAT}
+  - {prefix: "telesat", ticker: TSAT, from: "2021-11-19"}
+  - {prefix: "maxar", ticker: MAXR, cik: 1121142, until: "2023-05-03", successor: null}
+  - {prefix: "digitalglobe", ticker: MAXR, cik: 1121142, until: "2023-05-03", successor: null}
+  - {prefix: "ondas", ticker: ONDS}
+  - {prefix: "red cat", ticker: RCAT}
+  - {prefix: "archer aviation", ticker: ACHR, from: "2021-09-17"}
+  - {prefix: "joby aviation", ticker: JOBY, from: "2021-08-11"}
+  # ---- engineering, construction, services ------------------------------------
+  - {prefix: "fluor", ticker: FLR}
+  - {prefix: "jacobs", ticker: J}
+  - {prefix: "keyw", ticker: KEYW, cik: 1487101, until: "2019-06-12", successor: J}
+  - {prefix: "aecom", ticker: ACM}
+  - {prefix: "tetra tech", ticker: TTEK}
+  - {prefix: "icf ", ticker: ICFI}
+  - {prefix: "icf international", ticker: ICFI}
+  - {prefix: "maximus", ticker: MMS}
+  - {prefix: "unisys", ticker: UIS}
+  - {prefix: "dxc technology", ticker: DXC}
+  - {prefix: "granite construction", ticker: GVA}
+  - {prefix: "tutor perini", ticker: TPC}
+  - {prefix: "sterling infrastructure", ticker: STRL}
+  - {prefix: "emcor", ticker: EME}
+  - {prefix: "comfort systems", ticker: FIX}
+  - {prefix: "quanta services", ticker: PWR}
+  - {prefix: "mastec", ticker: MTZ}
+  - {prefix: "dycom", ticker: DY}
+  - {prefix: "primoris", ticker: PRIM}
+  - {prefix: "ameresco", ticker: AMRC}
+  - {prefix: "great lakes dredge", ticker: GLDD}
+  - {prefix: "orion group", ticker: ORN}
+  - {prefix: "aramark", ticker: ARMK}
+  - {prefix: "abm industries", ticker: ABM}
+  - {prefix: "accenture", ticker: ACN}
+  - {prefix: "ibm", ticker: IBM}
+  - {prefix: "international business machines", ticker: IBM}
+  - {prefix: "microsoft", ticker: MSFT}
+  - {prefix: "amazon web services", ticker: AMZN}
+  - {prefix: "amazon", ticker: AMZN}
+  - {prefix: "oracle", ticker: ORCL}
+  - {prefix: "google", ticker: GOOGL}
+  - {prefix: "alphabet", ticker: GOOGL}
+  - {prefix: "dell", ticker: DELL, from: "2018-12-28"}
+  - {prefix: "hewlett packard enterprise", ticker: HPE}
+  - {prefix: "hpe ", ticker: HPE}
+  - {prefix: "cisco", ticker: CSCO}
+  - {prefix: "motorola solutions", ticker: MSI}
+  - {prefix: "verizon", ticker: VZ}
+  - {prefix: "at t", ticker: T}
+  - {prefix: "lumen", ticker: LUMN}
+  - {prefix: "centurylink", ticker: CTL, cik: 18926, until: "2020-09-17", successor: LUMN}
+  - {prefix: "c3 ai", ticker: AI, from: "2020-12-09"}
+  - {prefix: "c3ai", ticker: AI, from: "2020-12-09"}
+  - {prefix: "snowflake", ticker: SNOW, from: "2020-09-16"}
+  - {prefix: "servicenow", ticker: NOW}
+  - {prefix: "salesforce", ticker: CRM}
+  - {prefix: "fortinet", ticker: FTNT}
+  - {prefix: "arista", ticker: ANET}
+  - {prefix: "ciena", ticker: CIEN}
+  - {prefix: "amphenol", ticker: APH}
+  - {prefix: "te connectivity", ticker: TEL}
+  - {prefix: "broadcom", ticker: AVGO}
+  - {prefix: "intel", ticker: INTC}
+  - {prefix: "nvidia", ticker: NVDA}
+  - {prefix: "micron", ticker: MU}
+  - {prefix: "qualcomm", ticker: QCOM}
+  - {prefix: "analog devices", ticker: ADI}
+  - {prefix: "texas instruments", ticker: TXN}
+  - {prefix: "microchip", ticker: MCHP}
+  - {prefix: "globalfoundries", ticker: GFS, from: "2021-10-28"}
+  - {prefix: "skywater", ticker: SKYT, from: "2021-04-21"}
+  - {prefix: "coherent", ticker: COHR}
+  - {prefix: "ii vi", ticker: COHR}
+  - {prefix: "lumentum", ticker: LITE}
+  - {prefix: "ipg photonics", ticker: IPGP}
+  - {prefix: "nlight", ticker: LASR}
+  # ---- health, pharma, logistics ----------------------------------------------
+  - {prefix: "cardinal health", ticker: CAH}
+  - {prefix: "mckesson", ticker: MCK}
+  - {prefix: "owens minor", ticker: OMI}
+  - {prefix: "henry schein", ticker: HSIC}
+  - {prefix: "laboratory corp", ticker: LH}
+  - {prefix: "labcorp", ticker: LH}
+  - {prefix: "quest diagnostics", ticker: DGX}
+  - {prefix: "pfizer", ticker: PFE}
+  - {prefix: "moderna", ticker: MRNA}
+  - {prefix: "merck", ticker: MRK}
+  - {prefix: "johnson johnson", ticker: JNJ}
+  - {prefix: "janssen", ticker: JNJ}
+  - {prefix: "regeneron", ticker: REGN}
+  - {prefix: "novavax", ticker: NVAX}
+  - {prefix: "emergent biosolutions", ticker: EBS}
+  - {prefix: "siga technologies", ticker: SIGA}
+  - {prefix: "abbott", ticker: ABT}
+  - {prefix: "quidel", ticker: QDEL}
+  - {prefix: "quidelortho", ticker: QDEL}
+  - {prefix: "orasure", ticker: OSUR}
+  - {prefix: "hologic", ticker: HOLX}
+  - {prefix: "thermo fisher", ticker: TMO}
+  - {prefix: "danaher", ticker: DHR}
+  - {prefix: "becton dickinson", ticker: BDX}
+  - {prefix: "3m ", ticker: MMM}
+  - {prefix: "humana", ticker: HUM}
+  - {prefix: "unitedhealth", ticker: UNH}
+  - {prefix: "optum", ticker: UNH}
+  - {prefix: "centene", ticker: CNC}
+  - {prefix: "triwest", ticker: null}
+  - {prefix: "fedex", ticker: FDX}
+  - {prefix: "federal express", ticker: FDX}
+  - {prefix: "united parcel", ticker: UPS}
+  - {prefix: "ups ", ticker: UPS}
+  - {prefix: "atlas air", ticker: AAWW, cik: 1135185, until: "2023-03-16", successor: null}
+  - {prefix: "kalitta", ticker: null}
+  - {prefix: "american airlines", ticker: AAL}
+  - {prefix: "delta air", ticker: DAL}
+  - {prefix: "united airlines", ticker: UAL}
+  - {prefix: "matson", ticker: MATX}
+  - {prefix: "kirby", ticker: KEX}
+  - {prefix: "crowley", ticker: null}
+  - {prefix: "american roll on roll off", ticker: null}
+  - {prefix: "maersk line limited", ticker: null}
+  # ---- fuel and materials (DLA Energy) -----------------------------------------
+  - {prefix: "exxon", ticker: XOM}
+  - {prefix: "valero", ticker: VLO}
+  - {prefix: "chevron", ticker: CVX}
+  - {prefix: "marathon petroleum", ticker: MPC}
+  - {prefix: "phillips 66", ticker: PSX}
+  - {prefix: "delek", ticker: DK}
+  - {prefix: "par hawaii", ticker: PARR}
+  - {prefix: "par pacific", ticker: PARR}
+  - {prefix: "hf sinclair", ticker: DINO}
+  - {prefix: "hollyfrontier", ticker: HFC, cik: 48039, until: "2022-03-14", successor: DINO}
+  - {prefix: "calumet", ticker: CLMT}
+  - {prefix: "world fuel", ticker: INT, cik: 789460, until: "2023-06-01", successor: WKC}
+  - {prefix: "world kinect", ticker: WKC}
+  - {prefix: "sunoco", ticker: SUN}
+  - {prefix: "kinder morgan", ticker: KMI}
+  - {prefix: "gevo", ticker: GEVO}
+  - {prefix: "olin", ticker: OLN}
+  - {prefix: "winchester", ticker: OLN}
+  - {prefix: "nucor", ticker: NUE}
+  - {prefix: "cleveland cliffs", ticker: CLF}
+  - {prefix: "steel dynamics", ticker: STLD}
+  - {prefix: "metallus", ticker: MTUS}
+  - {prefix: "timkensteel", ticker: TMST, cik: 1598428, until: "2024-04-01", successor: MTUS}
+  - {prefix: "alcoa", ticker: AA}
+  - {prefix: "ati ", ticker: ATI}
+  - {prefix: "allegheny technologies", ticker: ATI}
+  - {prefix: "carpenter technology", ticker: CRS}
+  - {prefix: "haynes international", ticker: HAYN, cik: 858655, until: "2024-11-20", successor: null}
+  - {prefix: "mp materials", ticker: MP, from: "2020-11-18"}
+  - {prefix: "rio tinto", ticker: null}
+  - {prefix: "bp products", ticker: null}
+  - {prefix: "shell", ticker: null}
+  - {prefix: "motiva", ticker: null}
+  - {prefix: "pbf", ticker: PBF}
+  - {prefix: "citgo", ticker: null}
+  # ---- vehicles, industrials ---------------------------------------------------
+  - {prefix: "polaris", ticker: PII}
+  - {prefix: "ford motor", ticker: F}
+  - {prefix: "general motors", ticker: GM}
+  - {prefix: "gm defense", ticker: GM}
+  - {prefix: "caterpillar", ticker: CAT}
+  - {prefix: "deere", ticker: DE}
+  - {prefix: "cummins", ticker: CMI}
+  - {prefix: "allison transmission", ticker: ALSN}
+  - {prefix: "navistar", ticker: NAV, cik: 808450, until: "2021-06-30", successor: null}
+  - {prefix: "parker hannifin", ticker: PH}
+  - {prefix: "eaton", ticker: ETN}
+  - {prefix: "crane", ticker: CR}
+  - {prefix: "itt ", ticker: ITT}
+  - {prefix: "ametek", ticker: AME}
+  - {prefix: "roper", ticker: ROP}
+  - {prefix: "trimble", ticker: TRMB}
+  - {prefix: "garmin", ticker: GRMN}
+  - {prefix: "generac", ticker: GNRC}
+  - {prefix: "ametek", ticker: AME}
+  - {prefix: "smith wesson", ticker: SWBI}
+  - {prefix: "sturm ruger", ticker: RGR}
+  - {prefix: "ammo inc", ticker: POWW}
+  - {prefix: "byrna", ticker: BYRN}
+  - {prefix: "vista outdoor", ticker: VSTO, cik: 1616318, until: "2024-11-26", successor: null}
+  # ---- known non-public: private, JV, foreign-listed only, nonprofit, government
+  - {prefix: "sierra nevada", ticker: null}
+  - {prefix: "general atomics", ticker: null}
+  - {prefix: "anduril", ticker: null}
+  - {prefix: "spacex", ticker: null}
+  - {prefix: "space exploration technologies", ticker: null}
+  - {prefix: "united launch", ticker: null}
+  - {prefix: "blue origin", ticker: null}
+  - {prefix: "relativity space", ticker: null}
+  - {prefix: "sierra space", ticker: null}
+  - {prefix: "shield ai", ticker: null}
+  - {prefix: "epirus", ticker: null}
+  - {prefix: "scale ai", ticker: null}
+  - {prefix: "applied intuition", ticker: null}
+  - {prefix: "saronic", ticker: null}
+  - {prefix: "hermeus", ticker: null}
+  - {prefix: "bechtel", ticker: null}
+  - {prefix: "kiewit", ticker: null}
+  - {prefix: "hensel phelps", ticker: null}
+  - {prefix: "walsh", ticker: null}
+  - {prefix: "whiting turner", ticker: null}
+  - {prefix: "clark construction", ticker: null}
+  - {prefix: "gilbane", ticker: null}
+  - {prefix: "mortenson", ticker: null}
+  - {prefix: "m a mortenson", ticker: null}
+  - {prefix: "haskell", ticker: null}
+  - {prefix: "balfour beatty", ticker: null}
+  - {prefix: "skanska", ticker: null}
+  - {prefix: "turner construction", ticker: null}
+  - {prefix: "hunt", ticker: null}
+  - {prefix: "manson construction", ticker: null}
+  - {prefix: "weeks marine", ticker: null}
+  - {prefix: "conti federal", ticker: null}
+  - {prefix: "environmental chemical", ticker: null}
+  - {prefix: "am general", ticker: null}
+  - {prefix: "bollinger", ticker: null}
+  - {prefix: "vigor", ticker: null}
+  - {prefix: "eastern shipbuilding", ticker: null}
+  - {prefix: "austal", ticker: null}
+  - {prefix: "fincantieri", ticker: null}
+  - {prefix: "marinette marine", ticker: null}
+  - {prefix: "vt halter", ticker: null}
+  - {prefix: "philly shipyard", ticker: null}
+  - {prefix: "colonna", ticker: null}
+  - {prefix: "bae systems", ticker: null}
+  - {prefix: "rolls royce", ticker: null}
+  - {prefix: "airbus", ticker: null}
+  - {prefix: "leonardo", ticker: null}
+  - {prefix: "saab", ticker: null}
+  - {prefix: "thales", ticker: null}
+  - {prefix: "rheinmetall", ticker: null}
+  - {prefix: "hanwha", ticker: null}
+  - {prefix: "hyundai", ticker: null}
+  - {prefix: "mitsubishi", ticker: null}
+  - {prefix: "kongsberg", ticker: null}
+  - {prefix: "nammo", ticker: null}
+  - {prefix: "chemring", ticker: null}
+  - {prefix: "elbit", ticker: null}
+  - {prefix: "serco", ticker: null}
+  - {prefix: "qinetiq", ticker: null}
+  - {prefix: "cobham", ticker: null}
+  - {prefix: "ultra electronics", ticker: null}
+  - {prefix: "babcock", ticker: null}
+  - {prefix: "safran", ticker: null}
+  - {prefix: "meggitt", ticker: null}
+  - {prefix: "canadian commercial", ticker: null}
+  - {prefix: "wescam", ticker: null}
+  - {prefix: "droneshield", ticker: null}
+  - {prefix: "israel aerospace", ticker: null}
+  - {prefix: "rafael", ticker: null}
+  - {prefix: "mitre", ticker: null}
+  - {prefix: "battelle", ticker: null}
+  - {prefix: "johns hopkins", ticker: null}
+  - {prefix: "charles stark draper", ticker: null}
+  - {prefix: "draper laboratory", ticker: null}
+  - {prefix: "aerospace corp", ticker: null}
+  - {prefix: "southwest research", ticker: null}
+  - {prefix: "massachusetts institute", ticker: null}
+  - {prefix: "lincoln laboratory", ticker: null}
+  - {prefix: "university", ticker: null}
+  - {prefix: "regents of", ticker: null}
+  - {prefix: "trustees of", ticker: null}
+  - {prefix: "sandia", ticker: null}
+  - {prefix: "national technology engineering solutions", ticker: null}
+  - {prefix: "los alamos", ticker: null}
+  - {prefix: "triad national security", ticker: null}
+  - {prefix: "lawrence livermore", ticker: null}
+  - {prefix: "ut battelle", ticker: null}
+  - {prefix: "fluor marine propulsion", ticker: FLR}
+  - {prefix: "bechtel plant machinery", ticker: null}
+  - {prefix: "bechtel marine propulsion", ticker: null}
+  - {prefix: "day zimmermann", ticker: null}
+  - {prefix: "american ordnance", ticker: null}
+  - {prefix: "ensign bickford", ticker: null}
+  - {prefix: "sig sauer", ticker: null}
+  - {prefix: "fn america", ticker: null}
+  - {prefix: "colt", ticker: null}
+  - {prefix: "daniel defense", ticker: null}
+  - {prefix: "knight s armament", ticker: null}
+  - {prefix: "barrett firearms", ticker: null}
+  - {prefix: "centerra", ticker: null}
+  - {prefix: "constellis", ticker: null}
+  - {prefix: "triple canopy", ticker: null}
+  - {prefix: "sodexo", ticker: null}
+  - {prefix: "compass group", ticker: null}
+  - {prefix: "deloitte", ticker: null}
+  - {prefix: "guidehouse", ticker: null}
+  - {prefix: "ernst young", ticker: null}
+  - {prefix: "pricewaterhousecoopers", ticker: null}
+  - {prefix: "kpmg", ticker: null}
+  - {prefix: "mckinsey", ticker: null}
+  - {prefix: "carahsoft", ticker: null}
+  - {prefix: "world wide technology", ticker: null}
+  - {prefix: "insight public sector", ticker: null}
+  - {prefix: "iron bow", ticker: null}
+  - {prefix: "sev1tech", ticker: null}
+  - {prefix: "modern technology solutions", ticker: null}
+  - {prefix: "src inc", ticker: null}
+  - {prefix: "src ", ticker: null}
+  - {prefix: "torch technologies", ticker: null}
+  - {prefix: "systems planning and analysis", ticker: null}
+  - {prefix: "aviation systems engineering", ticker: null}
+  - {prefix: "m1 support services", ticker: null}
+  - {prefix: "yulista", ticker: null}
+  - {prefix: "chenega", ticker: null}
+  - {prefix: "alutiiq", ticker: null}
+  - {prefix: "akima", ticker: null}
+  - {prefix: "arctic slope", ticker: null}
+  - {prefix: "asrc", ticker: null}
+  - {prefix: "nana", ticker: null}
+  - {prefix: "bering straits", ticker: null}
+  - {prefix: "goldbelt", ticker: null}
+  - {prefix: "koniag", ticker: null}
+  - {prefix: "cherokee nation", ticker: null}
+  - {prefix: "lata", ticker: null}
+  - {prefix: "s k aerospace", ticker: null}
+  - {prefix: "s k ", ticker: null}
+  - {prefix: "pentaq", ticker: null}
+  - {prefix: "nitradyn", ticker: null}
+  - {prefix: "healtheon", ticker: null}
+  - {prefix: "sap national security", ticker: null}
+  - {prefix: "active deployment systems", ticker: null}
+  - {prefix: "national advanced mobility consortium", ticker: null}
+  - {prefix: "colorado department", ticker: null}
+  - {prefix: "state of", ticker: null}
+  - {prefix: "commonwealth of", ticker: null}
+  - {prefix: "city of", ticker: null}
+  - {prefix: "county of", ticker: null}
+  - {prefix: "government of", ticker: null}
+  - {prefix: "air force awarded", ticker: null}
+  - {prefix: "the air force", ticker: null}
+  - {prefix: "the army", ticker: null}
+  - {prefix: "the navy", ticker: null}

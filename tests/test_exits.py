@@ -2003,7 +2003,9 @@ def test_the_boundary_confirmation_is_on_the_decision_record(
     decision = started.audit.trail("dec-1").decision
     stamp = decision.boundary_confirmation
     assert stamp is not None
-    assert (stamp.floor, stamp.band_width) == (50, 20)
+    # Floor 50 -> 45 (ruling 2026-10-06); the harness keeps band_width 20
+    # while the shipped config widened it to 25 so the band stays [45, 70).
+    assert (stamp.floor, stamp.band_width) == (45, 20)
     assert (stamp.first_direction, stamp.first_confidence) == ("long", 60)
     assert (stamp.second_direction, stamp.second_confidence) == ("long", second_confidence)
     assert stamp.sized_from == sized_from

@@ -17,6 +17,17 @@ from signals.classification import (
     extract_tickers,
 )
 from signals.config import ClassConfig, SignalsConfig, SourceConfig, default_signals_path
+from signals.contracts import (
+    AwardeeSizer,
+    CombinedAwardsFetcher,
+    ContractorMap,
+    ContractsError,
+    DodDigestFetcher,
+    FinnhubProfile,
+    FpdsCivilianFetcher,
+    SecCompanyFacts,
+    parse_digest,
+)
 from signals.edgar import ARCHIVES_URL, FTS_URL, EdgarError, Form13FFetcher
 from signals.form4 import Form4InsiderFetcher
 from signals.form13d import Form13DFetcher
@@ -50,6 +61,15 @@ from signals.scanners import (
 
 __all__ = [
     "ARCHIVES_URL",
+    "AwardeeSizer",
+    "CombinedAwardsFetcher",
+    "ContractorMap",
+    "ContractsError",
+    "DodDigestFetcher",
+    "FinnhubProfile",
+    "FpdsCivilianFetcher",
+    "SecCompanyFacts",
+    "parse_digest",
     "FTS_URL",
     "EdgarError",
     "FeedNotConfigured",

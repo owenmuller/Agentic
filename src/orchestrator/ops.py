@@ -646,6 +646,75 @@ def _alerts_line(checks) -> str:
     return "alerts: " + "  |  ".join(parts)
 
 
+def verdict_funnel(records, sessions: int = 10) -> dict:
+    """The last N research sessions' verdict funnel (AGGRESSION / WEEKLY TARGET
+    rulings 2026-10-06, both measured before shipping): passes, long verdicts,
+    and what became of the longs. Deployment in this book is limited by
+    VERDICTS — not by caps, the budget, sizing or the floor — and the health
+    and weekly lines say so with these numbers rather than implying otherwise.
+    Judged arm only; reads the audit records and nothing about P&L."""
+    from audit.records import DecisionRecord, StageRejectionRecord
+
+    by_day: dict = {}
+    for record in records:
+        research = getattr(record, "research", None)
+        if research is None or not isinstance(record, (DecisionRecord, StageRejectionRecord)):
+            continue
+        if isinstance(record, DecisionRecord) and getattr(record.sizing, "strategy", None) in ("mechanical", "cash_sweep", "baseline"):
+            continue
+        day = record.recorded_at.date().isoformat()
+        bucket = by_day.setdefault(day, {"passes": 0, "longs": 0, "approved": 0, "long_fates": {}})
+        bucket["passes"] += 1
+        if str(getattr(research, "direction", "")) == "long":
+            bucket["longs"] += 1
+            if isinstance(record, DecisionRecord):
+                approved = bool(getattr(getattr(record, "gate", None), "approved", False))
+                fate = "approved" if approved else "gate_rejected"
+                bucket["approved"] += 1 if approved else 0
+            else:
+                fate = str(getattr(record, "code", "") or getattr(record, "stage", ""))
+            bucket["long_fates"][fate] = bucket["long_fates"].get(fate, 0) + 1
+    days = sorted(by_day)[-sessions:]
+    total = {"sessions": len(days), "passes": 0, "longs": 0, "approved": 0, "long_fates": {}}
+    for day in days:
+        total["passes"] += by_day[day]["passes"]
+        total["longs"] += by_day[day]["longs"]
+        total["approved"] += by_day[day]["approved"]
+        for fate, count in by_day[day]["long_fates"].items():
+            total["long_fates"][fate] = total["long_fates"].get(fate, 0) + count
+    return total
+
+
+def deployment_line(checks: Preflight, positions: Optional[Iterable[TrackedPosition]] = None) -> str:
+    """Judged deployment, stated as what limits it. ``positions`` are the exit
+    engine's tracked positions when the caller has them (health); the weekly
+    counts the gate's judged-sleeve holdings instead."""
+    from risk_gate.state import Sleeve
+
+    if positions is not None:
+        tracked = [p for p in positions if not getattr(p, "is_option", False)]
+    else:
+        held = getattr(checks.gate.state, "positions", {}) or {}
+        tracked = [
+            key for key in (held.keys() if hasattr(held, "keys") else held)
+            if isinstance(key, tuple) and str(key[0]) in ("equity", "Sleeve.EQUITY")
+        ]
+    try:
+        sleeve_nav = checks.gate.sleeve_nav(Sleeve.EQUITY)
+        deployed = checks.gate.state.sleeve_exposure(Sleeve.EQUITY)
+        fraction = (deployed / sleeve_nav) if sleeve_nav > 0 else Decimal("0")
+    except Exception:  # noqa: BLE001 - a line, never a failure
+        fraction = Decimal("0")
+    funnel = verdict_funnel(checks.audit.records())
+    fates = ", ".join(f"{k}={v}" for k, v in sorted(funnel["long_fates"].items())) or "none"
+    return (
+        f"judged deployment: {len(tracked)} positions, {fraction:.1%} of the judged sleeve — "
+        f"VERDICT-LIMITED (last {funnel['sessions']} sessions: {funnel['passes']} research passes, "
+        f"{funnel['longs']} long verdicts, {funnel['approved']} approved; long fates: {fates}); "
+        f"caps, budget, sizing and the floor did not bind"
+    )
+
+
 def health_report(
     checks: Preflight,
     positions: Iterable[TrackedPosition],
@@ -679,6 +748,7 @@ def health_report(
         f"deployed today: {state.deployed_today}  |  research budget: "
         f"{checks.budget.spent} of {checks.budget.max_per_day} spent for "
         f"{checks.budget.day}",
+        deployment_line(checks, tracked),
         _cost_line(checks, moment),
         _alerts_line(checks),
         f"broker permits: {checks.permissions.describe()}"

@@ -124,7 +124,10 @@ def test_the_gate_can_be_disabled_but_ships_enabled():
     from orchestrator.config import OrchestratorConfig
 
     shipped = OrchestratorConfig.load().reward_risk
-    assert shipped.enabled and shipped.min_ratio == Decimal("1.3")  # 1.5 -> 1.3 (2026-09-15)
+    # 1.5 -> 1.3 (2026-09-15) -> 0.8 as the ABSOLUTE floor under the annualized
+    # 40% hurdle (ADAPTIVE STANDARDS ruling 2026-10-06; tests/test_hurdle.py).
+    assert shipped.enabled and shipped.min_ratio == Decimal("0.8")
+    assert shipped.annualized_hurdle == Decimal("0.40")
 
 
 # ================================================================================
@@ -184,7 +187,8 @@ def test_the_boundary_band_is_twenty_and_seventy_plus_stays_unconfirmed():
     from orchestrator.config import OrchestratorConfig
 
     boundary = OrchestratorConfig.load().boundary_confirmation
-    assert boundary.enabled and boundary.band_width == 20
+    # 20 -> 25 with the floor 50 -> 45 (ruling 2026-10-06): the band stays [floor, 70).
+    assert boundary.enabled and boundary.band_width == 25
 
 
 # ================================================================================
@@ -196,8 +200,9 @@ def test_the_golden_set_loads_and_names_the_ruled_cases():
     cases = load_cases()
     entries = [case for case in cases if case.kind == "entry"]
     reviews = [case for case in cases if case.kind == "review"]
-    # 20 + the stale Class 1 relay (ruling 2026-09-16).
-    assert len(entries) == 21
+    # 20 + the stale Class 1 relay (ruling 2026-09-16) + the two contract-award
+    # cases from the source's first live day (ruling 2026-10-06).
+    assert len(entries) == 23
     # Review cases (ruling 2026-09-02) grade the reasoning structure.
     assert len(reviews) == 4
     for case in reviews:

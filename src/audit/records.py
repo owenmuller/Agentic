@@ -219,6 +219,130 @@ def snapshot_amount_range(snapshot: "SignalSnapshot") -> str:
     return match.group(1) if match else ""
 
 
+#: Government contract awards (ruling 2026-10-06): the fetcher's labelled lines,
+#: parsed back the same way the other sources' facts are.
+_CONTENT_AWARD_FEED = re.compile(r"^feed:\s*(dod_digest|fpds)\s*$", re.MULTILINE)
+_CONTENT_AWARD_KIND = re.compile(r"^award kind:\s*(\w+)\s*$", re.MULTILINE)
+_CONTENT_AWARD_AMOUNT = re.compile(r"^award amount:\s*\$([\d,]+)", re.MULTILINE)
+_CONTENT_AWARD_CEILING = re.compile(r"^ceiling value:\s*\$([\d,]+)", re.MULTILINE)
+_CONTENT_AWARD_MULTI = re.compile(r"^multiple award:\s*(yes|no)", re.MULTILINE)
+_CONTENT_AWARD_IDIQ = re.compile(r"^idiq:\s*(yes|no)", re.MULTILINE)
+_CONTENT_AWARD_SOLE = re.compile(r"^sole source:\s*(yes|unstated|no)", re.MULTILINE)
+_CONTENT_AWARD_OFFERS = re.compile(r"^offers received:\s*(\d+)", re.MULTILINE)
+_CONTENT_AWARD_TERM = re.compile(r"^term months:\s*(\d+)", re.MULTILINE)
+_CONTENT_AWARD_AGENCY = re.compile(r"^agency:\s*(.+?)\s*$", re.MULTILINE)
+_CONTENT_AWARD_MILITARY = re.compile(r"^military:\s*(yes|no)", re.MULTILINE)
+_CONTENT_AWARD_MCAP = re.compile(r"^awardee market cap:\s*\$([\d,]+)", re.MULTILINE)
+_CONTENT_AWARD_REL_MCAP = re.compile(r"^award / market cap:\s*([\d.]+)%", re.MULTILINE)
+_CONTENT_AWARD_REL_REV = re.compile(r"^award / revenue:\s*([\d.]+)%", re.MULTILINE)
+_CONTENT_AWARD_TIER = re.compile(r"^size tier:\s*(\w+)", re.MULTILINE)
+_CONTENT_AWARD_EVENT = re.compile(r"^event date:\s*(\d{4}-\d{2}-\d{2})", re.MULTILINE)
+_CONTENT_AWARD_RESOLUTION = re.compile(r"^parent resolution:\s*(\w+)", re.MULTILINE)
+
+
+@dataclass(frozen=True, slots=True)
+class GovAwardFacts:
+    """What a government-contract-award row says about its event."""
+
+    feed: str
+    kind: str
+    tier: str
+    amount: Optional[Decimal]
+    ceiling: Optional[Decimal]
+    multiple_award: bool
+    idiq: bool
+    sole_source: bool
+    offers: Optional[int]
+    term_months: Optional[int]
+    agency: str
+    military: bool
+    market_cap: Optional[Decimal]
+    rel_mcap: Optional[Decimal]
+    rel_revenue: Optional[Decimal]
+    event_date: Optional[date]
+    resolution: str
+
+    @property
+    def ceiling_stated(self) -> bool:
+        return self.ceiling is not None
+
+    @property
+    def mcap_band(self) -> str:
+        if self.market_cap is None:
+            return "unknown"
+        if self.market_cap < Decimal("5000000000"):
+            return "small"
+        if self.market_cap < Decimal("50000000000"):
+            return "mid"
+        return "mega"
+
+    @property
+    def rel_band(self) -> str:
+        if self.rel_mcap is None:
+            return "unknown"
+        if self.rel_mcap < Decimal("0.2"):
+            return "<0.2%"
+        if self.rel_mcap < Decimal("1"):
+            return "0.2-1%"
+        if self.rel_mcap < Decimal("5"):
+            return "1-5%"
+        return ">=5%"
+
+
+def _money_of(match) -> Optional[Decimal]:
+    if match is None:
+        return None
+    try:
+        return Decimal(match.group(1).replace(",", ""))
+    except InvalidOperation:
+        return None
+
+
+def snapshot_gov_award(snapshot: "SignalSnapshot") -> Optional["GovAwardFacts"]:
+    """The award's facts from a snapshot's content, or None for any other row."""
+    content = snapshot.content or ""
+    feed = _CONTENT_AWARD_FEED.search(content)
+    kind = _CONTENT_AWARD_KIND.search(content)
+    if feed is None or kind is None:
+        return None
+    tier = _CONTENT_AWARD_TIER.search(content)
+    offers = _CONTENT_AWARD_OFFERS.search(content)
+    term = _CONTENT_AWARD_TERM.search(content)
+    agency = _CONTENT_AWARD_AGENCY.search(content)
+    military = _CONTENT_AWARD_MILITARY.search(content)
+    rel_mcap = _CONTENT_AWARD_REL_MCAP.search(content)
+    rel_rev = _CONTENT_AWARD_REL_REV.search(content)
+    event = _CONTENT_AWARD_EVENT.search(content)
+    resolution = _CONTENT_AWARD_RESOLUTION.search(content)
+    try:
+        rel_mcap_value = Decimal(rel_mcap.group(1)) if rel_mcap else None
+        rel_rev_value = Decimal(rel_rev.group(1)) if rel_rev else None
+    except InvalidOperation:
+        rel_mcap_value = rel_rev_value = None
+    multi = _CONTENT_AWARD_MULTI.search(content)
+    idiq = _CONTENT_AWARD_IDIQ.search(content)
+    sole = _CONTENT_AWARD_SOLE.search(content)
+    return GovAwardFacts(
+        feed=feed.group(1),
+        kind=kind.group(1),
+        tier=tier.group(1) if tier else "",
+        amount=_money_of(_CONTENT_AWARD_AMOUNT.search(content)),
+        ceiling=_money_of(_CONTENT_AWARD_CEILING.search(content)),
+        multiple_award=bool(multi and multi.group(1) == "yes"),
+        idiq=bool(idiq and idiq.group(1) == "yes"),
+        sole_source=bool(sole and sole.group(1) == "yes"),
+        offers=int(offers.group(1)) if offers else None,
+        term_months=int(term.group(1)) if term else None,
+        agency=agency.group(1) if agency else "",
+        military=bool(military and military.group(1) == "yes"),
+        market_cap=_money_of(_CONTENT_AWARD_MCAP.search(content)),
+        rel_mcap=rel_mcap_value,
+        rel_revenue=rel_rev_value,
+        event_date=date.fromisoformat(event.group(1)) if event else None,
+        resolution=resolution.group(1) if resolution else "",
+    )
+
+
 _CONTENT_STAKE = re.compile(r"^stake:\s*([\d.]+)% of class", re.MULTILINE)
 
 #: The overreaction screen's labelled lines (ruling 2026-09-03), parsed back by

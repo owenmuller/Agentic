@@ -22,6 +22,7 @@ from research.research_pass import ResearchPass
 from test_exits import RoutingLLM, filer_signal
 from test_orchestrator import NOW, REPORT, structured
 from test_hardening import disclosure_item, congressional_feed
+from config_overrides import pre_demotion_signals_config
 
 
 def registry(clock=lambda: NOW, **overrides) -> SignalRegistry:
@@ -402,7 +403,7 @@ def test_clustered_disclosures_outrank_a_solo_one_for_the_last_slot(
     started = build(
         tmp_path,
         RiskLimits.load(),
-        SignalsConfig.load(),
+        pre_demotion_signals_config(),  # three congressional slots: the mechanism, not the 2026-10-06 cap
         ResearchConfig.load(),
         llm=RoutingLLM(
             **{

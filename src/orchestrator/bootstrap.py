@@ -564,8 +564,12 @@ def start(
         # Execution fidelity (ruling 2026-09-02): the production price source
         # can quote a spread; a harness's stub usually cannot, and None is fine.
         spread_pct=getattr(prices, "spread_pct", None),
-        # The reward:risk gate (ruling 2026-09-02): veto-only, equity longs.
+        # The reward hurdle (ruling 2026-09-02; horizon-adjusted and
+        # opportunity-cost-aware since 2026-10-06): veto-only, equity longs.
+        # The leash bounds give the hurdle its days; the loop hands it the
+        # opportunity set after construction.
         reward_risk=checks.orchestrator_config.reward_risk,
+        exits_config=checks.orchestrator_config.exits,
         # Boundary confirmation (ruling 2026-09-02): the floor band is
         # stochastic (diagnosed live); a second pass confirms or blocks.
         boundary=checks.orchestrator_config.boundary_confirmation,

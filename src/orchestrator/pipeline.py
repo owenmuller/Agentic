@@ -53,6 +53,7 @@ from audit.records import (
 from execution.base import BrokerAdapter, BrokerError, OrderReceipt
 from research.add_decision import ADD_HOLD_CODES, HeldPositionContext
 from orchestrator.boundary import BoundaryConfirmation, confirm_boundary
+from orchestrator.hurdle import Opportunity, days_to_resolution, effective_hurdle, judge
 from research.reports import Direction, ResearchReport, ResearchUsage
 from signals.themes import THEME_KEY, shortlist_of
 from research.research_pass import ResearchPass
@@ -239,6 +240,8 @@ class SignalPipeline:
         atr_config: Optional["AtrSizingConfig"] = None,
         spread_pct: Optional[Callable[[str], Optional[Decimal]]] = None,
         reward_risk: Optional["RewardRiskConfig"] = None,
+        exits_config: Optional["ExitsConfig"] = None,
+        opportunity: Optional[Callable[[], Optional["Opportunity"]]] = None,
         boundary: Optional["BoundaryConfirmationConfig"] = None,
         sizing_floor: int = 50,
         adds: Optional[HeldPositions] = None,
@@ -269,6 +272,11 @@ class SignalPipeline:
         self._spread_pct = spread_pct
         #: The reward:risk gate (ruling 2026-09-02): veto-only, equity longs.
         self._rr_config = reward_risk
+        self._exits_config = exits_config
+        #: The opportunity set at decision time (ADAPTIVE STANDARDS ruling
+        #: 2026-10-06): the loop supplies deployment and queue pressure; the
+        #: hurdle may read nothing else. None = the base hurdle.
+        self._opportunity = opportunity
         #: Boundary confirmation (ruling 2026-09-02): the sizing floor's noise
         #: band demands a second independent pass; the lower confidence sizes.
         self._boundary = boundary
@@ -563,7 +571,7 @@ class SignalPipeline:
         # sized. Veto-only — the model's target claim can block an entry, never
         # enlarge one. Adds clear it too: more of a position is a new dollar.
         if not intends_option and report.direction is Direction.LONG:
-            failed = self._reward_risk_reason(report)
+            failed = self._reward_risk_reason(report, signal)
             if failed is not None:
                 return self._stopped(
                     decision_id,
@@ -1127,14 +1135,27 @@ class SignalPipeline:
             add_context=add_context,
         )
 
-    def _reward_risk_reason(self, report) -> Optional[str]:
-        """Why this equity long fails the reward:risk gate, or None to proceed.
+    def set_opportunity(self, source: Optional[Callable[[], Optional[Opportunity]]]) -> None:
+        """The loop hands the pipeline its view of the opportunity set
+        (deployment, queue pressure). Deployment and queue only — the hurdle
+        is structurally unable to see P&L, targets or the calendar."""
+        self._opportunity = source
+
+    def _reward_risk_reason(self, report, signal=None) -> Optional[str]:
+        """Why this equity long fails the reward hurdle, or None to proceed.
 
         Deterministic: the model's own target claim over the stop distance the
         position would actually get (ATR-derived, or the fixed fallback). A
         missing QUOTE fails open — order construction already refuses to price
         without one; a missing TARGET fails closed (Constraint #6): a long
         without a defensible level is not a sized trade.
+
+        Since the ADAPTIVE STANDARDS ruling (2026-10-06) the test is two-part:
+        the absolute reward:risk floor (``min_ratio``) and, when
+        ``annualized_hurdle`` is configured, the annualized expected return —
+        (target − entry)/entry × 365/days, days from the report's resolution
+        date clamped into the leash bounds — against a hurdle that scales with
+        the OPPORTUNITY SET (``base × (1 + k × u)``) and with nothing else.
         """
         config = self._rr_config
         if config is None or not config.enabled or not report.tickers:
@@ -1164,15 +1185,54 @@ class SignalPipeline:
         risk = entry * stop_fraction
         if risk <= 0:
             return None
-        ratio = reward / risk
-        if ratio >= config.min_ratio:
-            return None
-        return (
-            f"reward:risk {ratio:.2f} below the {config.min_ratio} floor: "
-            f"target {report.target_price} vs entry {entry} with a "
-            f"{stop_fraction:.2%} stop risks {risk:.2f} to make {reward:.2f} "
-            f"(ruling 2026-09-02)"
+        annualized = getattr(config, "annualized_hurdle", None)
+        if annualized is None:
+            ratio = reward / risk
+            if ratio >= config.min_ratio:
+                return None
+            return (
+                f"reward:risk {ratio:.2f} below the {config.min_ratio} floor: "
+                f"target {report.target_price} vs entry {entry} with a "
+                f"{stop_fraction:.2%} stop risks {risk:.2f} to make {reward:.2f} "
+                f"(ruling 2026-09-02)"
+            )
+        horizon = str(getattr(report, "time_horizon", "") or "weeks")
+        signal_class = str(getattr(signal, "signal_class", "") or "")
+        if self._exits_config is not None:
+            bounds = self._exits_config.leash_bounds_for(horizon, signal_class)
+            floor_days, ceiling_days = bounds.floor, bounds.ceiling
+            fallback_days = self._exits_config.time_stop_days.for_horizon(horizon)
+        else:
+            floor_days, ceiling_days = 3, 367
+            fallback_days = {"days": 7, "weeks": 45, "months": 120}.get(horizon, 45)
+        days = days_to_resolution(
+            getattr(report, "expected_resolution_date", None),
+            self._clock().date(),
+            horizon,
+            floor_days,
+            ceiling_days,
+            fallback_days,
         )
+        opportunity = None
+        if self._opportunity is not None:
+            try:
+                opportunity = self._opportunity()
+            except Exception:  # noqa: BLE001 - an unreadable opportunity set is the base hurdle
+                opportunity = None
+        reading = effective_hurdle(
+            Decimal(str(annualized)),
+            Decimal(str(getattr(config, "opportunity_cost_k", "0.5"))),
+            opportunity,
+            config.min_ratio,
+        )
+        verdict = judge(
+            target=report.target_price,
+            entry=entry,
+            stop_fraction=stop_fraction,
+            days=days,
+            reading=reading,
+        )
+        return None if verdict.passed else verdict.reason
 
     def _propose_equity(self, report, sleeve_nav) -> SizedProposal:
         """The confidence table, then ATR risk-parity (per-name, ruling

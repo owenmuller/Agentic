@@ -336,6 +336,45 @@ classes:
         prefilter:
           # Backfill floods die here, recorded, instead of eating the cap.
           max_report_age_days: 3
+      - id: gov_contract_awards
+        # Human ruling 2026-10-06 (REWORK, amended the same day): government
+        # contract awards as the event-driven Class 1 source. Two feeds behind
+        # one parser — the DoD daily contracts digest (every business day at
+        # 17:00 ET, after the close; read through a reader proxy because the
+        # site refuses plain clients; Wayback for history) and the FPDS public
+        # ATOM feed for CIVILIAN agencies (same day; DoD is withheld 90 days
+        # there). The PRIMARY filter is RELATIVE size — award / market cap —
+        # never dollars: new award + single awardee + >= research_min of the
+        # awardee's cap researches (cap 6/day); >= measure_min is a
+        # measurement-only row (code award_measurement); below that a
+        # measurement-only control row (award_below_floor). Unresolved,
+        # small-business (*) and known-non-public awardees die free as
+        # no_instrument with the reason in the content. Every row carries the
+        # determinants the literature names (relative size, new vs
+        # modification, multiple-award / IDIQ / ceiling, sole-source, agency,
+        # term, awardee size) so the weekly grades SUBTYPES from day one.
+        # MEASUREMENT-FIRST (probation): the research pass runs, the position
+        # does not, for 30 days; the trading path is a human ruling once a
+        # subtype shows edge — not the category average. Review 2026-11-05.
+        # The awardee -> parent map is config/contractors.yaml (human-edited).
+        provider: dod_digest_plus_fpds
+        monthly_cost: 0 # both feeds are free; the proxy is a free tier
+        start_date: 2026-10-07
+        research_tier: class_1
+        daily_research_cap: 6
+        require_instrument: true # an award on an unmapped awardee cannot be traded
+        probation: true # measurement-first: research yes, sizing short-circuits to zero
+        contract_awards:
+          research_min: 0.01
+          measure_min: 0.002
+          parser_floor_usd: 50000000
+          fpds_min_obligated_usd: 25000000
+          fpds_enabled: true
+        prefilter:
+          # The digest is read the next morning (lookback) or the evening
+          # before; anything older than this is a backfill, recorded and not
+          # researched.
+          max_report_age_days: 3
 
       - id: unusual_whales
         # Human-authorized 2026-08-25. Curated callouts of unusual options
@@ -558,7 +597,7 @@ classes:
         # Cost governance (2026-08-25): at most this many research passes per
         # UTC day from this source; beyond it, signals are recorded as
         # pre_filtered code source_cap. Survives restarts (seeded from audit).
-        daily_research_cap: 5
+        daily_research_cap: 1 # 5 -> 1 (REWORK ruling 2026-10-06): measured negative at 5d and 20d (thousands of rows); demoted to one pass a day, measurement continues; retire or restore at 2026-10-27 on the data
 
         # Filer-name normalisation (human ruling 2026-09-04): names are
         # canonicalised at ingest (honorifics, suffixes and initials dropped,
@@ -596,7 +635,7 @@ classes:
         start_date: 2026-09-02
         user_agent: "Agentic trading research omuller@brasacap.com"
         # Cost governance: at most this many research passes per UTC day.
-        daily_research_cap: 5
+        daily_research_cap: 2 # 5 -> 2 (REWORK ruling 2026-10-06): clusters read worse than the singles control at 5d; the only source still producing long verdicts, so two passes keep the funnel alive until an event source earns in; rule at 2026-10-15
         prefilter:
           require_cluster: true
           # Backfill floods (cold start, lost state file) die here, recorded,

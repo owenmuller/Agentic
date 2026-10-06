@@ -149,6 +149,13 @@ Two permitted strategies:
 6. Kalshi module — only after the equity leg proves itself in paper
 7. **Paper trade the full pipeline 2–4 weeks minimum before any live-mode discussion**
 
+## Standards Move With the Opportunity Set, Never With the Scoreboard (human rulings 2026-10-06)
+
+Two standing constraints, each proven by a topology test, each a change to this file if ever revisited:
+
+1. **No threshold, prompt, or sizing input may be a function of realized P&L, distance from any return target, or elapsed time without a trade.** The opportunity set may move the bar — the reward hurdle scales with judged deployment and dispatch-queue pressure (`orchestrator/hurdle.py`) — but the scoreboard may not. The confidence floor, boundary confirmation, the reward hurdle's base and absolute floor, the catalyst gate, verification requirements, stops and the kill switch never read performance. Tested the way the regime scalar is tested: structurally unreachable (the hurdle, the sizing scalars and the prompt builders import nothing from attribution, spend, P&L or any target module — `tests/test_scoreboard_constraint.py`). A deployment multiplier driven by a weekly-return target was approved the same day; it is a sizing input that is a function of target distance, which this constraint forbids, so it is NOT built pending a human ruling on which of the two rulings governs (Constraint #6: the smaller position wins until a human says otherwise).
+2. **The research and review prompts are never told about the weekly target, performance, or any shortfall.** A model that knows it is behind has a motive to rationalize. The target lives in allocation, not in judgment: a measured record (hit rate and forward excess by source, band and horizon, n ≥ 20) may be rendered as evidence to weigh; a target, a P&L, or a deficit may not be rendered at all.
+
 ## Requires Explicit Human Approval (agent must stop and ask)
 
 - Any change to this file's Inviolable Constraints or position caps
