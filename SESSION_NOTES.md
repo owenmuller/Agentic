@@ -4102,6 +4102,80 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### Are the declines selling strength? Run-up declines vs the rest, forward excess (2026-10-06, report only — nothing changed)
+
+**Asked** on the VSTS decline 178299cfb0104e21 ("would be a pure momentum/narrative continuation
+bet"). Two corrections first: that sentence is not in the audit log (no record contains "narrative
+continuation"); the VSTS record's own grounds are "excerpt is XBRL cover metadata, no 5.02 content;
+13.5h stale; volume 0.92x" — a content decline, not a momentum one, and the classifier below puts
+it in "neither". The question stands regardless and was measured over every researched decline.
+
+**Method (deterministic, read-only, droplet audit log + forward cache refreshed 2026-10-02):** 356
+researched declines (324 `no_position`, 21 `insufficient_reward_risk`, 10 `unconfirmed_boundary`, 1
+`already_held_no_add`). Each decline's thesis + priced_in_analysis (manipulation and invalidation
+fields excluded — boilerplate and hypotheticals) parsed for the SIGNED facts the prose states:
+"X% above/below its 200-DMA", "Y% off its 52-week high", "up/down Z%", plus markers (run-up,
+already moved/played out, extended/stretched/overbought, rich valuation; momentum/narrative wording
+tracked separately). **run-up** = above the 200-DMA, or within 10% of the high, or a strength marker,
+or a stated gain ≥10%; **sold-off** = below the 200-DMA, or ≥20% off the high, or a stated fall ≥10%;
+a conflict is settled by the 200-DMA sign. Result: run-up 81, sold-off 118, mixed 8, neither 149
+(the "neither" bucket is mirror-verification failures, 13Fs, 8-K boilerplate — declines with no
+price view at all). A first pass that keyed on the words "52-week high" / "200-DMA" alone tagged 212
+as run-up because the prompt's market-context block puts those phrases in EVERY report — the
+signed parse is the one to trust. Excess vs SPY, points; n rows / ev distinct ticker-days / tk
+tickers / d observation days:
+
+| slice | 5d | 20d | 60d |
+|---|---|---|---|
+| all researched declines | −2.18 (med −1.30, tw −2.65, hit 31%, n=160, 145 ev, 116 tk, 23 d) | +3.27 (med +0.38, tw −1.56, hit 53%, n=62, 53 ev, 40 tk, 13 d) | none yet |
+| **run-up** | **−0.95** (med −1.23, tw −0.92, hit 35%, n=55, 48 ev, 35 tk, 19 d) | **+6.05 (med +1.84, tw +2.91, hit 59%, n=29, 25 ev, 19 tk, 10 d)** | none yet |
+| **sold-off** | **−3.74** (med −1.97, tw −3.90, hit 28%, n=76, 74 ev, 69 tk, 19 d) | **−5.84 (med −4.85, tw −5.84, hit 29%, n=14, 14 ev, 14 tk, 9 d)** | none yet |
+| neither | −0.20 (n=24) | +3.11 (med +2.09, tw +0.39, n=16) | — |
+| run-up minus sold-off | +2.79 (SE 1.24, t +2.2) | +11.88 (SE 3.36, t +3.5) | — |
+| above its 200-DMA (stated) | −0.96 (n=50, 32 tk, 19 d) | +5.42 (med +2.13, tw +3.20, hit 58%, n=26, 17 tk, 10 d) | — |
+| below its 200-DMA (stated) | −4.07 (n=65, 59 tk, 16 d) | −6.87 (med −7.81, hit 30%, n=10) | — |
+
+**The 200-DMA gradient at 5d is monotonic** (below 25%+ −6.92 n=21 → below 10–25% −3.45 n=19 → below
+0–10% −2.13 n=25 → above 0–10% −1.26 n=10 → above 10–25% −1.13 n=26 → above 25%+ −0.42 n=14): over
+115 rows and 16–19 observation days, the further above the 200-DMA a declined name sat, the better
+it did the following week — relative to other declines. SPY over the same windows was flat (−0.3 to
++0.4), so excess ≈ raw: this is not beta.
+
+**What carries it, and what cuts against it:**
+- **Source:** congressional run-up declines 20d **+8.37 / med +3.14 / tw +4.25, hit 68%, n=25**
+  (BE ×5 rows +34/+26, CRWD +23, INTC +22, AMD +20, PLTR +10 at the top; TOST −13, PRAX −19, ALKS
+  −12 at the bottom) vs congressional non-run-up +0.92 / med −1.31 / tw −2.27. **Form 4 run-up
+  declines run the OTHER way:** 5d −3.85 (hit 9%, n=11), 20d −8.45 (n=4; INBX, PRTS) — buying into
+  strength on an insider signal looked wrong; declining it was right.
+- **Who declined:** the research pass's own `no_position` run-up verdicts are the ones that went on
+  to outperform (20d +7.07 / med +2.83 / tw +2.84, hit 63%, n=27). Run-up names the MODEL wanted
+  (direction long, refused by the floor / reward:risk / boundary) did badly: 5d −3.10 (hit 17%,
+  n=6), 20d −7.82 (n=2). The deterministic gates refusing run-up longs were right; the model's
+  priced-in declines of run-up names are the question.
+- **Markers:** "extended / stretched / overbought" 20d +11.13 / med +8.10 / tw +8.56, hit 70%, n=10
+  (7 tickers). "Already moved / played out": 5d **−5.31, hit 19%, n=26** then 20d +1.28 — the names
+  dip in the week after and recover. "Momentum/narrative" wording itself is unremarkable (20d
+  +2.35 / tw −0.32).
+- **Sample shape:** 20d run-up evidence is 19 tickers over 10 observation days (2026-08-27 →
+  09-11), nearly all congressional, with AI/semis megacaps (AMD, CRWD, PLTR, NVDA, MSFT, AAPL) in
+  the top half — one market path in which that factor ran. 60d marks for the late-August rows land
+  ~2026-10-27; a second, independent observation window does not exist yet.
+
+**Reading, stated not ruled.** Directionally the question's premise holds: the declines are not
+random — the system correctly avoided the sold-off names (−3.7 / −5.8), and the names it declined
+for having already run went on to beat both SPY and every other decline bucket at 20d, by median
+and ticker-weighted as well as mean. At 5d even the run-up declines were slightly negative vs SPY,
+so the system was not wrong on the week, only on the month. The mechanism is visible in the prose:
+the priced-in frame reads "X% above the 200-DMA" as "no mean-reversion dislocation, nothing left to
+capture" — a mean-reversion-only lens with no door for continuation, which is what the question
+calls structural. Against calling it now: one source, one window, 19 tickers, no 60d, and Form 4
+run-ups go the other way. **What would make it decidable:** (1) stamp a deterministic
+`dma_distance_at_observation` (from the bars the forward engine already fetches) on every decision
+record so this slice is mechanical, not prose-parsed; (2) a weekly forward line "declines by 200-DMA
+band" at 5/20/60d; (3) rule after the 60d marks (~10-27) and a second window. If it holds, the
+design question is a continuation door in the research frame with its own measurement tag — the
+shape the options doors took — not a threshold tweak. No code or config changed.
+
 ### Citrini re-pointed to @citrini, trial clock reset — human ruling 2026-09-30
 
 **Ruled:** `signals.yaml` citrini `handle` "@Citrini7" → **"@citrini"**; `start_date` 2026-08-25 →
