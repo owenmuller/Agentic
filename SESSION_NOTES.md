@@ -4102,6 +4102,101 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### ITEM 6 (2026-10-07) — 8-K widening and FDA calendar: the VST check, volume, design, and the PRE-REGISTERED backtests (registered here BEFORE either ran)
+
+**The VST 8-K check.** Vistra filed two 8-Ks in the window: 2026-09-24 (accepted 21:13 ET, items
+1.01/8.01/9.01) — the closing of a $1.5B junior subordinated notes offering; and 2026-10-05
+(accepted Sat 2026-10-03 00:12 ET, items 1.01/2.03/9.01) — an amendment extending a commodity-linked
+revolver's maturity. **Neither is the DOE Loan Programs Office loan (Bloomberg 10-02 15:27 ET) nor
+the Google/Constellation nuclear deal (10-06), and through 10-06 no 8-K for either exists.** The
+move: 10-02 close +0.2% (gap +1.65% into the 15:27 story, faded), 10-05 +3.5%, 10-06 +10.8% (open
++4.5%), SPY +0.7/+0.6%. A widened whitelist (8.01) would have caught nothing: the catalysts were a
+newswire story and a press release, not filings. Two filing-side findings instead:
+1. **The whitelisted 1.01 filings never reached the funnel.** EDGAR full-text search listed both
+   (VST on the first page both days, 88 and 121 hits for "Item 1.01" in the windows); the paper
+   unit's 8-K polls ran (journal 09-25 13:30, 10-05 13:30); no Vistra record exists in the audit.
+   The pooled dispatch holds low-scored candidates for the next window ("released 3, holding 37"
+   on 10-05) and 1.01 ranks below 5.02/1.05 by ruled prior; a candidate still held at the close
+   leaves NO record and is never re-listed (the seen ledger). **Measurement gap:** capped and held
+   8-K candidates are invisible to the forward engine, so "measurement-first" does not hold for 8-K
+   today. Proposed (not built): write `stage_rejection slot_lost` for pooled candidates still held
+   at session close — no LLM, one record — so the forward report grades the whole 8-K set.
+2. **The lister reads ONE page (100 hits) per item per poll**, relevance-ordered, lookback 1 day: on
+   a day with >100 filings carrying an item (8.01 runs 63/day on a 2-day window; 1.01 reached 121
+   in the 10-03..10-06 window) filings are silently dropped. Proposed (not built): page `from`
+   until the total is reached, or query per calendar day.
+
+**8-K volume, 2026-09-08..2026-10-06 (21 filing days, EDGAR full-text search, item carried in the
+filing's own item list):**
+
+| item | filings | per day | with a listed ticker | distinct filers | item-only (± 9.01), tickered | top co-items |
+|---|---|---|---|---|---|---|
+| 1.01 | 908 | 43 | 651 (72%) | 152 | 141 | 9.01 838, 2.03 290, 7.01 231, 3.02 220, 8.01 165, 5.02 76 |
+| 8.01 | 1,331 | 63 | 861 (65%) | 248 | 522 | 9.01 946, 7.01 210, 1.01 163, 3.02 126, 5.02 73 |
+
+Both items: 165. Against the current five-item list (~87–254 candidates/day arriving, cap 6 researched)
+the widening adds ~70 tickered filings a day, 8.01 the larger half. **What 8.01 carries** (14 random
+8.01-only tickered filings read): dividend declarations (3), a trial-timing update, a topline-result
+press release, a litigation note, a proxy/meeting note, an ETF cover-page filing, a nuclear-framework
+press release ($120B, BAM), a small M&A agreement, two cover-page-only XBRL stubs. **Dollar figures
+appear in 3 of 14 and a counterparty in 2** — 8.01 is a grab bag whose signal, where it exists, lives
+in the exhibit 99.1 press release, not the item text. Counterparty / dollar extraction is feasible
+for 1.01 (the item text names the agreement and usually the party) and weak for 8.01.
+
+**Design for the widening (report, nothing built):** add 1.01 (already listed) and 8.01 to the
+whitelist with a RELATIVE-SIZE stamp as for contracts: dollars extracted from the item text and
+exhibit 99.1 (first $ figure within 400 chars of "agreement"/"contract"/"award"/"financing"),
+counterparty = the capitalised party after "with"/"between"; tiers dollars / market cap ≥ 1%
+research, 0.2–1% measure, < 0.2% or none extracted below_floor (measurement rows). 8.01 without an
+extracted dollar figure is below_floor by construction (the dividend/proxy/ETF noise never researches).
+Keep the 8-K cap at 6; the pooled slot competition decides; fix the two filing-side findings first or
+the measurement rows never exist.
+
+**PRE-REGISTERED 8-K BACKTEST (stage A, no document fetch), registered before it ran:**
+- Universe: every 8-K (not 8-K/A) filed 2024-01-02..2026-10-02 carrying item 1.01 or 8.01, filer with
+  a listed ticker in EDGAR's display names (the production lister's own source). Groups by item set:
+  `1.01` (no 8.01, no 2.02), `8.01` (no 1.01, no 2.02), `both_1.01_8.01`, `earnings_2.02` (any
+  filing of the universe carrying 2.02 — the comparison group, not a candidate).
+- Timing point-in-time: acceptance time from the filer's submissions JSON; the first tradeable print
+  is the file-date open when accepted before 09:30 ET, else the next session's open. oc = that open →
+  close t+1/5/20; cc = close(t0) → close; pre5; gap. Excess vs SPY. Caps = SEC shares × close(t0),
+  bands < $2B / $2–20B / > $20B. Slices: cap band, with 5.02, with 7.01, by year.
+- Statistics: mean/median/hit, ticker-clustered SE, 4,000-draw ticker-cluster bootstrap CI on oc5.
+- **Success criterion (rule candidate = `1.01` group, then `8.01`):** oc5 mean > 0 with the
+  cluster-bootstrap CI excluding 0, hit > 50%, n ≥ 300, ≥ 2 calendar years, and beats
+  `earnings_2.02` at t+5. Stage B (dollar extraction, relative-size tiers on the 1.01 group with cap
+  ≥ $1B) is registered as the follow-up only if stage A passes; its criterion is the contracts rule's
+  (≥ 1% of cap beats < 1% at t+5, n ≥ 100).
+- Script `~/scratch/k8_backtest.py` (droplet), outputs `~/Agentic/data/k8_backtest_2026-10-07.*`.
+
+**FDA / PDUFA calendar — sources and volume.** There is no official PDUFA calendar. Free, official:
+the FDA Advisory Committee calendar page (fetchable, HTTP 200, ~31KB, parseable). PDUFA target action
+dates are disclosed by the issuers themselves in 8-Ks and press-release exhibits: EDGAR full-text
+hits for "PDUFA" + "target action date" per year — 2019 57, 2020 83, 2021 131, 2022 109, 2023 79,
+2024 106, 2025 117, 2026-to-date 99 (documents, so a filing and its exhibit count twice; many are
+earnings releases restating a known date). Distinct (ticker, date) events ≈ 50–70 a year, ~1–2 a
+week. Paid calendars (BiopharmCatalyst, RTTNews) are not needed for the measurement. A live source
+would be: EDGAR FTS daily for new PDUFA/goal-date statements (same lister as 8-K) plus the AdCom page
+weekly; family `issuer_filings`; measurement-first like contracts.
+
+**PRE-REGISTERED PDUFA BACKTEST, registered before it ran:**
+- Events: distinct (ticker, PDUFA date) mined from 8-K documents 2019-01..2026-10 whose text states a
+  PDUFA / target action / goal date 7–400 days ahead of the filing; the announcement is the FIRST
+  filing naming the date. Outcome label: a follow-up 8-K by the same filer within 7 days after the
+  date whose text says "approved" (approved) or "Complete Response Letter" (CRL); else unlabelled.
+- Measures (excess vs SPY, point-in-time caps at announcement): **R1 run-up** = close(announcement)
+  → close(t−1 before the date); **decision** = close(t−1) → next open / close t+1; **R2 post** =
+  next open → close t+5 / t+20, by label. Slices: lead time (7–60, 61–180, 181–400 days), cap band,
+  year.
+- Statistics: mean/median/hit, ticker-clustered SE and 4,000-draw cluster bootstrap on R1 and R2.
+- **Success criterion:** R1 mean > 0 with the cluster-bootstrap CI excluding 0, hit > 50%, n ≥ 150,
+  ≥ 4 calendar years; R2 reported by label, no criterion (the decision outcome is not knowable in
+  advance; a post-approval drift rule needs the label, which arrives with the move).
+- Script `~/scratch/pdufa_backtest.py` (droplet), outputs `~/Agentic/data/pdufa_backtest_2026-10-07.*`.
+
+Both scripts were syntax-checked and the 8-K script smoke-run on a 40-filing random sample for code
+correctness only (no numbers read) before this entry was committed; the registered runs launch after.
+
 ### RULINGS 2026-10-07 — 2b interval adopted; the self-consistency vote BUILT (replaces boundary confirmation); sampling settings in CLAUDE.md; calibration block BUILT; all pure-decline golden cases graded behaviourally
 
 **1. 2b interval → [+0.15, +1.20], adopted in full.** The deduped backtest is a bug correction (one
