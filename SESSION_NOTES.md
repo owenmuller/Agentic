@@ -4102,6 +4102,46 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 8-K ITEMS 1.01 / 8.01 BACKTEST, STAGE A — RESULT (2026-10-07 18:04 UTC, the pre-registered run): NO WIDENING; and item 2b
+
+45,776 filings 2024-01-02..2026-10-02, 40,446 with bars; point-in-time acceptance times (before-open
+filings trade at that day's open), caps = SEC shares × close(t0). Excess vs SPY, points,
+next-open → close (oc) unless stated:
+
+| group | events / tickers | gap | oc t+1 | **oc t+5** | oc t+20 | oc5 clustered CI | by year oc5 (24/25/26) |
+|---|---|---|---|---|---|---|---|
+| 1.01 (no 8.01/2.02) | 12,866 / 3,546 | +1.17 (med −0.02) | −0.26 | **−0.61, med −1.23, hit 40%** | −2.83 | SE 0.59, t −1.0, **[−1.45, +0.84]** | +0.71 / −1.32 / −1.36 |
+| 8.01 (no 1.01/2.02) | 20,390 / 3,850 | +0.50 | −0.67 | **−0.69, med −0.81, hit 43%** | −1.71 | SE 0.22, t −3.2, **[−1.07, −0.21]** | −1.07 / −0.28 / −0.79 |
+| both 1.01 + 8.01 | 3,826 / 1,974 | +2.27 | −0.95 | **−1.32, hit 39%** | −2.44 | SE 0.41, t −3.2, [−2.06, −0.42] | −0.72 / −1.48 / −1.93 |
+| earnings 2.02 (comparison) | 3,364 / 1,321 | +0.38 | −0.63 | −0.79, hit 45% | −1.03 | SE 0.22, t −3.7, [−1.21, −0.38] | −0.47 / −1.14 / −0.72 |
+
+By cap: 1.01 small −0.24 / mid −0.89 / large −2.77; 8.01 small −0.55 / mid −1.04 / large −1.18.
+With 5.02 on the filing: 1.01 +0.16 (n=917), 8.01 −1.25. **The pre-registered criterion (oc5 mean > 0
+with the CI excluding 0, hit > 50%, beats 2.02) fails for both items on every leg**: 1.01 is
+indistinguishable from zero and 8.01 is reliably NEGATIVE after the open, as negative as the
+earnings-day comparison group. Post-filing drift on these items is downward, not upward. The ruling's
+default (no 8.01 widening) stands with the data behind it; stage B (dollar extraction) is not run
+because stage A did not pass. Outputs `~/Agentic/data/k8_backtest_2026-10-07.*`.
+
+**Item 2b — researched vs would-have-been-discarded, same window (item 1.01 filings
+2026-09-15..10-02 that are in the backtest universe, 354; `k8_2b.py`):**
+
+| group | filings / tickers | gap | oc t+1 | oc t+5 | oc5 clustered CI |
+|---|---|---|---|---|---|
+| researched (an audit record carries a verdict) | 13 / 12 | −1.08 | −4.42 | **−4.38**, med −4.75, hit 31% | [−11.6, +2.9] |
+| recorded, not researched (prefilter / cap codes) | 68 / 65 | −0.18 | −3.71 | −5.66, hit 25% | [−8.9, −2.6] |
+| would have been discarded (listed, no record) | 273 / 252 | +1.15 | −1.89 | **−4.48**, med −2.53, hit 29% (n=225) | [−6.3, −2.6] |
+
+The discarded group's t+5 mean (−4.48) equals the researched group's (−4.38) within noise (the
+researched SE is 4.0 on n=13), and every group is sharply negative in this window (an 11-session
+window; the full 2024–26 1.01 group is −0.61). **Proposal: NO 8-K cap increase.** The condition for
+proposing one — the discarded set being at least as good — is met only in the sense that both are
+equally bad; researching more item-1.01 filings would buy more passes on a flow whose post-filing
+drift is negative at every horizon. The cap stays at 6 and the `slot_lost` rows now make the whole
+flow measurable going forward. Vote cost for sizing (2b): 0 votes, 0 extra passes on the log so
+far — the vote shipped at 05:xx UTC and today's session produced no tradeable or near-threshold
+verdict; the ~7.6/day projection stands until measured.
+
 ### RULINGS 2026-10-08 — ITEM 1: the OOM audit; research jobs now run memory-capped; swap needs root
 
 **1a. What was killed.** The kernel log is unreadable to the `agentic` user (`dmesg_restrict=1`,
