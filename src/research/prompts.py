@@ -364,8 +364,15 @@ def build_user_prompt(
     market_context: Optional[str] = None,
     convergence_context: Optional[str] = None,
     add_context: Optional[HeldPositionContext] = None,
+    measured_record: Optional[str] = None,
 ) -> str:
     """Assemble the analysis request.
+
+    ``measured_record`` (ruling 2026-10-07, item 4) is the system's own
+    measured record for this source - forward returns by voted-median
+    confidence band and horizon, n >= 20 only - rendered as data by the caller
+    (``orchestrator.calibration``) and stated here verbatim. Empty or None
+    renders nothing, and the prompt is byte-identical to the one without it.
 
     ``add_context`` (ruling 2026-09-16) turns the request into an ADD DECISION:
     the held position is stated from the system's own records, outside the
@@ -404,6 +411,8 @@ def build_user_prompt(
     lines.extend(_theme_lines(signal))
     if add_context is not None:
         lines.extend(add_decision_lines(add_context))
+    if measured_record:
+        lines.extend(["", measured_record])
 
     guidance = _CLASS_GUIDANCE[signal.signal_class]
     if class1_is_stale(signal):

@@ -89,6 +89,12 @@ class FunnelEntry:
     #: Options-door / theme->ETF measurement tag (ruling 2026-09-15), traded
     #: rows only; "" elsewhere.
     expression_tag: str = ""
+    #: Calibration block (ruling 2026-10-07, item 4): the research verdict's
+    #: stated horizon and direction, and the self-consistency vote's median
+    #: confidence when a vote ran (None on unvoted and pre-ruling records).
+    time_horizon: str = ""
+    direction: str = ""
+    voted_confidence: Optional[int] = None
     #: Form 4 door (ruling 2026-09-15): "cluster", "c_suite_single", "single";
     #: "" on every other source. Parsed from the content the fetcher wrote.
     form4_qualification: str = ""
@@ -154,6 +160,9 @@ def funnel_entries(
                     transaction=snapshot_transaction(record.signal),
                     amount_range=snapshot_amount_range(record.signal),
                     stake_percent=snapshot_stake_percent(record.signal),
+                    time_horizon=(str(record.research.time_horizon) if record.research is not None else ""),
+                    direction=(str(record.research.direction) if record.research is not None else ""),
+                    voted_confidence=(record.vote.median_confidence if getattr(record, "vote", None) is not None else None),
                 )
             )
         elif isinstance(record, StageRejectionRecord):
@@ -186,6 +195,9 @@ def funnel_entries(
                     amount_range=snapshot_amount_range(record.signal),
                     stake_percent=snapshot_stake_percent(record.signal),
                     overreaction=snapshot_overreaction(record.signal),
+                    time_horizon=(str(record.research.time_horizon) if record.research is not None else ""),
+                    direction=(str(record.research.direction) if record.research is not None else ""),
+                    voted_confidence=(record.vote.median_confidence if getattr(record, "vote", None) is not None else None),
                 )
             )
     return out

@@ -319,6 +319,11 @@ class ForwardReturns:
                     # Last write wins: a later, fuller row supersedes.
                     self._cache[(row.symbol, row.observed)] = row
 
+    def cached(self) -> dict[tuple[str, date], ForwardRow]:
+        """The rows already on disk, without fetching anything (the calibration
+        block reads these at startup; the weekly refreshes them)."""
+        return dict(self._cache)
+
     def _append(self, row: ForwardRow) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._path, "a", encoding="utf-8") as handle:
