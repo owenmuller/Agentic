@@ -49,10 +49,11 @@ from audit.records import (
     NearMissSnapshot,
     RejectedStage,
     StageRejectionRecord,
+    VoteSnapshot,
 )
 from execution.base import BrokerAdapter, BrokerError, OrderReceipt
 from research.add_decision import ADD_HOLD_CODES, HeldPositionContext
-from orchestrator.boundary import BoundaryConfirmation, confirm_boundary
+from orchestrator.vote import VOTE_OVERTURNED, VoteOutcome, VoteRules, run_vote
 from orchestrator.hurdle import Opportunity, days_to_resolution, effective_hurdle, judge
 from research.reports import Direction, ResearchReport, ResearchUsage
 from signals.themes import THEME_KEY, shortlist_of
@@ -243,6 +244,7 @@ class SignalPipeline:
         exits_config: Optional["ExitsConfig"] = None,
         opportunity: Optional[Callable[[], Optional["Opportunity"]]] = None,
         boundary: Optional["BoundaryConfirmationConfig"] = None,
+        self_consistency: Optional["SelfConsistencyConfig"] = None,
         sizing_floor: int = 50,
         adds: Optional[HeldPositions] = None,
         add_config: Optional["AddDecisionsConfig"] = None,
@@ -279,7 +281,12 @@ class SignalPipeline:
         self._opportunity = opportunity
         #: Boundary confirmation (ruling 2026-09-02): the sizing floor's noise
         #: band demands a second independent pass; the lower confidence sizes.
-        self._boundary = boundary
+        self._boundary = boundary  # RETIRED (ruling 2026-10-07): kept for old call sites, never read
+        #: Self-consistency vote (ruling 2026-10-07): replaced boundary
+        #: confirmation. The loop hands in a funder that draws each extra
+        #: sample from the daily research budget.
+        self._vote_config = self_consistency
+        self._fund_sample: Optional[Callable[[], bool]] = None
         self._sizing_floor = sizing_floor
         self._gate = gate
         self._adapter = adapter
@@ -539,33 +546,37 @@ class SignalPipeline:
                 or (report.direction is Direction.LONG and self._option_door(report) is not None)
             )
         )
-        # 2a-0. Boundary confirmation (ruling 2026-09-02, post-diagnosis): a
-        # tradeable verdict in the sizing floor's noise band must be confirmed
-        # by a second independent pass, and the LOWER confidence sizes.
+        # 2a-0. Self-consistency vote (ruling 2026-10-07, replacing boundary
+        # confirmation): a tradeable verdict, an add, or any verdict within the
+        # margin of a live threshold buys k more independent passes; majority
+        # direction, median confidence; an overturned tradeable verdict is a
+        # typed rejection. A confident decline buys nothing and passes through.
         boundary = None
-        if not report.recommends_no_position:
-            confirmation = self._confirm_boundary(signal, report, add_context)
-            if confirmation.usage is not None:
-                # The second pass is real spend on THIS decision (2026-09-15:
-                # RWT's record carried one pass's cost for two passes' calls).
-                usage = _combine_usage(usage, confirmation.usage)
-            if confirmation.report is None:
-                return self._stopped(
-                    decision_id,
-                    signal,
-                    RejectedStage.SIZING,
-                    "unconfirmed_boundary",
-                    confirmation.failure or "boundary confirmation failed",
-                    report=report,
-                    usage=usage,
-                    screen_report=screen_report,
-                    screen_usage=screen_usage,
-                    add=self._add_stub(add_context, "unconfirmed", second_pass),
-                )
-            report = confirmation.report
-            boundary = confirmation.snapshot
-            if is_add:
-                self._add_in_flight = {"context": add_context, "report": report}
+        vote = None
+        voted = self._vote(signal, report, add_context)
+        if voted.usage is not None:
+            # The samples are real spend on THIS decision (2026-09-15: RWT's
+            # record carried one pass's cost for two passes' calls).
+            usage = _combine_usage(usage, voted.usage)
+        if voted.ran:
+            vote = voted.snapshot
+        if voted.report is None:
+            return self._stopped(
+                decision_id,
+                signal,
+                RejectedStage.SIZING,
+                VOTE_OVERTURNED,
+                voted.failure or "self-consistency vote overturned the verdict",
+                report=report,
+                usage=usage,
+                screen_report=screen_report,
+                screen_usage=screen_usage,
+                add=self._add_stub(add_context, "unconfirmed", second_pass),
+                vote=vote,
+            )
+        report = voted.report
+        if is_add:
+            self._add_in_flight = {"context": add_context, "report": report}
         # 2a. The reward:risk gate (ruling 2026-09-02): equity longs must clear
         # (target - entry) / (entry x stop) >= min_ratio before a dollar is
         # sized. Veto-only — the model's target claim can block an entry, never
@@ -693,6 +704,7 @@ class SignalPipeline:
             convergence=convergence,
             boundary=boundary,
             add=add_snapshot,
+            vote=vote,
         )
         if not decision.is_approved:
             return PipelineResult(
@@ -1111,29 +1123,36 @@ class SignalPipeline:
             update={"tag": expression.tag or "theme_etf", "theme": theme}
         )
 
-    def _confirm_boundary(
+    def _vote(
         self,
         signal: Signal,
         report: ResearchReport,
         add_context: Optional[HeldPositionContext] = None,
-    ) -> BoundaryConfirmation:
-        """Boundary confirmation (ruling 2026-09-02): a tradeable verdict in
-        the floor band must replicate before it sizes. The rule itself lives in
-        ``orchestrator.boundary.confirm_boundary`` — ONE function, shared with
-        the golden replay (2026-09-17) so the set exercises the guard production
-        runs. Returns the report to size, or none plus why for the typed
-        ``unconfirmed_boundary`` rejection.
+    ) -> VoteOutcome:
+        """Self-consistency vote (ruling 2026-10-07): the rule itself lives in
+        ``orchestrator.vote.run_vote`` — ONE function, shared with the golden
+        replay so the set exercises the guard production runs. Returns the
+        report to continue with (the majority sample at the median), or none
+        plus why for the typed ``vote_overturned`` rejection.
         """
-        if self._boundary is None or not self._boundary.enabled:
-            return BoundaryConfirmation(report)
-        return confirm_boundary(
+        config = self._vote_config
+        if config is None or not config.enabled:
+            return VoteOutcome(report, first=report)
+        return run_vote(
             self._research,
             signal,
             report,
-            floor=self._sizing_floor,
-            band_width=self._boundary.band_width,
+            rules=VoteRules(k=config.k, margin=config.margin, thresholds=tuple(config.thresholds), floor=self._sizing_floor),
             add_context=add_context,
+            fund=self._fund_sample,
+            first_transcript_hash=getattr(self._research, "last_transcript_hash", "") or "",
         )
+
+    def set_sample_funder(self, fund: Optional[Callable[[], bool]]) -> None:
+        """The loop hands the vote its funder: each extra sample draws one
+        pass from the daily research budget, and a refusal leaves a tradeable
+        verdict unconfirmed (Constraint #6)."""
+        self._fund_sample = fund
 
     def set_opportunity(self, source: Optional[Callable[[], Optional[Opportunity]]]) -> None:
         """The loop hands the pipeline its view of the opportunity set
@@ -1512,6 +1531,7 @@ class SignalPipeline:
         screen_report=None,
         screen_usage=None,
         add: Optional[AddSnapshot] = None,
+        vote: Optional["VoteSnapshot"] = None,
     ) -> PipelineResult:
         rejection = self._audit.record_stage_rejection(
             decision_id,
@@ -1526,6 +1546,7 @@ class SignalPipeline:
             screen_report=screen_report,
             screen_usage=screen_usage,
             add=add,
+            vote=vote,
         )
         return PipelineResult(
             decision_id=decision_id,

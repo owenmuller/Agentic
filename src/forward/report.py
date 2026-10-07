@@ -847,7 +847,10 @@ def gov_award_section(
 UNLOCK_MIN_EVENTS = 25
 UNLOCK_MIN_NET_MEAN = Decimal("0.40")
 UNLOCK_ROUND_TRIP_COST = Decimal("0.15")
-UNLOCK_BACKTEST_CI = (Decimal("0.17"), Decimal("1.37"))
+#: [+0.17, +1.37] -> [+0.15, +1.20] (human ruling 2026-10-07): the backtest
+#: re-run on the deduped set (one event per ticker per digest date) is a bug
+#: correction, not a re-fit on live data, so the interval moves with it.
+UNLOCK_BACKTEST_CI = (Decimal("0.15"), Decimal("1.20"))
 
 
 def sizing_unlock_line(
@@ -873,6 +876,9 @@ def sizing_unlock_line(
         )
     gross = Decimal(str(statistics.mean(values)))
     net = gross - UNLOCK_ROUND_TRIP_COST
+    # The net MEDIAN prints beside the mean (ruling 2026-10-07): the backtest's
+    # net median is +0.01, and nobody should read the mean as typical.
+    net_median = Decimal(str(statistics.median(values))) - UNLOCK_ROUND_TRIP_COST
     c_n = n >= UNLOCK_MIN_EVENTS
     c_net = net >= UNLOCK_MIN_NET_MEAN
     c_ci = UNLOCK_BACKTEST_CI[0] <= gross <= UNLOCK_BACKTEST_CI[1]
@@ -880,7 +886,8 @@ def sizing_unlock_line(
     return (
         f"  SIZING UNLOCK (pre-registered 2026-10-06): {state} — live rule events n={n} "
         f"({'ok' if c_n else 'need ' + str(UNLOCK_MIN_EVENTS)}); next-open->t+5 mean gross {gross:+.2f}, "
-        f"net of 15bp {net:+.2f} ({'ok' if c_net else 'need >= +' + str(UNLOCK_MIN_NET_MEAN)}); "
+        f"net of 15bp {net:+.2f} ({'ok' if c_net else 'need >= +' + str(UNLOCK_MIN_NET_MEAN)}), "
+        f"net median {net_median:+.2f} (backtest net median +0.01: the mean is not typical); "
         f"inside backtest CI [{UNLOCK_BACKTEST_CI[0]:+}, {UNLOCK_BACKTEST_CI[1]:+}]: {'yes' if c_ci else 'no'}"
     )
 

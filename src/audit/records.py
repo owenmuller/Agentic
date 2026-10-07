@@ -715,6 +715,46 @@ class BoundaryConfirmationSnapshot(_Record):
     second_est_cost_usd: Optional[Decimal] = None
 
 
+class VoteSampleSnapshot(_Record):
+    """One sample of a self-consistency vote (ruling 2026-10-07): what it said,
+    and a hash of the search transcript it said it from, so vote stability is
+    measurable per source and band and a repeated transcript is visible."""
+
+    index: int
+    #: The direction (entry), add verdict (add decision) or action (review).
+    direction: str
+    confidence: Optional[int] = None
+    transcript_hash: str = ""
+    est_cost_usd: Optional[Decimal] = None
+
+
+class VoteSnapshot(_Record):
+    """The self-consistency vote (ruling 2026-10-07) that replaced boundary
+    confirmation: why it ran, every sample, the majority and the median that
+    sized (or did not). Absent on records written before the field, and on
+    verdicts that bought no vote (a confident decline) - absent means "no
+    trigger", never "not run"."""
+
+    trigger: str
+    k: int
+    margin: int
+    thresholds: tuple[int, ...]
+    floor: Optional[int]
+    first_direction: str
+    first_confidence: Optional[int]
+    majority_direction: str
+    median_confidence: Optional[int]
+    #: The first pass's verdict carried the vote.
+    held: bool
+    samples: tuple[VoteSampleSnapshot, ...]
+    #: Samples bought beyond the first pass, and their estimated spend (the
+    #: decision's est_cost_usd includes it).
+    extra_passes: int = 0
+    extra_est_cost_usd: Optional[Decimal] = None
+    #: Why the vote was incomplete, when it was (unfunded or a failed sample).
+    failure: Optional[str] = None
+
+
 class DecisionRecord(_Record):
     """Everything known when the gate answered. All four stages are required."""
 
@@ -740,6 +780,9 @@ class DecisionRecord(_Record):
     #: the verdict sat in the sizing floor's noise band. None outside the band
     #: and on records written before the field.
     boundary_confirmation: Optional[BoundaryConfirmationSnapshot] = None
+    #: Self-consistency vote (ruling 2026-10-07): every sample and the median
+    #: that sized. None when the verdict bought no vote, and on older records.
+    vote: Optional[VoteSnapshot] = None
     #: Add decision (ruling 2026-09-16): set when this decision ADDED to a held
     #: position instead of opening one. None on every ordinary entry.
     add: Optional[AddSnapshot] = None
@@ -917,6 +960,9 @@ class StageRejectionRecord(_Record):
     #: Add decision that did not add (ruling 2026-09-16): the position it landed
     #: on and why nothing was bought. Replay reads these back as convergence.
     add: Optional["AddSnapshot"] = None
+    #: Self-consistency vote (ruling 2026-10-07): the samples behind a
+    #: ``vote_overturned`` rejection, or behind a voted decline.
+    vote: Optional["VoteSnapshot"] = None
 
 
 class ExitReason(StrEnum):
@@ -1029,6 +1075,9 @@ class ThesisReviewRecord(_Record):
     #: Why this review ran out of cadence, when it did — the price move that
     #: forced it. None on an ordinary cadence review.
     trigger_reason: Optional[str] = None
+    #: Self-consistency vote (ruling 2026-10-07): a first verdict that would
+    #: close or trim bought k more; the samples and the majority action.
+    vote: Optional["VoteSnapshot"] = None
     #: The position's leash after this review, in days from entry. Present when
     #: the review moved it; the clamp means this is what was actually applied,
     #: not what was asked for.

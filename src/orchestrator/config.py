@@ -291,8 +291,41 @@ class BoundaryConfirmationConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    enabled: bool = True
+    #: RETIRED (human ruling 2026-10-07): the self-consistency vote below
+    #: replaced it - one vote, not both. The field stays so old configs load;
+    #: nothing reads it.
+    enabled: bool = False
     band_width: int = Field(default=10, gt=0)
+
+
+class SelfConsistencyConfig(BaseModel):
+    """Self-consistency vote (human ruling 2026-10-07, replacing boundary
+    confirmation). Diagnosis: five single-pass replays of every golden case
+    put the noise where the trades are - every long outside one Form 4 cluster
+    was a minority verdict (1-2 of 5), and the five noisy cases spanned 20-40
+    confidence points on identical input at T=0. The noise is search variance;
+    the fix is a vote, not a temperature.
+
+    A first-pass long (or puts), an add verdict, a review that would close or
+    trim, or ANY verdict whose confidence lies within ``margin`` of a live
+    threshold buys ``k`` more independent full passes. Majority direction;
+    median confidence among the majority samples (rounded down); ties and
+    incomplete votes resolve to no position / hold (Constraint #6). The
+    vote can only confirm or kill a tradeable verdict, never enlarge one, so
+    absent-section defaults are safe.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = True
+    #: Extra independent samples beyond the first pass (k=2 -> three votes).
+    k: int = Field(default=2, ge=1, le=6)
+    #: Points either side of a threshold that trigger a vote on a decline.
+    margin: int = Field(default=10, ge=0, le=30)
+    #: The live thresholds: the sizing floor, the band edge, the band top.
+    thresholds: tuple[int, ...] = (45, 50, 70)
+    #: Reviews that would close or trim vote too.
+    reviews: bool = True
 
 
 class RewardRiskConfig(BaseModel):
@@ -594,6 +627,9 @@ class OrchestratorConfig(BaseModel):
     boundary_confirmation: BoundaryConfirmationConfig = Field(
         default_factory=BoundaryConfirmationConfig
     )
+    #: Self-consistency vote (ruling 2026-10-07): replaced boundary
+    #: confirmation. Confirms or kills a tradeable verdict, never enlarges it.
+    self_consistency: SelfConsistencyConfig = Field(default_factory=SelfConsistencyConfig)
     #: Add decisions (ruling 2026-09-16): one judged position per symbol, adds
     #: under a combined cap. The combined cap can never exceed the hard cap, so
     #: absent-section defaults are safe.

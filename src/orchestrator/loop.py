@@ -190,6 +190,12 @@ class TradingLoop:
         self._queue_positive = 0
         if hasattr(pipeline, "set_opportunity"):
             pipeline.set_opportunity(self._current_opportunity)
+        # Self-consistency vote (ruling 2026-10-07): each extra sample is a
+        # pass against the daily budget, drawn from the review reserve so a
+        # vote never starves tomorrow's entries and a refusal leaves a
+        # tradeable verdict unconfirmed (Constraint #6).
+        if hasattr(pipeline, "set_sample_funder"):
+            pipeline.set_sample_funder(lambda: self._budget.try_spend(for_review=True))
         self._dispatch = dispatch if (dispatch is not None and dispatch.scored) else None
         self._pooled_sources = frozenset(dispatch.pooled_sources) if self._dispatch else frozenset()
         self._next_release: Optional[datetime] = None

@@ -37,7 +37,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
 
-from orchestrator.boundary import BoundaryConfirmation, confirm_boundary
+from orchestrator.vote import VoteOutcome as BoundaryConfirmation  # the vote's outcome; name kept for the harness
+from orchestrator.vote import VoteRules, run_vote
 from research.exit_review import ExitReview, PositionUnderReview
 from research.reports import ResearchReport, is_manipulation_flagged
 from signals import SignalClass, SignalsConfig
@@ -328,11 +329,22 @@ class GoldenResult:
 
 @dataclass(frozen=True, slots=True)
 class BoundaryBand:
-    """The floor and width production confirms inside — from risk_limits.yaml
-    ``sizing.no_trade_below`` and orchestrator.yaml ``boundary_confirmation``."""
+    """The vote production runs (ruling 2026-10-07, replacing the boundary
+    band): the sizing floor from risk_limits.yaml and k / margin / thresholds
+    from orchestrator.yaml ``self_consistency``. The class name is kept so the
+    harness and its tests read as before; ``band_width`` is retired."""
 
     floor: int
-    band_width: int
+    k: int = 2
+    margin: int = 10
+    thresholds: tuple[int, ...] = (45, 50, 70)
+
+    @property
+    def rules(self) -> VoteRules:
+        return VoteRules(k=self.k, margin=self.margin, thresholds=tuple(self.thresholds), floor=self.floor)
+
+    def describe(self) -> str:
+        return f"k={self.k}, margin {self.margin} around {'/'.join(str(t) for t in self.thresholds)}, floor {self.floor}"
 
 
 def _total_cost(usage, confirmation: Optional[BoundaryConfirmation]) -> Optional[Decimal]:
@@ -350,7 +362,7 @@ def _total_cost(usage, confirmation: Optional[BoundaryConfirmation]) -> Optional
 def _confirmed_line(first: str, confirmation: Optional[BoundaryConfirmation]) -> str:
     if confirmation is None or not confirmation.ran:
         return first
-    return f"{first} | boundary: {confirmation.describe()}"
+    return f"{first} | vote: {confirmation.describe()}"
 
 
 def grade(
@@ -542,21 +554,19 @@ def grade_add(
 
 
 def _confirm(research_pass, signal, outcome, band, add_context=None):
-    """The production boundary confirmation on a TRADEABLE first-pass verdict
-    (a long or puts; an add on an add case). None when the band is not wired
-    or the verdict is not tradeable; ``ran`` False when it sat outside the band."""
+    """The production self-consistency vote on the first-pass verdict (ruling
+    2026-10-07): a tradeable verdict, an add, or any verdict within the margin
+    of a live threshold buys k more samples. None when no vote is wired or the
+    first pass is not a report; ``ran`` False when nothing triggered."""
     if band is None or not isinstance(outcome, ResearchReport):
         return None
-    tradeable = outcome.is_add if add_context is not None else str(outcome.direction) != "no_position"
-    if not tradeable:
-        return None
-    return confirm_boundary(
+    return run_vote(
         research_pass,
         signal,
         outcome,
-        floor=band.floor,
-        band_width=band.band_width,
+        rules=band.rules,
         add_context=add_context,
+        first_transcript_hash=getattr(research_pass, "last_transcript_hash", "") or "",
     )
 
 
@@ -612,7 +622,7 @@ def run_golden(
 
 
 def confirmation_tally(results: list[GoldenResult]) -> tuple[int, int, int]:
-    """(in-band second passes run, upheld, reversed) across the results."""
+    """(votes run, held, overturned) across the results."""
     ran = [r.confirmation for r in results if r.confirmation is not None and r.confirmation.ran]
     upheld = sum(1 for c in ran if c.upheld)
     return len(ran), upheld, len(ran) - upheld
@@ -628,14 +638,11 @@ def render_summary(results: list[GoldenResult], band: Optional[BoundaryBand] = N
     ]
     if band is not None:
         ran, upheld, reversed_ = confirmation_tally(results)
-        tradeable = sum(1 for r in results if r.confirmation is not None)
+        eligible = sum(1 for r in results if r.confirmation is not None)
         lines.append(
-            f"Boundary confirmation [{band.floor}, {band.floor + band.band_width}): "
-            f"{tradeable} tradeable first-pass verdicts, {ran} in the band -> "
-            f"{upheld} upheld, {reversed_} reversed"
-            + (
-                f" ({upheld / ran:.0%} concurrence)" if ran else ""
-            )
+            f"Self-consistency vote ({band.describe()}): {eligible} first-pass reports, "
+            f"{ran} triggered a vote -> {upheld} held, {reversed_} overturned"
+            + (f" ({upheld / ran:.0%} held)" if ran else "")
         )
     if drifted:
         lines.append("DRIFT — a human reviews each before any change ships:")

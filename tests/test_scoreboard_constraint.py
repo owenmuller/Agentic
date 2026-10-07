@@ -22,6 +22,7 @@ FENCED = (
     "orchestrator/hurdle.py",
     "orchestrator/scalars.py",
     "orchestrator/deployment.py",  # the deployment multiplier (step 3), when it exists
+    "orchestrator/vote.py",  # the self-consistency vote (ruling 2026-10-07, requirement d)
     "research/prompts.py",
     "research/exit_review.py",
     "research/triage.py",

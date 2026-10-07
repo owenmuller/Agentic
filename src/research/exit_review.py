@@ -712,6 +712,13 @@ class ExitReviewPass:
         self._client = client
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._last_usage: Optional[ResearchUsage] = None
+        #: Search-transcript hash of the last review call (ruling 2026-10-07):
+        #: the review-side vote persists it per sample.
+        self._last_transcript_hash: str = ""
+
+    @property
+    def last_transcript_hash(self) -> str:
+        return self._last_transcript_hash
 
     @property
     def last_usage(self) -> Optional[ResearchUsage]:
@@ -726,6 +733,7 @@ class ExitReviewPass:
         reason. The caller treats every rejection as HOLD.
         """
         self._last_usage = None
+        self._last_transcript_hash = ""
         try:
             result = self._client.research(
                 system=EXIT_SYSTEM_PROMPT,
@@ -744,6 +752,7 @@ class ExitReviewPass:
             output_tokens=result.output_tokens,
             cost_usd=result.est_cost_usd,
         )
+        self._last_transcript_hash = getattr(result, "transcript_hash", "") or ""
 
         if not result.structured:
             return self._reject(

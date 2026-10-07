@@ -698,7 +698,7 @@ def test_reviews_spend_the_shared_budget_and_stop_when_it_is_gone(
         limits,
         signals_config,
         research_config,
-        config=review_config(max_research_passes_per_day=2),
+        config=review_config(max_research_passes_per_day=2, self_consistency={"enabled": False}),
     )
     assert started.budget.spent == 1  # the entry
 
@@ -722,7 +722,7 @@ def test_review_spends_are_replayed_from_the_log(
         limits,
         signals_config,
         research_config,
-        config=review_config(),
+        config=review_config(self_consistency={"enabled": False}),
         clock=clock,
     )
     clock.advance(hours=2)
@@ -1962,63 +1962,82 @@ class _SecondPass:
         return getattr(self._real, name)
 
 
-def _band_session(tmp_path, limits, signals_config, research_config, second_confidence):
+def _vote_session(tmp_path, limits, signals_config, research_config, second_confidence, direction="long"):
+    """A long/60 first pass, then k=2 scripted samples (the same scripted
+    report twice) through the production vote (ruling 2026-10-07)."""
     from research.reports import ResearchReport, ResearchUsage
 
     started = build(
         tmp_path, limits, signals_config, research_config,
         prices=MutablePrices(NUE=str(QUOTE)), clock=FakeClock(),
         llm=RoutingLLM(**{REPORT_TOOL_NAME: structured({**REPORT, "confidence": 60})}),
-        # The shipped band (ruling 2026-09-03): [50, 70), RWT's exact case.
-        config=orchestrator_config(boundary_confirmation={"band_width": 20}),
+        config=orchestrator_config(self_consistency={"enabled": True}),
     )
     pipeline = started.loop.pipeline
-    second = ResearchReport.model_validate({**REPORT, "confidence": second_confidence})
+    second = ResearchReport.model_validate({**REPORT, "confidence": second_confidence, "direction": direction})
     wrapped = _SecondPass(
         pipeline._research, second,
         ResearchUsage(input_tokens=1000, output_tokens=100, cost_usd=Decimal("0.05")),
     )
     pipeline._research = wrapped
     report = started.loop.tick()
-    assert report.processed and report.processed[0].traded
-    assert wrapped.runs == 2  # the band bought a second independent pass
-    return started
+    assert wrapped.runs == 3  # the first pass plus k=2 samples
+    return started, report
 
 
 @pytest.mark.parametrize(
-    "second_confidence,sized_from,sized_confidence",
-    [(66, "first", 60), (55, "second", 55), (60, "first", 60)],
+    "second_confidence,sized_confidence",
+    [(66, 66), (55, 55), (60, 60)],
 )
-def test_the_boundary_confirmation_is_on_the_decision_record(
+def test_the_vote_is_on_the_decision_record(
     tmp_path, limits, signals_config, research_config,
-    second_confidence, sized_from, sized_confidence,
+    second_confidence, sized_confidence,
 ):
-    """RWT (2026-09-15) sized at 60 inside [50, 70) and the record could not
-    say what the second pass returned or which pass sized. Now it does: both
-    verdicts, the band, the lower-sizes rule's choice, and the second pass's
-    spend folded into the decision's estimate."""
-    started = _band_session(
+    """Ruling 2026-10-07: every sample, the majority and the median that
+    sized are on the record, with the samples' spend folded into the
+    decision's estimate. Samples long/60, long/x, long/x -> median x."""
+    started, report = _vote_session(
         tmp_path, limits, signals_config, research_config, second_confidence
     )
+    assert report.processed and report.processed[0].traded
     decision = started.audit.trail("dec-1").decision
-    stamp = decision.boundary_confirmation
-    assert stamp is not None
-    # Floor 50 -> 45 (ruling 2026-10-06); the harness keeps band_width 20
-    # while the shipped config widened it to 25 so the band stays [45, 70).
-    assert (stamp.floor, stamp.band_width) == (45, 20)
-    assert (stamp.first_direction, stamp.first_confidence) == ("long", 60)
-    assert (stamp.second_direction, stamp.second_confidence) == ("long", second_confidence)
-    assert stamp.sized_from == sized_from
+    assert decision.boundary_confirmation is None  # retired
+    vote = decision.vote
+    assert vote is not None and vote.held and vote.trigger == "tradeable_verdict"
+    assert (vote.k, vote.margin, tuple(vote.thresholds), vote.floor) == (2, 10, (45, 50, 70), 45)
+    assert (vote.first_direction, vote.first_confidence) == ("long", 60)
+    assert [s.confidence for s in vote.samples] == [60, second_confidence, second_confidence]
+    assert (vote.majority_direction, vote.median_confidence) == ("long", sized_confidence)
     assert decision.research.confidence == sized_confidence
     assert decision.sizing.confidence == sized_confidence
-    assert stamp.second_est_cost_usd == Decimal("0.05")
-    assert decision.est_cost_usd is not None and decision.est_cost_usd >= Decimal("0.05")
+    assert vote.extra_passes == 2 and vote.extra_est_cost_usd == Decimal("0.10")
+    assert decision.est_cost_usd is not None and decision.est_cost_usd >= Decimal("0.10")
 
 
-def test_a_verdict_outside_the_band_carries_no_confirmation_stamp(
+def test_a_minority_long_is_overturned_into_a_typed_rejection(
     tmp_path, limits, signals_config, research_config
 ):
-    started, _, _ = enter_position(tmp_path, limits, signals_config, research_config)
+    started, report = _vote_session(
+        tmp_path, limits, signals_config, research_config, 40, direction="no_position"
+    )
+    assert report.processed and not report.processed[0].traded
+    rejection = report.processed[0].rejection
+    assert rejection is not None and rejection.code == "vote_overturned"
+    assert rejection.vote is not None and not rejection.vote.held
+    assert [s.direction for s in rejection.vote.samples] == ["long", "no_position", "no_position"]
+    assert rejection.vote.majority_direction == "no_position"
+    assert not started.loop.exits.tracked  # nothing opened
+
+
+def test_a_confident_long_still_votes_and_a_held_vote_is_stamped(
+    tmp_path, limits, signals_config, research_config
+):
+    started, _, _ = enter_position(
+        tmp_path, limits, signals_config, research_config,
+        config=orchestrator_config(self_consistency={"enabled": True}),
+    )
     decision = started.audit.trail("dec-1").decision
-    assert decision.research.confidence == 71  # outside [50, 70)
+    assert decision.research.confidence == 71
     assert decision.boundary_confirmation is None
+    # Every long votes (ruling 2026-10-07); the scripted LLM replicates, so it holds at 71.
+    assert decision.vote is not None and decision.vote.held and decision.vote.median_confidence == 71

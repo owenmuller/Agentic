@@ -101,6 +101,7 @@ class AuditLog:
         convergence: Optional["ConvergenceSnapshot"] = None,
         boundary: Optional["BoundaryConfirmationSnapshot"] = None,
         add: Optional["AddSnapshot"] = None,
+        vote: Optional["VoteSnapshot"] = None,
     ) -> DecisionRecord:
         """Write the complete decision-time record. Approved or rejected, both land."""
         record = DecisionRecord(
@@ -113,6 +114,7 @@ class AuditLog:
             expression=expression,
             convergence=convergence,
             boundary_confirmation=boundary,
+            vote=vote,
             add=add,
             screen_research=(
                 ResearchSnapshot.of(screen_report)
@@ -287,6 +289,7 @@ class AuditLog:
         screen_usage: Optional[ResearchUsage] = None,
         broker_order_id: Optional[str] = None,
         add: Optional["AddSnapshot"] = None,
+        vote: Optional["VoteSnapshot"] = None,
     ) -> StageRejectionRecord:
         """Record a signal that stopped before the gate, or an order the broker refused.
 
@@ -322,6 +325,7 @@ class AuditLog:
             est_cost_usd=usage.cost_usd if usage else None,
             broker_order_id=broker_order_id,
             add=add,
+            vote=vote,
         )
         self._append(record)
         return record
@@ -373,6 +377,7 @@ class AuditLog:
         case_for_holding: Optional[str] = None,
         case_for_selling: Optional[str] = None,
         verdict_reason: Optional[str] = None,
+        vote: Optional["VoteSnapshot"] = None,
     ) -> ThesisReviewRecord:
         """Record one thesis review of an open position.
 
@@ -403,6 +408,7 @@ class AuditLog:
             case_for_holding=case_for_holding,
             case_for_selling=case_for_selling,
             verdict_reason=verdict_reason,
+            vote=vote,
             code=code,
             message=message,
             est_input_tokens=usage.input_tokens if usage else None,
@@ -955,7 +961,15 @@ class AuditLog:
                 and record.sizing.strategy in ("mechanical", "cash_sweep", "baseline")
             )
         )
-        return new_ids + reviews
+        # Self-consistency votes (ruling 2026-10-07): every extra sample was a
+        # pass against the budget; the record carries how many were bought, so
+        # a restart replays them too and cannot refill them.
+        votes = sum(
+            int(getattr(getattr(record, "vote", None), "extra_passes", 0) or 0)
+            for record in self.records()
+            if getattr(record, "recorded_at", None) is not None and record.recorded_at.date() == day
+        )
+        return new_ids + reviews + votes
 
     def _decision(self, decision_id: str) -> DecisionRecord:
         for record in self.records():

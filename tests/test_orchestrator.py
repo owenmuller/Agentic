@@ -311,6 +311,12 @@ def orchestrator_config(**overrides) -> OrchestratorConfig:
         "max_research_passes_per_day": 40,
         "tick_interval_seconds": 30,
         "account_type": "cash",
+        # The self-consistency vote (ruling 2026-10-07) triples the passes
+        # behind every long; the shipped yaml has it ON (pinned in
+        # test_accountability2) and the mechanism tests here run it OFF so
+        # call counts, costs and budget lines stay about what they test. Vote
+        # tests opt in with self_consistency={"enabled": True}.
+        "self_consistency": {"enabled": False},
         "exits": {
             "max_loss_fraction": "0.15",
             "time_stop_days": {"days": 7, "weeks": 45, "months": 120},
@@ -772,7 +778,7 @@ def test_the_budget_stops_research_and_defers_the_rest(
         signals_config,
         research_config,
         fetcher=feed(trump_posts=posts),
-        config=orchestrator_config(max_research_passes_per_day=2),
+        config=orchestrator_config(max_research_passes_per_day=2, self_consistency={"enabled": False}),
     )
 
     report = started.loop.tick()
@@ -819,7 +825,7 @@ def test_the_budget_is_replayed_from_the_log_so_a_restart_cannot_refill_it(
         limits=limits,
         signals_config=signals_config,
         research_config=research_config,
-        orchestrator_config=orchestrator_config(max_research_passes_per_day=3),
+        orchestrator_config=orchestrator_config(max_research_passes_per_day=3, self_consistency={"enabled": False}),
         data_dir=tmp_path,
         clock=clock,
     )
@@ -1359,6 +1365,8 @@ def test_no_record_written_by_an_adversarial_run_is_anything_but_a_known_kind(
         "convergence",
         # Boundary confirmation (2026-09-15): both passes and which one sized.
         "boundary_confirmation",
+        # Self-consistency vote (2026-10-07): every sample and the median that sized.
+        "vote",
         # Add decision (2026-09-16): the position an add joined; None on entries.
         "add",
         # Two-stage research (2026-08-25): the screen draft and its cost.

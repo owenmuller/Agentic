@@ -56,6 +56,22 @@ class LLMResult:
     #: Estimated dollars, from the pricing table in research.yaml. None when the
     #: model is unpriced — an absent estimate, never a guessed one.
     est_cost_usd: Optional[Decimal] = None
+    #: SHA-256 prefix of the search-phase transcript the report was written
+    #: from (ruling 2026-10-07): the self-consistency vote persists it per
+    #: sample so a repeated transcript is visible. Empty when no search ran.
+    transcript_hash: str = ""
+
+
+def transcript_hash_of(messages: list[dict[str, Any]]) -> str:
+    """16 hex chars of the transcript, serialised deterministically."""
+    import hashlib
+    import json
+
+    try:
+        blob = json.dumps(messages, sort_keys=True, default=str)
+    except TypeError:
+        blob = repr(messages)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
 class LLMClient(Protocol):
@@ -182,12 +198,19 @@ class AnthropicResearchClient:
         usage = _fresh_usage()
         messages: list[dict[str, Any]] = [{"role": "user", "content": user}]
 
+        transcript_hash = ""
         if self._config.web_search.enabled:
             messages = self._gather_evidence(system, messages, resolved, usage)
+            transcript_hash = transcript_hash_of(messages)
             if not self._config.web_search.replay_results_in_report:
                 messages = _elide_search_results(messages)
 
-        return self._request_report(system, messages, tool, resolved, usage)
+        result = self._request_report(system, messages, tool, resolved, usage)
+        if transcript_hash:
+            from dataclasses import replace as _replace
+
+            result = _replace(result, transcript_hash=transcript_hash)
+        return result
 
     def triage(
         self, *, system: str, user: str, tool: dict[str, Any]

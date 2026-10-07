@@ -302,12 +302,30 @@ risk_scalars:
 # the noise in the 60-70 mean-confidence bucket (spread 17.2, the one
 # direction split), not [50, 60) - a case running 52/72/75 landed in the old
 # band once in three. >=70 was stable (spread 4.4) and stays unconfirmed.
+# RETIRED (human ruling 2026-10-07): boundary confirmation - k=1 on the floor
+# band, the lower sizes - is replaced by the self-consistency vote below. One
+# vote, never both. The key stays so the field loads; nothing reads it.
 boundary_confirmation:
-  enabled: true
-  # band_width 20 -> 25 (AGGRESSION RULING 2026-10-06, lever 2): the floor
-  # moved 50 -> 45 and the confirmation band stays [floor, 70), so every new
-  # admission still buys a second agreeing pass before sizing.
+  enabled: false
   band_width: 25
+
+# SELF-CONSISTENCY VOTE (human ruling 2026-10-07). Five single-pass replays of
+# every golden case (2026-10-06): every long outside one Form 4 cluster was a
+# minority verdict (1-2 of 5); the five noisy cases spanned 20-40 points on
+# identical input with the report call at T=0. The noise is search variance,
+# so a pass is a noisy sample and the decision is a vote. A first-pass long or
+# puts, an add verdict, a review that would close or trim, or any verdict
+# within `margin` of a live threshold buys `k` more independent full passes.
+# Majority direction; median confidence among the majority samples (rounded
+# down); no majority or an incomplete vote -> no position / hold. Projected on
+# the last ten sessions: 7.6 extra passes a day, 22.8 total against the cap
+# of 40, ~$1-2.5 a day. Every sample is persisted on the record.
+self_consistency:
+  enabled: true
+  k: 2
+  margin: 10
+  thresholds: [45, 50, 70]
+  reviews: true
 
 # REWARD:RISK GATE (ruling 2026-09-02, from live LLM-agent trading evidence:
 # expectancy discipline beats verdict accuracy). A judged EQUITY LONG must clear

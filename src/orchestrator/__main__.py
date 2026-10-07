@@ -312,6 +312,14 @@ def _attribution_text(checks) -> str:
         sections.append(deployment_line(checks))
     except Exception as error:  # noqa: BLE001 - a line must never sink the report
         sections.append(f"judged deployment line unavailable: {error}")
+    # Self-consistency votes (ruling 2026-10-07): held, overturned by direction
+    # and source, extra passes and dollars - the window is the report's.
+    try:
+        from orchestrator.vote_report import vote_lines
+
+        sections.append("\n".join(vote_lines(checks.audit.records(), window_start)))
+    except Exception as error:  # noqa: BLE001
+        sections.append(f"self-consistency vote lines unavailable: {error}")
 
     # Research upstream errors (ruling 2026-09-03): the code-execution 400 on
     # the opus search phase is accepted as an intermittent typed rejection and
@@ -590,11 +598,13 @@ def golden() -> int:
             client, source_tiers=build_source_tiers(SignalsConfig.load())
         )
         band = None
-        boundary = OrchestratorConfig.load().boundary_confirmation
-        if boundary.enabled and not single_pass:
+        vote_config = OrchestratorConfig.load().self_consistency
+        if vote_config.enabled and not single_pass:
             band = BoundaryBand(
                 floor=RiskLimits.load().sizing.no_trade_below,
-                band_width=boundary.band_width,
+                k=vote_config.k,
+                margin=vote_config.margin,
+                thresholds=tuple(vote_config.thresholds),
             )
         reviews = sum(1 for case in cases if case.kind == "review")
         print(
@@ -602,7 +612,7 @@ def golden() -> int:
             f"production passes (model {config.model}, screen "
             f"{config.screen.model if config.screen else 'off'}"
             + (
-                f", boundary confirmation in [{band.floor}, {band.floor + band.band_width})"
+                f", self-consistency vote ({band.describe()})"
                 if band is not None
                 else ", single pass"
             )

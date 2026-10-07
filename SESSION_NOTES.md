@@ -4102,6 +4102,100 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### RULINGS 2026-10-07 — 2b interval adopted; the self-consistency vote BUILT (replaces boundary confirmation); sampling settings in CLAUDE.md; calibration block BUILT; all pure-decline golden cases graded behaviourally
+
+**1. 2b interval → [+0.15, +1.20], adopted in full.** The deduped backtest is a bug correction (one
+event per ticker per digest date), not a re-fit on live data, so pre-registration is not breached.
+`UNLOCK_BACKTEST_CI` moved; the weekly `SIZING UNLOCK` line now prints the net MEDIAN beside the net
+mean with the backtest's +0.01 stated, so nobody reads the mean as typical.
+
+**2. Self-consistency vote — SHIPPED as designed** (`orchestrator/vote.py`, config
+`orchestrator.yaml self_consistency: k 2, margin 10, thresholds [45, 50, 70], reviews true`).
+- **Trigger:** a first-pass long or puts, an add verdict, an exit review that would close or trim,
+  or ANY verdict (declines included) whose confidence is within 10 of 45/50/70. Confident declines
+  (the 72–95 cluster) buy nothing. **Decision:** majority of the three; confidence = median among the
+  majority samples, rounded DOWN; the sized report is the majority sample nearest the median with
+  its confidence set to the median; no majority, an unfunded or failed sample on a tradeable
+  trigger, or an add that does not replicate as an add → `vote_overturned` rejection / hold.
+  Reviews: majority action, no majority → HOLD, an incomplete vote on a close/trim → HOLD recorded
+  as `vote_incomplete`.
+- **Boundary confirmation RETIRED, not run alongside:** `orchestrator/boundary.py` deleted; the
+  pipeline's hook, the golden harness's `_confirm` and the CLI all call `run_vote`; the config key
+  stays (`enabled: false`) so old configs load; `BoundaryConfirmationSnapshot` stays for old records.
+- **(a) Persistence:** `VoteSnapshot` (trigger, k, margin, thresholds, floor, first verdict,
+  majority, median, held, failure, extra passes and dollars, and every sample's direction,
+  confidence and 16-hex search-transcript hash) on `DecisionRecord.vote`,
+  `StageRejectionRecord.vote` and `ThesisReviewRecord.vote`. The hash is SHA-256 of the search-phase
+  transcript before elision (`LLMResult.transcript_hash`, `ResearchPass.last_transcript_hash`,
+  `ExitReviewPass.last_transcript_hash`).
+- **(b) Weekly:** `orchestrator/vote_report.py` — votes triggered, held, overturned (and incomplete),
+  by direction (first → majority), by source, by trigger, extra passes and estimated dollars; appended
+  under the deployment line. The golden summary line reads "N first-pass reports, M triggered a
+  vote -> held, overturned".
+- **Budget:** every extra sample is one pass against the daily budget, drawn through
+  `try_spend(for_review=True)` (the review reserve, so a vote never starves tomorrow's entries); a
+  refusal leaves a tradeable verdict unconfirmed. `research_passes_on` replays `vote.extra_passes`
+  so a restart cannot refill them. Mechanism tests run the vote OFF through the harness default
+  (`tests/test_orchestrator.orchestrator_config`); the shipped yaml has it ON, pinned in
+  `test_accountability2`.
+- **(d) Topology:** `orchestrator/vote.py` is in the scoreboard fence (imports only
+  `audit.records` and `research.reports`); `tests/test_vote.py` (10) pins the rule.
+- **(c) Golden replay with the vote LIVE** (production passes, k=2, 29 cases, $10.66, one run each,
+  `~/scratch/gvote/index.log`): **28 PASS / 1 DRIFT; 14 votes triggered → 12 held, 2 overturned.**
+
+| case | samples | vote | grade |
+|---|---|---|---|
+| form4-intc-cluster | long/68, long/62, long/60 | HELD long/62 | PASS — INTC holds, as expected |
+| pelosi-be-calls-decline | long/52, no/72, no/48 | OVERTURNED → no_position | PASS — the minority long dies |
+| pelosi-intc-calls-entry | no/38, long/52, long/58 | OVERTURNED → long/55 | PASS (long allowed) — a near-threshold DECLINE that was the minority became a long |
+| pelosi-uber-priced-in | long/61, long/52, long/52 | HELD long/52 | **DRIFT** on the traded band [0, 49] — it replicated 3 of 3 today (2 of 5 yesterday) |
+| sa-13f-stale-heavy-puts | no/72, no/82, no/72 | HELD no/72 | PASS — the 20–82 case declined three times today |
+| moskowitz-amat-max-lag | no/72, no/72, no/35 | HELD no/72 | PASS (behavioural) — the 35 is the noise, outvoted |
+| 8 other near-threshold declines (72–80) | all declines | HELD | PASS |
+| add-celh ×2 | hold ×3 each | HELD hold | PASS |
+| 11 confident declines, 4 reviews | no vote (reviews: single, no close/trim) | – | PASS |
+
+  Read against the ruling's expectation ("the four minority longs die, INTC holds"): INTC holds;
+  pelosi-be dies; pelosi-uber did NOT die — it drew long three times in a row today, and a verdict
+  that replicates is exactly what the vote is built to let through; pelosi-intc-calls was the
+  mirror case, a minority decline outvoted into a long/55. The vote kills what fails to replicate,
+  not what was a minority yesterday. The one DRIFT is a floor-band long that replicated; the golden
+  case's traded band [0, 49] predates the vote and now grades a replicated long/52 as drift — a
+  grading decision for the human, not a code defect.
+- **Live round trip:** the replay above IS the production request path — `ResearchPass.run` (screen
+  + verification, real API) three times per triggered case through the same `run_vote` the
+  pipeline calls; 14 votes ran live. The pipeline-side hook is covered by `tests/test_exits.py`
+  (vote on the record, overturned → `vote_overturned`, confident long still votes) and the full
+  suite (green on the droplet, 3 skips).
+
+**3. Temperature: no change.** The settings are now recorded in CLAUDE.md § LLM Request-Path
+Changes (T=0 on the sonnet report call only; opus verification and every search phase at the API
+default; no top_p/top_k/thinking parameters) so they cannot drift silently.
+
+**4. Calibration block — BUILT** (`orchestrator/calibration.py`): cells per source × VOTED-median
+confidence band (<45, 45–55, 55–70, 70–85, 85+) × stated horizon × direction, from the funnel
+entries (`FunnelEntry.time_horizon / direction / voted_confidence`) and the forward engine's cached
+rows; a cell renders only at n ≥ 20 marks at 5d (n, 5d hit, mean 5d and 20d excess), fenced under
+`MEASURED RECORD ... evidence to weigh, nothing more`, for the signal's source only, through
+`ResearchPass(measured_record=)` → `build_user_prompt(measured_record=)`. Built at startup from
+the cached rows (no fetch; the unit is a fresh process each morning), any failure renders nothing.
+Fence: imports `forward` (allowed: a measured record) and nothing from attribution, spend, the
+audit log or a target module (`tests/test_calibration.py`, 6). **Today it is inert and verified
+so:** production log 6,314 funnel entries, 3,620 cached rows, **0 voted entries, 0 cells**; all 23
+golden entry prompts byte-identical with the provider wired. The largest single-pass cells (NOT
+rendered, by ruling) are congressional 70–85/weeks/no_position n=55 and form_8k 70–85/days n=23;
+the first VOTED cell needs 20 voted marks in one cell — at ~2 longs a day, months away. Because
+the rendered prompt is byte-identical until then, no golden replay was spent on this step; the
+replay is owed when the first cell crosses n ≥ 20 (the prompt changes then), flagged in the
+standing reminders.
+
+**5. All pure-decline golden cases graded behaviourally:** ten cases' expect confidence → [0, 100]
+(sa-13f, appaloosa, pelosi-intc-may-backfill, case-aapl, trump-nike, trump-micron, trump-clemens,
+trump-ford, nolimitgains, uw-tim-cook); directions unchanged, so a long still fails.
+
+**Shipping:** vote bundle (items 1, 2, 3, 5) in one commit, the calibration block (item 4) in the
+next; both verified on origin, vps and the droplet.
+
 ### RULING 2026-10-06 ON 2a AND 3, ITEMS 2–4 — confidence noise measured five-fold; the self-consistency design; sampling settings; the calibration block was missed
 
 **2a. Every golden case five times, single pass, production passes (model, screen, tiers as
@@ -5248,6 +5342,15 @@ tests now use distinct names.
   a door into a measured-negative population.
 
 ## Standing reminders
+- **Calibration block golden replay owed (2026-10-07):** the `MEASURED RECORD` block renders only
+  once a source × voted-band × horizon × direction cell reaches n ≥ 20 at 5d; until then every
+  prompt is byte-identical and no replay was spent. When the health/weekly first shows a cell
+  (`calibration block: N cells` at startup), run the golden replay and a live round trip BEFORE
+  the next session, per CLAUDE.md § LLM Request-Path Changes.
+- **Vote stability read (2026-10-07):** the weekly's vote lines (held / overturned by source and
+  direction, transcript hashes on the records) are the first measure of per-source noise; at
+  ~20 votes a source, read whether overturn rates differ by source and band before touching k
+  or the margin.
 
 - **LLM-path changes need a live round trip (2026-08-24 ruling, now in
   CLAUDE.md § LLM Request-Path Changes):** elision/caching/tool-config/model

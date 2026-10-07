@@ -93,6 +93,7 @@ class ResearchPass:
         convergence_context: Optional[Callable[[Signal], Optional[str]]] = None,
         source_tiers: Optional[dict[str, str]] = None,
         screen_graduation: Optional[int] = None,
+        measured_record: Optional[Callable[[Signal], str]] = None,
     ) -> None:
         self._client = client
         self._credibility = credibility
@@ -111,9 +112,33 @@ class ResearchPass:
         #: and what harnesses without a screen config get); an int = the screen
         #: confidence a report must reach to graduate to verification.
         self._screen_graduation = screen_graduation
+        #: Calibration block (ruling 2026-10-07, item 4): the system's own
+        #: measured record for the signal's source, rendered as data by the
+        #: orchestrator; None or "" = no block, byte-identical prompt.
+        self._measured_record = measured_record
         self._last_usage: Optional["ResearchUsage"] = None
         self._last_screen: Optional[ResearchReport] = None
         self._last_screen_usage: Optional["ResearchUsage"] = None
+        #: Search-transcript hash of the call whose report was returned (the
+        #: verification call, or the screen when the pass ended there) - the
+        #: self-consistency vote persists it per sample (ruling 2026-10-07).
+        self._last_transcript_hash: str = ""
+
+    @property
+    def last_transcript_hash(self) -> str:
+        return self._last_transcript_hash
+
+    def _measured_block(self, signal: Signal) -> Optional[str]:
+        """The calibration block for this signal, or None. A provider failure
+        renders nothing - absent beats invented, and never blocks a pass."""
+        if self._measured_record is None:
+            return None
+        try:
+            block = self._measured_record(signal)
+        except Exception as error:  # noqa: BLE001 - evidence is optional
+            logger.warning("measured record failed (%s); pass proceeds without it", type(error).__name__)
+            return None
+        return block or None
 
     @property
     def last_usage(self) -> Optional["ResearchUsage"]:
@@ -176,11 +201,13 @@ class ResearchPass:
             market_context=market_context,
             convergence_context=convergence_context,
             add_context=add_context,
+            measured_record=self._measured_block(signal),
         )
 
         self._last_usage = None
         self._last_screen = None
         self._last_screen_usage = None
+        self._last_transcript_hash = ""
         tier = self._source_tiers.get(signal.source_id) or str(signal.signal_class)
 
         add_decision = add_context is not None
@@ -248,6 +275,7 @@ class ResearchPass:
             output_tokens=result.output_tokens,
             cost_usd=result.est_cost_usd,
         )
+        self._last_transcript_hash = getattr(result, "transcript_hash", "") or ""
 
         if not result.structured:
             # The model answered in prose, or not at all. One attempt, no re-roll.

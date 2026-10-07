@@ -183,12 +183,14 @@ def test_sampling_aimed_at_the_wrong_model_fails_preflight(models, fragment):
         ResearchConfig.model_validate(raw)
 
 
-def test_the_boundary_band_is_twenty_and_seventy_plus_stays_unconfirmed():
+def test_the_vote_is_configured_as_ruled_and_boundary_confirmation_is_retired():
     from orchestrator.config import OrchestratorConfig
 
-    boundary = OrchestratorConfig.load().boundary_confirmation
-    # 20 -> 25 with the floor 50 -> 45 (ruling 2026-10-06): the band stays [floor, 70).
-    assert boundary.enabled and boundary.band_width == 25
+    config = OrchestratorConfig.load()
+    # Ruling 2026-10-07: k=2, margin 10 around 45/50/70, reviews too; one vote, never both.
+    vote = config.self_consistency
+    assert vote.enabled and vote.k == 2 and vote.margin == 10 and tuple(vote.thresholds) == (45, 50, 70) and vote.reviews
+    assert not config.boundary_confirmation.enabled
 
 
 # ================================================================================
@@ -302,63 +304,68 @@ class _Scripted:
         return self._outcomes.pop(0)
 
 
-def test_the_golden_replay_runs_the_production_boundary_confirmation():
-    """2026-09-17: an in-band tradeable verdict buys the SAME second pass the
-    pipeline buys; the case grades on what would size, both passes stay on the
-    line, and the summary tallies concurrence."""
+def test_the_golden_replay_runs_the_production_vote():
+    """Ruling 2026-10-07 (succeeding the 2026-09-17 boundary rule): a first
+    pass that triggers buys the SAME vote the pipeline buys; the case grades on
+    what would size, every sample stays on the line, and the summary tallies
+    held against overturned."""
     from orchestrator.golden import BoundaryBand, confirmation_tally, render_summary, run_golden
 
-    band = BoundaryBand(floor=50, band_width=20)
+    band = BoundaryBand(floor=45, k=2, margin=10, thresholds=(45, 50, 70))
     from dataclasses import replace
 
     case = replace(golden_case(directions=("no_position", "long")), traded_confidence_band=(0, 49))
     long58 = make_report(direction="long", confidence=58, target_price="10")
 
-    # Reversed: the second pass declines -> nothing sizes -> behaviourally a pass.
-    research = _Scripted(long58, make_report(direction="no_position", confidence=40))
+    # Overturned: a minority long -> nothing sizes -> behaviourally a pass.
+    research = _Scripted(long58, make_report(direction="no_position", confidence=40), make_report(direction="no_position", confidence=38))
     (result,) = run_golden(research, [case], echo=lambda *_: None, band=band)
-    assert research.calls == 2
+    assert research.calls == 3
     assert result.passed and result.confirmation.reversed
-    assert result.verdict.startswith("long/58") and "REVERSED" in result.verdict
+    assert result.verdict.startswith("long/58") and "OVERTURNED" in result.verdict
 
-    # Upheld: the second pass replicates at 52 -> long/52 sizes -> drift on the traded band.
-    research = _Scripted(long58, make_report(direction="long", confidence=52, target_price="10"))
+    # Held: the long replicates at 52 and 54 -> long/54 (median of 52, 54, 58) sizes -> drift on the traded band.
+    research = _Scripted(long58, make_report(direction="long", confidence=52, target_price="10"), make_report(direction="long", confidence=54, target_price="10"))
     (result,) = run_golden(research, [case], echo=lambda *_: None, band=band)
-    assert research.calls == 2
+    assert research.calls == 3
     assert not result.passed and result.confirmation.upheld
-    assert "traded verdict confidence 52" in result.problems[0]
-    assert "UPHELD, the second pass sizes (long/52)" in result.verdict
+    assert "traded verdict confidence 54" in result.problems[0]
+    assert "HELD long/54" in result.verdict
 
-    # Outside the band (75) and a decline: no second pass is bought.
-    research = _Scripted(make_report(direction="long", confidence=75, target_price="10"))
-    (outside,) = run_golden(research, [case], echo=lambda *_: None, band=band)
-    assert research.calls == 1 and outside.confirmation is not None and not outside.confirmation.ran
-    research = _Scripted(make_report(direction="no_position", confidence=55))
+    # A confident long (85) still votes - every long does; a confident decline (88) buys nothing.
+    research = _Scripted(make_report(direction="long", confidence=85, target_price="10"), make_report(direction="long", confidence=85, target_price="10"), make_report(direction="long", confidence=85, target_price="10"))
+    (held85,) = run_golden(research, [case], echo=lambda *_: None, band=band)
+    assert research.calls == 3 and held85.confirmation.upheld
+    research = _Scripted(make_report(direction="no_position", confidence=88))
     (decline,) = run_golden(research, [case], echo=lambda *_: None, band=band)
-    assert research.calls == 1 and decline.confirmation is None
-    # No band wired: single pass, as before.
+    assert research.calls == 1 and decline.confirmation is not None and not decline.confirmation.ran
+    # A near-threshold decline (62) votes too and can stay a decline.
+    research = _Scripted(make_report(direction="no_position", confidence=62), make_report(direction="no_position", confidence=72), make_report(direction="long", confidence=52, target_price="10"))
+    (near,) = run_golden(research, [case], echo=lambda *_: None, band=band)
+    assert research.calls == 3 and near.passed and near.confirmation.upheld
+    # No vote wired (--single-pass): one pass, as before.
     research = _Scripted(long58)
     (single,) = run_golden(research, [case], echo=lambda *_: None)
     assert research.calls == 1 and single.confirmation is None and not single.passed
 
-    tally = confirmation_tally([result, outside, decline, single])
-    assert tally == (1, 1, 0)
-    summary = render_summary([result, outside, decline, single], band)
-    assert "1 in the band -> 1 upheld, 0 reversed (100% concurrence)" in summary
+    tally = confirmation_tally([result, held85, decline, near, single])
+    assert tally == (3, 3, 0)
+    summary = render_summary([result, held85, decline, near, single], band)
+    assert "4 first-pass reports, 3 triggered a vote -> 3 held, 0 overturned (100% held)" in summary
     assert "a traded verdict only in [0, 49]" in summary
 
 
-def test_the_pipeline_and_the_golden_replay_share_one_confirmation_rule():
+def test_the_pipeline_and_the_golden_replay_share_one_vote_rule():
     """The rule is ONE function: the pipeline's method delegates to it."""
     import inspect
 
     from orchestrator import pipeline
-    from orchestrator.boundary import confirm_boundary, in_boundary_band
+    from orchestrator.golden import _confirm
+    from orchestrator.vote import run_vote
 
-    assert "confirm_boundary(" in inspect.getsource(pipeline.SignalPipeline._confirm_boundary)
-    assert in_boundary_band(50, 50, 20) and in_boundary_band(69, 50, 20)
-    assert not in_boundary_band(70, 50, 20) and not in_boundary_band(49, 50, 20)
-    assert confirm_boundary is pipeline.confirm_boundary
+    assert "run_vote(" in inspect.getsource(pipeline.SignalPipeline._vote)
+    assert "run_vote(" in inspect.getsource(_confirm)
+    assert run_vote is pipeline.run_vote
 
 
 def test_the_review_grade_can_pin_the_validity_label():

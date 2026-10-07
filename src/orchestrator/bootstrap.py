@@ -228,6 +228,26 @@ class Startup:
         return self.preflight.describe()
 
 
+def _calibration_provider(checks: "Preflight") -> Optional[Callable]:
+    """The calibration block's provider (ruling 2026-10-07, item 4): cells
+    from the funnel entries and the forward engine's cached rows at startup.
+    Any failure returns None - the research pass then renders no block."""
+    try:
+        from forward.funnel import funnel_entries
+        from forward.returns import ForwardReturns
+        from orchestrator.calibration import CalibrationRecord
+
+        path = checks.audit.path.parent / "forward_returns.jsonl"
+        engine = ForwardReturns(lambda *_args, **_kw: [], path, clock=checks.clock, pace_seconds=0)
+        record = CalibrationRecord(funnel_entries(checks.audit.records()), engine.cached())
+        if record.cells:
+            logger.info("calibration block: %d cells at n >= 20", len(record.cells))
+        return record.for_signal
+    except Exception as error:  # noqa: BLE001 - evidence is optional
+        logger.warning("calibration block unavailable (%s); passes run without it", type(error).__name__)
+        return None
+
+
 def preflight(
     *,
     adapter: Optional[BrokerAdapter] = None,
@@ -442,6 +462,11 @@ def start(
         checks.clock,
         market_context=market_context,
         convergence_context=registry.context_for,
+        # Calibration block (ruling 2026-10-07, item 4): the system's own
+        # measured record by voted-median band, n >= 20, rendered as data.
+        # Built from the funnel and the forward engine's CACHED rows (no
+        # fetch at startup); a failure here renders nothing, never blocks.
+        measured_record=_calibration_provider(checks),
         source_tiers=source_tiers,
         screen_graduation=(
             screen_config.graduation_confidence if screen_config is not None else None
@@ -476,6 +501,8 @@ def start(
         review_pass=ExitReviewPass(client, checks.clock),
         budget=checks.budget,
         config=checks.orchestrator_config.exits,
+        # Reviews that would close or trim vote too (ruling 2026-10-07).
+        vote_config=checks.orchestrator_config.self_consistency,
         clock=checks.clock,
         credibility=credibility,
         cost_sink=cost_meter.add,
@@ -573,6 +600,9 @@ def start(
         # Boundary confirmation (ruling 2026-09-02): the floor band is
         # stochastic (diagnosed live); a second pass confirms or blocks.
         boundary=checks.orchestrator_config.boundary_confirmation,
+        # Self-consistency vote (ruling 2026-10-07): replaced boundary
+        # confirmation; the loop wires the budget funder after construction.
+        self_consistency=checks.orchestrator_config.self_consistency,
         sizing_floor=checks.limits.sizing.no_trade_below,
         options_chain=options_chain,
         option_selector=option_selector,

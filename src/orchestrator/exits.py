@@ -90,6 +90,7 @@ from audit.records import (
 from orchestrator.registry import family_of
 from research.add_decision import ADD_HOLD_CODES, HeldPositionContext, LotContext
 from execution.base import BrokerAdapter, BrokerError
+from orchestrator.vote import VoteRules, run_review_vote, _sum_usage as _sum_vote_usage
 from research.exit_review import (
     ExitAction,
     ExitReview,
@@ -370,10 +371,14 @@ class ExitEngine:
         sizing_floor: Optional[int] = None,
         min_reward_risk: Optional[Decimal] = None,
         opportunity_context: Optional[Callable[[], Optional[str]]] = None,
+        vote_config: Optional["SelfConsistencyConfig"] = None,
     ) -> None:
         self._gate = gate
         self._adapter = adapter
         self._audit = audit
+        #: Self-consistency vote on reviews (ruling 2026-10-07): a first
+        #: verdict that would close or trim buys k more; majority action.
+        self._vote_config = vote_config
         self._prices = prices
         #: The bid side, for sells (defect 2026-09-28: TPVG's trailing-stop exit
         #: limited at the ask three sessions running on a thin $4.8 BDC in a
@@ -1574,7 +1579,7 @@ class ExitEngine:
                 and price > position.entry_price
             ):
                 tax_boundary = boundary
-            outcome = self._reviews.run(
+            under_review = (
                 PositionUnderReview(
                     symbol=position.symbol,
                     entry_price=position.entry_price,
@@ -1603,6 +1608,7 @@ class ExitEngine:
                     convergence_summary=self._convergence_summary(position),
                 )
             )
+            outcome = self._reviews.run(under_review)
             position.last_review_at = moment
             # Debounce from here whether or not the verdict parsed: the review was
             # bought and the question was asked, so the next trigger must be a NEW
@@ -1638,6 +1644,46 @@ class ExitEngine:
                 continue
 
             usage = self._reviews.last_usage
+            # Self-consistency vote (ruling 2026-10-07): a verdict that would
+            # close or trim buys k more independent reviews; majority action;
+            # an incomplete vote or no majority is a HOLD, nothing applied.
+            review_vote = None
+            vote_config = self._vote_config
+            if vote_config is not None and vote_config.enabled and vote_config.reviews:
+                voted = run_review_vote(
+                    lambda: self._reviews.run(under_review),
+                    outcome,
+                    rules=VoteRules(
+                        k=vote_config.k, margin=vote_config.margin,
+                        thresholds=tuple(vote_config.thresholds), floor=self._sizing_floor,
+                    ),
+                    usage_of=lambda: self._reviews.last_usage,
+                    hash_of=lambda: getattr(self._reviews, "last_transcript_hash", "") or "",
+                    fund=lambda: self._budget.try_spend(for_review=True),
+                    first_transcript_hash=getattr(self._reviews, "last_transcript_hash", "") or "",
+                    is_review=lambda o: isinstance(o, ExitReview),
+                )
+                if voted.ran:
+                    review_vote = voted.snapshot
+                    usage = _sum_vote_usage([usage, voted.usage])
+                    if voted.outcome is None:
+                        self._audit.record_thesis_review(
+                            position.decision_id,
+                            ReviewOutcome.HOLD,
+                            code="vote_incomplete",
+                            message=voted.failure or "no majority",
+                            usage=usage,
+                            trigger_reason=trigger_reason,
+                            vote=review_vote,
+                        )
+                        if self._cost_sink is not None:
+                            self._cost_sink(usage.cost_usd if usage else None)
+                        logger.info(
+                            "review vote on %s incomplete (%s); holding",
+                            position.decision_id, voted.failure,
+                        )
+                        continue
+                    outcome = voted.outcome
             leash_after = self._apply_revision(position, outcome)
             if outcome.should_close:
                 recorded_outcome = ReviewOutcome.CLOSE
@@ -1664,6 +1710,7 @@ class ExitEngine:
                 case_for_holding=outcome.case_for_holding,
                 case_for_selling=outcome.case_for_selling,
                 verdict_reason=outcome.verdict_reason,
+                vote=review_vote,
             )
             if self._cost_sink is not None:
                 self._cost_sink(usage.cost_usd if usage else None)
