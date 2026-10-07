@@ -4102,6 +4102,47 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### MORNING SUMMARY 2026-10-07 (overnight rules) — what shipped, what's running, what waits on the human
+
+**Shipped to production (droplet HEAD e470c4a = origin = vps; the paper unit was mid-session on
+ae11e1e and loads the new code at tomorrow's start):**
+- 8-K funnel holes (ruling item 2): `slot_lost` records at the day's last window and at shutdown;
+  the lister reads every page. Gates: full suite green (3 skips); golden replay with the vote live
+  **28 PASS / 1 DRIFT**, the drift (`review-intc-day9-post-blowout-real`, a review verdict reading
+  `displaced`) rerun 3× per the 2026-10-06 drift protocol → **PASS, PASS, PASS** → nondeterministic
+  review noise, not a code effect (the changed code touches no prompt); live lister dry-run
+  DRY RUN OK (190 records end to end, pagination exercised, Vistra present). Deployed 16:1x UTC
+  (12:1x ET) — outside the 60-minute pre-open window; a mid-session `git pull` changes nothing in
+  the running process.
+- pelosi-uber-priced-in traded band [0, 55] (item 4). Notes: item 1 report, PDUFA result, both
+  pre-registrations, the 21-day hole count.
+- Earlier the same night (before the overnight rules): the self-consistency vote (69ca3f5), the
+  calibration block (637b23a), the 2b interval and the behavioural grading.
+
+**On a branch:** nothing — `overnight-2026-10-07` was fast-forwarded into main once the gates held.
+
+**Running detached on the droplet (restart-safe, results on disk):**
+- 8-K items 1.01/8.01 backtest, stage A — relaunched twice: the first run kept every accession of
+  5,290 filers in memory (135 MB) and the 1 GB droplet killed it (exit 137); now universe-only.
+  Listing cached (45,776 filings, 144 weeks); acceptance times → caps → bars → report.
+  Output `~/Agentic/data/k8_backtest_2026-10-07.txt` when done.
+- News-catalyst backtest, stage A, 2015-01..2026-10 (~6 h): `~/Agentic/data/news_backtest_2026-10-07.txt`.
+- PDUFA backtest: DONE, criterion not met (entry below).
+
+**One command for job status:**
+```
+ssh agentic@137.184.59.200 'cat ~/Agentic/data/item6_backtests.log; tail -1 ~/Agentic/data/k8_backtest_2026-10-07.log; tail -1 ~/Agentic/data/news_backtest_2026-10-07.log; ls ~/Agentic/data/*_2026-10-07.txt'
+```
+
+**Waiting on the human:**
+1. 8.01 widening: HOLD per ruling until the k8 report lands (default no widening).
+2. News source (item 1): the design is a report; building it is a new source (approval), and the
+   backtest's intraday-vs-gap split decides whether a real-time path is worth it.
+3. The slot_lost rows start accruing tomorrow; the forward report's 8-K rows will roughly 5× —
+   the 10-15 review of form_8k now has the whole candidate set behind it, but only from 10-08.
+4. Calibration-block golden replay when the first voted cell reaches n ≥ 20 (standing reminder).
+5. Vote stability read at ~20 votes per source (standing reminder).
+
 ### RULINGS 2026-10-07 (second set) — 8-K funnel holes BUILT; pelosi-uber band; the general class behind VST
 
 **Item 2, both holes built** (`orchestrator/loop.py`, `signals/form8k.py`; tests in
