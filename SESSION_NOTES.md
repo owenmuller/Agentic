@@ -4141,6 +4141,48 @@ The Vistra DOE-loan item: `2026-10-02T19:27:03Z` (15:27 ET, in-session) tagged V
 $4 Billion Loan for Vistra to Boost Nuclear Output' – Bloomberg; the Google deal 10-06 13:32 UTC
 tagged across CEG/VST/TLN/OKLO/SMR. Finnhub is not needed.
 
+### ITEM 1 — NEWS-CATALYST SOURCE REPORT (2026-10-07; report, nothing built; backtest running)
+
+**a. The source.** Alpaca news (Benzinga) on this account, probed live: HTTP 200, `X-Ratelimit-Limit`
+200/min, items carry `created_at`/`updated_at`, `symbols` (~97% tagged), `source`, `url`, and the
+body with `include_content=true`; history back to at least 2015-01 (paged, `next_page_token`);
+volume ~830–860 items per session day, 16,435 in September 2026. Real-time: the Vistra DOE-loan item
+is stamped 2026-10-02T19:27:03Z (15:27 ET), the Bloomberg headline itself. Finnhub not needed.
+
+**b. Design (not built).** A Class 1 source `news_catalysts`: poll every 60 s (one request, `sort=desc`,
+since the last `created_at`); drop items tagged with more than six symbols (wraps) or whose headline
+is an analyst action, options flow, earnings, dividend, listicle or market wrap (deterministic
+exclusions, as the backtest); the rest go through an **LLM extraction call** (haiku, forced tool,
+~$0.001–0.003 each): event type ∈ {deal, contract/award, loan/financing, partnership/offtake,
+acquisition, other/none}, counterparty, dollar value, whether the ISSUER is the party (not a
+third-party deal the issuer is tagged on), and the date the catalyst is effective. Relative size =
+dollars / point-in-time cap (Finnhub live, SEC shares × close in the backtest); tiers as contracts:
+≥ 1% research, 0.2–1% measure, < 0.2% dropped with the reason stamped (`news_below_floor`). One
+event per ticker per day (the largest). The research prompt gets the extraction as data and the
+publish timestamp (the Class 1 staleness rule applies as written: ≥ 30 min old → priced-in
+mandatory). Extraction and tiering are deterministic inputs to dispatch; nothing reads the
+scoreboard. Families: a new seventh family `newswire` (a wire story and its 8-K are not
+independent; convergence with `issuer_filings` is stamped, not counted twice).
+
+**c. Backtest:** pre-registered above; the one-month smoke (2026-09) read 16,435 items → 670
+candidates (4.1%) → 811 ticker-day rows, and showed one defect fixed BEFORE the registered run: a
+six-symbol wire story ("Anthropic signs $35B cloud agreement with Lambda", tagged AMZN/GOOG/…)
+attributed $35B to every tagged ticker, putting AMZN in the research tier at 1.2% of cap. Stage A
+now requires the headline or summary to name the issuer (a distinctive token of its EDGAR title);
+rows failing it are counted as `not_named`. The in-session intraday leg works (CRWD 09-01 15:21 UTC
+$2B lifetime contract, measure tier, publish → close +0.67 vs SPY). Full run launched 16:0x UTC
+(detached, month checkpoints, ~6 h: 46k news pages, caps per CIK, bars per ticker, minute bars for
+in-session research/measure rows). Results in `~/Agentic/data/news_backtest_2026-10-07.txt`.
+
+**d. Volume, latency, spend (projection; the backtest's tier counts replace these):** ~850 items a
+day → after the deterministic exclusions and the six-symbol rule roughly 30–40 candidates a day
+(4%) → LLM extraction ~$0.05–0.10 a day → research tier (≥ 1% of cap, issuer named) expected low
+single digits a day, measure tier similar; against the Class 1 pool of 15 passes this is a
+candidate for a cap of 3–4. Latency: poll 60 s against `created_at`; the probe's `updated_at`
+equals `created_at` on the wire items (no edit lag); the system's own latency is the poll plus the
+extraction call (~5–15 s) plus the research pass (minutes) — the backtest's intraday-vs-gap split
+says what that costs. The VST items are the check cases in the report.
+
 ### PDUFA CALENDAR BACKTEST — RESULT (2026-10-07; the pre-registered run): criterion NOT MET, no source
 
 454 events (ticker, PDUFA date) on 162 tickers, dates 2019-03..2026-09, mined from 8-K text; labels
