@@ -4141,6 +4141,36 @@ The Vistra DOE-loan item: `2026-10-02T19:27:03Z` (15:27 ET, in-session) tagged V
 $4 Billion Loan for Vistra to Boost Nuclear Output' – Bloomberg; the Google deal 10-06 13:32 UTC
 tagged across CEG/VST/TLN/OKLO/SMR. Finnhub is not needed.
 
+### PRE-REGISTERED NEWS-CATALYST BACKTEST (ruling 2026-10-07 item 1c; registered BEFORE it ran)
+
+- **Source and universe:** Alpaca news (Benzinga), ALL symbols, 2015-01..2026-10 (the full history
+  the API serves). **Stage A is deterministic, no LLM** (the live design's LLM extraction is item 1b;
+  the backtest proxies it): a candidate is an item whose headline or summary names a company-specific
+  dated catalyst (deal, agreement, contract, award, loan, partnership, offtake, acquisition, merger,
+  financing, order, supply, license, collaboration, investment, buyback) AND carries a dollar figure
+  ≥ $1M; headlines that are analyst actions, options-flow, earnings, dividend, "if you invested" or
+  market-wrap pieces are excluded; items tagged with more than six symbols are dropped (wraps).
+  **One event per ticker per day**, the largest dollar figure.
+- **Relative size:** dollars / point-in-time market cap (SEC `dei` shares × the prior close; ticker →
+  CIK from company_tickers.json, so delisted names are "unsized"). Tiers as contracts: ≥ 1% research,
+  0.2–1% measure, < 0.2% below_floor (counted, dropped with the reason).
+- **Timing and measures (excess vs SPY):** in-session items (09:30–16:00 ET): INTRADAY = first
+  1-minute bar at/after publish → that day's close (research and measure tiers), prior close → close,
+  the GAP (next open vs that close), next open → close t+1/5/20. Pre-open items: first open that day →
+  t+h, gap vs the prior close. Post-close items: next open → t+h, gap vs that day's close.
+- **Statistics:** mean/median/hit, ticker-clustered SE, 3,000-draw cluster bootstrap on oc5 and on
+  the intraday leg; by tier, in- vs out-of-session, year; net of 15bp stated in the write-up.
+- **The decisive number:** research tier, in-session: mean INTRADAY (publish → close) against mean
+  GAP against mean next-open → t+5. If the move is intraday, only the real-time path (Class 1, 60-s
+  poll, LLM extraction in minutes) can trade it and the next-open row is the lag cost; if it is in
+  the gap and the next-open drift, a slower path suffices.
+- **Success criterion for a trading path:** research tier next-open → t+5 mean > 0 with the
+  cluster-bootstrap CI excluding 0, hit > 50%, n ≥ 150, ≥ 4 calendar years, net of 15bp > 0; the
+  intraday leg reported alongside with its own CI. Volume per day by tier and the VST items (10-02
+  DOE loan, 10-06 Google deal) reported as check cases.
+- Script `~/scratch/news_backtest.py` (droplet), outputs `~/Agentic/data/news_backtest_2026-10-07.*`
+  (month checkpoints, restart-safe).
+
 ### ITEM 6 (2026-10-07) — 8-K widening and FDA calendar: the VST check, volume, design, and the PRE-REGISTERED backtests (registered here BEFORE either ran)
 
 **The VST 8-K check.** Vistra filed two 8-Ks in the window: 2026-09-24 (accepted 21:13 ET, items
