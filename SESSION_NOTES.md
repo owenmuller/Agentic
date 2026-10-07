@@ -4102,6 +4102,122 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### RULING 2026-10-06 ON 2a AND 3, ITEMS 2–4 — confidence noise measured five-fold; the self-consistency design; sampling settings; the calibration block was missed
+
+**2a. Every golden case five times, single pass, production passes (model, screen, tiers as
+shipped), 145 runs, $28.42, `~/scratch/g5/index.log` on the droplet, `golden5_stats`.**
+Single-pass means the boundary second pass was NOT bought — this is the raw first-pass noise.
+
+| case | majority | flips | sd | range | crosses 45/50/70 | verdicts (5 runs) |
+|---|---|---|---|---|---|---|
+| sa-13f-stale-heavy-puts | no_position | 1/5 | 22.8 | 20–82 | 45, 50, 70 | long/52, no/75, no/20, no/82, no/75 |
+| sarissa-amrn-13da | no_position | 0/5 | 16.7 | 28–72 | 45, 50, 70 | no/30, 28, 32, 32, 72 |
+| pelosi-be-calls-decline | no_position | 1/5 | 12.9 | 38–72 | 45, 50, 70 | no/72, long/52, no/38, no/72, no/62 |
+| pelosi-uber-priced-in | no_position | 2/5 | 10.0 | 30–58 | 45, 50 | no/42, no/38, long/58, no/30, long/52 |
+| pelosi-intc-calls-entry | no_position | 2/5 | 8.4 | 57–78 | 70 | no/78, no/72, long/58, no/72, long/57 |
+| add-celh-cross-family (synthetic) | hold | 0/5 | 8.2 | 70–92 | – | hold/92, 70, 72, 72, 72 |
+| trump-nike-woke | no_position | 0/5 | 6.1 | 72–86 | – | |
+| appaloosa-13f-stale | no_position | 0/5 | 5.2 | 72–87 | – | |
+| trump-micron-announcement | no_position | 0/5 | 5.2 | 72–85 | – | |
+| moskowitz-amat-max-lag | no_position | 0/5 | 4.9 | 72–82 | – | no/82, 72, 72, 82, 82 (yesterday: 18–82 over 6 runs) |
+| pelosi-intc-may-backfill | no_position | 0/5 | 4.9 | 72–82 | – | |
+| trump-energy-relay-read-10h-later | no_position | 0/5 | 3.4 | 72–82 | – | |
+| award-amtm-sole-source-new-1.8pct | no_position | 0/5 | 3.2 | 80–88 | – | |
+| award-mck-va-1.1pct-fpds | no_position | 0/5 | 3.1 | 80–88 | – | |
+| case-aapl, clemens, uw-tim-cook, ford, venezuela, mirror, nolimitgains, injection | no_position | 0/5 | 0.4–2.8 | within 72–95 | – | |
+| form4-intc-cluster | long | 0/5 | 0.8 | 62–64 | – | long/62, 63, 62, 64, 62 |
+| taylor-ibp-small | no_position | 0/5 | 0.0 | 72–72 | – | |
+| add-celh-same-cluster-repeat-real | hold | 0/5 | 0.0 | 60–60 | – | |
+| review-intc-resolved-synthetic | trim | 2/5 | – | – | – | trim, hold, hold, trim, trim |
+| review-intc-day3-real | hold | 1/5 | – | – | – | close, hold ×4 |
+| review-intc-day9-post-blowout-real | hold | 1/5 | – | – | – | hold ×3, close, hold |
+| review-intc-near-stop-synthetic | close | 0/5 | – | – | – | |
+
+Totals: verdict flipped at least once **7 of 29** (4 of 25 entry/add, 3 of 4 reviews); mean
+confidence sd 4.6, median range width 8; confidence range crosses 45: 4 of 29, crosses 50: 4,
+crosses 70: 4; **crosses at least one live threshold: 5 of 29 (17%)**. Read:
+- Noise is concentrated. Twenty cases sit in a tight 72–95 confident-decline cluster and never
+  move across anything. The five noisy cases are all Class 2/3 filing cases where the thesis is
+  genuinely marginal (Pelosi, Sarissa, the SA 13F) — exactly the ones a floor-band long comes from.
+- **Every long outside form4-intc-cluster was a minority verdict**: 1 or 2 of 5 runs. A majority
+  vote over three samples kills every one of them; the one stable long (form4-intc, 62–64) survives.
+- The noise is itself unstable: AMAT ranged 18–82 over yesterday's six runs and 72–82 today.
+  Five runs bound the sd loosely; the share-crossing-a-threshold number is the robust one.
+- Exit reviews flip too (trim/hold 2 of 5 on the resolved case; a stray `close` on both real
+  cases): any self-consistency rule should cover reviews that would CLOSE or TRIM, not just entries.
+
+**2c. Sampling settings — what is pinned (`config/research.yaml`, `research/client.py`):**
+- `sampling.report_temperature: 0.0` applies ONLY to the forced-tool REPORT call and ONLY on
+  `claude-sonnet-4-6` (`report_temperature_models`). That covers the screen (sonnet, effort
+  medium), the Class 2/3 verification tier and the exit review (all sonnet, medium).
+- The Class 1 verification tier is `claude-opus-5`, effort high: NO temperature is sent (opus-5
+  400s on any temperature), so it runs at the API default 1.0 with thinking on by default.
+- The web-search phase (the tool loop before the forced report call) is never given a temperature
+  on any model — default 1.0. Triage (haiku, 200 tokens) sends none. `top_p`/`top_k` are never
+  sent anywhere. No `thinking` parameter is sent on any call.
+- Consequence shown by the data: the five noisiest cases are all Class 2/3, i.e. screen AND
+  verification at T=0 — and still 20–82. T=0 on the report call does not pin a verdict because the
+  transcript it conditions on differs every run (different searches, different results) and the
+  API's T=0 is not bit-deterministic. Pinning temperature further has no lever left to pull; the
+  design below treats the pass as a noisy sample and votes.
+
+**2b. Self-consistency pass — DESIGN, not built (the budget has never bound: 15.2 first passes a
+day over the last ten sessions, 2026-09-23..10-06, 152 passes, 21 longs, 131 declines; cap 40).**
+- **Trigger:** after the first production pass (screen + verification as today), buy `k` further
+  INDEPENDENT full passes (same path, fresh context, no knowledge of the first) when (i) the verdict
+  is a long (or an add verdict, or a review that would close or trim), or (ii) the verdict's
+  confidence lies within `margin` of a live threshold — the floor 45, the band edge 50, the band top
+  70. Confident declines (the 72–95 cluster, 20 of 29 cases) buy nothing.
+- **Decision:** direction = majority of the k+1 samples; confidence = median of the samples that
+  carry the majority direction; a long sizes only if the majority is long AND the median clears the
+  floor. A tie or a majority of errors is a `no_position` (Constraint #6). This SUBSUMES boundary
+  confirmation: today's second pass is k=1 on [45,70) with "the lower sizes"; the new rule is a
+  wider trigger with a vote. The boundary code path is kept and the vote replaces it in one place.
+- **Proposed k = 2, margin = 10** (three samples; trigger band on confidence [35, 80) for declines).
+  Why k=2: a case that goes long 2 of 5 times is majority-long with 3 samples 35% of the time and
+  with 5 samples 32% — five samples buy almost nothing over three, at twice the cost. Why 10: the
+  five noisy cases' ranges are 20–40 points wide; a margin of 5 misses declines at 60 that would
+  have been 52 on the next draw (pelosi-be: 62, 72, 72 and long/52).
+- **Projected spend, last ten sessions' distribution** (`verdicts10`): candidates = 21 longs + 17
+  declines within 10 of a threshold = 38 over ten sessions.
+
+| setting | extra passes/day | total passes/day vs cap 40 | extra $/day at $0.13–0.34 a pass |
+|---|---|---|---|
+| k=2, margin 5 | 6.4 | 21.6 | ~$1–2 |
+| **k=2, margin 10** | **7.6** | **22.8** | **~$1–2.5** |
+| k=4, margin 5 | 12.8 | 28.0 | ~$2–4 |
+| k=4, margin 10 | 15.2 | 30.4 | ~$2–5 |
+
+  The 6 boundary second passes already bought in those sessions are inside the k=2 figure, not on
+  top of it. Reviews that would close or trim add ~0.5/day at today's position count.
+- **What it would have done to the golden longs:** pelosi-be, pelosi-uber, pelosi-intc-calls and
+  sa-13f go to no_position by vote (each long was 1–2 of 5); form4-intc stays long at ~62. Fewer
+  trades, and the ones left replicate — the direction Constraint #6 wants. It cannot manufacture a
+  long the first pass did not find; it only confirms or kills.
+- **Topology:** the vote reads only the samples; it imports nothing from attribution, spend or any
+  target (the scoreboard test extends to it). The prompt is unchanged — no golden replay needed for
+  the vote itself; the live round trip is owed because the request path gains calls.
+- **Golden grading under the vote:** the replay buys the same vote (as it buys the boundary pass
+  today) and grades on what would size.
+
+**3. Calibration block — MISSED, not deferred.** The adaptive-standards ruling approved it ("a
+fenced MEASURED RECORD block per source × confidence band × horizon class, rendered at n ≥ 20,
+framed as evidence"). The step-2 build entry shipped the hurdle, the demotions and the topology
+tests and does not mention the block at all; nothing was recorded as deferred. The first time its
+absence was written down was the post-ship item 3 ("never built"). Queued after item 2, behind the
+self-consistency decision, as ruled: a measured record per band is meaningless until the bands'
+noise is known — and today's table says a decline's band carries no information at all.
+
+**4. AMAT graded behaviourally — applied.** `moskowitz-amat-max-lag` expect confidence [50, 100] →
+[0, 100] with the ruling in its note; direction stays `no_position` only, so a long still fails.
+**Flagged, not applied:** ten other pure-decline cases still carry a lower band on the decline —
+sa-13f [60,100] (today drew no_position/20 → DRIFT), appaloosa [50,100], pelosi-intc-may-backfill
+[50,100], case-aapl [60,100], trump-nike [60,100], trump-micron [50,100], trump-clemens [70,100],
+trump-ford [40,100], nolimitgains [50,100], uw-tim-cook [50,100]. CLAUDE.md already says decline
+cases grade behaviourally; these bands predate that sentence. One word applies the same change.
+
+**5. Incumbent stamp:** limitation accepted; FPDS prior-award lookup noted, not queued.
+
 ### RULING 2026-10-06 ON 2a, ITEM 1 — the OSK double count, deduped; 2a restated on 170 events
 
 **Correction first.** The post-ship 2a report called OSK 2020-03-27 "one award parsed from two
