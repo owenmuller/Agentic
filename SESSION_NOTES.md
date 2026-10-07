@@ -4141,6 +4141,29 @@ The Vistra DOE-loan item: `2026-10-02T19:27:03Z` (15:27 ET, in-session) tagged V
 $4 Billion Loan for Vistra to Boost Nuclear Output' – Bloomberg; the Google deal 10-06 13:32 UTC
 tagged across CEG/VST/TLN/OKLO/SMR. Finnhub is not needed.
 
+### PDUFA CALENDAR BACKTEST — RESULT (2026-10-07; the pre-registered run): criterion NOT MET, no source
+
+454 events (ticker, PDUFA date) on 162 tickers, dates 2019-03..2026-09, mined from 8-K text; labels
+approved 134, CRL 61, unlabelled 259; median lead 145 days. Excess vs SPY, points:
+
+| measure | mean | median | hit | n |
+|---|---|---|---|---|
+| **R1 run-up** (close at announcement → close t−1) | +2.57 | **−3.47** | 45% | 454 |
+| R1 clustered (162 tickers) | SE 2.57, t 1.00, cluster-bootstrap CI **[−2.17, +7.72]** | | | |
+| R1 by lead: 7–60d / 61–180d / 181–400d | +2.37 / +4.18 / −0.37 | +2.72 / −5.81 / −5.12 | 55% / 43% / 45% | 53 / 262 / 139 |
+| decision gap (close t−1 → next open) | −2.64 | −0.10 | 47% | 454 |
+| approved: gap / post5 / post20 | +4.43 / −2.21 / −0.68 | +1.10 / −1.56 / −0.35 | 60% / 43% / 49% | 134 |
+| CRL: gap / post5 / post20 | **−27.19** / −2.53 / −0.44 | −19.94 / −5.43 / −7.53 | 16% / 41% / 41% | 61 |
+| R2 post (all): post5 / post20 | −1.25 / −0.04 | −1.15 / −1.57 | 42% / 44% | 454 / 449 |
+| R2 post5 clustered | SE 0.72, t −1.73, CI [−2.68, +0.16] | | | |
+
+Read: the run-up is a right tail (cap < $1B mean +17 on median +1.8; 2019/2020/2025 means +13/+10/+19
+against medians near zero) on a 45% hit rate with a CI straddling zero — the pre-registered R1
+criterion (mean > 0 with CI excluding 0, hit > 50%) fails on two of three legs. The decision day is
+an approval/CRL lottery (+4 vs −27 at the open) that no filing-based or news-based reader sees in
+advance, and the post-decision drift is negative. **No PDUFA source**; the AdCom calendar is not
+pursued either. Outputs `~/Agentic/data/pdufa_backtest_2026-10-07.*`.
+
 ### PRE-REGISTERED NEWS-CATALYST BACKTEST (ruling 2026-10-07 item 1c; registered BEFORE it ran)
 
 - **Source and universe:** Alpaca news (Benzinga), ALL symbols, 2015-01..2026-10 (the full history
