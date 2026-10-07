@@ -443,3 +443,107 @@ def test_the_weekly_renders_the_award_subtype_table(signals_config, source, cont
     assert "next-open->close" in text and "close->close" in text
     # The go-live criterion (post-ship 2b) prints every week; one live event is LOCKED.
     assert "SIZING UNLOCK (pre-registered 2026-10-06): LOCKED" in text and "n=1" in text
+
+
+# ---------------------------------------------------------------- dedup (ruling 2026-10-06 on 2a)
+
+# Verbatim from the 2020-03-27 digest (four Oshkosh orders), the 2019-09-24
+# digest (one HII award listed twice, once late-listed) and the 2019-09-30
+# digest (two distinct Boeing orders against one basic ordering agreement).
+OSK_DIGEST_HTML = """<html><body><div class="body">
+<p><strong>ARMY</strong></p>
+<p>Oshkosh Defense LLC, Oshkosh, Wisconsin, was awarded firm-fixed-price, fixed-price-incentive contract in the amount of $173,788,535 for heavy expanded mobility tactical trucks, palletized load system trucks, and self-recovery winches on the Family of Heavy Tactical Vehicles. Bids were solicited via the internet with one received. Work locations and funding will be determined with each order, with an estimated completion date of Oct. 31, 2022. U.S. Army Contracting Command, Detroit Arsenal, Michigan, is the contracting activity (W56HZV-20-F-0035).</p>
+<p>Oshkosh Defense LLC, Oshkosh, Wisconsin, was awarded a $100,886,870 fixed-price-incentive contract for heavy expanded mobility tactical trucks, palletized load system (PLS) trucks and PLS trailers on the Family of Heavy Tactical Vehicles. Bids were solicited via the internet with one received. Work will be performed in Oshkosh, Wisconsin, with an estimated completion date of Aug. 31, 2022. Fiscal 2018, 2019 and 2020 other procurement, Army funds in the amount of $100,886,870 were obligated at the time of the award. U.S. Army Contracting Command, Detroit Arsenal, Michigan, is the contracting activity (W56HZV-20-F-0149).</p>
+<p>Oshkosh Defense LLC, Oshkosh, Wisconsin, was awarded a $46,093,000 fixed-price-incentive contract for heavy expanded mobility tactical trucks, palletized load system trucks (PLS), and PLS trailers on the Family of Heavy Tactical Vehicles. Bids were solicited via the internet with one received. Work will be performed in Oshkosh, Wisconsin, with an estimated completion date of Oct. 30, 2022. Fiscal 2018 and 2020 other procurement, Army funds in the amount of $46,093,000 were obligated at the time of the award. U.S. Army Contracting Command, Detroit Arsenal, Michigan, is the contracting activity (W56HZV-20-F-0150).</p>
+<p>Oshkosh Defense LLC, Oshkosh, Wisconsin, was awarded a $25,669,720 fixed-price-incentive contract for heavy expanded mobility tactical truck common bridge transporters and basic issue item kits with and without winches on the Family of Heavy Tactical Vehicles. Bids were solicited via the internet with one received. Work will be performed in Oshkosh, Wisconsin, with an estimated completion date of Oct. 31, 2022. Fiscal 2020 other procurement, Army funds in the amount of $25,669,720 were obligated at the time of the award. U.S. Army Contracting Command, Detroit Arsenal, Michigan, is the contracting activity (W56HZV-20-F-0177).</p>
+<p><strong>NAVY</strong></p>
+<p>Huntington Ingalls Industries, Newport News, Virginia, was awarded a $20,000,000 cost-plus-fixed-fee modification to previously-awarded contract N00024-15-C-4301 to continue performance of the repair, maintenance, upgrade and modernization efforts for the USS Columbus (SSN 762) engineered overhaul. Work will be performed in Newport News, Virginia, and is expected to be completed by November 2020. The Supervisor of Shipbuilding, Conversion and Repair, Newport News, Virginia, is the contracting activity. (Awarded Sept. 23, 2019)</p>
+<p>Huntington Ingalls Industries, Newport News, Virginia, is awarded a $20,000,000 cost-plus-fixed-fee modification to previously-awarded contract N00024-15-C-4301 to continue performance of the repair, maintenance, upgrade and modernization efforts for the USS Columbus (SSN 762) engineered overhaul. Work will be performed in Newport News, Virginia, and is expected to be completed by November 2020. The Supervisor of Shipbuilding, Conversion and Repair, Newport News, Virginia, is the contracting activity.</p>
+<p>The Boeing Co., St. Louis, Missouri, is awarded a $17,603,904 cost-plus-fixed-fee order (N0001919F4078) against a previously issued basic ordering agreement (N00019-16-G-0001). This order procures non-recurring engineering support for the CPOMS kit. The Naval Air Systems Command, Patuxent River, Maryland, is the contracting activity.</p>
+<p>The Boeing Co., St. Louis, Missouri, is awarded a $15,537,941 modification (P00003) to a cost-plus-fixed-fee delivery order (N0001917F173) against a previously issued basic ordering agreement (N00019-16-G-0001). This modification provides for the design and development of the Environmental Control System. The Naval Air Systems Command, Patuxent River, Maryland, is the contracting activity.</p>
+</div></body></html>"""
+
+
+def test_the_parser_drops_a_repeated_paragraph_but_keeps_distinct_orders_on_one_parent():
+    awards = parse_digest(OSK_DIGEST_HTML)
+    by_name = {}
+    for a in awards:
+        by_name.setdefault(a.awardee, []).append(a)
+    # Four Oshkosh orders, four order numbers: all distinct.
+    assert [str(a.amount) for a in by_name["Oshkosh Defense LLC"]] == ["173788535", "100886870", "46093000", "25669720"]
+    # The late-listed HII paragraph and its repeat are one award.
+    assert len(by_name["Huntington Ingalls Industries"]) == 1
+    # Two Boeing orders share the parent BOA N00019-16-G-0001 and different amounts: both survive.
+    assert [str(a.amount) for a in by_name["The Boeing Co."]] == ["17603904", "15537941"]
+    assert all(a.contract_number == "N00019-16-G-0001" for a in by_name["The Boeing Co."])
+    # Indices stay contiguous after the dedup (external ids are dod:<article>:<index>).
+    assert [a.index for a in awards] == list(range(len(awards)))
+
+
+def test_the_live_path_emits_one_item_per_ticker_per_digest(source, contractors):
+    from audit.records import snapshot_gov_award
+    from signals.contracts import DigestRef
+
+    fetcher = DodDigestFetcher(
+        httpx.Client(transport=httpx.MockTransport(_Routes().handler)), contractors=contractors,
+        sizer=_Sizer({"OSK": Decimal("4000000000")}), clock=lambda: NOW, sleeper=lambda s: None,
+    )
+    ref = DigestRef(article_id="2129070", title="Contracts for March 27, 2020", url="https://www.war.gov/x/", published_at=datetime(2020, 3, 27, 21, 0, tzinfo=timezone.utc), digest_date=date(2020, 3, 27))
+    items = fetcher.items_for(ref, RatioRules.from_source(source), text=OSK_DIGEST_HTML)
+    osk = [i for i in items if i.fields["ticker"] == "OSK"]
+    assert len(osk) == 1, [i.external_id for i in items]
+    item = osk[0]
+    # The $46.1M and $25.7M orders are below the $50M parser floor; the two
+    # above it fold into one item whose primary is the largest.
+    assert item.fields["award_amount"] == "173788535"
+    assert item.fields["same_day_awards"] == "2" and item.fields["same_day_total"] == "274675405"
+    assert item.fields["size_tier"] == TIER_RESEARCH  # 4.3% of cap on the largest alone
+    assert "same-day awards: 2 (this is the largest; the day's total is $274,675,405, 6.87% of market cap)" in item.content
+    assert fetcher.last_tally["same_day_collapsed"] == 1
+    # The sibling's id is seen with the primary's, so a re-read never re-emits it.
+    assert "dod:2129070:1" in fetcher._seen  # noqa: SLF001 - test peeks at the ledger
+
+    class _Snap:
+        content = item.content
+        tickers = ("OSK",)
+
+    assert snapshot_gov_award(_Snap()).same_day_awards == 2
+    # A single-award item says so and parses back to 1.
+    single = [i for i in items if i.fields["ticker"] == "BA"]
+    assert single == []  # both Boeing orders sit below the parser floor
+
+
+def test_the_backtest_counts_one_event_per_ticker_day(tmp_path):
+    from orchestrator.contracts_backtest import run_backtest
+
+    folder = tmp_path / "digests"
+    folder.mkdir()
+    (folder / "2020-03-27__2129070.html").write_text(OSK_DIGEST_HTML, encoding="utf-8")
+
+    def bars(symbol, start, end):
+        out = []
+        day = date(2020, 3, 16)
+        while day <= date(2020, 5, 1):
+            if day.weekday() < 5:
+                px = "60" if symbol == "OSK" else "300"
+                out.append({"t": day.isoformat() + "T04:00:00Z", "o": px, "c": px})
+            day = date.fromordinal(day.toordinal() + 1)
+        return out
+
+    class _Sec:
+        def shares_outstanding(self, cik, on):
+            assert cik == 775158
+            return (Decimal("68000000"), date(2020, 2, 20))
+
+    contractors = ContractorMap.load(edgar_names={"oshkosh corp": ("OSK", 775158)})
+    text = run_backtest(folder, bars=bars, out_path=tmp_path / "bt.json", sec=_Sec(), contractors=contractors)
+    import json
+
+    report = json.loads((tmp_path / "bt.json").read_text(encoding="utf-8"))
+    assert report["same_day_collapsed"] == 1
+    assert report["groups"]["i_rule"]["events"] == 1
+    events = [json.loads(line) for line in (tmp_path / "bt.events.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    osk = [e for e in events if e["ticker"] == "OSK"]
+    assert len(osk) == 1 and osk[0]["amount"] == "173788535" and osk[0]["same_day_awards"] == 2
+    assert osk[0]["same_day_total"] == "274675405" and osk[0]["rel_total"] == "0.067322"
+    assert "same ticker, same digest: 1 awards folded" in text

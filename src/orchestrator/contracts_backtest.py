@@ -65,6 +65,11 @@ class Event:
     oc: dict[int, Optional[float]] = field(default_factory=dict)
     gap_pct: Optional[float] = None
     note: str = ""
+    #: Awards this ticker took in the same digest (ruling 2026-10-06 on 2a):
+    #: one event per ticker-day, the largest award primary, the total stamped.
+    same_day_awards: int = 1
+    same_day_total: Optional[Decimal] = None
+    rel_total: Optional[Decimal] = None
 
     @property
     def group(self) -> str:
@@ -94,6 +99,31 @@ def _load_digests(folder: Path) -> list[tuple[date, str, str]]:
         if day not in best or len(html) > len(best[day][1]):
             best[day] = (match.group(2), html)
     return [(day, aid, html) for day, (aid, html) in sorted(best.items())]
+
+
+def _collapse_same_ticker_day(events: list["Event"]) -> tuple[list["Event"], int]:
+    """One event per ticker per digest date (human ruling 2026-10-06 on 2a).
+    OSK 2020-03-27 took four orders in one digest, two of them above 1% of
+    cap, and the rule group counted one forward return twice. The largest
+    award is the primary and decides the group (Constraint #6: the day's
+    total would admit more); the count and total are stamped so the
+    sum-tiered variant can be reported beside the rule."""
+    by_key: dict[tuple[str, date], list[Event]] = defaultdict(list)
+    kept: list[Event] = []
+    for e in events:
+        if e.ticker is None:
+            kept.append(e)
+            continue
+        by_key[(e.ticker, e.digest_date)].append(e)
+    removed = 0
+    for members in by_key.values():
+        primary = max(members, key=lambda e: (e.facts.amount or Decimal(0), -e.facts.index))
+        primary.same_day_awards = len(members)
+        primary.same_day_total = sum((m.facts.amount or Decimal(0)) for m in members)
+        removed += len(members) - 1
+        kept.append(primary)
+    kept.sort(key=lambda e: (e.digest_date, e.facts.index))
+    return kept, removed
 
 
 class _Series:
@@ -166,6 +196,8 @@ def _measure(event: Event, series: _Series, spy: list[tuple[date, Decimal, Decim
         event.market_cap = (event.shares * t0[2]).quantize(Decimal("1"))
         if event.facts.amount is not None and event.market_cap > 0:
             event.rel = (event.facts.amount / event.market_cap).quantize(Decimal("0.000001"))
+        if event.same_day_awards > 1 and event.same_day_total is not None and event.market_cap > 0:
+            event.rel_total = (event.same_day_total / event.market_cap).quantize(Decimal("0.000001"))
     pre = _Series.on_or_before(rows, event.digest_date - timedelta(days=5))
     spre = _Series.on_or_before(spy, event.digest_date - timedelta(days=5))
     if pre and spre:
@@ -256,6 +288,7 @@ def run_backtest(
                 unresolved_names[facts.awardee] += 1
                 unresolved_dollars[facts.awardee] += float(facts.amount)
             events.append(Event(day, aid, facts, res.ticker, res.how, res.cik))
+    events, same_day_collapsed = _collapse_same_ticker_day(events)
     if max_events:
         events = events[:max_events]
     mapped = [e for e in events if e.ticker]
@@ -303,6 +336,19 @@ def run_backtest(
         },
         "rule_sole_source": _group_table([e for e in rule if e.facts.sole_source]),
         "rule_competed_or_unstated": _group_table([e for e in rule if not e.facts.sole_source]),
+        # Ruling 2026-10-06 on 2a: one event per ticker-day. How many were
+        # folded, how the rule splits on single- vs multi-award days, and what
+        # tiering on the day's TOTAL (not the largest award) would have added.
+        "same_day_collapsed": same_day_collapsed,
+        "rule_single_award_day": _group_table([e for e in rule if e.same_day_awards == 1]),
+        "rule_multi_award_day": _group_table([e for e in rule if e.same_day_awards > 1]),
+        "would_join_rule_on_day_total": _group_table(
+            [
+                e
+                for e in mapped
+                if e.group == "iii_new_single_below_1pct" and e.rel_total is not None and e.rel_total >= RULE_REL_MIN
+            ]
+        ),
         "ceiling_audit": [
             {"date": e.digest_date.isoformat(), "ticker": e.ticker, "awardee": e.facts.awardee[:50], "amount": str(e.facts.amount), "ceiling": str(e.facts.ceiling), "rel": str(e.rel), "kind": e.facts.kind}
             for e in sorted([e for e in mapped if e.rel is not None and e.rel >= Decimal("0.2")], key=lambda e: -(e.rel or 0))[:40]
@@ -322,7 +368,7 @@ def run_backtest(
         events_path = out_path.with_suffix(".events.jsonl")
         with open(events_path, "w", encoding="utf-8") as handle:
             for e in mapped:
-                handle.write(json.dumps({"date": e.digest_date.isoformat(), "ticker": e.ticker, "awardee": e.facts.awardee, "amount": str(e.facts.amount), "ceiling": str(e.facts.ceiling) if e.facts.ceiling else None, "kind": e.facts.kind, "multiple": e.facts.multiple_award, "idiq": e.facts.idiq, "sole": e.facts.sole_source, "agency": e.facts.agency, "mcap": str(e.market_cap) if e.market_cap else None, "rel": str(e.rel) if e.rel is not None else None, "group": e.group, "pre5": e.pre5, "gap": e.gap_pct, "cc": e.cc, "oc": e.oc, "note": e.note}) + "\n")
+                handle.write(json.dumps({"date": e.digest_date.isoformat(), "ticker": e.ticker, "awardee": e.facts.awardee, "amount": str(e.facts.amount), "ceiling": str(e.facts.ceiling) if e.facts.ceiling else None, "kind": e.facts.kind, "multiple": e.facts.multiple_award, "idiq": e.facts.idiq, "sole": e.facts.sole_source, "agency": e.facts.agency, "mcap": str(e.market_cap) if e.market_cap else None, "rel": str(e.rel) if e.rel is not None else None, "group": e.group, "pre5": e.pre5, "gap": e.gap_pct, "cc": e.cc, "oc": e.oc, "note": e.note, "same_day_awards": e.same_day_awards, "same_day_total": str(e.same_day_total) if e.same_day_awards > 1 else None, "rel_total": str(e.rel_total) if e.rel_total is not None else None}) + "\n")
     return render_backtest(report)
 
 
@@ -406,6 +452,12 @@ def render_backtest(report: dict[str, Any]) -> str:
         if table["events"] >= 10:
             lines.append(f"  {agency or 'unstated'}: {_fmt(table['oc5'])}")
     lines.append(f"rule, sole-source language: {_fmt(report['rule_sole_source']['oc5'])} | competed/unstated: {_fmt(report['rule_competed_or_unstated']['oc5'])}")
+    if "same_day_collapsed" in report:
+        lines.append(
+            f"same ticker, same digest: {report['same_day_collapsed']} awards folded into their day's largest (one event per ticker-day); "
+            f"rule on single-award days {_fmt(report['rule_single_award_day']['oc5'])} | multi-award days {_fmt(report['rule_multi_award_day']['oc5'])}"
+        )
+        lines.append(f"would join the rule if tiered on the day's TOTAL instead of the largest award (not adopted, Constraint #6): {_fmt(report['would_join_rule_on_day_total']['oc5'])}")
     lines.append("")
     lines.append("ceiling audit — largest award / point-in-time cap ratios (check for ceiling or mapping errors):")
     for row in report["ceiling_audit"][:25]:

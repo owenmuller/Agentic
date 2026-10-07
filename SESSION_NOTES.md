@@ -4102,6 +4102,60 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### RULING 2026-10-06 ON 2a, ITEM 1 — the OSK double count, deduped; 2a restated on 170 events
+
+**Correction first.** The post-ship 2a report called OSK 2020-03-27 "one award parsed from two
+paragraphs". The digest shows FOUR distinct Oshkosh orders that day (W56HZV-20-F-0035 $173.8M,
+-0149 $100.9M, -0150 $46.1M, -0177 $25.7M), two of them above 1% of cap. The parser was right; the
+backtest counted one forward return twice because two awards on one ticker-day are one observation.
+The ruled key (awardee + digest date + contract number, or dollar figure) would not have caught it,
+and keyed on the contract number alone it would merge distinct orders against one parent (the
+parser's number is the last in the paragraph, usually the parent basic ordering agreement: Boeing
+2019-09-30 took two orders against N00019-16-G-0001, $17.6M and $15.5M). Two layers shipped:
+
+1. **Parser dedup, true duplicates only:** key = awardee + contract number + dollar figure (awardee +
+   dollar figure where no number parses). Across the 1,899 digests the ruled key as written matched
+   126 pairs; nearly all are distinct orders against a shared parent. A genuine repeat exists (HII
+   2019-09-24: the USS Columbus $20M modification listed twice, once with an "(Awarded Sept. 23,
+   2019)" trailer) and is now one award. Indices stay contiguous, so external ids are unchanged.
+2. **One event per ticker per digest date, both paths.** `collapse_same_ticker` in
+   `signals/contracts.py`: the LARGEST single award is the primary and decides the tier
+   (Constraint #6 — tiering on the day's total would admit more); the count and the day's total are
+   stamped (`same-day awards: N (this is the largest; the day's total is $X, Y% of market cap)`,
+   fields `same_day_awards`, `same_day_total`, `rel_mcap_same_day`), the siblings are marked seen
+   with the primary so a re-read never re-emits them. DoD digest and FPDS (within a poll batch, by
+   signing date). `GovAwardFacts.same_day_awards` parses it back; the weekly slices "several awards
+   on one day". The backtest folds the same way (`_collapse_same_ticker_day`) and reports the fold.
+   Regression test on the verbatim OSK/HII/Boeing paragraphs, parser, live path and backtest
+   (`tests/test_contracts.py`, 3 new; 16 pass; full suite green on the droplet).
+
+**2a rerun on the deduped set** (`contracts_backtest_2026-10-06c`, 1,899 digests, 507 same-ticker-day
+awards folded across all mapped events; rule group 174 → 170, 46 tickers, `rule_stats`):
+
+| statistic | before (174) | deduped (170) |
+|---|---|---|
+| mean / median next-open → t+5 | +0.74 / +0.27 | **+0.65 / +0.16** |
+| hit rate | 54% | 53% |
+| ticker-clustered SE (46 clusters), t | 0.31, 2.41 | 0.26, 2.49 |
+| bootstrap 95% CI, ticker-cluster (10,000 draws) | [+0.17, +1.37] | **[+0.15, +1.20]**, P(mean ≤ 0) = 0.004 |
+| bootstrap 95% CI, event resampling | [+0.22, +1.27] | [+0.13, +1.15] |
+| mean excluding top 5 | +0.39 (169) | +0.34 (165) |
+| net of 15bp: mean / median / hit | +0.59 / +0.12 / 51% | **+0.50 / +0.01 / 50%** |
+| recompete language | 7 of 174, ex −0.07 → +0.77 | 7 of 170, ex +0.68 |
+
+The top five are now OSK 2020-03-27 once, MRNA 2022-07-29, OSK 2020-04-24, KTOS 2021-03-25 and BA
+2020-09-24. Net of cost the median event is now flat. Split by day shape: rule events on
+single-award days +0.58 (n=145), on multi-award days +1.05 (n=25). Tiering on the day's TOTAL
+instead of the largest award would add 7 events (mean +0.83) — reported, not adopted.
+
+**2b:** the lower bound moved +0.17 → +0.15, a 0.02 move, under the ruling's 0.05 trigger, so the
+pre-registered interval [+0.17, +1.37] STANDS and the weekly `SIZING UNLOCK` line is unchanged. Noted
+for the human: the upper bound moved more (1.37 → 1.20); the trigger as ruled reads the lower bound
+only. The success criterion is still met by letter (rule +0.65 vs ii −0.03, iii −0.15, 8 years).
+
+Not fixed, noted: one awardee string parses as "lot 2)" (a Navy multiple-award paragraph with two
+lot numbers in parentheses, 2020-02-18) — unresolved, harmless, a parser nit for later.
+
 ### POST-SHIP RULINGS 2026-10-06 — multiplier retired; backtest accepted as modest; the go-live criterion re-registered
 
 **1. Multiplier:** Constraint #6 governs permanently; the 1.3× deployment multiplier is RETIRED. The

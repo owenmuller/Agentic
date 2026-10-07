@@ -804,6 +804,7 @@ def gov_award_section(
         ("ceiling value stated", [e for e in awards if facts(e).ceiling_stated]),
         ("ceiling-suspect (award > awardee market cap)", [e for e in awards if getattr(facts(e), "ceiling_suspect", False)]),
         ("recompete / incumbent language (stamped, never a filter)", [e for e in awards if getattr(facts(e), "recompete", False)]),
+        ("several awards on one day (the row is the largest; total stamped)", [e for e in awards if getattr(facts(e), "same_day_awards", 1) > 1]),
         ("sole-source language", [e for e in awards if facts(e).sole_source]),
         ("military", [e for e in awards if facts(e).military]),
         ("civilian", [e for e in awards if not facts(e).military]),

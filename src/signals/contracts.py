@@ -313,10 +313,20 @@ def _name_of(segment: str) -> str:
 
 
 def parse_digest_paragraphs(paragraphs: Iterable[str]) -> list[AwardFacts]:
-    """Every award paragraph in a digest, with the agency header in force."""
+    """Every award paragraph in a digest, with the agency header in force.
+
+    Duplicate paragraphs are dropped (human ruling 2026-10-06 on 2a): the
+    digest occasionally lists an award twice — once late-listed with an
+    "(Awarded Sept. 23, 2019)" trailer, once plain (HII 2019-09-24). The key
+    is awardee + contract number + dollar figure, or awardee + dollar figure
+    where no number is parsed. The number alone is NOT the key: the parser's
+    number is the last one in the paragraph, usually the parent basic ordering
+    agreement, and distinct orders against one parent (Boeing 2019-09-30,
+    N00019-16-G-0001, $17.6M and $15.5M) are distinct awards."""
     awards: list[AwardFacts] = []
     agency: Optional[str] = None
     index = 0
+    seen_keys: set[tuple[str, Optional[str], Optional[Decimal]]] = set()
     for paragraph in paragraphs:
         header = _AGENCY_RE.match(paragraph)
         if header and len(paragraph) < 80:
@@ -351,6 +361,10 @@ def parse_digest_paragraphs(paragraphs: Iterable[str]) -> list[AwardFacts]:
         for cm2 in _CONTRACT_NO_RE.finditer(paragraph):
             contract_match = cm2.group(1)
         for name, small in named:
+            key = (name.lower(), contract_match, amount)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
             awards.append(
                 AwardFacts(
                     awardee=name,
@@ -754,6 +768,43 @@ def _military(department: str) -> bool:
     return "DEFENSE" in text or "DEPT OF THE" in text or text in {"ARMY", "NAVY", "AIR FORCE", "SPACE FORCE"}
 
 
+@dataclass(frozen=True, slots=True)
+class SameDay:
+    """How many awards one listed parent took in one digest, and their total
+    (human ruling 2026-10-06 on 2a: OSK 2020-03-27 took four orders in one
+    digest and the backtest counted one forward return twice)."""
+
+    awards: int = 1
+    total: Optional[Decimal] = None
+
+
+def collapse_same_ticker(
+    resolved: Sequence[tuple[AwardFacts, Resolution]],
+) -> list[tuple[AwardFacts, Resolution, SameDay, tuple[AwardFacts, ...]]]:
+    """One entry per listed parent per digest. The LARGEST single award is the
+    primary and its facts decide the tier — tiering on the day's total would
+    admit more, so Constraint #6 keeps the largest; the count and the total
+    are stamped for the record. The siblings come back so the caller can mark
+    them seen. Awardees with no ticker stay one entry per award."""
+    by_ticker: dict[str, list[tuple[AwardFacts, Resolution]]] = {}
+    order: list[tuple[AwardFacts, Resolution]] = []
+    for facts, resolution in resolved:
+        if resolution.ticker:
+            by_ticker.setdefault(resolution.ticker, []).append((facts, resolution))
+        else:
+            order.append((facts, resolution))
+    out: list[tuple[AwardFacts, Resolution, SameDay, tuple[AwardFacts, ...]]] = [
+        (facts, resolution, SameDay(1, facts.amount), ()) for facts, resolution in order
+    ]
+    for members in by_ticker.values():
+        primary_facts, primary_res = max(members, key=lambda m: (m[0].amount or Decimal(0), -m[0].index))
+        total = sum((m[0].amount or Decimal(0)) for m in members)
+        siblings = tuple(m[0] for m in members if m[0] is not primary_facts)
+        out.append((primary_facts, primary_res, SameDay(len(members), total), siblings))
+    out.sort(key=lambda entry: entry[0].index)
+    return out
+
+
 def build_item(
     *,
     feed: str,
@@ -771,14 +822,19 @@ def build_item(
     action_type: str = "",
     modification_reason: str = "",
     competition: str = "",
+    same_day: Optional[SameDay] = None,
 ) -> RawItem:
     """One award as the scanner wants it: labelled lines the funnel can parse
     back, and the same facts as ``fields`` for dispatch and the prompt."""
+    same_day = same_day or SameDay(1, facts.amount)
     rel_mcap = None
     rel_rev = None
+    rel_total = None
     if size is not None and facts.amount is not None:
         if size.market_cap:
             rel_mcap = (facts.amount / size.market_cap).quantize(Decimal("0.000001"))
+            if same_day.awards > 1 and same_day.total is not None:
+                rel_total = (same_day.total / size.market_cap).quantize(Decimal("0.000001"))
         if size.revenue:
             rel_rev = (facts.amount / size.revenue).quantize(Decimal("0.000001"))
     ticker = resolution.ticker
@@ -821,6 +877,12 @@ def build_item(
             f"award / revenue: {_pct(rel_rev)}",
             f"ceiling suspect: {'yes' if ceiling_suspect else 'no'}",
             f"recompete: {'yes' if facts.recompete_language else 'unstated'}",
+            f"same-day awards: {same_day.awards}"
+            + (
+                f" (this is the largest; the day's total is {_fmt_money(same_day.total)}, {_pct(rel_total)} of market cap)"
+                if same_day.awards > 1
+                else ""
+            ),
             f"size tier: {tier}",
             f"event date: {event_date.isoformat()}",
             f"published: {published_at.isoformat()}"
@@ -860,6 +922,9 @@ def build_item(
         "size_tier": tier,
         "ceiling_suspect": "true" if ceiling_suspect else "false",
         "recompete": "true" if facts.recompete_language else "false",
+        "same_day_awards": str(same_day.awards),
+        "same_day_total": str(same_day.total) if same_day.awards > 1 and same_day.total is not None else "",
+        "rel_mcap_same_day": str(rel_total) if rel_total is not None else "",
         "event_date": event_date.isoformat(),
         "report_date": event_date.isoformat(),
         "published_at": published_at.isoformat(),
@@ -997,17 +1062,24 @@ class DodDigestFetcher:
         facts_list = parse_digest(body)
         event_date = ref.digest_date or ref.published_at.astimezone(NEW_YORK).date()
         items = []
-        tally = {"awards": 0, "below_parser_floor": 0, "no_instrument": 0, TIER_RESEARCH: 0, TIER_MEASURE: 0, TIER_BELOW_FLOOR: 0, "seen": 0}
+        tally = {"awards": 0, "below_parser_floor": 0, "no_instrument": 0, TIER_RESEARCH: 0, TIER_MEASURE: 0, TIER_BELOW_FLOOR: 0, "seen": 0, "same_day_collapsed": 0}
+        resolved: list[tuple[AwardFacts, Resolution]] = []
         for facts in facts_list:
             tally["awards"] += 1
             if facts.amount is None or facts.amount < rules.parser_floor:
                 tally["below_parser_floor"] += 1
                 continue
+            resolved.append((facts, self._contractors.resolve(facts.awardee, event_date, facts.small_business)))
+        # One item per listed parent per digest (ruling 2026-10-06 on 2a): the
+        # largest award is the primary; its siblings are marked seen with it.
+        for facts, resolution, same_day, siblings in collapse_same_ticker(resolved):
             external_id = f"dod:{ref.article_id}:{facts.index}"
+            sibling_ids = [f"dod:{ref.article_id}:{s.index}" for s in siblings]
             if external_id in self._seen:
                 tally["seen"] += 1
+                self._seen.update(sibling_ids)
                 continue
-            resolution = self._contractors.resolve(facts.awardee, event_date, facts.small_business)
+            tally["same_day_collapsed"] += len(siblings)
             size = None
             if resolution.ticker and self._sizer is not None:
                 size = self._sizer.size(resolution.ticker, resolution.cik)
@@ -1024,10 +1096,12 @@ class DodDigestFetcher:
                 digest_title=ref.title,
                 digest_url=ref.url,
                 article_id=ref.article_id,
+                same_day=same_day,
             )
             tally[item.fields["size_tier"]] = tally.get(item.fields["size_tier"], 0) + 1
             items.append(item)
             self._seen.add(external_id)
+            self._seen.update(sibling_ids)
         self.last_tally = tally
         return items
 
@@ -1263,7 +1337,9 @@ class FpdsCivilianFetcher:
             if len(batch) < 10:
                 break
         items = []
-        tally = {"actions": len(actions), "dod_excluded": 0, "seen": 0, "no_instrument": 0}
+        tally = {"actions": len(actions), "dod_excluded": 0, "seen": 0, "no_instrument": 0, "same_day_collapsed": 0}
+        by_date: dict[date, list[tuple[AwardFacts, Resolution]]] = {}
+        action_of: dict[AwardFacts, FpdsAction] = {}
         for action in actions:
             if any(action.department.upper().startswith(d) for d in self._exclude):
                 tally["dod_excluded"] += 1
@@ -1273,27 +1349,37 @@ class FpdsCivilianFetcher:
                 continue
             facts = facts_from_fpds(action)
             event_date = action.signed or (action.modified_at or now).astimezone(NEW_YORK).date()
-            resolution = self._contractors.resolve(facts.awardee, event_date)
-            size = None
-            if resolution.ticker and self._sizer is not None:
-                size = self._sizer.size(resolution.ticker, resolution.cik)
-            item = build_item(
-                feed=FEED_FPDS,
-                facts=facts,
-                event_date=event_date,
-                published_at=action.modified_at or now,
-                resolution=resolution,
-                size=size,
-                rules=rules,
-                department=action.department,
-                external_id=action.external_id,
-                action_type=action.action_type,
-                modification_reason=action.modification_reason,
-                competition=action.competition,
-            )
-            tally[item.fields["size_tier"]] = tally.get(item.fields["size_tier"], 0) + 1
-            items.append(item)
-            self._seen.add(action.external_id)
+            action_of[facts] = action
+            by_date.setdefault(event_date, []).append((facts, self._contractors.resolve(facts.awardee, event_date)))
+        # One item per listed parent per signing date within the batch (ruling
+        # 2026-10-06 on 2a); actions of one day that arrive across polls still
+        # meet the pipeline's same-name-same-day rule.
+        for event_date in sorted(by_date):
+            for facts, resolution, same_day, siblings in collapse_same_ticker(by_date[event_date]):
+                action = action_of[facts]
+                tally["same_day_collapsed"] += len(siblings)
+                size = None
+                if resolution.ticker and self._sizer is not None:
+                    size = self._sizer.size(resolution.ticker, resolution.cik)
+                item = build_item(
+                    feed=FEED_FPDS,
+                    facts=facts,
+                    event_date=event_date,
+                    published_at=action.modified_at or now,
+                    resolution=resolution,
+                    size=size,
+                    rules=rules,
+                    department=action.department,
+                    external_id=action.external_id,
+                    action_type=action.action_type,
+                    modification_reason=action.modification_reason,
+                    competition=action.competition,
+                    same_day=same_day,
+                )
+                tally[item.fields["size_tier"]] = tally.get(item.fields["size_tier"], 0) + 1
+                items.append(item)
+                self._seen.add(action.external_id)
+                self._seen.update(action_of[s].external_id for s in siblings)
         self.last_tally = tally
         return items
 
