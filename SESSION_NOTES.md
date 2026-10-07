@@ -4118,6 +4118,22 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
    computed. The size-matched read decides whether a signal exists; the pre-registered SPY
    criterion decides the trading path, unchanged.
 
+**8-K groups restated, one table (`size_matched.py`, 40,446 events; IWM-benchmarked share 76–78%):**
+
+| group | n | vs SPY t+1 / t+5 / t+20 | size-matched t+1 / t+5 / t+20 | t+5 CI vs SPY | t+5 CI size-matched |
+|---|---|---|---|---|---|
+| 1.01 | 12,866 | −0.26 / −0.61 / −2.83 | −0.24 / **−0.56** / −2.74 | [−1.42, +0.75] | [−1.39, +0.80] |
+| 8.01 | 20,390 | −0.67 / −0.69 / −1.71 | −0.63 / **−0.63** / −1.54 | [−1.07, −0.24] | [−1.02, −0.18] |
+| both | 3,826 | −0.95 / −1.32 / −2.44 | −0.92 / −1.25 / −2.25 | [−2.05, −0.49] | [−2.01, −0.40] |
+| earnings 2.02 | 3,364 | −0.63 / −0.79 / −1.03 | −0.55 / −0.64 / −0.74 | [−1.21, −0.36] | [−1.06, −0.24] |
+
+Within the IWM-benchmarked rows (caps under $10B) the t+5 restatement moves by +0.06 to +0.19 points
+(1.01 −0.39 → −0.33; 8.01 −0.66 → −0.57; earnings −0.84 → −0.65); the SPY-benchmarked rows are
+unchanged by construction. **Read: the small-cap lag of 2024–26 is not what made these groups
+negative** — over five-day windows IWM and SPY differ by a few basis points on average, and the
+post-filing drift stays negative with the CIs where they were. The size-matched leg confirms no
+signal; the SPY-based ruling stands.
+
 ### 8-K ITEMS 1.01 / 8.01 BACKTEST, STAGE A — RESULT (2026-10-07 18:04 UTC, the pre-registered run): NO WIDENING; and item 2b
 
 45,776 filings 2024-01-02..2026-10-02, 40,446 with bars; point-in-time acceptance times (before-open
