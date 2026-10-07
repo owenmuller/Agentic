@@ -246,6 +246,44 @@ def _overreaction_line(
     return f"  {label}: {len(entries)} events | " + "  ".join(parts)
 
 
+#: The first session whose 8-K rows carry the WHOLE listed set (ruling
+#: 2026-10-08, 2a): the funnel holes closed in 541fdbc, deployed 2026-10-07
+#: midday, live from the next session's start.
+FORM8K_FULL_RECORD_FROM = date(2026, 10, 8)
+
+
+def slot_lost_section(
+    entries: Iterable[FunnelEntry],
+    rows: dict[tuple[str, date], ForwardRow],
+) -> list[str]:
+    """Ruling 2026-10-08 (2c): what the pooled dispatch turned away, by source,
+    beside what it researched, so a cap that binds is visible the week it
+    starts binding. ``slot_lost`` rows (held through the last window, or
+    deferred at shutdown) against the same source's researched rows."""
+    entries = list(entries)
+    lost = [e for e in entries if e.code == "slot_lost"]
+    if not lost:
+        return []
+    lines = ["", f"Slot-lost candidates by source (ruling 2026-10-08; listed, never researched; excess at {KEY_HORIZON}d and 20d):"]
+    for source in sorted({e.source_id for e in lost}):
+        mine = [e for e in lost if e.source_id == source]
+        researched = [e for e in entries if e.source_id == source and e.confidence is not None]
+        lines.append(
+            f"  {source}: {len(mine)} slot_lost rows over {len({e.observed_at.date() for e in mine})} session(s) "
+            f"vs {len(researched)} researched"
+        )
+        for horizon in (KEY_HORIZON, 20):
+            lost_values = _excess_values(mine, rows, horizon)
+            res_values = _excess_values(researched, rows, horizon)
+            lines.append(
+                f"    {horizon}d: slot_lost "
+                + (f"mean {statistics.mean(lost_values):+.2f}% hit {sum(1 for v in lost_values if v > 0)/len(lost_values):.0%} n={len(lost_values)}" if lost_values else "n=0")
+                + " | researched "
+                + (f"mean {statistics.mean(res_values):+.2f}% hit {sum(1 for v in res_values if v > 0)/len(res_values):.0%} n={len(res_values)}" if res_values else "n=0")
+            )
+    return lines
+
+
 def render_forward_report(
     entries: list[FunnelEntry],
     rows: dict[tuple[str, date], ForwardRow],
@@ -540,6 +578,18 @@ def render_forward_report(
     form8k = [e for e in entries if e.source_id == "form_8k" and e.form8k_items]
     if form8k:
         lines.extend(["", f"8-K by item (excess at {KEY_HORIZON}d; ruling 2026-09-15, review 2026-10-15):"])
+        # Ruling 2026-10-08 (2a): before the funnel holes were closed (commit
+        # 541fdbc, live from 2026-10-08) the 8-K rows were the cap-selected
+        # ~18% of whitelisted flow - 1,027 of 1,259 listed filings over the
+        # prior 21 days left no record. Those rows are not a fair read of the
+        # source and the weekly says so beside them.
+        before = [e for e in form8k if e.observed_at.date() < FORM8K_FULL_RECORD_FROM]
+        after = [e for e in form8k if e.observed_at.date() >= FORM8K_FULL_RECORD_FROM]
+        lines.append(
+            f"  CAUTION: {len(before)} rows observed before {FORM8K_FULL_RECORD_FROM} are a cap-selected subset "
+            f"(~18% of whitelisted flow; two funnel holes closed in 541fdbc) and are NOT a fair read of the source; "
+            f"{len(after)} rows since carry the whole listed set (slot_lost rows included)"
+        )
         for item in sorted({i for e in form8k for i in e.form8k_items}):
             members = [e for e in form8k if item in e.form8k_items]
             bearish_members = [e for e in members if e.code == "bearish_measurement"]
@@ -547,6 +597,9 @@ def render_forward_report(
             if bearish_members and len(bearish_members) == len(members):
                 label += " (bearish, measurement only — negative excess = right)"
             lines.append(_stat_line(label, _excess_values(members, rows, KEY_HORIZON)))
+
+    # Slot-lost candidates by source (ruling 2026-10-08, 2c).
+    lines.extend(slot_lost_section(with_ticker, rows))
 
     # Bearish groundwork (ruling 2026-09-02): measurement-only rows, graded
     # before any bearish trading path exists. For BOTH slices a NEGATIVE excess

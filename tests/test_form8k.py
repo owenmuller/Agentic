@@ -298,9 +298,21 @@ def test_the_forward_funnel_reads_the_items_and_the_report_slices_them():
         for i, (bucket, code, items) in enumerate([
             ("traded", "", ("5.02", "9.01")),
             ("prefiltered", "bearish_measurement", ("4.02",)),
+            ("prefiltered", "slot_lost", ("1.01", "9.01")),
         ])
     ]
     report = render_forward_report(entries, {})
     assert "8-K by item" in report
     assert "item 5.02" in report
     assert "item 4.02 (bearish, measurement only" in report
+    # Ruling 2026-10-08 (2a): rows before the holes closed are flagged as a
+    # cap-selected subset, right beside the table.
+    assert "CAUTION: 3 rows observed before 2026-10-08 are a cap-selected subset" in report
+    # (2c): slot_lost rows by source, beside the source's researched rows.
+    assert "Slot-lost candidates by source" in report
+    assert "form_8k: 1 slot_lost rows over 1 session(s) vs 0 researched" in report
+    from dataclasses import replace
+
+    recent = [replace(e, observed_at=datetime(2026, 10, 8, 14, 0, tzinfo=timezone.utc)) for e in entries]
+    report2 = render_forward_report(recent, {})
+    assert "CAUTION: 0 rows observed before 2026-10-08" in report2 and "3 rows since carry the whole listed set" in report2

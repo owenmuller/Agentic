@@ -4102,6 +4102,46 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### RULINGS 2026-10-08 — ITEM 1: the OOM audit; research jobs now run memory-capped; swap needs root
+
+**1a. What was killed.** The kernel log is unreadable to the `agentic` user (`dmesg_restrict=1`,
+`journalctl -k` empty, sudo needs a password), so the OOM kills are inferred from exit codes: the
+8-K backtest died twice with exit 137 (SIGKILL) — 05:45 UTC while holding a 135 MB acceptance-time
+map for 5,290 filers, and 16:03 UTC loading that map back — on a 961 MB droplet with no swap. **No
+production unit was killed or restarted:** `agentic-paper` NRestarts=0, Result=success, one start per
+session (10-07 13:15:01 UTC), OOMPolicy=stop untouched; every timer fired on schedule (earnings
+20:30, overreaction 20:45, backup 01:07, weekly Fri 21:00). **No session lost data:** audit records
+10-05 n=48 (13:31→19:49 UTC), 10-06 n=70 (13:33→19:49), 10-07 running (13:31→). The only failed
+unit is pre-existing and unrelated: `agentic-backup` exits 203/EXEC because
+`/usr/local/bin/agentic-push-backup` does not exist (the local tar step succeeds; the push step
+needs root to fix or remove).
+
+**1b. Built, no root needed.** `~/scratch/research_job.sh NAME LOG -- CMD` runs any research job as a
+transient USER service: `MemoryMax` (default 600M, per-job override), `MemorySwapMax=0`,
+`OOMPolicy=kill`, `OOMScoreAdjust=1000`, `CPUWeight=20`, `IOWeight=20`, `Nice=19`, output appended
+to the job's log. The user cgroup has the cpu/memory/pids controllers delegated and lingering is now
+enabled for `agentic` (`loginctl enable-linger` was permitted), so the services outlive the ssh
+session. **Tested:** a 400 MB allocation under a 200M cap was OOM-killed inside its own unit
+(`research-captest.service: Failed with result 'oom-kill'`) while `agentic-paper` stayed active.
+Both backtests were stopped and relaunched under caps (k8 350M, news 300M; checkpoints resumed:
+acceptance 39,805 of 45,776 known, news at 2016-04). Production units are system units outside this
+slice; the kernel's victim is always the job. **Swap: cannot be added without root** — the commands
+for you: `fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile &&
+echo '/swapfile none swap sw 0 0' >> /etc/fstab`; with `MemorySwapMax=0` on the jobs, swap would serve
+production only.
+
+**1c. Peak memory, normal session.** `agentic-paper` cgroup: MemoryPeak **137 MB**, current 117 MB
+(10-07 session). The timers' units report no peak (short-lived, `[not set]`). The box: 961 MB total,
+~350 MB used by OS + production with no jobs running, ~506 MB with both backtests alongside.
+**Production alone is far below 600 MB; no resize needed for production.** Two capped jobs at once
+(350 + 300) plus production fit inside 961 MB; three would not.
+
+**2a/2c built (weekly):** the 8-K by-item table now prints a CAUTION line splitting rows before and
+since 2026-10-08 (the first session with the whole listed set) and names the cap-selected ~18%; a
+new "Slot-lost candidates by source" section prints `slot_lost` rows per source with 20d/5d excess
+beside the same source's researched rows, so a binding cap is visible the week it binds. Tests in
+`tests/test_form8k.py`.
+
 ### MORNING SUMMARY 2026-10-07 (overnight rules) — what shipped, what's running, what waits on the human
 
 **Shipped to production (droplet HEAD e470c4a = origin = vps; the paper unit was mid-session on
