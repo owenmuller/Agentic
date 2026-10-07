@@ -135,28 +135,48 @@ class Form8KFetcher(EdgarFetcherBase):
         self.last_tally = tally
         return items
 
+    #: Full-text search pages 100 hits, relevance-ordered; the lister reads
+    #: EVERY page (human ruling 2026-10-07, 8-K funnel hole b) - one page per
+    #: item per poll silently dropped filings on busy days (8.01 runs ~63 a day
+    #: on a two-day window; "Item 1.01" reached 121 in the 10-03..10-06 window).
+    MAX_PAGES = 40
+
     def _list(self, item: str, user_agent: str, today: date) -> list[dict]:
-        response = self._get(
-            FTS_URL,
-            user_agent,
-            params={
-                "q": f'"Item {item}"',
-                "forms": "8-K",
-                "startdt": (today - self._lookback).isoformat(),
-                "enddt": today.isoformat(),
-            },
-        )
-        if response.status_code != 200:
-            logger.warning(
-                "8-K listing (item %s) returned HTTP %d; skipping this cycle",
-                item,
-                response.status_code,
+        hits: list[dict] = []
+        offset = 0
+        for _page in range(self.MAX_PAGES):
+            response = self._get(
+                FTS_URL,
+                user_agent,
+                params={
+                    "q": f'"Item {item}"',
+                    "forms": "8-K",
+                    "startdt": (today - self._lookback).isoformat(),
+                    "enddt": today.isoformat(),
+                    "from": offset,
+                },
             )
-            return []
-        try:
-            return response.json().get("hits", {}).get("hits", [])
-        except ValueError:
-            return []
+            if response.status_code != 200:
+                logger.warning(
+                    "8-K listing (item %s, from %d) returned HTTP %d; keeping the %d hits read",
+                    item,
+                    offset,
+                    response.status_code,
+                    len(hits),
+                )
+                break
+            try:
+                body = response.json().get("hits", {})
+            except ValueError:
+                break
+            page = body.get("hits", [])
+            hits.extend(page)
+            total = body.get("total", {})
+            total = int(total.get("value", 0) if isinstance(total, dict) else total or 0)
+            offset += len(page)
+            if not page or offset >= total:
+                break
+        return hits
 
     # -- one filing ------------------------------------------------------------------
 

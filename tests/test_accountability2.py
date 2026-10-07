@@ -283,12 +283,17 @@ def test_the_priced_in_declines_grade_behaviourally():
         case = cases[name]
         assert case.directions == ("no_position", "long")
         assert case.confidence_band == (0, 100)
-        assert case.traded_confidence_band == (0, 49)
+        # pelosi-uber accepts a REPLICATED long in the 45-55 floor band too
+        # (human ruling 2026-10-07: it drew long 3 of 3 under the vote).
+        top = 55 if name == "pelosi-uber-priced-in" else 49
+        assert case.traded_confidence_band == (0, top)
         assert grade(case, make_report(direction="no_position", confidence=30), None).passed
         assert grade(case, make_report(direction="long", confidence=45, target_price="10"), None).passed
         drift = grade(case, make_report(direction="long", confidence=58, target_price="10"), None)
         assert not drift.passed and "traded verdict confidence 58" in drift.problems[0]
         assert drift.verdict.startswith("long/58")
+    uber = cases["pelosi-uber-priced-in"]
+    assert grade(uber, make_report(direction="long", confidence=52, target_price="10"), None).passed
 
 
 class _Scripted:

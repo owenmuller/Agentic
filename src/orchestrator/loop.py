@@ -344,7 +344,37 @@ class TradingLoop:
                 remaining_windows,
             )
         self._last_window = window
+        if held and remaining_windows <= 1:
+            # The day's last window (human ruling 2026-10-07, 8-K funnel hole
+            # a): a pooled candidate still held now cannot get a slot today,
+            # and the queue dies with the process - so it is RECORDED, not
+            # carried. Measurement-first: the forward engine grades what the
+            # cap turned away. Origin: two Vistra 1.01 filings listed and
+            # never recorded.
+            self._record_slot_lost(held, "held through the day's last dispatch window")
+            held = []
         return immediate + released, held
+
+    def _record_slot_lost(self, signals: list[Signal], why: str) -> int:
+        """Write ``slot_lost`` for every signal that was listed and never
+        researched; mark it a slot loser so an aged re-list says so."""
+        count = 0
+        for signal in signals:
+            try:
+                self._pipeline.record_prefiltered(
+                    signal,
+                    f"{signal.source_id}: listed but never researched - {why} "
+                    f"(ruling 2026-10-07: every listed filing leaves a record)",
+                    code="slot_lost",
+                )
+                count += 1
+            except Exception as error:  # noqa: BLE001 - a record must never sink the tick
+                logger.warning("slot_lost record failed for %s: %s", signal.signal_id, error)
+            if signal.external_id:
+                self._slot_losers.add((signal.source_id, signal.external_id))
+        if count:
+            logger.info("recorded %d slot_lost candidate(s): %s", count, why)
+        return count
 
     def tick(self) -> TickReport:
         """Poll, research, trade, settle, persist. Never raises for a fetcher or a bug."""
@@ -844,6 +874,12 @@ class TradingLoop:
         if self._baseline is not None:
             report.settled += len(self._baseline.cancel_working())
             self._session.capture_baseline(self._baseline)
+        # Signals still deferred at shutdown die with the process (ruling
+        # 2026-10-07, 8-K funnel hole a): record them so the forward engine
+        # can grade what the pool or the budget turned away today.
+        if self._deferred:
+            self._record_slot_lost(list(self._deferred), "still deferred when the session shut down")
+            self._deferred = []
         report.halted = self._gate.kill_switch_tripped
         self._session.capture_exits(self._exits)
         self._session.persist(self._gate, self._clock())

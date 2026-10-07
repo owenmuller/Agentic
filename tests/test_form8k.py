@@ -77,7 +77,11 @@ class Recorder:
         if "efts.sec.gov" in url:
             q = request.url.params.get("q", "")
             item = q.replace('"Item ', "").replace('"', "")
-            return httpx.Response(200, json={"hits": {"hits": self._hits.get(item, [])}})
+            # Pages of 100 by `from`, with the total, exactly as EDGAR serves them.
+            all_hits = self._hits.get(item, [])
+            offset = int(request.url.params.get("from", "0") or 0)
+            page = all_hits[offset:offset + 100]
+            return httpx.Response(200, json={"hits": {"total": {"value": len(all_hits), "relation": "eq"}, "hits": page}})
         if url.endswith("/index.json"):
             return httpx.Response(
                 self._index_status,
@@ -243,6 +247,34 @@ def test_the_prompt_speaks_8k(signals_config):
     assert "filing-day reaction is NOT the trade" in prompt
     assert "5.02 cuts both ways" in prompt
     assert "congressional" not in prompt.split("BEGIN UNTRUSTED")[0].lower()
+
+
+# The two Vistra 1.01 filings the production lister listed and the funnel
+# never recorded (ruling 2026-10-07): the notes-offering close of 2026-09-24
+# and the revolver amendment accepted 2026-10-03 (filed 2026-10-05).
+VST_NOTES = hit("0001140361-26-037577", ["1.01", "8.01", "9.01"],
+                display="Vistra Corp.  (VST)  (CIK 0001692819)", cik="0001692819",
+                file_date="2026-09-24", period="2026-09-24")
+VST_REVOLVER = hit("0001140361-26-038468", ["1.01", "2.03", "9.01"],
+                   display="Vistra Corp.  (VST)  (CIK 0001692819)", cik="0001692819",
+                   file_date="2026-10-05", period="2026-09-30")
+
+
+def test_the_lister_reads_every_page_so_a_busy_day_keeps_the_vistra_filings(source):
+    """Hole b (ruling 2026-10-07): one page of 100 relevance-ordered hits per
+    item dropped whatever sat on page two. 121 "Item 1.01" hits with both
+    Vistra filings on the second page must all be read."""
+    fillers = [hit(f"0009{i:06d}-26-000001", ["1.01", "9.01"], display=f"Private Co {i}  (CIK 0009{i:06d})", cik=f"0009{i:06d}")
+               for i in range(119)]
+    fetcher, recorder = fetcher_with({"1.01": fillers + [VST_NOTES, VST_REVOLVER]}, clock=lambda: datetime(2026, 10, 6, 13, 30, tzinfo=timezone.utc))
+    items = fetcher(source)
+    by_accession = {i.external_id: i for i in items}
+    assert "0001140361-26-037577" in by_accession and "0001140361-26-038468" in by_accession
+    assert all(i.fields["ticker"] == "VST" for i in by_accession.values())
+    assert by_accession["0001140361-26-038468"].fields["whitelisted_items"] == "1.01"
+    listing_requests = [r for r in recorder.requests if "efts.sec.gov" in str(r.url) and 'Item 1.01' in r.url.params.get("q", "")]
+    assert [int(r.url.params.get("from", "0") or 0) for r in listing_requests] == [0, 100]
+    assert fetcher.last_tally["listed"] == 121 and fetcher.last_tally["no_ticker"] == 119
 
 
 def test_8k_is_the_sixth_family():

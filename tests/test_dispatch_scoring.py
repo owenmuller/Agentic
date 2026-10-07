@@ -294,6 +294,70 @@ def test_pooled_filings_wait_for_a_window_while_posts_dispatch_at_once(tmp_path,
     assert len(started.loop.deferred) == 1
 
 
+def _seven_disclosures():
+    """Seven candidates against the pre-demotion cap of five: two must lose."""
+    return [
+        f"Congressional trading disclosure (STOCK Act filing)\nrepresentative: Nancy Pelosi (Representatives)\n"
+        f"ticker: NUE\ntransaction: Purchase\namount range: $500,001 - $1,000,000\n"
+        f"transaction date: 2026-08-0{i}\nreport date: 2026-08-16\ndisclosure lag: 1{i} days\n"
+        for i in range(1, 8)
+    ]
+
+
+def _slot_lost(started):
+    from audit.records import StageRejectionRecord
+
+    return [r for r in started.audit.records() if isinstance(r, StageRejectionRecord) and r.code == "slot_lost"]
+
+
+def test_pooled_candidates_held_through_the_last_window_leave_a_record(tmp_path):
+    """Hole a (ruling 2026-10-07): a low-scored pooled candidate held at the
+    day's last window used to die with the queue, unrecorded - two Vistra 1.01
+    filings were listed and never seen again. Now it is written as slot_lost."""
+    from research.config import ResearchConfig
+    from risk_gate import RiskLimits
+
+    signals_config = pre_demotion_signals_config()  # three congressional slots
+    clock = FakeClock(datetime(2026, 8, 17, 19, 45, tzinfo=timezone.utc))  # 15:45 ET: one window left
+    started = build(
+        tmp_path, RiskLimits.load(), signals_config, ResearchConfig.load(),
+        llm=FakeLLM(), broker=FakeBroker(), clock=clock,
+        fetcher=feed(congressional_disclosures=_seven_disclosures()),
+        prices=prices_of(NUE="140.00"),
+        config=_config(),
+    )
+    report = started.loop.tick()
+    assert [_src(r) for r in report.processed].count("congressional_disclosures") == 5
+    assert not started.loop.deferred
+    lost = _slot_lost(started)
+    assert len(lost) == 2
+    assert all("last dispatch window" in r.message and r.signal.source_id == "congressional_disclosures" for r in lost)
+    # Marked as slot losers: an aged re-list would say aged_out_capped, not pre_filter.
+    assert all((r.signal.source_id, r.signal.external_id) in started.loop._slot_losers for r in lost)  # noqa: SLF001
+
+
+def test_candidates_still_deferred_at_shutdown_leave_a_record(tmp_path):
+    from research.config import ResearchConfig
+    from risk_gate import RiskLimits
+
+    signals_config = pre_demotion_signals_config()
+    clock = FakeClock(datetime(2026, 8, 17, 14, 0, tzinfo=timezone.utc))  # 10:00 ET: twelve windows left
+    started = build(
+        tmp_path, RiskLimits.load(), signals_config, ResearchConfig.load(),
+        llm=FakeLLM(), broker=FakeBroker(), clock=clock,
+        fetcher=feed(congressional_disclosures=_seven_disclosures()),
+        prices=prices_of(NUE="140.00"),
+        config=_config(),
+    )
+    report = started.loop.tick()
+    assert [_src(r) for r in report.processed].count("congressional_disclosures") == 1
+    assert len(started.loop.deferred) == 6 and _slot_lost(started) == []
+    started.loop.shutdown()
+    lost = _slot_lost(started)
+    assert len(lost) == 6 and all("shut down" in r.message for r in lost)
+    assert not started.loop.deferred
+
+
 def test_with_scoring_off_the_batch_dispatches_as_before(tmp_path, signals_config):
     from research.config import ResearchConfig
     from risk_gate import RiskLimits

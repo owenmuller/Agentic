@@ -4102,6 +4102,45 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### RULINGS 2026-10-07 (second set) — 8-K funnel holes BUILT; pelosi-uber band; the general class behind VST
+
+**Item 2, both holes built** (`orchestrator/loop.py`, `signals/form8k.py`; tests in
+`tests/test_dispatch_scoring.py` and `tests/test_form8k.py` with the two Vistra 1.01 filings as
+fixtures — accessions 0001140361-26-037577 and -038468):
+- **(a) Every listed filing leaves a record.** A pooled candidate still held at the day's LAST
+  dispatch window is written as `stage_rejection slot_lost` ("held through the day's last dispatch
+  window") and marked a slot loser; anything still deferred when the loop shuts down (pool or budget)
+  is written the same way ("still deferred when the session shut down"). No LLM, one record each;
+  the forward engine grades them like any prefiltered row. Before this the held queue died with the
+  process and the seen ledger stopped a re-list.
+- **(b) The lister reads every page.** `Form8KFetcher._list` pages `from` 0, 100, 200 … until the
+  response's total is reached (cap 40 pages), per item per poll; a failed page keeps what was read.
+- **How much the holes dropped, last 21 poll days (2026-09-08..10-06; `k8_holes.py`, every page of
+  every whitelisted item over each day's [D−1, D] window, as production queried):** 1,259 tickered
+  whitelisted 8-K filings listed. **Hole b** (never on page 1 of any window): **10** (8 carrying
+  1.01, 3 carrying 5.02; 5 windows exceeded 100 hits). **Holes a+b together — listed but no audit
+  record names the accession: 1,027 of 1,259 (82%)**, 1,017 of them on page 1, i.e. hole a: by
+  item 1.01 546, 5.02 508, 2.05 19, 1.05 2, 4.02 2. Both Vistra filings: page 1, NOT recorded. So the
+  8-K funnel has been researching 6 a day and silently discarding ~48 a day; the forward report's
+  8-K rows were the 18% that got a slot or a prefilter. Measurement-first did not hold for 8-K
+  until this entry. The slot_lost rows will start accruing the first session after deployment.
+- **Live dry-run (deploy gate, `ops/experiments/form8k_dry_run.py`, scratch clone against live
+  EDGAR, 3-day lookback, no LLM, temp audit log):** listed 203, pages read for "Item 1.01" [0, 100],
+  190 signals emitted → 190 records → 190 funnel entries read back with items parsed, Vistra present.
+  DRY RUN OK. Full suite green on the droplet.
+
+**Item 4:** `pelosi-uber-priced-in` traded band [0, 49] → [0, 55]: a decline, a sub-floor long, or a
+REPLICATED long in the 45–55 floor band all pass; a long above 55 is drift. Test pin updated.
+
+**Item 1, the class behind VST (report follows in its own entry once the backtests are read, per
+the ORDER):** large, dated, company-specific catalysts that arrive as news before any filing. Alpaca
+news (Benzinga) probed on this account: HTTP 200 with the account keys, **200 requests/minute**
+(`X-Ratelimit-Limit`), symbol-tagged (~97% of items carry symbols), `include_content` returns the
+body (5–6k chars), **history back to at least 2015-01**, ~830–860 items a session (2026-09-29..10-01).
+The Vistra DOE-loan item: `2026-10-02T19:27:03Z` (15:27 ET, in-session) tagged VST — 'US to Offer
+$4 Billion Loan for Vistra to Boost Nuclear Output' – Bloomberg; the Google deal 10-06 13:32 UTC
+tagged across CEG/VST/TLN/OKLO/SMR. Finnhub is not needed.
+
 ### ITEM 6 (2026-10-07) — 8-K widening and FDA calendar: the VST check, volume, design, and the PRE-REGISTERED backtests (registered here BEFORE either ran)
 
 **The VST 8-K check.** Vistra filed two 8-Ks in the window: 2026-09-24 (accepted 21:13 ET, items
