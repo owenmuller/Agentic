@@ -4102,6 +4102,22 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### RULINGS 2026-10-08, 8-K — accepted; and the SIZE-MATCHED BENCHMARK LEG, pre-registered
+
+1. **Accepted and recorded:** no 1.01 or 8.01 widening, the 8-K cap stays at 6, stage B closed.
+2. **Size-matched benchmark, pre-registered as a SECONDARY report (not a change to any criterion;
+   SPY stays the deployment benchmark):** every 8-K group including the earnings comparison ran
+   negative vs SPY over 2024–26, which looks like the small-cap lag of the period. Each excess is
+   therefore restated against a size-matched benchmark: **IWM for point-in-time caps under $10B,
+   SPY at or above $10B** (unsized rows keep SPY and are labelled); cap-tercile matching is not
+   built. Method: the ticker's raw return over the exact same window (next open → close t+h, and
+   for the news intraday leg the 1-minute print at publish → close) minus the benchmark's return
+   over the same window, computed from the benchmark's own bars — i.e. the SPY excess already
+   stored plus (SPY − IWM) over the window. Registered here BEFORE the news backtest's measurement
+   stage ran (its harvest was at 2017 when this was written) and before the 8-K restatement was
+   computed. The size-matched read decides whether a signal exists; the pre-registered SPY
+   criterion decides the trading path, unchanged.
+
 ### 8-K ITEMS 1.01 / 8.01 BACKTEST, STAGE A — RESULT (2026-10-07 18:04 UTC, the pre-registered run): NO WIDENING; and item 2b
 
 45,776 filings 2024-01-02..2026-10-02, 40,446 with bars; point-in-time acceptance times (before-open
