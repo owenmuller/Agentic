@@ -432,6 +432,24 @@ class Class2CongressionalScanner(Scanner):
             )
             enqueued = self._enqueue(signal)
             return [enqueued] if enqueued else []
+        if source.id == "attention_momentum":
+            # Attention momentum (risk-on redirect, human ruling 2026-10-08,
+            # item 6): a market-data confirmation of an event this system
+            # already recorded. The ruling turns the priced-in and staleness
+            # checks OFF for this source - momentum buys what has already
+            # moved - so the requirement flag is false and the research layer
+            # judges room to run instead.
+            metadata = {
+                **item.fields,
+                "tickers": item.fields.get("ticker", ""),
+                "priced_in_analysis_required": "false",
+                "copy_trade": "false",
+                "momentum_note": "confirmed by price and volume after the "
+                "event; the question is whether the story has room to run",
+            }
+            signal = self._build(source, item, item.content, now, metadata=metadata)
+            enqueued = self._enqueue(signal)
+            return [enqueued] if enqueued else []
         if item.fields.get("form") == "4":
             # Form 4 insider filings (human ruling 2026-09-02): Class 2 cadence,
             # but the lag is DAYS — the filing deadline is two business days

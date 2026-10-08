@@ -30,10 +30,13 @@ class SleeveWeights(_Strict):
     #: 4): target fraction of NAV held in one index ETF. Defaults to zero so a
     #: cap table written before the ruling still parses; the live file says 0.30.
     baseline: Fraction = Decimal("0")
+    #: The aggressive sleeve (risk-on redirect, human ruling 2026-10-08).
+    #: Defaults to zero so a cap table written before the redirect still parses.
+    aggressive: Fraction = Decimal("0")
 
     @model_validator(mode="after")
     def _weights_sum_to_one(self) -> "SleeveWeights":
-        total = self.equity + self.mechanical + self.prediction + self.baseline
+        total = self.equity + self.mechanical + self.prediction + self.baseline + self.aggressive
         if total != Decimal("1"):
             raise ValueError(f"sleeve weights must sum to 1, got {total}")
         return self
@@ -142,6 +145,26 @@ class MechanicalSleeveLimits(_Strict):
     #: new entries with code ``mechanical_disabled`` while time exits keep
     #: firing and held positions ride. Distinct from the breaker, which is the
     #: sleeve's own drawdown halt.
+    entries_enabled: bool = True
+
+
+class AggressiveSleeveLimits(_Strict):
+    """The aggressive sleeve's cap table (risk-on redirect, human ruling
+    2026-10-08). LLM-judged, sized per trade by a fixed risk budget (the
+    orchestrator's ``aggressive_sleeve`` block); these are the gate's caps.
+    Cash-secured, no margin, long-only, the kill switch and never-negative
+    exactly as every sleeve; its own daily counter and sector budget."""
+
+    #: Of aggressive sleeve NAV.
+    max_single_position: Fraction
+    #: Concurrent open positions in the sleeve (pending opens count).
+    max_positions: Annotated[int, Field(gt=0)]
+    #: Of aggressive sleeve NAV, per trading day - it turns over.
+    max_daily_deployment: Fraction
+    #: Of aggressive sleeve NAV; same membership table, unmapped = singleton.
+    max_sector_exposure: Fraction
+    min_order_notional_usd: Annotated[Decimal, Field(ge=Decimal("0"))] = Decimal("5")
+    #: Operational off switch: false stops new aggressive entries; exits run.
     entries_enabled: bool = True
 
 
@@ -408,6 +431,10 @@ class RiskLimits(_Strict):
     #: The baseline market-beta sleeve (aggression ruling 2026-09-18, lever 4).
     baseline_sleeve: BaselineSleeveLimits
     prediction_sleeve: PredictionSleeveLimits
+    #: The aggressive sleeve (redirect 2026-10-08). Optional so a pre-redirect
+    #: file parses; with no block the sleeve has no caps and the gate refuses
+    #: its orders.
+    aggressive_sleeve: Optional[AggressiveSleeveLimits] = None
     cash_management: CashManagementLimits
     options_selection: OptionsSelectionLimits
     execution: ExecutionLimits

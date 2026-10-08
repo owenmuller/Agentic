@@ -552,6 +552,59 @@ class DispatchConfig(BaseModel):
     pooled_sources: tuple[str, ...] = ()
 
 
+class AttentionMomentumConfig(BaseModel):
+    """The attention-momentum screen (risk-on redirect, human ruling
+    2026-10-08, item 6): events this system already recorded, CONFIRMED by the
+    market within a few sessions. Thresholds are the pre-registered ones."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = True
+    #: Funnel sources whose events are eligible.
+    event_sources: tuple[str, ...] = (
+        "congressional_disclosures",
+        "form4_insiders",
+        "gov_contract_awards",
+        "form_8k",
+    )
+    #: Calendar days of funnel history read each morning.
+    lookback_calendar_days: int = Field(default=10, ge=3, le=30)
+    #: Confirmation must land on one of t0+1 .. t0+confirm_sessions.
+    confirm_sessions: int = Field(default=3, ge=1, le=5)
+    #: Pre-event high = max close of this many sessions before t0.
+    pre_high_sessions: int = Field(default=5, ge=1)
+    #: Volume baseline = average of this many sessions ending t0-1.
+    volume_avg_sessions: int = Field(default=20, ge=5)
+    volume_multiple: Decimal = Field(default=Decimal("2.0"), gt=0)
+    #: The screen reads completed sessions only; it runs once per session day
+    #: at the first poll at/after this New York time.
+    earliest_new_york: str = "09:35"
+    #: Cap on symbols screened per morning (bars are fetched in batches).
+    max_symbols: int = Field(default=600, ge=1)
+
+
+class AggressiveSleeveConfig(BaseModel):
+    """The aggressive sleeve's routing and sizing (risk-on redirect, human
+    ruling 2026-10-08). Sizing is a FIXED RISK BUDGET: capital = sleeve NAV x
+    risk_budget_fraction / stop, the stop = stop_atr_k x ATR(14)/price clamped
+    into [stop_floor, stop_ceiling]. Confidence gates entry (the sizing floor)
+    and never scales size; nothing here reads P&L or a target (Constraint #6).
+    Disabled by default so a config written before the redirect is unchanged."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = False
+    #: Signal sources whose verdicts size in the aggressive sleeve.
+    sources: tuple[str, ...] = ("attention_momentum",)
+    risk_budget_fraction: Decimal = Field(default=Decimal("0.02"), gt=0, le=Decimal("0.05"))
+    stop_atr_k: Decimal = Field(default=Decimal("2.5"), gt=0)
+    stop_floor: Decimal = Field(default=Decimal("0.04"), gt=0, lt=1)
+    stop_ceiling: Decimal = Field(default=Decimal("0.20"), gt=0, lt=1)
+    #: Time cap for a swing position: 60 sessions ~ 84 calendar days.
+    leash_days: int = Field(default=84, ge=1, le=367)
+    attention: AttentionMomentumConfig = Field(default_factory=AttentionMomentumConfig)
+
+
 class OrchestratorConfig(BaseModel):
     """Loop cadence and the daily research budget."""
 
@@ -630,6 +683,8 @@ class OrchestratorConfig(BaseModel):
     #: Self-consistency vote (ruling 2026-10-07): replaced boundary
     #: confirmation. Confirms or kills a tradeable verdict, never enlarges it.
     self_consistency: SelfConsistencyConfig = Field(default_factory=SelfConsistencyConfig)
+    #: The aggressive sleeve (risk-on redirect, human ruling 2026-10-08).
+    aggressive_sleeve: AggressiveSleeveConfig = Field(default_factory=AggressiveSleeveConfig)
     #: Add decisions (ruling 2026-09-16): one judged position per symbol, adds
     #: under a combined cap. The combined cap can never exceed the hard cap, so
     #: absent-section defaults are safe.

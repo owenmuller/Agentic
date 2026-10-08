@@ -73,6 +73,10 @@ def family_of(source_id: str, signal_class: SignalClass) -> str:
         # Government contract awards (ruling 2026-10-06): the buyer's
         # announcement, not the issuer's, not a filing by anyone with a stake.
         return "government_awards"
+    if source_id in SCREEN_SOURCES:
+        # Market-data screens have no filer and sit OUTSIDE convergence
+        # (CLAUDE.md, source families); named so nothing defaults them to X.
+        return "market_data_screens"
     return "x_callers"
 
 logger = logging.getLogger("orchestrator.registry")
@@ -81,6 +85,11 @@ logger = logging.getLogger("orchestrator.registry")
 MEASUREMENT_CODES: frozenset[str] = frozenset(
     {"bearish_measurement", "overreaction_candidate", "award_measurement", "award_below_floor"}
 )
+
+#: Market-data screens (no filer): outside convergence entirely by ruling.
+#: attention_momentum (redirect 2026-10-08) re-reads events already in the
+#: window - counting it again would be the same event twice.
+SCREEN_SOURCES: frozenset[str] = frozenset({"attention_momentum", "overreaction_screen"})
 
 
 @dataclass(slots=True)
@@ -150,6 +159,8 @@ class SignalRegistry:
                 continue
             if isinstance(record, StageRejectionRecord) and record.code in MEASUREMENT_CODES:
                 continue  # measurement rows are graded, never converged on
+            if record.signal.source_id in SCREEN_SOURCES:
+                continue  # screens have no filer: outside convergence
             if isinstance(record, StageRejectionRecord) and record.stage is RejectedStage.EXECUTION:
                 continue  # shares its decision's id: the decision already seeded it
             snapshot = record.signal
@@ -210,6 +221,8 @@ class SignalRegistry:
             meta = signal.metadata
             if meta.get("measurement_only") == "true":
                 continue
+            if signal.source_id in SCREEN_SOURCES:
+                continue  # screens have no filer: outside convergence (2026-10-08)
             identity = canonical_credibility_key(meta.get("credibility_key") or signal.source_id)
             filer = (meta.get("representative") or meta.get("fund") or "").strip()
             key = f"{signal.source_id}\x00{signal.external_id or signal.signal_id}"

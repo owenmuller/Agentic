@@ -37,8 +37,15 @@ portfolio:
   # drift) refuses refills until the sleeve is back under it, then refills at
   # the new slice. SGOV holds what the judged sleeve has not deployed. Dated so
   # attribution partitions before/after.
+  # RISK-ON REDIRECT (human ruling 2026-10-08, amendment 4): the aggressive
+  # sleeve opens at 25% of NAV, carved from the judged sleeve (55 -> 30);
+  # mechanical 15 and baseline 30 unchanged. No forced trims: judged holdings
+  # ride; the judged allocation ceiling (30 + 3) applies to new entries only.
+  # Judged sizing bands read off a 30% sleeve from this change (0.6/1.5/3.0%
+  # of NAV at 2/5/10% of sleeve). Dated so attribution partitions before/after.
   sleeves:
-    equity: 0.55 # the JUDGED sleeve: equities & long options (was 0.75)
+    equity: 0.30 # the JUDGED sleeve: equities & long options (was 0.55)
+    aggressive: 0.25 # LLM-judged, fixed risk budget per trade (redirect 2026-10-08)
     mechanical: 0.15 # deterministic disclosure follower — no LLM in the path (was 0.25)
     baseline: 0.30 # market beta in SPY, weekly rebalance — no LLM, no thesis
     prediction: 0.00 # event contracts — INACTIVE, no venue (design target: 0.10)
@@ -162,6 +169,21 @@ mechanical_sleeve:
   ruleset_version: "2026-08-27.1"
   # Operational off switch: false stops new mechanical entries
   # (code mechanical_disabled) while time exits still fire.
+  entries_enabled: true
+
+# Aggressive sleeve (RISK-ON REDIRECT, human ruling 2026-10-08). LLM-judged
+# momentum swings now (attention_momentum) and day trades from increment B.
+# Sizing is a FIXED RISK BUDGET per trade (orchestrator.yaml aggressive_sleeve:
+# 2% of this sleeve's NAV at risk to the stop), never a function of P&L or a
+# target (Constraint #6). These are the gate's caps. Equity only in increment
+# A (options are keyed to the judged sleeve until increment B). Its buys may
+# not spend today's unsettled sale proceeds (T+1 cash account, amendment 3).
+aggressive_sleeve:
+  max_single_position: 0.25 # of aggressive sleeve NAV
+  max_positions: 5 # concurrent names, pending opens included
+  max_daily_deployment: 1.00 # of aggressive sleeve NAV per trading day
+  max_sector_exposure: 0.50 # of aggressive sleeve NAV; config/sectors.yaml
+  min_order_notional_usd: 5
   entries_enabled: true
 
 # Idle-cash yield sweep (human ruling 2026-09-02). The swept ETF is NEVER buying

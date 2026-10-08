@@ -829,6 +829,24 @@ def run() -> int:
             seen=seen_for("gov_contract_awards"),
             pending_path=pending_path_for(default_data_dir()),
         )
+        # Attention momentum (risk-on redirect, human ruling 2026-10-08, item
+        # 6f): a once-a-morning market-data confirmation screen over this
+        # system's own recorded events, for the aggressive sleeve. SIP bars,
+        # batched. None when the sleeve or the screen is switched off.
+        from orchestrator.attention import AttentionMomentumFetcher
+
+        aggressive_config = checks.orchestrator_config.aggressive_sleeve
+        attention = (
+            AttentionMomentumFetcher(
+                records=checks.audit.records,
+                bars_many=sip_bars.bars_many,
+                config=aggressive_config.attention,
+                clock=checks.clock,
+                seen=seen_for("attention_momentum"),
+            )
+            if aggressive_config.enabled and aggressive_config.attention.enabled
+            else None
+        )
         # Session-gap first-poll lookback (ruling 2026-08-26): the old fixed
         # 15-minute window lost every post made between sessions. Floor 15min
         # (a mid-session bounce re-reads almost nothing), cap 24h (X bills per
@@ -888,6 +906,13 @@ def run() -> int:
                     if contracts is not None
                     else {}
                 ),
+                # Attention momentum (human ruling 2026-10-08): Class 2 cadence,
+                # self-throttled to once per session day.
+                **(
+                    {"attention_momentum": logged("attention_momentum", attention)}
+                    if attention is not None
+                    else {}
+                ),
                 "nolimitgains": logged("nolimitgains", x_search),
                 # Options-flow free taste (human-authorized 2026-08-25).
                 "unusual_whales": logged("unusual_whales", x_search),
@@ -905,8 +930,10 @@ def run() -> int:
                 "trump_mirror_tdp": logged("trump_mirror_tdp", x_search),
             },
             # The original account is not polled directly; its content arrives via
-            # the mirror sources above.
-            unbuilt={"trump_posts"},
+            # the mirror sources above. The attention screen is declared unbuilt
+            # when the aggressive sleeve or the screen is switched off, so the
+            # source in signals.yaml always has a wiring decision.
+            unbuilt={"trump_posts"} | ({"attention_momentum"} if attention is None else set()),
         )
 
         # Mirror health: silence is ambiguous (quiet principal, or dead bot), so it

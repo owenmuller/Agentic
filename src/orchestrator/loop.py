@@ -270,7 +270,13 @@ class TradingLoop:
             sleeve_nav = self._gate.sleeve_nav(Sleeve.EQUITY)
             deployed = self._gate.state.sleeve_exposure(Sleeve.EQUITY)
             fraction = (deployed / sleeve_nav) if sleeve_nav > 0 else Decimal("0")
-            open_positions = sum(1 for p in self._exits.tracked if not getattr(p, "is_option", False))
+            # Judged positions only: the aggressive sleeve (2026-10-08) has its
+            # own caps and is not part of the judged opportunity set.
+            open_positions = sum(
+                1
+                for p in self._exits.tracked
+                if not getattr(p, "is_option", False) and getattr(p, "sleeve", "equity") == "equity"
+            )
         except Exception:  # noqa: BLE001 - an unreadable book is the base hurdle
             return None
         target = 20

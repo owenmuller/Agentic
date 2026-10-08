@@ -45,7 +45,11 @@ def paper_mode(monkeypatch):
 
 @pytest.fixture(scope="session")
 def limits():
-    return RiskLimits.load()
+    # Pre-redirect weights (judged 55, aggressive 0): this file tests judged
+    # mechanics; the shipped 30/25/15/30 split is pinned in test_aggressive.
+    from config_overrides import pre_redirect_limits
+
+    return pre_redirect_limits()
 
 
 @pytest.fixture(scope="session")
@@ -229,7 +233,7 @@ def test_the_live_transition_unparks_sgov_to_fund_the_build(
     SGOV for the balance, and the buy completes as the cash lands — one
     rebalance, a few ticks, no staging."""
     clock = FakeClock()
-    raw = RiskLimits.load().model_dump()
+    raw = limits.model_dump()  # pre-redirect weights (judged 55), as the fixture
     raw["baseline_sleeve"]["enabled"] = False  # session one: the world before
     before = RiskLimits.model_validate(raw)
     broker = FakeBroker()

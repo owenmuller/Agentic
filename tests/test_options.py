@@ -48,7 +48,11 @@ TODAY = NOW.date()
 
 @pytest.fixture(scope="module")
 def limits() -> RiskLimits:
-    return RiskLimits.load()
+    # Pre-redirect weights (judged 55, aggressive 0): this file tests judged
+    # mechanics; the shipped 30/25/15/30 split is pinned in test_aggressive.
+    from config_overrides import pre_redirect_limits
+
+    return pre_redirect_limits()
 
 
 @pytest.fixture(scope="module")

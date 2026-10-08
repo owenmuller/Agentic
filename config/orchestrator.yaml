@@ -409,3 +409,33 @@ overreaction_screen:
   adv_days: 20
   market_day_threshold: 0.02
   universe_window_days: 60
+
+# AGGRESSIVE SLEEVE (RISK-ON REDIRECT, human ruling 2026-10-08; 25% of NAV,
+# risk budget 2% of the sleeve per trade - amendment 4). Increment A: the
+# attention_momentum source (item 6f) - events this system already recorded
+# (congressional purchases, Form 4, contract awards, 8-K), CONFIRMED by the
+# market on t0+1..t0+3 (close above the 5-session pre-event high, volume >=
+# 2x the 20-session average, positive excess vs SPY since the event), judged
+# by the LLM on room to run with the priced-in and staleness checks OFF.
+# Sizing: shares = (sleeve NAV x 2%) / stop, stop = 2.5 x ATR(14)/price
+# clamped [4%, 20%]; the stop TRAILS from entry (highest mark x (1 - stop));
+# time cap 84 calendar days (~60 sessions); no LLM reviews - the exit is the
+# trailing stop. Gate caps: risk_limits.yaml aggressive_sleeve.
+aggressive_sleeve:
+  enabled: true
+  sources: [attention_momentum]
+  risk_budget_fraction: 0.02
+  stop_atr_k: 2.5
+  stop_floor: 0.04
+  stop_ceiling: 0.20
+  leash_days: 84
+  attention:
+    enabled: true
+    event_sources: [congressional_disclosures, form4_insiders, gov_contract_awards, form_8k]
+    lookback_calendar_days: 10
+    confirm_sessions: 3
+    pre_high_sessions: 5
+    volume_avg_sessions: 20
+    volume_multiple: 2.0
+    earliest_new_york: "09:35"
+    max_symbols: 600

@@ -44,6 +44,10 @@ from signals import Signal, SignalClass
 #: explicit view on what has been priced in since.
 LAGGED_CLASSES = frozenset({SignalClass.CLASS_2_MOMENTUM, SignalClass.CLASS_3_THESIS})
 
+#: Sources whose priced-in requirement is OFF by human ruling (2026-10-08,
+#: item 6d: attention momentum buys what has already moved).
+PRICED_IN_EXEMPT_SOURCES = frozenset({"attention_momentum"})
+
 #: How much of a malformed response to keep for the audit record.
 _EXCERPT_CHARS = 500
 
@@ -302,7 +306,15 @@ class ResearchPass:
                 usage,
             )
 
-        if signal.signal_class in LAGGED_CLASSES and not report.has_priced_in_analysis:
+        if (
+            signal.signal_class in LAGGED_CLASSES
+            and not report.has_priced_in_analysis
+            # Attention momentum (human ruling 2026-10-08, item 6d): the
+            # priced-in check is OFF for this source - the move is the premise.
+            # Keyed on the source id, never on a metadata flag, so nothing a
+            # fetcher passes through can switch a check off.
+            and signal.source_id not in PRICED_IN_EXEMPT_SOURCES
+        ):
             return (
                 self._reject(
                     signal,

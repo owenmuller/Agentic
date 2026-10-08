@@ -48,6 +48,12 @@ class RejectionCode(StrEnum):
     #: exceed the configured fraction of the name's 20-day average dollar
     #: volume — or that ADV could not be read at all, which fails CLOSED.
     ILLIQUID_POSITION = "illiquid_position"
+    #: Aggressive sleeve (redirect 2026-10-08): its concurrent-position cap.
+    MAX_POSITIONS_EXCEEDED = "max_positions_exceeded"
+    #: Aggressive sleeve (redirect 2026-10-08): the buy would spend sale
+    #: proceeds that have not settled (T+1, cash account). Buying with unsettled
+    #: funds and selling before settlement is a good-faith violation at the venue.
+    UNSETTLED_FUNDS = "unsettled_funds"
 
 
 @dataclass(frozen=True, slots=True)

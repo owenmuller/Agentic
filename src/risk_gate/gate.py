@@ -192,6 +192,7 @@ class RiskGate:
             Sleeve.MECHANICAL: weights.mechanical,
             Sleeve.PREDICTION: weights.prediction,
             Sleeve.BASELINE: weights.baseline,
+            Sleeve.AGGRESSIVE: weights.aggressive,
         }[sleeve]
         return self._state.nav * weight
 
@@ -394,6 +395,47 @@ class RiskGate:
 
         sleeve_nav = self.sleeve_nav(sleeve)
 
+        # Aggressive sleeve (risk-on redirect, human ruling 2026-10-08): its
+        # own cap table must exist and be switched on; its buys may not spend
+        # today's unsettled sale proceeds (T+1, cash account - amendment 3);
+        # and it holds at most max_positions names at once, pending opens
+        # included.
+        aggressive = limits.aggressive_sleeve
+        if sleeve is Sleeve.AGGRESSIVE:
+            if aggressive is None or not aggressive.entries_enabled:
+                return Rejection(
+                    code=RejectionCode.SLEEVE_ALLOCATION_EXCEEDED,
+                    message="aggressive sleeve has no cap table or its entries are switched off",
+                    limit=ZERO,
+                    observed=cost,
+                )
+            if cost > state.settled_buying_power:
+                return Rejection(
+                    code=RejectionCode.UNSETTLED_FUNDS,
+                    message=(
+                        f"order reserves {cost} but only {state.settled_buying_power} is "
+                        f"settled: {state.unsettled_proceeds} of today's sale proceeds "
+                        f"settle T+1 and may not fund an aggressive-sleeve buy today"
+                    ),
+                    limit=state.settled_buying_power,
+                    observed=cost,
+                )
+            held_names = {
+                p.key
+                for p in state.positions.values()
+                if p.sleeve is Sleeve.AGGRESSIVE and (p.quantity > 0 or p.pending_open_units > 0)
+            }
+            if key not in held_names and len(held_names) + 1 > aggressive.max_positions:
+                return Rejection(
+                    code=RejectionCode.MAX_POSITIONS_EXCEEDED,
+                    message=(
+                        f"aggressive sleeve already holds {len(held_names)} positions, "
+                        f"the cap is {aggressive.max_positions}"
+                    ),
+                    limit=Decimal(aggressive.max_positions),
+                    observed=Decimal(len(held_names) + 1),
+                )
+
         # Max single position.
         position = state.position(key)
         current_exposure = position.exposure if position is not None else ZERO
@@ -402,6 +444,8 @@ class RiskGate:
             single_cap_fraction = limits.equity_sleeve.max_single_position
         elif sleeve is Sleeve.MECHANICAL:
             single_cap_fraction = limits.mechanical_sleeve.max_single_position
+        elif sleeve is Sleeve.AGGRESSIVE:
+            single_cap_fraction = aggressive.max_single_position  # type: ignore[union-attr]
         else:
             single_cap_fraction = self._prediction_cap_fraction(order)
         single_cap = sleeve_nav * single_cap_fraction
@@ -425,7 +469,7 @@ class RiskGate:
         if (
             self._adv is not None
             and not is_option(order)
-            and sleeve in (Sleeve.EQUITY, Sleeve.MECHANICAL)
+            and sleeve in (Sleeve.EQUITY, Sleeve.MECHANICAL, Sleeve.AGGRESSIVE)
         ):
             liquidity_rejection = self._check_liquidity(key[1], resulting)
             if liquidity_rejection is not None:
@@ -437,11 +481,12 @@ class RiskGate:
         # config/sectors.yaml; an unmapped name is its own singleton sector, so
         # this check can only ever be TIGHTER for unknown tickers, never looser.
         if sleeve is not Sleeve.PREDICTION and not is_option(order):
-            sector_fraction = (
-                limits.equity_sleeve.max_sector_exposure
-                if sleeve is Sleeve.EQUITY
-                else limits.mechanical_sleeve.max_sector_exposure
-            )
+            if sleeve is Sleeve.EQUITY:
+                sector_fraction = limits.equity_sleeve.max_sector_exposure
+            elif sleeve is Sleeve.AGGRESSIVE:
+                sector_fraction = aggressive.max_sector_exposure  # type: ignore[union-attr]
+            else:
+                sector_fraction = limits.mechanical_sleeve.max_sector_exposure
             sector = self._sectors.sector_of(key[1])
             # Scoped per sleeve: judged and mechanical each get their own
             # sector budget, so neither can consume the other's headroom.
@@ -497,6 +542,19 @@ class RiskGate:
                     limit=daily_cap,
                     observed=deployed,
                 )
+        elif sleeve is Sleeve.AGGRESSIVE:
+            deployed = state.aggressive_deployed_today + cost
+            daily_cap = sleeve_nav * aggressive.max_daily_deployment  # type: ignore[union-attr]
+            if deployed > daily_cap:
+                return Rejection(
+                    code=RejectionCode.MAX_DAILY_DEPLOYMENT_EXCEEDED,
+                    message=(
+                        f"deploying {cost} would put the aggressive sleeve's "
+                        f"daily total at {deployed}, above its own cap"
+                    ),
+                    limit=daily_cap,
+                    observed=deployed,
+                )
 
         # Aggregate long-option premium at risk.
         if is_option(order):
@@ -545,6 +603,7 @@ class RiskGate:
                 Sleeve.MECHANICAL: limits.portfolio.sleeves.mechanical,
                 Sleeve.PREDICTION: limits.portfolio.sleeves.prediction,
                 Sleeve.BASELINE: limits.portfolio.sleeves.baseline,
+                Sleeve.AGGRESSIVE: limits.portfolio.sleeves.aggressive,
             }[sleeve]
             ceiling_fraction = target + limits.portfolio.drift_tolerance
             resulting_fraction = (state.sleeve_exposure(sleeve) + cost) / nav
@@ -582,6 +641,8 @@ class RiskGate:
             state.deployed_today += cost
         elif sleeve is Sleeve.MECHANICAL:
             state.mechanical_deployed_today += cost
+        elif sleeve is Sleeve.AGGRESSIVE:
+            state.aggressive_deployed_today += cost
         return self._approve(order, cost, now)
 
     def _prediction_cap_fraction(self, order: Order) -> Decimal:
@@ -670,6 +731,11 @@ class RiskGate:
             position.cost_basis -= share
             position.market_value -= mark_share
             self._state.cash += value
+            # T+1 (redirect 2026-10-08, amendment 3): today's proceeds are
+            # unsettled until the next business day; only aggressive-sleeve
+            # buys are held to it (see AccountState.unsettled_proceeds).
+            self._state.roll_deployment_window(self._clock().date())
+            self._state.unsettled_proceeds += value
 
         self._state.drop_if_empty(key)
         self._state.refresh_high_water_mark()

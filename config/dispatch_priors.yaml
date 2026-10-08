@@ -22,6 +22,10 @@ generated_at: '2026-09-18T19:14:16+00:00'
 horizon_days: 5
 min_n: 20
 sources:
+  attention_momentum:
+    # RULED (risk-on redirect, 2026-10-08): a confirmed event. Not pooled -
+    # dispatched at once in the morning; grounded by the forward engine later.
+    fallback: 0.5
   citrini:
     fallback: 0.0
   congressional_disclosures:

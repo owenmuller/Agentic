@@ -86,13 +86,25 @@ def liquidity_buffer(gate: RiskGate, config: CashManagementLimits) -> Decimal:
     and the configured margin. Module-level so the baseline sleeve (ruling
     2026-09-18) spends only cash above the same floor."""
     limits = gate.limits
+    # The aggressive sleeve (redirect 2026-10-08) needs SETTLED cash for what
+    # it can still deploy: its daily cap, but never more than its undeployed
+    # allotment - a fully invested sleeve does not need its cap parked in cash.
+    aggressive = ZERO_D
+    if limits.aggressive_sleeve is not None and limits.portfolio.sleeves.aggressive > 0:
+        nav = gate.sleeve_nav(Sleeve.AGGRESSIVE)
+        undeployed = max(ZERO_D, nav - gate.state.sleeve_exposure(Sleeve.AGGRESSIVE))
+        aggressive = min(nav * limits.aggressive_sleeve.max_daily_deployment, undeployed)
     return (
         gate.sleeve_nav(Sleeve.EQUITY) * limits.equity_sleeve.max_daily_deployment
         + gate.sleeve_nav(Sleeve.MECHANICAL)
         * limits.mechanical_sleeve.max_daily_deployment
+        + aggressive
         + gate.state.reserved_cash
         + config.buffer_margin_usd
     )
+
+
+ZERO_D = Decimal("0")
 
 
 @dataclass(slots=True)

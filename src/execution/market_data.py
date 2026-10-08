@@ -473,6 +473,54 @@ class AlpacaDailyBars:
             self._unserved.served(symbol)
         return collected
 
+    def bars_many(
+        self, symbols: list[str], start: datetime, end: datetime, chunk: int = 100
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Daily bars for many symbols, batched (``/v2/stocks/bars?symbols=``),
+        oldest first per symbol, completed sessions only. A failed batch is
+        missing data, never zero: its symbols simply come back absent. Used by
+        the attention-momentum screen (redirect 2026-10-08), which reads a
+        few hundred names once a morning."""
+        end = completed_bars_end(end, self._clock())
+        out: dict[str, list[dict[str, Any]]] = {}
+        wanted = [s for s in dict.fromkeys(symbols) if s and s not in self._unserved]
+        for index in range(0, len(wanted), chunk):
+            batch = wanted[index:index + chunk]
+            page_token: Optional[str] = None
+            for _page in range(_MAX_BAR_PAGES * 4):
+                params: dict[str, Any] = {
+                    "symbols": ",".join(batch),
+                    "timeframe": "1Day",
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                    "feed": self._feed,
+                    "limit": 10_000,
+                    "adjustment": "split",
+                }
+                if page_token:
+                    params["page_token"] = page_token
+                try:
+                    response = self._client.get("/v2/stocks/bars", params=params)
+                except Exception as error:  # noqa: BLE001 - an outage is missing data
+                    logger.warning("batched bars request failed: %s", error)
+                    break
+                if response.status_code >= 400:
+                    logger.warning("batched bars returned HTTP %d", response.status_code)
+                    break
+                try:
+                    payload: Any = response.json()
+                except ValueError:
+                    break
+                for symbol, rows in ((payload or {}).get("bars") or {}).items():
+                    if isinstance(rows, list):
+                        out.setdefault(symbol, []).extend(r for r in rows if isinstance(r, dict))
+                page_token = payload.get("next_page_token") if isinstance(payload, dict) else None
+                if not page_token:
+                    break
+        for rows in out.values():
+            rows.sort(key=lambda r: str(r.get("t", "")))
+        return out
+
     def window_return_pct(
         self, symbol: str, start: datetime, end: datetime
     ) -> Optional[Decimal]:

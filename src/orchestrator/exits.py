@@ -293,10 +293,16 @@ class TrackedPosition:
     originating_family: str = ""
     lots: list[Lot] = field(default_factory=list)
     convergence: list[ConvergenceNote] = field(default_factory=list)
+    #: The gate sleeve an EQUITY position lives in: "equity" (judged) or,
+    #: since the risk-on redirect (2026-10-08), "aggressive". Options are
+    #: always keyed ("option", symbol).
+    sleeve: str = "equity"
 
     @property
     def key(self) -> tuple[str, str]:
-        return (self.instrument_kind, self.symbol)
+        if self.instrument_kind == "option":
+            return ("option", self.symbol)
+        return (self.sleeve or "equity", self.symbol)
 
     @property
     def lot_count(self) -> int:
@@ -372,6 +378,10 @@ class ExitEngine:
         min_reward_risk: Optional[Decimal] = None,
         opportunity_context: Optional[Callable[[], Optional[str]]] = None,
         vote_config: Optional["SelfConsistencyConfig"] = None,
+        sleeve: str = "equity",
+        trail_from_entry: bool = False,
+        fixed_leash_days: Optional[int] = None,
+        reviews_enabled: bool = True,
     ) -> None:
         self._gate = gate
         self._adapter = adapter
@@ -379,6 +389,14 @@ class ExitEngine:
         #: Self-consistency vote on reviews (ruling 2026-10-07): a first
         #: verdict that would close or trim buys k more; majority action.
         self._vote_config = vote_config
+        #: Sleeve scope (risk-on redirect, 2026-10-08). The judged engine is
+        #: "equity" with every default below; the aggressive sleeve runs its
+        #: own instance: its gate keys, a stop that trails from entry at the
+        #: position's ATR distance, a fixed time cap, and no LLM reviews.
+        self._sleeve = sleeve
+        self._trail_from_entry = trail_from_entry
+        self._fixed_leash_days = fixed_leash_days
+        self._reviews_enabled = reviews_enabled
         self._prices = prices
         #: The bid side, for sells (defect 2026-09-28: TPVG's trailing-stop exit
         #: limited at the ask three sessions running on a thin $4.8 BDC in a
@@ -959,6 +977,7 @@ class ExitEngine:
             originating_family=family_of(
                 working.signal.source_id, working.signal.signal_class
             ),
+            sleeve=("equity" if is_option else self._sleeve),
         )
 
     def replay(self, trails: Iterable[AuditTrail]) -> int:
@@ -980,6 +999,8 @@ class ExitEngine:
         groups: dict[tuple[str, str], list[AuditTrail]] = {}
         for trail in trails:
             decision = trail.decision
+            if (decision.sizing.strategy == "aggressive") != (self._sleeve == "aggressive"):
+                continue  # each sleeve's engine replays only its own positions (2026-10-08)
             if decision.sizing.strategy in ("mechanical", "cash_sweep", "baseline"):
                 # Not this engine's: the mechanical engine replays its own
                 # positions (no stops, its own exit regime) and the cash sweeper
@@ -1033,7 +1054,9 @@ class ExitEngine:
         quantity = entry_quantity - sum((f.filled_quantity for f in all_sells), ZERO)
         if quantity <= 0:
             return None
-        gate_position = self._gate.state.position((kind, symbol))
+        gate_position = self._gate.state.position(
+            (kind if kind == "option" else self._sleeve, symbol)
+        )
         if gate_position is None or gate_position.quantity <= 0:
             logger.warning(
                 "audit log says %s holds %s %s but the broker does not; "
@@ -1166,6 +1189,7 @@ class ExitEngine:
             ),
             multiplier=multiplier,
             entry_order=parse_order(order) if is_option else None,
+            sleeve=("equity" if is_option else self._sleeve),
             last_review_at=(last_review.recorded_at if last_review else None),
             close_verdict=close_verdict,
             close_detail=(
@@ -1295,6 +1319,8 @@ class ExitEngine:
         what makes the date safe to accept: a model naming 2031 gets the ceiling,
         not 2031.
         """
+        if self._fixed_leash_days is not None:
+            return self._fixed_leash_days
         bounds = self._config.leash_bounds_for(horizon, signal_class)
         if resolution_date is None:
             return bounds.clamp(self._config.time_stop_days.for_horizon(horizon))
@@ -1307,6 +1333,11 @@ class ExitEngine:
         high = position.high_water_price
         if high is None or position.entry_price <= ZERO:
             return None
+        if self._trail_from_entry and position.stop_fraction is not None:
+            # Aggressive sleeve (redirect 2026-10-08): the stop trails from
+            # entry at the position's own ATR distance - highest mark x
+            # (1 - stop) - the live form of the registered trailing exit.
+            return high * (Decimal("1") - position.stop_fraction)
         ratchet = self._config.ratchet
         if high < position.entry_price * (Decimal("1") + ratchet.arm_at_gain):
             return None
@@ -1535,6 +1566,8 @@ class ExitEngine:
         noisy entry feed cannot starve the exit layer. When the budget really is
         exhausted, reviews wait — the guardrails do not.
         """
+        if not self._reviews_enabled:
+            return 0, 0  # the aggressive sleeve exits on its trailing stop and time cap
         moment = now or self._clock()
         interval = timedelta(hours=self._config.thesis_review_interval_hours)
         reviews_run = 0
@@ -1996,6 +2029,7 @@ class ExitEngine:
             execution=LimitExecution(limit_price=limit),
             signal_id=position.signal_id,
             confidence=position.confidence,
+            sleeve=position.sleeve or "equity",
         )
 
     def reconcile(self) -> list[str]:
@@ -2276,23 +2310,84 @@ def unmanaged_exposure(
     # PENDING, not unmanaged (2026-08-27): they have a trail, it just has not
     # caught up. Health reports them under their own heading.
     pending = {symbol.upper() for symbol in pending_symbols}
-    covered: dict[str, int] = {}
+    # Keyed by the GATE key (sleeve, symbol) since the risk-on redirect
+    # (2026-10-08): a judged and an aggressive holding of one name are two
+    # positions, and neither may cover the other's units.
+    covered: dict[tuple[str, str], int] = {}
     for position in tracked:
-        covered[position.symbol] = covered.get(position.symbol, 0) + position.quantity
+        covered[position.key] = covered.get(position.key, 0) + position.quantity
 
     unmanaged: dict[str, int] = {}
     for key, held in gate.state.positions.items():
         # Options included (2026-08-24): an untracked option is the WORSE kind of
         # unmanaged — it decays while nobody's stops are armed.
-        if key[0] not in ("equity", "option") or held.quantity <= 0:
+        if key[0] not in ("equity", "option", "aggressive") or held.quantity <= 0:
             continue
         symbol = key[1]
         if symbol.upper() in pending:
             continue
-        excess = held.quantity - covered.get(symbol, 0)
+        excess = held.quantity - covered.get((key[0], key[1]), 0)
         if excess > 0:
-            unmanaged[symbol] = excess
+            unmanaged[symbol] = unmanaged.get(symbol, 0) + excess
     return unmanaged
+
+
+class SleeveExits:
+    """The loop's exit engine since the risk-on redirect (2026-10-08): the
+    judged engine plus the aggressive sleeve's own instance. Everything
+    judged-specific (held-name prefilter, add decisions, filer events, thesis
+    reviews) is the judged engine's; guardrails, settlement, cancellation,
+    marks and replay run on both; an entry fill goes to the engine of the
+    sleeve its proposal sized in. Any other attribute is the judged engine's."""
+
+    def __init__(self, judged: "ExitEngine", aggressive: "Optional[ExitEngine]" = None) -> None:
+        self.judged = judged
+        self.aggressive = aggressive
+
+    def _all(self) -> "list[ExitEngine]":
+        return [self.judged] + ([self.aggressive] if self.aggressive is not None else [])
+
+    @property
+    def tracked(self) -> "tuple[TrackedPosition, ...]":
+        return tuple(p for engine in self._all() for p in engine.tracked)
+
+    @property
+    def working_exits(self) -> tuple[str, ...]:
+        return tuple(o for engine in self._all() for o in engine.working_exits)
+
+    def track_fill(self, working, filled, price) -> None:
+        proposal = getattr(working, "proposal", None)
+        sleeve = getattr(proposal, "sleeve", None)
+        if self.aggressive is not None and str(sleeve) == "aggressive":
+            self.aggressive.track_fill(working, filled, price)
+        else:
+            self.judged.track_fill(working, filled, price)
+
+    def replay(self, trails) -> int:
+        trails = list(trails)
+        return sum(engine.replay(trails) for engine in self._all())
+
+    def seed_marks(self, marks) -> None:
+        for engine in self._all():
+            engine.seed_marks(marks)
+
+    def marks_to_persist(self) -> dict:
+        merged: dict = {}
+        for engine in self._all():
+            merged.update(engine.marks_to_persist())
+        return merged
+
+    def check_guardrails(self, now=None) -> list[str]:
+        return [d for engine in self._all() for d in engine.check_guardrails(now)]
+
+    def reconcile(self) -> list[str]:
+        return [d for engine in self._all() for d in engine.reconcile()]
+
+    def cancel_working(self) -> list[str]:
+        return [d for engine in self._all() for d in engine.cancel_working()]
+
+    def __getattr__(self, name: str):
+        return getattr(self.judged, name)
 
 
 def _phantom_rejection(position: TrackedPosition) -> Rejection:

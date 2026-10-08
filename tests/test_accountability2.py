@@ -203,8 +203,11 @@ def test_the_golden_set_loads_and_names_the_ruled_cases():
     entries = [case for case in cases if case.kind == "entry"]
     reviews = [case for case in cases if case.kind == "review"]
     # 20 + the stale Class 1 relay (ruling 2026-09-16) + the two contract-award
-    # cases from the source's first live day (ruling 2026-10-06).
-    assert len(entries) == 23
+    # cases from the source's first live day (ruling 2026-10-06) + the two
+    # attention-momentum cases from the dry-run replay (redirect 2026-10-08).
+    assert len(entries) == 25
+    names = {case.name for case in entries}
+    assert {"attn-gnrc-8k-confirmed-breakout", "attn-aemd-microcap-squeeze-decline"} <= names
     # Review cases (ruling 2026-09-02) grade the reasoning structure.
     assert len(reviews) == 4
     for case in reviews:

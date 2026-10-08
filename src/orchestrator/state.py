@@ -297,7 +297,7 @@ def replay_mechanical_deployed_today(
 
 
 def replay_deployed_today(
-    decisions: Iterable[DecisionRecord], today: date
+    decisions: Iterable[DecisionRecord], today: date, sleeve: Sleeve = Sleeve.EQUITY
 ) -> Decimal:
     """Equity-sleeve capital committed today, from approved decisions in the log.
 
@@ -313,7 +313,7 @@ def replay_deployed_today(
         if gate_snapshot.approved_at.date() != today:
             continue
         order = parse_order(gate_snapshot.order)
-        if order.is_opening and sleeve_of(order) is Sleeve.EQUITY:
+        if order.is_opening and sleeve_of(order) is sleeve:
             total += gate_snapshot.max_loss or ZERO
     return total
 
@@ -330,6 +330,8 @@ def seed_account_state(
     mechanical_open: Optional[dict[str, tuple[Decimal, Decimal]]] = None,
     cash_management_open: Optional[dict[str, tuple[Decimal, Decimal]]] = None,
     baseline_open: Optional[dict[str, tuple[Decimal, Decimal]]] = None,
+    aggressive_open: Optional[dict[str, tuple[Decimal, Decimal]]] = None,
+    aggressive_deployed_today: Decimal = ZERO,
 ) -> AccountState:
     """Assemble the state a restarted gate should wake up holding.
 
@@ -358,6 +360,9 @@ def seed_account_state(
                 (cash_management_open or {}).get(holding.symbol),
             ),
             (Sleeve.BASELINE, (baseline_open or {}).get(holding.symbol)),
+            # The aggressive sleeve (risk-on redirect, 2026-10-08) wakes up
+            # holding its own units under its own key.
+            (Sleeve.AGGRESSIVE, (aggressive_open or {}).get(holding.symbol)),
         )
         for sleeve, claim in splits:
             if claim is None or holding.is_option or position.quantity <= 0:
@@ -389,6 +394,7 @@ def seed_account_state(
         positions=held,
         deployed_today=deployed_today,
         mechanical_deployed_today=mechanical_deployed_today,
+        aggressive_deployed_today=aggressive_deployed_today,
         deployment_date=today,
     )
     state.high_water_mark = (

@@ -38,7 +38,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
-from decimal import ROUND_DOWN, ROUND_UP, Decimal
+from decimal import ROUND_DOWN, ROUND_UP, Decimal, InvalidOperation
 from typing import Callable, Collection, Optional, Protocol
 
 from audit.log import AuditLog, AuditLogError
@@ -245,6 +245,7 @@ class SignalPipeline:
         opportunity: Optional[Callable[[], Optional["Opportunity"]]] = None,
         boundary: Optional["BoundaryConfirmationConfig"] = None,
         self_consistency: Optional["SelfConsistencyConfig"] = None,
+        aggressive: Optional["AggressiveSleeveConfig"] = None,
         sizing_floor: int = 50,
         adds: Optional[HeldPositions] = None,
         add_config: Optional["AddDecisionsConfig"] = None,
@@ -287,6 +288,8 @@ class SignalPipeline:
         #: sample from the daily research budget.
         self._vote_config = self_consistency
         self._fund_sample: Optional[Callable[[], bool]] = None
+        #: The aggressive sleeve (risk-on redirect, human ruling 2026-10-08).
+        self._aggressive_config = aggressive
         self._sizing_floor = sizing_floor
         self._gate = gate
         self._adapter = adapter
@@ -441,13 +444,18 @@ class SignalPipeline:
         # prompt. Deterministic; the model may decline.
         if self._themes is not None:
             signal = self._themes.apply(signal)
+        # 0a. The aggressive sleeve (risk-on redirect, human ruling 2026-10-08):
+        # its sources size by a fixed risk budget into their own sleeve, long
+        # equity only, never as an add to a judged position (the sleeves hold
+        # the same name as separate positions, like the mechanical arm).
+        aggressive = self._is_aggressive(signal)
         # 0b. Add decision (ruling 2026-09-16): a signal naming a name the judged
         # sleeve already holds is researched as an ADD DECISION — the position
         # stated in the prompt, the verdict add/hold with a fraction — never as
         # a second position. Deterministic routing from the scanner's tickers.
         add_context: Optional[HeldPositionContext] = None
         second_pass = False
-        if self._adds_enabled:
+        if self._adds_enabled and not aggressive:
             add_context = self._adds.context_for(signal)  # type: ignore[union-attr]
             if add_context is not None:
                 self._add_in_flight = {"context": add_context, "report": None}
@@ -477,6 +485,7 @@ class SignalPipeline:
         if (
             add_context is None
             and self._adds_enabled
+            and not aggressive
             and not report.recommends_no_position
             and len(report.tickers) == 1
         ):
@@ -536,10 +545,11 @@ class SignalPipeline:
         # fallback to equity RE-sizes at the full table (ruling 2026-08-24 #2:
         # no phantom half-size penalty for chain illiquidity). Adds are equity
         # only (ruling 2026-09-16): they join an equity position's lots.
-        sleeve_nav = self._gate.sleeve_nav(Sleeve.EQUITY)
+        sleeve_nav = self._gate.sleeve_nav(Sleeve.AGGRESSIVE if aggressive else Sleeve.EQUITY)
         wants_puts = report.direction is Direction.SHORT_VIA_PUTS
         intends_option = (
             not is_add
+            and not aggressive  # equity only until increment B
             and self._option_selector is not None
             and (
                 wants_puts
@@ -582,7 +592,11 @@ class SignalPipeline:
         # sized. Veto-only — the model's target claim can block an entry, never
         # enlarge one. Adds clear it too: more of a position is a new dollar.
         if not intends_option and report.direction is Direction.LONG:
-            failed = self._reward_risk_reason(report, signal)
+            failed = (
+                self._aggressive_reward_risk_reason(report, signal)
+                if aggressive
+                else self._reward_risk_reason(report, signal)
+            )
             if failed is not None:
                 return self._stopped(
                     decision_id,
@@ -601,6 +615,8 @@ class SignalPipeline:
             proposal, add_snapshot = self._propose_add(
                 report, sleeve_nav, add_context, second_pass  # type: ignore[arg-type]
             )
+        elif aggressive:
+            proposal = self._propose_aggressive(report, sleeve_nav, signal)
         elif intends_option:
             proposal = self._propose_option(report, sleeve_nav)
         else:
@@ -655,8 +671,9 @@ class SignalPipeline:
             )
 
         # 3. Order construction (expression routing lives inside). An add is
-        # always stock: it joins the lots of an equity position.
-        if is_add:
+        # always stock: it joins the lots of an equity position. The aggressive
+        # sleeve is stock too in increment A, tagged with its own sleeve.
+        if is_add or aggressive:
             order, problem, proposal, expression = self._build_equity_order(
                 signal, report, proposal, expression=None
             )
@@ -1264,6 +1281,121 @@ class SignalPipeline:
         proposal = self._apply_atr(proposal, report)
         return self._scalars.scale(proposal) if self._scalars else proposal
 
+    # -- the aggressive sleeve (risk-on redirect, human ruling 2026-10-08) -------
+
+    def _is_aggressive(self, signal: Signal) -> bool:
+        config = self._aggressive_config
+        return bool(
+            config is not None
+            and config.enabled
+            and signal.source_id in config.sources
+            and self._gate.limits.aggressive_sleeve is not None
+            and self._gate.limits.portfolio.sleeves.aggressive > ZERO
+        )
+
+    def _aggressive_stop(self, symbol: str, signal: Optional[Signal]) -> tuple[Decimal, Optional[Decimal]]:
+        """(stop fraction, ATR fraction): k x ATR(14)/price clamped into the
+        configured bounds. The screen's own ATR (computed at the confirmation
+        close) is preferred; the ATR source is the fallback; with neither,
+        the CEILING - the widest stop, hence the smallest position for the
+        same risk budget (Constraint #6)."""
+        config = self._aggressive_config
+        atr: Optional[Decimal] = None
+        raw = (signal.metadata.get("atr_fraction") if signal is not None else "") or ""
+        try:
+            atr = Decimal(str(raw)) if raw else None
+        except (InvalidOperation, ValueError):
+            atr = None
+        if (atr is None or atr <= 0) and self._atr_fraction is not None:
+            try:
+                atr = self._atr_fraction(symbol)
+            except Exception:  # noqa: BLE001 - missing data, not a verdict
+                atr = None
+        if atr is None or atr <= 0:
+            return config.stop_ceiling, None  # type: ignore[union-attr]
+        stop = min(max(config.stop_atr_k * atr, config.stop_floor), config.stop_ceiling)  # type: ignore[union-attr]
+        return stop, atr
+
+    def _aggressive_reward_risk_reason(self, report, signal) -> Optional[str]:
+        """The aggressive sleeve's reward test: a momentum position exits on a
+        trailing stop, not a target, so a MISSING target passes; a STATED target
+        must still clear the absolute reward:risk floor against the stop the
+        position would actually get. The judged sleeve's annualized hurdle is
+        an opportunity-cost rule for that sleeve and does not apply here
+        (redirect 2026-10-08; flagged for the human in SESSION_NOTES)."""
+        config = self._rr_config
+        if config is None or not config.enabled or not report.tickers or report.target_price is None:
+            return None
+        symbol = report.tickers[0]
+        try:
+            entry = self._prices(symbol)
+        except Exception:  # noqa: BLE001
+            entry = None
+        if entry is None or entry <= 0:
+            return None
+        stop, _ = self._aggressive_stop(symbol, signal)
+        risk = entry * stop
+        ratio = (report.target_price - entry) / risk if risk > 0 else Decimal("0")
+        if ratio >= config.min_ratio:
+            return None
+        return (
+            f"stated target {report.target_price} vs entry {entry} with a {stop:.2%} "
+            f"trailing stop is reward:risk {ratio:.2f}, below the {config.min_ratio} floor"
+        )
+
+    def _propose_aggressive(self, report, sleeve_nav, signal: Signal) -> SizedProposal:
+        """Fixed risk budget (redirect 2026-10-08, amendment 4): capital =
+        sleeve NAV x risk_budget_fraction / stop, capped by the gate's single-
+        position cap, then the post-table risk scalars (they only shrink).
+        Confidence gates entry at the sizing floor and NEVER scales size.
+        Long equity only; one position per name in this sleeve."""
+        config = self._aggressive_config
+
+        def none(rationale: str) -> SizedProposal:
+            return SizedProposal(
+                instrument=InstrumentKind.EQUITY,
+                sleeve=Sleeve.AGGRESSIVE,
+                confidence=report.confidence,
+                sleeve_nav=sleeve_nav,
+                fraction_of_sleeve_nav=ZERO,
+                capital=ZERO,
+                rationale=rationale,
+                strategy="aggressive",
+            )
+
+        if report.recommends_no_position:
+            return none("no position recommended")
+        if report.direction is not Direction.LONG or not report.tickers:
+            return none("the aggressive sleeve is long equity only (increment A)")
+        if report.confidence < self._sizing_floor:
+            return none(f"confidence {report.confidence} below the {self._sizing_floor} sizing floor")
+        symbol = report.tickers[0]
+        held = self._gate.state.position(("aggressive", symbol))
+        if held is not None and (held.quantity > 0 or held.pending_open_units > 0):
+            return none(f"{symbol} is already held in the aggressive sleeve; one position per name")
+        stop, atr = self._aggressive_stop(symbol, signal)
+        budget = sleeve_nav * config.risk_budget_fraction  # type: ignore[union-attr]
+        cap = sleeve_nav * self._gate.limits.aggressive_sleeve.max_single_position  # type: ignore[union-attr]
+        capital = min(budget / stop, cap).quantize(CENTS, rounding=ROUND_DOWN)
+        proposal = SizedProposal(
+            instrument=InstrumentKind.EQUITY,
+            sleeve=Sleeve.AGGRESSIVE,
+            confidence=report.confidence,
+            sleeve_nav=sleeve_nav,
+            fraction_of_sleeve_nav=(capital / sleeve_nav) if sleeve_nav > 0 else ZERO,
+            capital=capital,
+            rationale=(
+                f"aggressive sleeve fixed risk budget: {config.risk_budget_fraction:.0%} of "  # type: ignore[union-attr]
+                f"{sleeve_nav:.0f} = {budget:.2f} at risk over a {stop:.2%} trailing stop "
+                f"({'ATR ' + format(atr, '.2%') if atr else 'no ATR: ceiling stop'}) -> {capital}"
+                + (" (capped by the single-position cap)" if capital >= cap else "")
+            ),
+            strategy="aggressive",
+            atr_fraction=atr,
+            stop_fraction=stop,
+        )
+        return self._scalars.scale(proposal) if self._scalars else proposal
+
     def _propose_option(self, report, sleeve_nav) -> SizedProposal:
         # Options are EXCLUDED from ATR sizing by ruling: the premium is the
         # stop, and the halved table already prices the leverage.
@@ -1367,6 +1499,11 @@ class SignalPipeline:
                 execution=LimitExecution(limit_price=limit_price),
                 signal_id=signal.signal_id,
                 confidence=report.confidence,
+                # The sleeve the proposal sized in: "equity" (judged) or, since
+                # the 2026-10-08 redirect, "aggressive" - its own gate caps.
+                sleeve=(
+                    "aggressive" if proposal.sleeve is Sleeve.AGGRESSIVE else "equity"
+                ),
             ),
             None,
             proposal,

@@ -608,6 +608,23 @@ classes:
         filer_aliases:
           "Mitchell Mcconnell": "Mitch Mcconnell"
 
+      # ATTENTION MOMENTUM (RISK-ON REDIRECT, human ruling 2026-10-08, item 6):
+      # a market-data confirmation screen over this system's OWN recorded
+      # events (congressional purchases, Form 4, contract awards, 8-K): the
+      # stock closed above its 5-session pre-event high on >= 2x volume with
+      # positive excess vs SPY within 3 sessions. Runs once per session day
+      # (orchestrator.yaml aggressive_sleeve.attention). Sizes in the
+      # AGGRESSIVE sleeve by a fixed risk budget; the priced-in and staleness
+      # checks are OFF by ruling (momentum buys what has already moved).
+      # A new source, added by the redirect ruling (CLAUDE.md, Requires
+      # Explicit Human Approval). No filer: outside convergence families.
+      - id: attention_momentum
+        provider: alpaca_market_data
+        monthly_cost: 0 # Alpaca SIP bars on the existing plan
+        start_date: 2026-10-08
+        daily_research_cap: 4
+        require_instrument: true
+
       - id: form4_insiders
         # Human ruling 2026-09-02: Form 4 insider CLUSTER buying, market-wide on
         # SEC EDGAR (free). The deterministic recipe lives in the fetcher and is

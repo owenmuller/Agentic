@@ -41,6 +41,7 @@ from research.triage import TriagePass
 from research.research_pass import ResearchPass
 from risk_gate.gate import RiskGate
 from risk_gate.limits import RiskLimits
+from risk_gate.state import Sleeve
 from signals.config import SignalsConfig
 from signals.records import CredibilityLog, SignalQueue
 from signals.scanners import Fetcher, build_scanners
@@ -49,7 +50,7 @@ from sizing.selection import OptionSelector
 
 from orchestrator.budget import ResearchBudget
 from orchestrator.config import OrchestratorConfig
-from orchestrator.exits import ExitEngine, unmanaged_exposure
+from orchestrator.exits import ExitEngine, SleeveExits, unmanaged_exposure
 from orchestrator.loop import TradingLoop
 from orchestrator.mechanical import MechanicalEngine
 from orchestrator.pipeline import PriceSource, SignalPipeline
@@ -337,6 +338,10 @@ def preflight(
         cash_management_open=audit.strategy_open_positions("cash_sweep"),
         # The baseline sleeve's index ETF (ruling 2026-09-18), likewise.
         baseline_open=audit.strategy_open_positions("baseline"),
+        # The aggressive sleeve (risk-on redirect, 2026-10-08), likewise, and
+        # its own daily deployment counter so a restart cannot refill it.
+        aggressive_open=audit.strategy_open_positions("aggressive"),
+        aggressive_deployed_today=replay_deployed_today(decisions, today, Sleeve.AGGRESSIVE),
         today=today,
         account_type=orchestrator_config.account_type,
     )
@@ -491,7 +496,7 @@ def start(
         initial_spent=checks.audit.research_cost_between(day_start),
     )
 
-    exits = ExitEngine(
+    exit_kwargs = dict(
         gate=checks.gate,
         adapter=checks.adapter,
         audit=checks.audit,
@@ -530,6 +535,23 @@ def start(
         # what else the convergence registry sees. Context, never a decision.
         opportunity_context=lambda: _opportunity_context(registry),
     )
+    # The aggressive sleeve (risk-on redirect, human ruling 2026-10-08) runs its
+    # own exit engine: its gate keys, a stop that trails from entry at the
+    # position's ATR distance, a fixed time cap, no LLM reviews. The loop holds
+    # both behind one composite; the judged engine is untouched.
+    aggressive_config = checks.orchestrator_config.aggressive_sleeve
+    aggressive_exits = (
+        ExitEngine(
+            **exit_kwargs,
+            sleeve="aggressive",
+            trail_from_entry=True,
+            fixed_leash_days=aggressive_config.leash_days,
+            reviews_enabled=False,
+        )
+        if aggressive_config.enabled and checks.limits.aggressive_sleeve is not None
+        else None
+    )
+    exits = SleeveExits(ExitEngine(**exit_kwargs), aggressive_exits)
     # Positions opened by earlier runs, rebuilt from the log with stops re-armed. Part
     # of the replay step in spirit, but it needs the wired engine, so it runs here.
     # Marks first, replay second: the ratchet re-arms from the persisted
@@ -603,6 +625,8 @@ def start(
         # Self-consistency vote (ruling 2026-10-07): replaced boundary
         # confirmation; the loop wires the budget funder after construction.
         self_consistency=checks.orchestrator_config.self_consistency,
+        # The aggressive sleeve (risk-on redirect, human ruling 2026-10-08).
+        aggressive=checks.orchestrator_config.aggressive_sleeve,
         sizing_floor=checks.limits.sizing.no_trade_below,
         options_chain=options_chain,
         option_selector=option_selector,

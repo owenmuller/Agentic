@@ -441,6 +441,34 @@ def build_user_prompt(
             "forced departure and a strong appointment are different theses; say which "
             "and why. Form your own view of the company and assign your own confidence."
         )
+    elif signal.source_id == "attention_momentum":
+        # Attention momentum (risk-on redirect, human ruling 2026-10-08, item
+        # 6): an event this system already recorded, then CONFIRMED by price
+        # and volume. The ruling turns the priced-in and staleness checks OFF
+        # for this source: momentum buys what has already moved. The model's
+        # job is whether the story has room to run.
+        guidance = (
+            "This is an ATTENTION-MOMENTUM candidate: an event this system already recorded "
+            "(a congressional purchase, an insider cluster, a government contract award or an "
+            "8-K) that the market has since CONFIRMED - within three sessions the stock closed "
+            "above its pre-event high on at least twice its normal volume and has beaten the "
+            "S&P 500 since the event. The confirmation numbers are stated outside the fence; "
+            "the original event is quoted inside it. This is a MOMENTUM decision for a "
+            "separate, fixed-risk sleeve with a trailing stop and a holding period of roughly "
+            "20 to 60 sessions. Do NOT decline because the stock has already moved or because "
+            "the event is days old: the move is the premise. Judge whether the story has ROOM "
+            "TO RUN: is there a theme the market is still discovering, a pipeline of further "
+            "catalysts (orders, contracts, guidance, index or analyst attention), and how "
+            "crowded is it already (a parabolic, gapped, heavily-discussed name has less room "
+            "than one just breaking out)? Decline a confirmation that looks like a one-day "
+            "squeeze, a takeover-spike that has nowhere further to go, or a move driven by "
+            "something other than the recorded event. A long is the only expression in this "
+            "sleeve; size is fixed by a risk budget, so confidence should reflect the odds the "
+            "move continues, not how big the position should be. priced_in_analysis is "
+            "optional here; if you give one, say how much of the story you think is already "
+            "in the price. State a time_horizon of weeks or months and an invalidation "
+            "condition a trailing stop would not already capture."
+        )
     elif signal.source_id == "gov_contract_awards":
         # Government contract awards (human ruling 2026-10-06): the buyer's
         # announcement, published after the close (DoD digest, 17:00 ET) or

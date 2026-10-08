@@ -61,6 +61,11 @@ class Sleeve(StrEnum):
     PREDICTION = "prediction"
     CASH_MANAGEMENT = "cash_management"
     BASELINE = "baseline"
+    #: Risk-on redirect (human ruling 2026-10-08): an LLM-judged, fixed-risk-
+    #: budget sleeve for momentum swings and (increment B) day trades. Its own
+    #: cap table, its own daily counter, its own exit engine; cash-secured and
+    #: bound by the kill switch like everything else.
+    AGGRESSIVE = "aggressive"
 
 
 class AccountType(StrEnum):
@@ -182,6 +187,15 @@ class AccountState:
     #: Same, for the mechanical sleeve — its own daily budget, so mechanical
     #: entries can never consume the judged sleeve's deployment headroom.
     mechanical_deployed_today: Decimal = ZERO
+    #: Same, for the aggressive sleeve (redirect 2026-10-08).
+    aggressive_deployed_today: Decimal = ZERO
+    #: Sale proceeds credited on ``deployment_date`` (any sleeve). A cash
+    #: account settles T+1, so these may not fund an AGGRESSIVE-sleeve buy the
+    #: same day (redirect 2026-10-08, amendment 3). Reset at the day roll: the
+    #: next business day they have settled. The older sleeves are unchanged
+    #: (paper settles instantly; their account-wide treatment is the live-gate
+    #: review's question).
+    unsettled_proceeds: Decimal = ZERO
     deployment_date: date | None = None
     #: Dates on which a day trade completed (open and close on the same day).
     day_trades: list[date] = field(default_factory=list)
@@ -276,6 +290,13 @@ class AccountState:
             self.deployment_date = today
             self.deployed_today = ZERO
             self.mechanical_deployed_today = ZERO
+            self.aggressive_deployed_today = ZERO
+            self.unsettled_proceeds = ZERO
+
+    @property
+    def settled_buying_power(self) -> Decimal:
+        """Buying power less today's unsettled sale proceeds (T+1)."""
+        return self.buying_power - self.unsettled_proceeds
 
     def refresh_high_water_mark(self) -> None:
         current = self.nav
