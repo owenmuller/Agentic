@@ -4102,6 +4102,102 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### RULINGS 2026-10-07 (news and direction) — ITEM 3: the OCT-15 SCORECARD (one table) and the retirement PROPOSAL
+
+Item 1 recorded as ruled: across congressional, Form 4, 8-K, contract awards, PDUFA and news the
+move happens in the print and the post-publish drift this system can reach is flat or negative;
+the judged arm cannot win on information speed.
+
+**Scorecard (production audit log + cached forward rows, read 2026-10-08 02:30 UTC; excess vs SPY;
+"all rows" = every funnel row incl. prefiltered and capped, "researched" = rows with a verdict):**
+
+| source | live since | funnel rows | researched / longs / traded | all rows 5d | all rows 20d | researched 20d | registered result / read | status |
+|---|---|---|---|---|---|---|---|---|
+| congressional_disclosures | 08-19 | 3,289 | 83 / 3 / 1 | −0.98% (hit 31%, n=3,144) | −2.10% (32%, n=1,877) | **+5.00% (57%, n=54)** | ≤$15K band −0.79% 5d (n=1,541) → prefiltered; verdict ruled for **10-27** on the 20d read | live, cap 1 (demoted); mechanical control arm live |
+| form4_insiders | 09-03 | 595 | 77 / 44 / 9 | −1.91% (31%, n=484) | −3.26% (31%, n=209) | **−4.78% (25%, n=8)**; longs 20d −10.25% (n=4) | clusters vs control singles: both negative; C-suite door n small | live, cap 2 (demoted); review 10-15 |
+| form_8k | 09-16 | 506 | 96 / 0 / 0 | −0.47% (29%, n=431) | not yet due | −3.22% 5d (30%, n=46) | backtest 2024–26: 1.01 −0.56, 8.01 −0.63 size-matched; **no widening**; rows before 10-08 cap-selected (18%) | live, cap 6; whole flow recorded from 10-08 |
+| gov_contract_awards | 10-07 | 18 | 0 / 0 / 0 | n=0 | n=0 | — | backtest rule +0.65 (CI [+0.15, +1.20]); go-live n≥25 live events | measurement-only (probation) |
+| trump_posts | 08-19 | 318 | 99 / 0 / 0 | n=0 (theme/ETF rows carry no ticker mark) | n=0 | — | 99 passes, zero longs | live, Class 1 |
+| X callers (unusual_whales, optionshawk, nolimitgains, citrini) | 08-25.. | 123 | 14 / 0 / 0 | n≤4 | n≤1 | — | 0 trades; citrini had no trial (wrong handle to 09-30); feed-spend ruling 10-15 | live, graded 10-15 on spend |
+| form_13d | 09-22 | 4 | 4 / 0 / 0 | n=1 | — | — | too thin | live |
+| form_13f | 08-18 | 10 | 10 / 0 / 0 | — | — | — | quarterly; zero longs | live |
+| overreaction_screen | 09-03 | 1,504 | 0 | −0.12% (49%, n=1,471) | −0.19% (53%, n=1,414) | — | measurement rows only; no fade signal at 5d/20d | measurement-only |
+| PDUFA calendar | — | — | — | — | — | — | backtest: criterion not met | retired before build |
+| news catalysts | — | — | — | — | — | — | backtest: intraday −0.25, t+5 −0.20; no drift | retired before build |
+
+**Retirement PROPOSAL (proposal only, for the 10-15 review):** move **congressional** and **Form 4**
+research to **measurement-only rows at research cap 0** (every candidate still listed, prefiltered,
+stamped and graded by the forward engine; no LLM pass; the mechanical control arm keeps copying
+congressional purchases exactly as now, so the judged-vs-mechanical comparison survives). Grounds:
+Form 4 researched rows are −4.78% at 20d and the four longs −10.25% — the judged selection is worse
+than the flow; congressional's judged rows are the ONE positive line on the table (+5.00% at 20d,
+n=54, hit 57%) but on a demoted cap of 1 a day the sample cannot grow to a verdict before 10-27, and
+the ruled verdict date is 10-27 on the 20d read of the full flow. **Suggested sequencing:** retire
+Form 4 research on 10-15; hold congressional research at cap 1 until the 10-27 verdict, then retire
+or restore on that read. Spend freed: ~3 passes a day (Form 4 cap 2, congressional 1), roughly a
+dollar a day. The 8-K cap 6 stays as ruled (negative drift but the whole flow is only measurable from
+10-08). Nothing here is applied.
+
+### RULINGS 2026-10-07 (news and direction) — ITEM 4: the two root command blocks (paste-ready)
+
+**A. 2 GB swap, persistent across reboot** (jobs carry `MemorySwapMax=0`, so swap serves
+production only):
+```
+sudo bash -c 'set -e; fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile && grep -q "^/swapfile" /etc/fstab || echo "/swapfile none swap sw 0 0" >> /etc/fstab; sysctl -w vm.swappiness=10; grep -q "^vm.swappiness" /etc/sysctl.conf || echo "vm.swappiness=10" >> /etc/sysctl.conf'
+```
+Verify: `swapon --show && free -m | grep -i swap && grep swapfile /etc/fstab` — expect one 2G line,
+`Swap: 2047` total, and the fstab line.
+
+**B. Backup push script install** (the script is in the droplet's checkout; until
+`/home/agentic/.backup_env` exists it logs one line and exits 0, so the unit turns green now and
+pushes once the Spaces keys are written — vars listed in the script header):
+```
+sudo bash -c 'set -e; install -m 755 /home/agentic/Agentic/ops/vps/push_backup.sh /usr/local/bin/agentic-push-backup; apt-get install -y -q rclone gnupg >/dev/null; systemctl daemon-reload; systemctl reset-failed agentic-backup.service; systemctl start agentic-backup.service'
+```
+Verify: `systemctl status agentic-backup.service --no-pager | head -5 && ls -la /usr/local/bin/agentic-push-backup && journalctl -t agentic-backup --no-pager | tail -2` — expect
+`Active: inactive (dead)` with `status=0/SUCCESS` on both ExecStart lines, the script at 755, and the
+syslog line "off-box push not configured (no /home/agentic/.backup_env); on-box tarball only" (or
+"pushed … to spaces:…" once configured).
+
+### PRE-REGISTERED MERGER-ARBITRAGE BACKTEST (ruling 2026-10-07 item 2; registered BEFORE it ran)
+
+- **Universe:** US-listed TARGETS of definitive deals, 2016-01..2026-10, from the target's own
+  filings on EDGAR full-text search: **DEFM14A** (definitive merger proxy — a signed agreement) and
+  **SC 14D9** (the target's tender-offer recommendation — the target files it, so the subject is
+  unambiguous; SC TO-T lists the bidder as filer and is used only to confirm tender deals). Amendments
+  excluded; one deal per target CIK per 180 days (the earliest filing). The target must carry a
+  listed ticker in EDGAR's display names. **Announcement** = the target's 8-K carrying item 1.01 whose
+  text names an "Agreement and Plan of Merger" (or "merger agreement" / "tender offer") filed within
+  the 150 days before the proxy/14D9; without one, the proxy/14D9 itself is the announcement.
+  **Exclusions (as ruled):** equity value at entry < $100M (SEC shares × entry open) and entry open
+  < $1 per share.
+- **Entry:** the next session's open after the announcement filing's acceptance (file-date open if
+  accepted before 09:30 ET). **Exit:** (a) completion = the target's last bar within 12 months
+  (delisting) → that last close; (b) break = the target's 8-K within the 12 months whose text says the
+  merger agreement was terminated (item 1.02 or "terminat…" + "merger agreement") → the next open
+  after that filing; (c) otherwise the close 12 months after entry (unresolved, held to the cap).
+  Long-only, no hedge for stock deals (as ruled). **Return** net of 15bp per deal; **excess** = net
+  return minus SPY over the identical window; **annualized return on capital** = Σ(net return) /
+  Σ(holding days) × 365 (capital-day weighted) and the per-deal annualized median.
+- **Reported:** n deals, completion / break / unresolved rates, mean and median net return, hit
+  rate, annualized net return on capital and its excess over SPY, the loss distribution on breaks
+  (mean, median, p10, worst), by year, by cash vs stock consideration (from the announcement text),
+  and 5,000-draw event bootstrap on the annualized net excess (deals cluster on nothing larger
+  than the deal; a by-year table shows regime dependence).
+- **Success criterion:** annualized net excess over SPY ≥ **+3%** with the bootstrap lower bound
+  above zero, AND no calendar year below −10% net excess.
+- **Determinants, reported separately (item 2c, the LLM's potential role):** stamped per deal from
+  the filings' text — regulatory: "second request" (HSR) or "CFIUS" in the target's 8-Ks/proxy within
+  the window; financing condition ("financing condition" / "subject to financing"); hostile vs
+  friendly (SC 14D9 recommending against / "unsolicited"); cash vs stock; spread at entry for cash
+  deals (announced per-share price / entry open − 1, from "$X.XX per share"). Outcomes (break rate,
+  net return) sorted by each; if wide spreads at entry predict breaks, a judged filter has a job.
+- **Volume:** live deals open now = DEFM14A / SC 14D9 filed in the last 120 days whose target still
+  trades; capital tied up at a typical judged position (2–5% of a $55k sleeve = $1.1–2.75k each)
+  and at the measured median holding period.
+- Memory-capped, detached, restart-safe (per-deal cache). Script `~/scratch/marb_backtest.py`,
+  outputs `~/Agentic/data/marb_backtest_2026-10-08.*`.
+
 ### MORNING SUMMARY 2026-10-08 — everything landed; nothing running; what waits on the human
 
 **Shipped to production (droplet HEAD = origin = vps):** item 2 funnel holes + pelosi-uber band
