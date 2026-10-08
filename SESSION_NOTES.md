@@ -4102,6 +4102,52 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### DATA DEFECT FOUND AND RESTATED (2026-10-08): point-in-time caps used a split-ADJUSTED close in the 8-K and news backtests; conclusions unchanged, 8-K size bands materially different
+
+**The defect.** The 8-K, news-catalyst and contract-award backtests sized each company as SEC shares
+outstanding at t0 × the close at t0. The share count is point-in-time. The close came from
+`AlpacaDailyBars`, which requests `adjustment: split`, so it is divided by every LATER split. After
+a later forward split the cap is understated (NVDA before 2024-06 by 10×). After a later reverse
+split it is overstated, so microcaps that reverse-split 1:20 or more landed in the "large > $20B"
+band. Found while building the options universe, where the same pairing ranked GE first in 2016.
+
+**Scope, measured** with Alpaca's corporate-actions split history: the true cap is the recorded cap ×
+Π(new_rate / old_rate) over splits with ex-date after t0. Script `~/scratch/split_check.py`; output
+and corrected event files in `~/Agentic/data/split_check_2026-10-08/`.
+
+| events file | rows with a cap | cap restated (a split after t0) | band / tier / group changes |
+|---|---|---|---|
+| 8-K 1.01 / 8.01 | 36,464 | 5,013 | **1,466**: 826 mid→small, 458 large→small, 58 large→mid, 59 mid→large, 38 small→mid/large; benchmark 627 SPY→IWM, 63 IWM→SPY |
+| news catalysts | 25,995 | 3,096 | **1,362**: research→measure 147, measure→research 499, below_floor→research 559, below_floor→measure 89, demotions to below_floor 68; benchmark 617 SPY→IWM, 146 IWM→SPY |
+| contract awards | 2,801 | 80 | **0**: the result stands unchanged |
+
+**8-K, restated.** Group-level results do not use the cap and are unchanged (1.01 oc5 −0.61; 8.01
+−0.69, CI [−1.07, −0.21]). The size-matched secondary is unchanged at the group level: 1.01
+size-matched t+5 −0.56, 8.01 −0.63. The by-band lines change materially. The large band was
+polluted by reverse-split microcaps.
+
+| oc5 vs SPY by cap band | 1.01 recorded → corrected | 8.01 recorded → corrected | both recorded → corrected | earnings 2.02 recorded → corrected |
+|---|---|---|---|---|
+| small < $2B | −0.24 → **−0.73** (n 8,206) | −0.55 → **−0.98** (n 12,336) | −1.30 → −1.69 | −0.95 → −1.28 |
+| mid $2–20B | −0.89 → −0.45 | −1.04 → −0.19 | −1.47 → −0.60 | −0.64 → −0.16 |
+| large > $20B | **−2.77 → −0.38** (n 863) | −1.18 → −0.31 | −1.14 → −0.14 | −0.62 → +0.12 |
+
+Corrected, the post-filing drift is a small-cap phenomenon and large caps are near flat. The ruling
+(no widening, no edge) does not change.
+
+**News, restated on the measured rows.** Research tier, corrected: 20,624 events (was 19,735).
+Intraday publish → close vs SPY **−0.30, CI [−0.50, −0.11]** (was −0.25, [−0.45, −0.07]).
+Next-open → t+5 vs SPY −0.24 (was −0.20); size-matched −0.19, CI [−0.38, +0.01] (was −0.15,
+[−0.33, +0.05]). The decisive split is unchanged in sign: intraday −0.30 | gap +0.06 | t+1 −0.11 |
+t+5 −0.31. **656 promoted rows were never measured** (below_floor rows were counted, not
+measured, as registered): 565 research-tier, 116 in-session. The source stays closed by ruling,
+so they were left unmeasured. Measuring them is a ~30-minute capped job if the record should be
+complete.
+
+**Live production is not affected.** The live contract-awards path takes Finnhub's current market cap,
+where no later split can intervene; no live path multiplies SEC shares by a historical close. The options backtest uses RAW closes
+for its caps and facts filed by the ranking date.
+
 ### RISK-ON INCREMENT A — the aggressive paper sleeve and the attention-momentum source: BUILT, GATED, DEPLOYED (2026-10-08)
 
 **What it is (redirect item 4 with item 6 as its first source, as amended).** A fourth trading
