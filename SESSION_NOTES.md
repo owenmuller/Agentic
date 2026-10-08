@@ -4102,6 +4102,73 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### MORNING SUMMARY 2026-10-08 — everything landed; nothing running; what waits on the human
+
+**Shipped to production (droplet HEAD = origin = vps):** item 2 funnel holes + pelosi-uber band
+(e470c4a, 10-07 midday); item 1 OOM audit, capped research jobs, weekly CAUTION and slot_lost
+sections (9540220); notes through this entry. The paper unit runs the whole bundle from the 10-08
+session start.
+
+**Backtests, all DONE (results on disk, recorded above):** 8-K items 1.01/8.01 — no widening, cap
+stays 6, size-matched restatement confirms; PDUFA — no source; news catalysts — no source (intraday
+leg fixed as a data correction and recorded before/after). No research job is running; the
+`research-*` user services are inactive. One status command, unchanged:
+`ssh agentic@137.184.59.200 'cat ~/Agentic/data/item6_backtests.log; systemctl --user list-units --type=service --no-pager | grep research; ls ~/Agentic/data/*2026-10-07*.txt'`
+
+**Waiting on the human:** (1) 2 GB swap — root commands in the item-1 entry; (2) the backup push
+step (`/usr/local/bin/agentic-push-backup` missing, root); (3) nothing else is queued — the next
+ruling decides where the judged arm's candidate flow should come from, given that congressional
+(demoted), Form 4, 8-K, contracts (measurement-first), PDUFA and news have each been measured.
+
+### NEWS-CATALYST BACKTEST — THE INTRADAY LEG, FIXED (2026-10-08 02:06 UTC); and the size-matched secondary read: NO SOURCE
+
+**The defect and the fix (data correction only; rule, groups, timing and criterion exactly as
+pre-registered).** The registered run fetched the 1-minute print at publish with
+`adjustment=raw` while its daily closes were split-adjusted. Rows touched: **345 of 3,526
+in-session research/measure rows carried |publish → close| > 50 points, 388 > 20** (reverse splits:
+WKHS 2021–22, TNXP 2023, PFSA 2025, VSA 2025 …). The fix pass (`news_fix.py`, capped user service,
+restart-safe cache) refetched the print at publish split-adjusted for the ticker, SPY and IWM plus
+the ticker's split-adjusted close that day for all 3,576 in-session research/measure rows (3,526
+had a print; 50 none) and recomputed the same measure; **5 rows still inconsistent (|raw| > 60) are
+excluded.** Nothing else about the run was changed.
+
+| INTRADAY publish → close, research tier, in-session, vs SPY | mean | trimmed 5% | median | hit | n | clustered CI |
+|---|---|---|---|---|---|---|
+| **before the fix** (registered run, artifact) | +168.01 | — | +0.00 | 50% | 2,870 | [+85.5, +288.8] (meaningless) |
+| **after the fix** | **−0.25** | −0.09 | −0.02 | 49% | 2,866 | SE 0.10, t −2.58, **[−0.45, −0.07]** |
+| measure tier, after the fix | −0.16 | −0.04 | −0.03 | 48% | 655 | [−0.39, +0.05] |
+
+**Against the registered bar first:** the intraday leg is NEGATIVE — mean below zero, the cluster
+CI entirely below zero, hit 49% — so it fails on every leg, as the next-open path did (t+5 −0.20,
+CI [−0.38, −0.01]). **The decisive split (research tier, in-session, fixed):** intraday −0.25 | gap
++0.06 | next-open → t+1 −0.20 | → t+5 −0.38. Nothing after the publish is positive. The catalyst's
+move is in the print itself (and, for the 80% of items published out of session, in the GAP: all
+research-tier items, next open vs reference close, mean +2.03, median +0.40, hit 64%, n=19,729 —
+the announcement reaction, which no next-open entrant receives). A real-time path would have to be
+in the trade within the minute; this system's extraction plus research pass is minutes.
+
+**Size-matched read, secondary (IWM under $10B — 14,227 of the 19,735 research-tier events — SPY
+above):** intraday −0.24 (vs −0.25); next-open → t+1 −0.06 (vs −0.10), t+5 **−0.15, CI [−0.33,
++0.05]** (vs −0.20), t+20 −0.45, CI [−0.78, −0.12] (vs −0.63). By year, t+5 size-matched: 2016 +0.43,
+2017 +0.48, 2018 +0.42, 2019 +0.44, 2020 +0.20, 2021 +0.60, 2022 +0.90, 2023 +0.49, 2024 +0.33,
+**2025 −0.80, 2026 −1.94** — the same shape as vs SPY. By cap, t+5 size-matched: < $2B −0.21,
+$2–10B −0.09, > $10B −0.10. **The small-cap lag does not explain the last two years**; the drift
+after a news catalyst turned negative in 2025–26 across cap bands. The size-matched read confirms no
+signal in the next-open path either, and the eight positive years before 2025 (+0.2 to +0.9) are
+not a path this system can take today in any case.
+
+**VST check items (fixed):** 10-02 15:27 ET DOE-loan headline, research tier ($4.0B / cap):
+publish → close **+0.59**, gap to Monday's open +2.86, next-open → t+1 +10.21 (10-05 open → 10-06
+close: the Google deal day); 10-05 12:29 ET 'Vistra Gets $4.2B Federal Loan': publish → close
+−1.05, gap +4.11, t+1 +10.19. The headline session captured little; the moves were the next open
+and the second catalyst.
+
+**Conclusion for item 1 (report; nothing built):** on the pre-registered criterion and on the
+secondary read, **the news-catalyst class has no exploitable post-publish drift** at any horizon
+this system can reach — intraday, next open, t+5, t+20 are all ≤ 0 since 2025, and the only
+positive leg is the announcement gap itself. Not pursued. Outputs
+`~/Agentic/data/news_backtest_2026-10-07.{txt,fixed.txt,events.jsonl,fixed.events.jsonl}`.
+
 ### NEWS-CATALYST BACKTEST, STAGE A — RESULT (2026-10-08 00:41 UTC, the pre-registered run): the next-open path has no signal; the intraday leg needed a fix
 
 **The run:** 2015-01..2026-10, **2,225,683 items read, 49,795 candidates (2.2%), 57,363 ticker-day
