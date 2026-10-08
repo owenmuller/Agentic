@@ -4102,6 +4102,134 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### REDIRECT 2026-10-08: RISK-ON — item 4 design and build plan; PRE-REGISTRATIONS for items 1, 2, 3 and 6 (written BEFORE any of those backtests ran)
+
+Supersedes the maintenance-mode and search-closed rulings. Kept: contract awards measuring, the
+mechanical control arm, the weekly scorecard. Constraint #6 holds throughout: nothing below is
+sized off P&L or a target.
+
+**ITEM 4 — THE LIVE AGGRESSIVE PAPER SLEEVE (design; built in increments, each behind the deploy
+gates: suite green, golden replay where a prompt changes, live dry-run of the changed path, no
+deploy inside the pre-open hour).**
+- **Allocation:** a new `aggressive` sleeve at **10% of NAV, carved from the judged sleeve** (55 →
+  45; mechanical 15 and baseline 30 unchanged). The ruling says "open it"; the weight was not stated,
+  so the smaller measurement-first size applies (Constraint #6); raising it is a one-line ruling.
+- **Gate (deterministic, own cap table `aggressive_sleeve`):** max single position 25% of the
+  sleeve's NAV; max 5 concurrent; daily deployment 100% of the sleeve (it turns over intraday);
+  sector 50%; long calls/puts only, premium at risk ≤ 50% of the sleeve, short-dated allowed
+  through the existing selector (7 DTE floor, T−1 close); cash-secured, no margin, kill switch,
+  drawdown ladder and never-negative exactly as the judged sleeve. Day trades: the account is a
+  cash account — the gate already reserves settled cash per order; a same-day round trip on
+  settled cash is permitted and the proceeds are not reused until settled (no good-faith
+  violation); PDT counting applies only to margin accounts and stays as written.
+- **Sizing — a fixed risk budget, not the confidence table:** R = **1% of the aggressive sleeve's
+  NAV per trade** ($100 on $10k). Equity: shares = R / (entry − stop), stop = the LLM's named
+  structure stop (ORB low, pre-event high) clamped into [1%, 8%] of price, or 2.5 × ATR(14) when
+  none is named; capped by the single-position cap. Options: premium at risk = R. The verdict's
+  confidence gates entry (floor 50, unchanged) but never scales size. The self-consistency vote
+  runs on swing candidates (attention momentum) and is OFF for intraday candidates (a vote is
+  minutes; the sleeve's protection there is the risk budget).
+- **Candidate sources, LLM-judged:** (1) **`attention_momentum`** (item 6f, eligible now): events
+  already in the funnel from the last 1–3 sessions (congressional, Form 4, contract awards, 8-K)
+  confirmed by the item-6 thresholds below; prompt guidance: priced-in and staleness checks OFF,
+  judge room to run (theme, catalyst pipeline, crowding); horizon 20–60 sessions; exit by an ATR
+  trailing stop. (2) **`opening_gap`** (item 3's live counterpart): a liquid universe (the 150
+  largest US equities by trailing-60-session dollar volume plus SPY/QQQ/IWM and the nine sector
+  SPDRs, rebuilt nightly from the bars cache) screened at 09:35–09:45 ET for a gap ≥ 3% vs the prior
+  close with relative volume ≥ 2× in the first 15 minutes; judged as a day trade; exit at the
+  stop or by **15:50 ET**, never held overnight. (3) Either source may be expressed as a short-dated
+  long option through the existing doors when the LLM names a catalyst inside the window.
+- **Measurement:** own attribution bucket `aggressive`, partitioned out of the judged alpha line;
+  the weekly prints the sleeve's return vs SPY since inception and over the trailing four weeks,
+  and the forward engine grades its candidates by source like any other.
+- **Increments:** **A** — sleeve + gate caps + risk-budget sizing + `attention_momentum` source +
+  prompt branch + ATR trailing stop + attribution bucket + tests + golden case + live round trip.
+  **B** — `opening_gap` screen, the 15:50 close rule, minute-bar context in the prompt. **C** —
+  the weekly lines. A ships first; nothing trades in the sleeve until A is deployed, and a mid-session
+  deploy does not touch the running process, so the sleeve's first session is the one after the
+  deploy.
+
+**ITEM 6 — ATTENTION-MOMENTUM, PRE-REGISTERED (backtest on the harvested event history).**
+- **Universe:** every event already harvested: contract awards 2019–2026 (3,728 mapped events, all
+  tiers), news catalysts 2015–2026 (research + measure tiers, 23,500 ticker-days), congressional
+  and Form 4 funnel events since 2026-08 (thin, included), 8-K 1.01/8.01 2024–2026 (40,446). One
+  event per ticker per day; t0 = the event's first tradeable session.
+- **Confirmation (exact thresholds):** on the first session s ∈ {t0+1, t0+2, t0+3} where ALL hold:
+  close(s) > max close of the five sessions before t0 (the pre-event high); volume(s) ≥ 2.0 ×
+  the 20-session average volume ending at t0−1; close(s)/close(t0−1) − 1 > SPY's return over the same
+  span (positive excess since the event). Unconfirmed events are counted, not traded.
+- **Entry:** next open after s. **Exit:** trailing stop = highest close since entry − 2.5 × ATR(14)
+  (ATR at entry, recomputed daily), evaluated at each close, filled at the next open; time cap 60
+  sessions; no profit target. Net 15bp per side. Faders included: every confirmed event is a trade.
+- **Reported:** n events, n confirmed, hit rate, average winner vs average loser (payoff ratio),
+  mean and median net return, mean excess vs SPY and vs QQQ over each trade's own window, equal-weight
+  strategy max drawdown (one unit per trade, overlapping), by year and by source; cluster bootstrap
+  by ticker; **BE and VST** as named cases with their event, confirmation session, entry, exit and
+  return.
+- **Success:** mean excess vs SPY > 0 with the cluster-bootstrap CI excluding 0; payoff ratio ≥ 1.5;
+  positive in ≥ 60% of calendar years; and the same read vs QQQ reported (not a gate).
+
+**ITEM 1 — OPTIONS PREMIUM SLEEVE, PRE-REGISTERED.**
+- **Data (the honest limit):** Alpaca serves historical option-contract bars only from 2024-02; no
+  free source has 2016–2023 chains. So two segments: **2024-02→ real chains** (Alpaca options bars,
+  the selector's own feed) and **2016→2024-01 synthetic premiums**: Black–Scholes from the daily
+  close, the risk-free rate (3-month T-bill from FRED), and an IV proxy — VIX for SPY; for single
+  names VIX × (the name's trailing-60-day realized vol / SPY's). The synthetic segment is labelled
+  as such everywhere and the 2024+ segment is the check on it (synthetic vs real premium on the same
+  days, reported). Universe: SPY plus the 30 largest US equities by market cap at each year-start
+  (point-in-time list from the bars cache and SEC shares).
+- **Strategies:** (A) cash-secured puts: write the 30-delta put nearest 30 DTE at the monthly open,
+  hold to expiry; assigned → hold the shares and write 30-delta covered calls monthly until called
+  (the wheel); capital = strike × 100 reserved at write (fully cash-secured, no margin — the
+  backtest never writes more than cash covers). (B) covered calls on a buy-and-hold position
+  (30-delta, 30 DTE, monthly). Costs: $0.65 per contract plus half the spread (real segment) or
+  1% of premium (synthetic).
+- **Filters, tested JOINTLY as a block, not one at a time (the LLM-filter proxy):** F1 no earnings
+  inside the expiry window (earnings dates from the earnings-shadow log and 8-K 2.02 history); F2
+  IV rank ≥ 50% (trailing 252-day rank of the IV proxy); F3 no write within 3 sessions after a ≥ 5%
+  down day; F4 skip names with a news-catalyst event (the harvested news set) in the prior 3
+  sessions. Report unfiltered, each filter alone, and all four together.
+- **Reported:** total return vs SPY, CAGR, max drawdown, worst month, Sharpe, assignment rate, by
+  year, by segment (synthetic / real). **Success:** CAGR ≥ SPY − 2% with max drawdown ≤ 0.6 × SPY's,
+  or CAGR > SPY; the filtered block must beat the unfiltered on CAGR without raising drawdown.
+
+**ITEM 2 — LEVERAGED TREND SLEEVE, PRE-REGISTERED.**
+- **Data:** SPY, SSO (2×), UPRO (3×) daily bars 2016→ (Alpaca); VIX daily close (CBOE). One regime
+  (2016–2026 bull with 2018/2020/2022 drawdowns) — flagged.
+- **Filters evaluated daily at the close, executed at the next open, 15bp per switch, tested as
+  ONE rule family:** F1 SPY close > 200-day SMA; F2 50-day SMA > 200-day SMA; F3 VIX close < 20;
+  F4 SPY 20-day realized volatility < 20% annualized; F5 SPY close > its 10-month SMA at the last
+  session of the month (Faber). **Rule:** 3× (UPRO) when F1 ∧ F3 ∧ F4; 2× (SSO) when F1 ∧ (F3 ∨ F4);
+  1× (SPY) when F1 only; cash (T-bill rate) otherwise; F2 and F5 reported as alternates for F1.
+  Also reported: SPY-calls expression (synthetic 60-delta, 60 DTE, rolled monthly) for the 3×
+  state, as the capital-efficient variant.
+- **Reported:** CAGR vs SPY, max drawdown, time to recover from the max drawdown, worst month,
+  turnover, time in each state, by year. **Success:** CAGR ≥ SPY + 3% with max drawdown ≤ SPY's and
+  recovery time ≤ SPY's.
+
+**ITEM 3 — INTRADAY SLEEVE, PRE-REGISTERED.**
+- **Data:** Alpaca SIP 5-minute bars 2019-01→2026-10 (1-minute for 2019+ is ~100M bars; 5-minute
+  is 8M and fits the droplet); universe: the 60 largest US equities by trailing-60-session dollar
+  volume, rebuilt each January (point-in-time), plus SPY and QQQ.
+- **Strategies, each pre-registered, long-only:** (S1) **opening gap, follow:** gap ≥ 2% up at the
+  open vs the prior close; buy when the first 15 minutes' high is broken; stop at the 15-minute
+  low; exit at the stop or 15:50 ET. (S1f) **opening gap, fade** (reported, the mirror): gap ≥ 2%
+  down, buy at 09:45 if price is above the 09:30 open, stop at the day's low so far, exit at the
+  stop or 15:50 — long-only, so only down-gaps are faded. (S2) **15-minute opening-range breakout:**
+  any universe name whose first-15-minute relative volume ≥ 1.5× its 20-day average for that
+  window, buy on the break of the range high, stop at the range low, exit at 2R or 15:50. (S3)
+  **intraday momentum:** at 10:00 the five largest gainers since the open with RVOL ≥ 2×, buy,
+  trailing stop 1 × ATR(5-min, 20 bars), exit at the stop or 15:50.
+- **Costs:** 5 bps per side plus half the quoted spread (5-minute bar high-low/4 as the proxy),
+  $0 commission; **sizing:** equal risk, 1% of capital per trade, capital 100% of the sleeve.
+- **Reported, by year and pooled:** net return, CAGR, Sharpe, hit rate, average win vs average
+  loss, max drawdown, trades per day, vs SPY buy-and-hold. **Success:** net CAGR > SPY with max
+  drawdown below SPY's over 2019–2026 and positive in ≥ 5 of 7 full years.
+
+All four backtests run under the capped user service, detached, restart-safe; each writes to
+`~/Agentic/data/<name>_2026-10-08.*`. Order of launch: 6 (uses harvested data), then 2 (cheapest),
+then 3, then 1 (the options data pull is the heaviest).
+
 ### MERGER-ARBITRAGE BACKTEST — RESULT (2026-10-08 07:13 UTC, the pre-registered run on the corrected universe): criterion NOT MET; the spread premium is real but it is a beat-cash return, not a beat-SPY one
 
 **Universe and coverage (check 2 first, because it frames everything):** 3,082 single-filer
