@@ -4102,6 +4102,202 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### MORNING SUMMARY 2026-10-09 (overnight rules) — the aggressive sleeve is live in paper from today's start; all four risk-on backtests failed their registered criteria
+
+**Shipped to production.** The droplet HEAD, origin and vps all match at the final notes commit.
+The paper unit loads it at its 09:15 ET start on 2026-10-09.
+- **Increment A** (e9cba61): the aggressive sleeve at 25% of NAV with a 2% risk budget, its own
+  gate caps and T+1 settled-cash rule, and the `attention_momentum` source. Gates: suite green on
+  a clean checkout, golden replay **31/31 PASS** with the vote live ($11.55), and the dry run
+  produced records end to end. Deployed at 15:10 ET, outside the pre-open hour. A read-only
+  `check` on the deployed tree passed.
+- **Increment C** (67ccf3e): the weekly's aggressive lines against SPY, and the startup sleeve
+  line. Gates: suite green, plus a dry run of `attribution` on a copy of production data.
+- Notes: every result below, and the split-adjusted cap defect, restated.
+
+**On a branch:** nothing outstanding. `risk-on-increment-a` was fast-forwarded into main.
+
+**Backtest verdicts (registered criteria; all files in `~/Agentic/data/`):**
+
+| item | verdict | the number that decides it |
+|---|---|---|
+| 6 attention momentum | NOT MET | mean excess vs SPY −2.42%, CI [−3.38, −1.38] — significantly NEGATIVE (n = 6,361) |
+| 2 leveraged trend | NOT MET | CAGR +9.37% vs SPY +10.86%, 1993–2026; deeper drawdown, 3× longer recovery |
+| 3 intraday (4 strategies) | NOT MET | every strategy negative every year; gross of all costs the best is +8.9% vs SPY +17.3% |
+| 1 options premium | NOT MET on the binding real-chain segment | best: covered calls +14.7% vs SPY +20.3% (2024-02 →) |
+
+**Running or scheduled.** One transient user timer, `research-options-insession`, fires at
+2026-10-09 15:00 UTC (11:00 ET). It re-measures the option spread in session (both 10-08
+measurements were taken after the close) and reruns item 1 from cache. It decides only whether
+covered calls pass on the FULL span; the binding verdict holds under both spreads. Nothing else
+is running.
+
+**Today's sleeve, previewed.** As of the 10-08 session the attention screen confirms 0 of 206
+recent events on 179 symbols, so the sleeve will probably open nothing this morning.
+
+**Waiting on the human:**
+1. **The attention source's base rate is negative at significance.** The live sleeve is
+   LLM-judged on top of it. To keep it opening trades while the judged record accumulates, leave
+   it. To stop new entries and keep exits running, set
+   `config/risk_limits.yaml aggressive_sleeve.entries_enabled: false`.
+2. **Increment B, go or no-go**, for its two parts: the opening-gap day-trade screen, whose
+   counterpart S1 measured negative, and options in the aggressive sleeve, whose proposed defaults
+   are in the increment A entry.
+3. **Reward:risk for the sleeve.** A missing target passes; a stated target must clear 1.3×
+   against the aggressive stop. Confirm, or require a target.
+4. Still outstanding from earlier: the 2 GB swap and the backup-push root commands, and the
+   Oct-15 scorecard decisions.
+5. Optional: 656 news rows promoted by the split correction were never measured, about 30
+   minutes as a capped job. The news source is closed, so they were left.
+
+**One command for status:**
+```
+ssh agentic@137.184.59.200 'tail -12 ~/Agentic/data/item6_backtests.log; systemctl --user list-timers --no-pager | grep research; systemctl --user list-units --type=service --no-pager | grep research; ls -la ~/Agentic/data/options_bt_2026-10-09_insession.txt 2>/dev/null; tail -3 ~/Agentic/data/run.log'
+```
+
+### INTRADAY BACKTEST — RESULT (2026-10-08, item 3, the pre-registered run): NOT MET for all four strategies, in every year; gross of all costs nothing beats SPY either
+
+**Registered criterion first** (net CAGR above SPY, max drawdown smaller than SPY's, positive in at
+least 5 of 7 full years). Alpaca SIP 5-minute bars, 2019-01 → 2026-10. Universe: the 60 largest US
+equities by trailing dollar volume each January, plus SPY and QQQ. 1% of capital at risk per trade,
+day notional capped at 100%. SPY buy & hold: **+17.32% CAGR, −33.7% max DD**.
+
+| strategy | trades (per active day) | hit | avg win / loss | net CAGR | max DD | positive full years | criterion |
+|---|---|---|---|---|---|---|---|
+| S1 gap follow | 4,550 (4.1) | 43% | +0.84R / −0.85R | **−34.76%** | −96.5% | 0 of 7 | NOT MET |
+| S1f gap fade (down-gaps, long) | 3,546 (3.9) | 35% | +1.28R / −1.20R | **−40.50%** | −98.3% | 0 of 7 | NOT MET |
+| S2 15-min opening-range breakout | 8,816 (5.0) | 39% | +0.68R / −0.76R | **−53.38%** | −99.7% | 0 of 7 | NOT MET |
+| S3 10:00 momentum (top 5 gainers, RVOL ≥ 2×) | 5,096 (3.0) | 19% | +1.31R / −1.40R | **−69.01%** | −100% | 0 of 7 | NOT MET |
+
+**Gross of costs (secondary, NOT graded).** The registered cost model charges 5bp plus the fill
+bar's (high − low)/4 per side. That costs 0.41–0.54% of price per round trip, which is 0.23R for
+S1 and S2, 0.38R for S1f and 0.81R for S3. It is punitive for megacaps, whose real spreads are a
+few basis points, so this read asks whether any edge exists before cost.
+
+| gross of all costs | hit | avg win / loss | CAGR | max DD |
+|---|---|---|---|---|
+| S1 gap follow | 50% | +0.92R / −0.71R | **+8.86%** | −30.0% |
+| S1f gap fade | 40% | +1.38R / −0.85R | −3.10% | −37.8% |
+| S2 ORB | 48% | +0.76R / −0.64R | −1.34% | −31.4% |
+| S3 momentum | 35% | +1.32R / −0.79R | −11.70% | −64.6% |
+
+With zero cost, only gap-follow is positive, and at +8.86% it still trails SPY by 8.5 points with
+a similar drawdown. Real costs sit between zero and the registered model, so no cost assumption
+rescues any of the four. **This is the evidence base for increment B's `opening_gap` screen (the
+live S1), and the reason B was not built tonight.**
+
+**Defects found and corrected, as data or bug corrections only.** Rules, groups, timing and
+criterion are exactly as registered.
+1. **Universe (before the first full run completed).** The candidate pool's top 60 by dollar
+   volume included exchange-traded products (IVV, XLF, HYG, TLT, GLD, IBIT, TSLL, SMH and others)
+   and duplicate lines of one company: FB and META (Alpaca maps the rename backwards), SQ and XYZ,
+   GOOG and GOOGL. The registration says "equities". ETPs are now excluded by the asset-master
+   name, delisted names stay in, and one company keeps one line, the higher dollar-volume one.
+   The stopped run's symbol-years were reused where the name survived; the report lists each
+   year's exclusions.
+2. **S3 never traded in the first full run (n = 0).** Its stop needs ATR over 20 five-minute bars
+   at 10:00, but the code required 20 bars of the CURRENT session, and only six exist by then. The
+   registered reading spans the prior session. Fixed; bars were not cached, so all strategies were
+   rerun (`intraday_2026-10-08b`). **S1, S1f and S2 reproduce the first run exactly**, to the trade
+   count and the hundredth of a percent.
+3. **Positive years** counted the partial 2026 year. They now count full calendar years only, as
+   registered. No verdict changes.
+
+Files: `~/Agentic/data/intraday_2026-10-08b.{txt,trades.jsonl,s3cands.jsonl,universe.json}`
+(the final run); `intraday_2026-10-08.*` (the first full run, S3 empty). Script
+`~/scratch/intraday_bt.py`; the pre-fix copy is `intraday_bt_registered_run.py`.
+
+### OPTIONS PREMIUM BACKTEST — RESULT (2026-10-08, item 1, as amended): NOT MET on the binding real-chain test; the spread calibration reruns in session 2026-10-09 11:00 ET
+
+ANALYSIS ONLY. Writing options is forbidden in code by Constraint #2. Nothing here can place an
+order, and acting on any result would need a constraint change.
+
+**Verdict first.** Amendment 1a makes the 2024-02+ real chains the binding single-name test.
+On that segment **no strategy meets the criterion**, under either spread calibration. SPY total
+return over the segment is +20.29% CAGR with a −18.8% max drawdown, so passing needs CAGR ≥ 18.29%
+with drawdown no deeper than −11.3%, or CAGR above 20.29%.
+
+| real chains 2024-02 → 2026-10 (binding) | CAGR, all-chain spread 9.9% | CAGR, bucketed spread 24.2% | max DD | verdict |
+|---|---|---|---|---|
+| A wheel, unfiltered | +11.91% | +11.00% | −12.2% | NOT MET |
+| A + F1 earnings | +11.75% | +11.09% | −9.8% | NOT MET |
+| A + F2 IV rank | +11.54% | +10.88% | −8.0% | NOT MET |
+| A + F3 no post-crash | +11.27% | +10.36% | −11.1% | NOT MET |
+| A + F4 no news | +9.96% | +9.14% | −9.4% | NOT MET |
+| A + all four filters | +7.30% | +6.92% | −5.4% | NOT MET |
+| B covered calls | +14.71% | +13.90% | −17.0% | NOT MET |
+| SPY total return | +20.29% | | −18.8% | |
+
+**The full span 2016-04 → 2026-10** is synthetic before 2024-02, as registered. SPY total return
+is +15.24% CAGR with a −33.7% drawdown.
+
+| full span | CAGR (9.9% / 24.2% spread) | max DD | registered criterion |
+|---|---|---|---|
+| A wheel, unfiltered | +12.64% / +11.40% | −26.1% | NOT MET |
+| A + all four filters | +8.57% / +7.96% | −20.1% | NOT MET |
+| **B covered calls** | **+15.91% / +14.81%** | −28.5% | **MET / NOT MET: spread-sensitive** |
+| filter block, all four vs unfiltered | +8.57% vs +12.64% | −20.1% vs −26.1% | NOT MET: lower CAGR |
+
+B's full-span pass depends on the spread assumption and on the synthetic segment. **The synthetic
+segment is biased toward the strategies.** On the same days, a synthetic 30-delta put prices a
+median **36% richer** than the real contract (n = 957, 2024-02+; mean 91% richer, heavy tail). The
+synthetic ATM SPY put-write runs **+3.74%/yr above the CBOE PutWrite index** (tracking error
+3.07%/yr, correlation 0.954; amendment 1d). Both point the same way: the amended IV proxy, realized
+vol × SPY's VIX/realized ratio, overstates single-name implied vol, so the synthetic years overpay
+the writer. Read against real premiums, covered calls trail SPY by about 5.5 points a year. The
+upside cap costs more than the premium returns in a megacap bull market.
+
+**Calibration, as amended.** 30-delta put skew (IV at 30 delta ÷ ATM IV) has a pooled median of
+**1.036** from 957 real-chain observations (per name where n ≥ 6). The spread was measured twice,
+and both measurements were taken after the 16:00 ET close, which is the flaw. All strikes and
+expiries gave a 9.9% median. The amendment's bucket, puts at 85–100% and calls at 100–115% of
+spot, 14–45 DTE, gave 24.2%, which is implausible for Apple at 14.4%; indicative quotes widen
+after hours. **A transient user timer reruns the backtest at 2026-10-09 15:00 UTC (11:00 ET)** with
+the spread re-measured in session and everything else cached. Output:
+`~/Agentic/data/options_bt_2026-10-09_insession.txt`. Neither spread changes the binding verdict.
+
+Universe, 30 names a year by point-in-time cap (lists in the report): AAPL, MSFT, GOOGL, AMZN,
+META, XOM, JNJ and so on through 2016–2020; TSLA and NVDA from 2021; LLY and AVGO from 2022;
+PLTR, MU and GE in 2026. Not capped, so absent: V, MA and BRK (SEC reports their shares per
+class only), plus DD, APC, FOXA, CI, SNOW, DKNG and DJT in single years.
+
+**How it was run, and what the two-name smoke runs caught before the full run.** The
+script is `~/scratch/options_bt.py`. Seven defects were found and fixed in smoke runs on two
+names. None of them changes a registered rule, group, filter or criterion.
+
+1. **Universe ranking used split-adjusted closes against point-in-time shares.** This is the
+   same defect as the 8-K and news entry above. GE ranked first in 2016 and Apple 18th. Now RAW
+   closes are used.
+2. **Foreign filers were ranked as US equities** (BABA, NTES). A US equity is now a 10-K filer.
+3. **Share counts.** EDGAR's per-concept endpoint served empty series for some registrants, such
+   as KO. Now the companyfacts file is used. Multi-class registrants fall back to the diluted
+   weighted average, then balance-sheet shares. Hand-verified predecessor registrants are used
+   for XOM, DIS, AVGO and DOW. Only facts FILED by the ranking date count, because later filings
+   restate comparatives for splits; that is how SHOP ranked fourth in 2022. One company is one
+   name (GOOG/GOOGL keep the higher-volume line). Names that still cannot be capped (V, MA, BRK
+   report per class only; delisted names with no ticker mapping) are listed in the report.
+4. **Starting capital was zero.** The first January rebalance summed an empty book.
+5. **Holiday expiries.** A third Friday that is not a session, such as Good Friday 2025-04-18,
+   now moves to the prior session.
+6. **Cadence: a documented reading of "monthly, nearest 30 DTE, hold to expiry".** From a month's
+   first session, the third-Friday expiry is about 15 or 45 days out, and the option is still
+   open at the next month's start. Every other month was therefore skipped and the capital sat in
+   T-bills. The write now targets the LAST Friday before the next month's first session, about
+   25–31 DTE, so it expires inside its own cycle. In the real segment, a name with no contract
+   listed that Friday falls back to the nearest monthly. The PUT-index validation leg keeps the
+   CBOE third-Friday roll.
+7. **Units in the real segment.** Every price series is split-adjusted, but real strikes and
+   premiums are raw. Real contracts are now chosen at raw strike = adjusted target × the split
+   factor and carried in adjusted units (strike and premium ÷ the factor). The factor comes from
+   Alpaca's corporate actions. Also: the nearest strike that actually traded on the write day is
+   used, trying the four nearest. A real mark is carried at most three sessions, then synthetic.
+   In the smoke run, real-contract coverage of writes from 2024-02 rose from about 45% to 96 of 96.
+
+**Fills, as amended (1c).** Sells fill at mid × (1 − half the quoted spread) and buy-backs at
+mid × (1 + half). The spread is each name's median from today's chain snapshot. Real fills are not
+observable here, and "a share of the spread" was unstated, so the full half-spread applies
+(Constraint #6). Cost is $0.65 per contract.
+
 ### DATA DEFECT FOUND AND RESTATED (2026-10-08): point-in-time caps used a split-ADJUSTED close in the 8-K and news backtests; conclusions unchanged, 8-K size bands materially different
 
 **The defect.** The 8-K, news-catalyst and contract-award backtests sized each company as SEC shares
@@ -4201,9 +4397,25 @@ at its next session start (2026-10-09). **Read with the attention-momentum resul
 mechanical screen's base rate is negative at significance. The live sleeve is LLM-judged on top of
 it. Turning entries off is one config value, and is the human's call.
 
-**Not built (increments B and C, designed in the redirect entry below):** the opening-gap screen and 15:50 close rule;
-options in the sleeve; the weekly sleeve-vs-SPY lines. Until C ships, the sleeve's return reads
-from attribution's `aggressive` bucket.
+**Increment C: BUILT AND DEPLOYED the same evening (67ccf3e).** The weekly attribution prints two
+aggressive lines, since inception and over the trailing four weeks. Each gives trades (open), P&L
+on deployed capital, the per-trade mean return and hit rate, and the mean excess vs SPY over each
+trade's OWN window, the same measure item 6 graded, so idle sleeve cash never dilutes it. The
+sleeve is its own bucket, outside every class, alpha line and the book beta. The startup sleeve
+line now shows `aggressive 25%`. Gates: full suite green on a clean clone; new test
+`test_the_weekly_reports_the_sleeve_against_spy_in_its_own_bucket`; the `attribution` command
+ran end to end (exit 0, 445 lines) against a COPY of production data. No prompt changed, so no
+golden replay was needed. The line stays absent until the sleeve's first fill.
+
+**Increment B: NOT built, held for the human.** It has two parts:
+1. **`opening_gap` screen and the 15:50 ET close rule.** This is the live counterpart of item 3's
+   S1, which measured −34.8% CAGR net and +8.9% gross of ALL costs, against SPY's +17.3%.
+   Building a live source on a measured-negative base rate is the human's call.
+2. **Options in the aggressive sleeve.** This needs a sleeve field on option orders and
+   per-sleeve premium accounting in the gate (today the 20% aggregate and 5% short-dated pools
+   are judged-sleeve pools). It also needs two design choices. Proposed defaults: premium at risk
+   = the 2% risk budget, not halved, because the premium is the stop; and the judged option exits
+   (forced pre-expiry close, T−1 or T−5) without reviews. Ready to build on a go.
 
 ### ATTENTION-MOMENTUM BACKTEST — RESULT (2026-10-08 18:17 UTC, item 6, the pre-registered run): criterion NOT MET; the mechanical screen loses to SPY with the CI excluding zero
 
