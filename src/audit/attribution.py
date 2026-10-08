@@ -390,6 +390,136 @@ class BaselineAttribution:
 
 
 @dataclass(frozen=True, slots=True)
+class AggressiveTrade:
+    """One aggressive-sleeve position: cost, what it is worth now (proceeds
+    plus the mark on what is held), and SPY over the trade's OWN window."""
+
+    symbol: str
+    opened: datetime
+    #: The last sell fill when the position is flat; None while held.
+    closed: Optional[datetime]
+    cost: Decimal
+    #: proceeds + open units x mark - cost; None when units are held and no
+    #: mark exists (absent, never guessed).
+    pnl: Optional[Decimal]
+    #: SPY's return over [opened, closed or the report date], percent.
+    spy_return_pct: Optional[Decimal]
+
+    @property
+    def return_pct(self) -> Optional[Decimal]:
+        if self.pnl is None or self.cost <= ZERO:
+            return None
+        return (self.pnl / self.cost * 100).quantize(CENTS)
+
+    @property
+    def excess_pct(self) -> Optional[Decimal]:
+        ret = self.return_pct
+        if ret is None or self.spy_return_pct is None:
+            return None
+        return ret - self.spy_return_pct
+
+
+@dataclass(frozen=True, slots=True)
+class AggressiveAttribution:
+    """The aggressive sleeve's own lines (risk-on redirect, human ruling
+    2026-10-08, increment C): its return against SPY since inception and over
+    the trailing four weeks. Its own bucket — partitioned out of every judged
+    class, the alpha lines and the book beta before they are computed. The
+    vs-SPY read is per trade over each trade's own window (the same measure
+    the item-6 backtest graded), so idle sleeve cash never dilutes it and a
+    rising index never reads as the sleeve earning."""
+
+    trades: tuple[AggressiveTrade, ...]
+    generated_at: datetime
+    #: Trailing window for the second line, days.
+    recent_days: int = 28
+
+    @staticmethod
+    def _line(trades: tuple[AggressiveTrade, ...]) -> str:
+        if not trades:
+            return "no trades"
+        held = sum(1 for t in trades if t.closed is None)
+        cost = sum((t.cost for t in trades), ZERO)
+        priced = [t for t in trades if t.pnl is not None]
+        pnl = sum((t.pnl for t in priced), ZERO)  # type: ignore[misc]
+        body = f"{len(trades)} trades ({held} open)"
+        if priced:
+            on = sum((t.cost for t in priced), ZERO)
+            pct = (pnl / on * 100).quantize(CENTS) if on > ZERO else None
+            body += f": P&L {pnl:+.2f} on {cost:.2f} deployed" + (f" ({pct:+.2f}%)" if pct is not None else "")
+        if len(priced) < len(trades):
+            body += f"; {len(trades) - len(priced)} unpriced (no mark)"
+        rets = [t.return_pct for t in trades if t.return_pct is not None]
+        if rets:
+            mean = (sum(rets, ZERO) / len(rets)).quantize(CENTS)
+            wins = sum(1 for r in rets if r > ZERO)
+            body += f"; per trade mean {mean:+.2f}%, hit {100 * wins // len(rets)}%"
+        excess = [t.excess_pct for t in trades if t.excess_pct is not None]
+        if excess:
+            mean_ex = (sum(excess, ZERO) / len(excess)).quantize(CENTS)
+            body += f"; vs SPY over each trade's own window {mean_ex:+.2f}% (n={len(excess)})"
+        return body
+
+    def summary_lines(self) -> tuple[str, str]:
+        since = self.generated_at - timedelta(days=self.recent_days)
+        recent = tuple(t for t in self.trades if t.opened >= since)
+        return (
+            f"aggressive (redirect 2026-10-08, fixed 2% risk): since inception "
+            f"{self._line(self.trades)} — its own bucket, EXCLUDED from every "
+            f"alpha line and from the book beta",
+            f"aggressive, trailing {self.recent_days // 7} weeks (opened since "
+            f"{since.date()}): {self._line(recent)}",
+        )
+
+
+def _aggressive_attribution(
+    trails: list[AuditTrail],
+    generated_at: datetime,
+    price_on=None,
+) -> Optional[AggressiveAttribution]:
+    """Since inception: every aggressive trail with a buy fill."""
+    rows: list[AggressiveTrade] = []
+
+    def close_near(symbol: str, when: datetime) -> Optional[Decimal]:
+        if price_on is None:
+            return None
+        for days_back in (0, 1, 2, 4, 6):
+            price = price_on(symbol, when - timedelta(days=days_back))
+            if price is not None:
+                return price
+        return None
+
+    for trail in trails:
+        buys = [f for f in trail.fills if f.side == "buy"]
+        if not buys:
+            continue
+        symbol = str((trail.decision.gate.order or {}).get("symbol") or "?")
+        cost = sum((f.filled_value for f in buys), ZERO)
+        units = sum((f.filled_quantity for f in buys), ZERO)
+        sells = [f for f in trail.fills if f.side != "buy"]
+        proceeds = sum((f.filled_value for f in sells), ZERO)
+        units -= sum((f.filled_quantity for f in sells), ZERO)
+        opened = min(f.recorded_at for f in buys)
+        closed = max(f.recorded_at for f in sells) if sells and units <= ZERO else None
+        if units > ZERO:
+            mark = close_near(symbol, generated_at - timedelta(days=1))
+            pnl = (proceeds + units * mark - cost).quantize(CENTS) if mark is not None else None
+        else:
+            pnl = (proceeds - cost).quantize(CENTS)
+        spy_start = close_near("SPY", opened - timedelta(days=1))
+        spy_end = close_near("SPY", closed or (generated_at - timedelta(days=1)))
+        spy = (
+            ((spy_end / spy_start - 1) * 100).quantize(CENTS)
+            if spy_start and spy_end and spy_start > ZERO
+            else None
+        )
+        rows.append(AggressiveTrade(symbol, opened, closed, cost, pnl, spy))
+    if not rows:
+        return None
+    return AggressiveAttribution(tuple(sorted(rows, key=lambda r: r.opened)), generated_at)
+
+
+@dataclass(frozen=True, slots=True)
 class CashManagementAttribution:
     """The sweep's own line (ruling 2026-09-02): what parked cash earned.
 
@@ -628,6 +758,9 @@ class AttributionReport:
     #: The baseline market-beta sleeve's own line (ruling 2026-09-18); None
     #: until its first buy fills. Never in by_class, never in an alpha line.
     baseline: Optional[BaselineAttribution] = None
+    #: The aggressive sleeve's own lines (redirect 2026-10-08, increment C);
+    #: None until its first buy fills. Never in by_class or an alpha line.
+    aggressive: Optional[AggressiveAttribution] = None
     #: Judged-sleeve P&L grouped by exit reason (2026-08-31).
     by_exit_reason: tuple["ExitReasonAttribution", ...] = ()
     #: The options doors and theme->ETF expressions (ruling 2026-09-15), since
@@ -932,6 +1065,9 @@ class AttributionReport:
             lines.append(f"  {self.cash_management.summary()}")
         if self.baseline is not None:
             lines.append(f"  {self.baseline.summary()}")
+        if self.aggressive is not None:
+            for line in self.aggressive.summary_lines():
+                lines.append(f"  {line}")
 
         if self.flagged_classes:
             lines.extend(
@@ -1269,6 +1405,9 @@ def build_attribution(
     baseline_trails = [
         t for t in trails if t.decision.sizing.strategy == "baseline"
     ]
+    aggressive_trails = [
+        t for t in trails if t.decision.sizing.strategy == "aggressive"
+    ]
     trails = [
         t
         for t in trails
@@ -1504,6 +1643,7 @@ def build_attribution(
         mechanical=mechanical,
         cash_management=cash_management,
         baseline=baseline,
+        aggressive=_aggressive_attribution(aggressive_trails, generated_at, price_on),
         feed_cost_detail=feed_cost_detail,
         scalar_forgone=scalar_forgone,
         scalar_scaled_entries=scalar_scaled_entries,

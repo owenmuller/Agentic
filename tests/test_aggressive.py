@@ -380,3 +380,42 @@ def test_a_restart_wakes_the_position_up_in_its_own_sleeve(tmp_path, limits, sig
     assert restarted.gate.state.position(("equity", "NUE")) is None
     assert [p.key for p in restarted.exits.tracked] == [("aggressive", "NUE")]
     assert restarted.exits.judged.tracked == ()
+
+
+def test_the_weekly_reports_the_sleeve_against_spy_in_its_own_bucket(tmp_path, limits, signals_config, research_config):
+    """Increment C: the sleeve's own lines - since inception and trailing four
+    weeks, per-trade return against SPY over each trade's own window - and not
+    a cent of it in a judged class or the judged total."""
+    from audit.attribution import build_attribution
+    from datetime import timedelta
+
+    prices = MutablePrices(NUE=str(QUOTE))
+    started = _session(tmp_path, limits, signals_config, research_config, prices=prices, broker=FakeBroker(), llm=RoutingLLM())
+    started.loop.tick()
+    prices.set("NUE", "160.00")
+    started.loop.tick()
+    prices.set("NUE", "143.00")
+    started.loop.tick()
+    started.loop.tick()
+    trail = started.audit.trail("dec-1")
+    cost = sum(f.filled_value for f in trail.fills if f.side == "buy")
+    proceeds = sum(f.filled_value for f in trail.fills if f.side != "buy")
+    assert cost > 0 and proceeds > 0
+    generated = max(f.recorded_at for f in trail.fills) + timedelta(days=2)
+    report = build_attribution(
+        started.audit.trails(), generated_at=generated,
+        price_on=lambda s, d: Decimal("500") if s == "SPY" else None,  # SPY flat: excess == return
+    )
+    assert report.by_class == {}
+    assert report.total_pnl == Decimal("0")
+    assert report.aggressive is not None
+    (row,) = report.aggressive.trades
+    assert row.symbol == "NUE" and row.closed is not None
+    assert row.pnl == (proceeds - cost).quantize(Decimal("0.01"))
+    assert row.spy_return_pct == Decimal("0.00")
+    assert row.excess_pct == row.return_pct
+    rendered = report.render()
+    assert "aggressive (redirect 2026-10-08, fixed 2% risk): since inception 1 trades (0 open)" in rendered
+    assert "vs SPY over each trade's own window" in rendered
+    assert "aggressive, trailing 4 weeks" in rendered
+    assert "EXCLUDED from every alpha line" in rendered
