@@ -4102,6 +4102,83 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### MERGER-ARBITRAGE BACKTEST — RESULT (2026-10-08 07:13 UTC, the pre-registered run on the corrected universe): criterion NOT MET; the spread premium is real but it is a beat-cash return, not a beat-SPY one
+
+**Universe and coverage (check 2 first, because it frames everything):** 3,082 single-filer
+DEFM14A / SC 14D9 filings 2016-01..2026-10 (228–345 a year). Ticker from the EDGAR index 825,
+recovered from the filing's cover text 685, **no ticker recoverable 1,572 (51%)**. Of those 1,572,
+**1,001 stopped filing within 9 months of the proxy (absorbed — completed or taken private), 457
+kept filing a year on (broke, or the filer was the surviving company), 114 indeterminate.** So the
+measured set still under-represents COMPLETED deals (completions have short holds and small
+positive returns, so the missing mass would raise the completion share and the hit rate, lower
+the unresolved share, and leave the annualized level roughly where it is). Excluded in addition:
+acquirer-side proxies 452, equity < $100M or unknown 237, price < $1 23, still inside their 12
+months 103. **Measured: 772 deals.** Measured break rate **2.7%** against the 5–10% historical
+reference — low for two reasons: breaks that were never announced with the registered phrases sit
+in "unresolved" (294 deals held to the 12-month cap), and the dropped no-ticker set is
+completion-heavy, which cuts the other way. The by-source split: index-ticker deals annualized
+net ROC +2.14% (excess −13.3%), text-recovered deals +4.36% (excess −7.7%).
+
+| headline (772 deals, entry next open after announcement, exit at delisting / termination / 12-month cap, long-only, net of 15bp) | value |
+|---|---|
+| completed / break / unresolved | 457 (59%) / 21 (3%) / 294 (38%) |
+| net return per deal: mean / median / hit | +2.02% / +1.40% / 67% |
+| median hold | 178 days |
+| **annualized net return on capital** (capital-day weighted) | **+3.37%** (per-deal annualized median +4.85%) |
+| **annualized net excess vs SPY** | **−10.18%**, 5,000-draw bootstrap CI **[−15.0%, −4.8%]**, P(≤ 0) = 1.000 |
+| worst year (annualized net excess) | **−27.65% (2023)**; 7 of 11 years below −10% |
+| breaks: loss mean / median / p10 / worst | −25.4% / −19.6% / −68.3% / −72.3%; 81% of breaks lose |
+
+By year, annualized net excess: 2016 −19.1, 2017 −13.8, 2018 −19.9, 2019 −24.0, 2020 −13.7, 2021
++7.3, 2022 −10.5, 2023 −27.7, 2024 −7.7, 2025 −4.8, 2026 +10.8 (n 32–157). **Criterion (annualized
+net excess ≥ +3% with the bootstrap lower bound > 0; no year below −10%): NOT MET on all three
+legs.** Read: the deal spread is captured — cash deals complete 75% of the time at a median +1.39%
+in 126 days, and the 0–5% entry-spread bands complete 93% with hit rates of 88–92% — but that is
+a ~3–5% annualized return on capital, i.e. a risk premium of T-bill-plus size, and the registered
+benchmark is SPY over a decade that returned ~13% a year. Long-only, unhedged, the strategy cannot
+beat SPY; it would beat cash. A cash or T-bill benchmark, or a hedged stock-deal leg, would be a
+different, unregistered criterion and is not claimed here.
+
+**By consideration:** cash n=446 (75% complete, ROC +2.3%, excess −9.0%); stock n=109 (37% complete,
+breaks 7%, mean +10.8% on a +1.15% median — a right tail of acquirer rallies, excess 0.0%); mixed
+n=136 (ROC +6.2%); unknown n=81 (ROC −12.2%).
+
+**Item 2c — do stamped determinants sort outcomes?**
+
+| stamp | YES: n, complete, breaks, ann. ROC | NO: n, complete, breaks, ann. ROC |
+|---|---|---|
+| HSR mentioned at announcement | 527, 66%, 3%, +4.9% | 245, 44%, 2%, +0.9% |
+| second request within the window | 83, 59%, **6%**, +3.1% | 689, 59%, 2%, +3.4% |
+| CFIUS mentioned | 61, 64%, 2%, **−7.2%** (mean −4.8%) | 711, 59%, 3%, +4.4% |
+| "financing condition" text present | 308, 80%, 1%, +9.8% | 464, 45%, 4%, +0.6% |
+| unsolicited / hostile language | 465, 63%, 2%, +2.6% | 307, 53%, 4%, +4.5% |
+
+Caveat on the financing stamp: it is text presence, and the phrase almost always appears as "NOT
+subject to a financing condition" — the YES group is the well-documented, fully-financed deal, which
+is why it completes 80% of the time. A real stamp needs the negation parsed. The **spread at entry**
+is the stamp that sorts (cash deals with a parsed price, n=364):
+
+| entry spread | n | complete | breaks | net ret mean / median | ann. ROC | ann. excess vs SPY |
+|---|---|---|---|---|---|---|
+| < 0% (above the offer) | 32 | 59% | 3% | −6.4% / −0.9% | −11.2% | −15.5% |
+| 0–2% | 98 | **93%** | 0% | +1.1% / +1.2% | +3.2% | −9.1% |
+| 2–5% | 82 | 93% | 2% | +0.5% / +2.2% | +1.4% | −10.6% |
+| 5–10% | 38 | 79% | 0% | +1.2% / +1.2% | +2.5% | −7.8% |
+| 10–20% | 52 | 77% | 2% | +3.7% / +2.5% | +7.5% | −3.1% |
+| **> 20%** | 62 | 69% | **6%** | +8.2% / +2.6% | **+17.1%** | **+2.9%** |
+
+Wide spreads predict both breaks (6% vs 0%) and return (the classic gradient): the only band with
+a positive excess vs SPY is > 20% (n=62, 5 years' worth of ~12 deals a year), and that is where a
+judged filter would have a job — sorting the wide-spread deals' break risk (regulatory, financing,
+hostile) rather than the whole flow. On this evidence that is a 60-deals-a-decade niche with a
+−72% worst case, not a sleeve.
+
+**Volume (item 2d):** 103 targets trading inside their 12-month window today; 85 proxies/14D9 filed
+in the last 120 days; ~20–25 new definitive deals a month in the universe. Capital at a typical
+judged position ($1.1–2.75k) over the median 178-day hold: $113k–$283k if every open deal were
+held — far more than the sleeve; at 15–25 positions it is $17–69k, i.e. the whole judged sleeve for
+a ~3–5% annualized return. Outputs `~/Agentic/data/marb_backtest_2026-10-08.{txt,deals.jsonl,facts.jsonl}`.
+
 ### RULINGS 2026-10-07 (news and direction) — ITEM 3: the OCT-15 SCORECARD (one table) and the retirement PROPOSAL
 
 Item 1 recorded as ruled: across congressional, Form 4, 8-K, contract awards, PDUFA and news the
@@ -4252,8 +4329,9 @@ session start.
 
 **Backtests, all DONE (results on disk, recorded above):** 8-K items 1.01/8.01 — no widening, cap
 stays 6, size-matched restatement confirms; PDUFA — no source; news catalysts — no source (intraday
-leg fixed as a data correction and recorded before/after). No research job is running; the
-`research-*` user services are inactive. One status command, unchanged:
+leg fixed as a data correction and recorded before/after); **merger arbitrage (2026-10-08 07:13
+UTC) — criterion not met: +3.4% annualized net ROC, −10.2% vs SPY, a beat-cash return.** No research
+job is running; the `research-*` user services are inactive. One status command, unchanged:
 `ssh agentic@137.184.59.200 'cat ~/Agentic/data/item6_backtests.log; systemctl --user list-units --type=service --no-pager | grep research; ls ~/Agentic/data/*2026-10-07*.txt'`
 
 **Waiting on the human:** (1) 2 GB swap — root commands in the item-1 entry; (2) the backup push
