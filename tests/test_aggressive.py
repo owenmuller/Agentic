@@ -475,3 +475,34 @@ def test_a_stated_target_below_the_floor_is_refused_and_above_it_trades(tmp_path
     assert started.loop.tick().processed[0].rejection.code == "insufficient_reward_risk"
     started = _session(tmp_path / "b", limits, signals_config, research_config)
     assert started.loop.tick().processed[0].traded
+
+
+# ================================================================================
+# Day-trade counting at the opening order, any account type (ruling 2026-10-09, D)
+# ================================================================================
+
+
+@pytest.mark.parametrize(
+    "cash, used, sleeve, refused",
+    [
+        ("20000", 3, "aggressive", True),    # under $25K, the fourth would make a pattern day trader
+        ("20000", 2, "aggressive", False),   # under $25K, room for one more
+        ("100000", 3, "aggressive", False),  # above the threshold the rule is idle
+        ("20000", 3, "equity", False),       # the judged sleeve does not day trade; its rule is unchanged
+    ],
+)
+def test_the_sleeve_that_may_day_trade_is_held_to_the_count_at_the_open(limits, cash, used, sleeve, refused):
+    gate = _gate(limits, cash=cash)
+    today = FakeClock()().date()
+    gate.state.day_trades.extend([today] * used)
+    decision = gate.submit(_buy("NUE", Decimal("1"), sleeve=sleeve))
+    code = getattr(decision, "code", None)
+    assert (code is RejectionCode.PDT_LIMIT_REACHED) is refused, decision
+
+
+def test_day_trades_outside_the_window_do_not_count(limits):
+    gate = _gate(limits, cash="20000")
+    today = FakeClock()().date()
+    gate.state.day_trades.extend([today - timedelta(days=10)] * 5)
+    decision = gate.submit(_buy("NUE", Decimal("1")))
+    assert getattr(decision, "code", None) is not RejectionCode.PDT_LIMIT_REACHED

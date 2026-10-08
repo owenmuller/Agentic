@@ -420,6 +420,28 @@ class RiskGate:
                     limit=state.settled_buying_power,
                     observed=cost,
                 )
+            # Day-trade counting for the sleeve that may day trade (human ruling
+            # 2026-10-09, item D): ANY account type, refused at the OPENING
+            # order - never at the close, which stays risk-reducing. FINRA's
+            # rule binds sub-$25K margin accounts; applying it to every account
+            # type is the conservative reading (Constraint #6), idle above the
+            # threshold. The count is the gate's own ledger of closes that
+            # completed a same-day round trip.
+            pdt = limits.pdt
+            if state.nav < pdt.equity_threshold_usd:
+                used = state.day_trades_in_window(today, pdt.window_business_days)
+                if used >= pdt.max_day_trades_per_window:
+                    return Rejection(
+                        code=RejectionCode.PDT_LIMIT_REACHED,
+                        message=(
+                            f"aggressive-sleeve opening refused: {used} day trades in the "
+                            f"last {pdt.window_business_days} business days and account "
+                            f"equity {state.nav} is below ${pdt.equity_threshold_usd}; a "
+                            f"fourth would make a pattern day trader"
+                        ),
+                        limit=Decimal(pdt.max_day_trades_per_window),
+                        observed=Decimal(used),
+                    )
             held_names = {
                 p.key
                 for p in state.positions.values()
