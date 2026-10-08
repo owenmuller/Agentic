@@ -4102,6 +4102,64 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### B — SPY INTRADAY MOMENTUM, RESULT (2026-10-09, the pre-registered run): reproduction gate PASSED; binding long-only test NOT MET — the edge did not survive publication
+
+**Reproduction first.** B1 is the paper's volatility-targeted long/short version: Alpaca SIP
+1-minute bars, 2016-01-04 → 2026-10-07, rules and costs exactly as published.
+
+| year | ours (B1) | the paper's own table |
+|---|---|---|
+| 2016 | −15.3% | −12.8% |
+| 2017 | −10.6% | −6.9% |
+| 2018 | +59.6% | +61.1% |
+| 2019 | +8.7% | +6.9% |
+| 2020 | +23.7% | +26.8% |
+| 2021 | +33.4% | +34.8% |
+| 2022 | +23.3% | +24.4% |
+| 2023 | +38.3% | +37.2% |
+
+**REPRODUCTION GATE: PASSED.** Signs agree in 8 of 8 years. 2016–2023 runs at +17.8%/yr against
+the paper's +19.2%. In-sample (2016-01 → 2024-04) B1 earns +18.5%/yr with a Sharpe of 1.24 and a
+−28.3% max drawdown. Post-publication, our months track the authors' own published months: 2024-06
++1.5 vs +1.6; 07 +8.2 vs +8.2; 08 −2.4 vs −2.8; 09 +4.3 vs +4.1; 10 +7.5 vs +6.7; 11 −2.8 vs
+−2.6; 12 +4.6 vs +5.7; 2025-01 −1.1 vs −1.2. May differs (−1.1 vs −4.3), because our window
+starts 2024-05-13, the first session after publication.
+
+**Post-publication, 2024-05-13 → 2026-10-07:**
+
+| version | CAGR | Sharpe | max DD | note |
+|---|---|---|---|---|
+| B1, published, levered to 4×, long/short | **+1.88%** | 0.20 | −21.7% | 2025 −1.8%, 2026 −11.9% |
+| B2, published, 1×, long/short | +0.34% | 0.09 | −9.9% | |
+| **B3, long-only, SH for shorts, cash account — BINDING** | **−2.20%** | **−0.48** | −9.0% | 2,499 same-day re-entries skipped (unsettled funds) |
+| B3u, same-day recycling allowed | −3.00% | −0.51 | −13.0% | settlement is not what fails it |
+| B3 at 2× slippage | −2.73% | −0.61 | −9.6% | |
+| SPY total return | **+19.58%** | **1.20** | −18.8% | |
+
+**SUCCESS CRITERION (B3, post-publication: net CAGR above SPY's AND Sharpe above SPY's): NOT
+MET.** It misses by about 22 points of CAGR.
+
+**Reading.** The replication is faithful, and the published long/short edge is real in-sample.
+It has not persisted. Even the paper's own levered version earns +1.9%/yr after publication
+against +18.5% before, and it is losing in 2026. The long-only, cash-account form is the only one
+this account can hold (no shorting, no margin), and it was weak even in-sample: +1.5%/yr, Sharpe
+0.30. Buying SH below the lower band is a poorer short than a short, and the cash rule removes
+most re-entries. Nothing here passes.
+
+**D, for B — not taken live; for the human.** D says to run a strategy live once it reproduces
+in-sample, and B does. Ruling 1 says nothing is traded "until a source passes", and B's binding
+test failed. Constraint #6 resolves the conflict toward fewer trades, so **B is not live**. If you
+want it run live anyway, as a measurement of execution against the backtest, that is one sentence.
+
+**PDT, built (5a5ba7f).** The gate refuses an aggressive-sleeve OPENING once three day trades sit
+in five business days and equity is under $25K, on any account type. It never refuses at the
+close, which stays risk-reducing. At today's ~$100K it is idle. How PDT applies to this account
+is in the D pre-registration: cash-type, multiplier 1, ~$100K. The FINRA rule would not bind even
+a margin account at this equity. Settlement (T+1) is the live constraint, and the gate enforces it.
+
+Files: `~/research-data/spy_momentum_2026-10-09.{txt,log}`, with 1-minute bars cached under
+`.bars/`. Script: `~/scratch/spy_momentum_bt.py`.
+
 ### RULINGS 2026-10-09 — items 1–7, as done (deployed 3b9e4a5 on 2026-10-08 at 19:20 ET, outside the pre-open hour)
 
 1. **Aggressive entries OFF — DONE.** `risk_limits.yaml aggressive_sleeve.entries_enabled: false`.
