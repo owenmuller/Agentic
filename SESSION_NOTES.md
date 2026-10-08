@@ -4125,6 +4125,27 @@ the judged arm cannot win on information speed.
 | PDUFA calendar | — | — | — | — | — | — | backtest: criterion not met | retired before build |
 | news catalysts | — | — | — | — | — | — | backtest: intraday −0.25, t+5 −0.20; no drift | retired before build |
 
+**Check 1 (2026-10-08): the congressional +5.00% at 20d, split by FINAL verdict** (`cong_split.py`;
+83 researched rows: decline 80, long 2, boundary/vote-overturned 1; clustered bootstrap by ticker;
+QQQ-relative = raw return − QQQ over the identical window; mega-cap tech = a fixed list of 38 names):
+
+| rows | n (5d) | 5d vs SPY | 5d vs QQQ | n (20d) | 20d vs SPY | 20d vs QQQ |
+|---|---|---|---|---|---|---|
+| ALL researched | 80 | −0.86 (hit 35%) CI [−2.02, +0.09] | −1.54 CI [−2.92, −0.33] | 54 | **+5.00, med +1.64, hit 57%, CI [−2.94, +12.12]** | +2.85, med −1.55, hit 43%, CI [−5.66, +10.56] |
+| **decline** | 77 | −1.13 CI [−2.27, −0.10] | −1.79 CI [−3.20, −0.62] | **52** | **+4.64, med +1.64, hit 58%, CI [−2.83, +11.91]** | +2.51, med −1.55, hit 42%, CI [−5.47, +10.51] |
+| long | 2 | +8.71 | +8.92 | 2 | +14.52 (INTC +35.2, FITB −6.2) | +11.83 |
+| mega-cap tech rows (35% of researched) | 29 | −0.22 | −0.78 | 23 | **+7.23, med +3.47, hit 74%, CI [+1.13, +12.95]** | +5.33, med +1.81, CI [−1.05, +11.47] |
+| ex mega-cap tech | 51 | −1.23 | −1.96 | 31 | +3.35, med −0.31, hit 45%, CI [−8.28, +14.09] | +1.01, med −4.11, hit 32% |
+
+**Said plainly: the +5% is the DECLINES.** 52 of the 54 rows with a 20d mark were declined and
+those names rose +4.64% vs SPY afterwards; the two longs are one INTC (+35%) and one FITB (−6%).
+Three qualifications before "anti-skill": the decline mean is not significant (CI straddles zero,
+median +1.64); 23 of the 54 are mega-cap tech and carry most of it (+7.23% vs SPY, +5.33% vs QQQ,
+median vs QQQ +1.81 — a chunk is the period's tech beta, not stock selection); ex-mega-tech the
+median is negative vs both benchmarks. So this is not evidence the source works; it is weak evidence
+that the judge declined names that went up in a strong tech tape, with n=52 and a wide interval.
+The 10-27 read decides; the retirement proposal below is unchanged by this.
+
 **Retirement PROPOSAL (proposal only, for the 10-15 review):** move **congressional** and **Form 4**
 research to **measurement-only rows at research cap 0** (every candidate still listed, prefiltered,
 stamped and graded by the forward engine; no LLM pass; the mechanical control arm keeps copying
@@ -4197,6 +4218,30 @@ syslog line "off-box push not configured (no /home/agentic/.backup_env); on-box 
   and at the measured median holding period.
 - Memory-capped, detached, restart-safe (per-deal cache). Script `~/scratch/marb_backtest.py`,
   outputs `~/Agentic/data/marb_backtest_2026-10-08.*`.
+
+**Corrections made BEFORE the registered run completed (2026-10-08 02:45–03:05 UTC; the rule,
+entry, exit, criterion and determinants above are unchanged):**
+1. Two smoke runs (2023-10..2024-03, 30 deals) showed: DEFM14A is also filed by ACQUIRERS voting on a
+   share issuance → the target is identified from the proxy's and announcement's wording (target
+   cues vs acquirer cues; an unresolved DEFM14A filer with no target cue is excluded as unverified);
+   terminations are announced under 8.01 or in press releases, not item 1.02, and the loose phrase
+   "termination of the merger agreement" appears in outside-date amendments of deals that then
+   CLOSE (HA, AXNX, HAYN, JNPR were marked breaks) → break detection uses tight phrases
+   ("terminated the merger agreement", "mutually agreed to terminate", …) and **delisting inside the
+   window always wins (completed)**; partial tenders (SC 14D9 without "all outstanding shares") are
+   excluded; par values ("$0.01 per share") no longer parse as deal prices.
+2. **Survivorship (check 2, found by probe 03:00 UTC and fixed before the run):** EDGAR full-text
+   search attaches a ticker ONLY to current listings — the definitive proxies of Xilinx, Twitter
+   and Pioneer show no ticker; Hawaiian and Juniper (recently closed) still do. The first launch
+   required an index ticker and would have DROPPED most completed targets: 826 deals 2016–26
+   against ~3× that once every single-filer proxy is kept. Direction of the bias in the dropped
+   run: fewer completions, more breaks/unresolved, headline annualized excess biased DOWN and the
+   break rate biased UP. The run was stopped at "deals processed 0" and relaunched on every
+   single-filer DEFM14A / SC 14D9 with the ticker taken from the index when present, else from the
+   filing's own cover text ("under the symbol 'XLNX'", "(NASDAQ: XLNX)"); `ticker_source` is stamped
+   and the report prints results by source, the no-ticker remainder, and for that remainder whether
+   the filer stopped filing within 9 months of its proxy (absorbed) or kept filing (broke / was the
+   survivor), beside the measured break rate against the 5–10% reference.
 
 ### MORNING SUMMARY 2026-10-08 — everything landed; nothing running; what waits on the human
 
