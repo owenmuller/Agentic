@@ -4230,6 +4230,44 @@ All four backtests run under the capped user service, detached, restart-safe; ea
 `~/Agentic/data/<name>_2026-10-08.*`. Order of launch: 6 (uses harvested data), then 2 (cheapest),
 then 3, then 1 (the options data pull is the heaviest).
 
+**AMENDMENTS 2026-10-08 (human, before any launch; the registrations above read as amended):**
+1. **Options (item 1):** (a) pre-2024 single-name IV proxy = the name's 30-day realized vol × SPY's
+   contemporaneous implied-to-realized ratio (VIX / SPY 30-day realized), labelled synthetic; the
+   2024+ real chains are the BINDING single-name test. (b) a put-skew adjustment for 30-delta puts,
+   calibrated from the 2024+ real chains (skew = 30-delta put IV / ATM IV by name and DTE bucket),
+   applied to the synthetic segment. (c) fills at mid minus a share of the quoted spread calibrated
+   from the real chains (median fill-vs-mid by moneyness bucket), never at mid. (d) the synthetic
+   SPY put-write leg is validated against the CBOE PutWrite index (PUT) over the same years and the
+   tracking gap reported.
+2. **Leveraged trend (item 2):** extended with synthetic daily-rebalanced 2× and 3× SPY from 1993
+   (SPY total return × leverage, minus the ETFs' expense ratios 0.89%/0.91% and a financing cost at
+   the 3-month T-bill + 50bp on the borrowed fraction, daily), real SSO/UPRO where they exist
+   (2006/2009→), synthetic-vs-real tracking gap reported; results by regime including 2000–02,
+   2008 and 2020; criterion unchanged, evaluated on the full span. Data for 1993→: SPY daily from
+   Alpaca covers 2016→ only, so the 1993–2015 span uses Stooq's free SPY daily history (dividends
+   excluded there — flagged; the real-ETF overlap checks the gap) and the VIX from CBOE's full
+   history.
+3. **Intraday (item 3) and the item-4 gap screen — PDT and settlement, as they apply:** the paper
+   account is `multiplier 1`, shorting disabled, options level 3, equity ~$100k, with
+   `pattern_day_trader` and `daytrade_count` unset — i.e. a CASH-type account: **PDT does not
+   apply** (PDT is a margin-account rule, and even in a margin account it would not bind above
+   $25k equity). What applies to a cash account is **settlement**: a sale's proceeds settle T+1 and
+   may not fund a purchase before then (buying with unsettled funds and selling before settlement is
+   a good-faith violation; Alpaca restricts live cash accounts after three in a year). The intended
+   live venue is Alpaca live, same account type, same rules. **What the gate enforces today:** PDT
+   counting when `account_type: margin` and NAV < $25k (`pdt` block, `_check_pdt`, unchanged); the
+   reserve-then-settle cash model asserts never-negative against `cash − reserved_cash`, but
+   `record_fill` books sale proceeds straight into `cash` — **no T+1 bucket**, so a same-day
+   re-use of proceeds would pass the gate and be caught only by the venue. **Added to increment A:**
+   an `unsettled_proceeds` ledger in `risk_gate.state` — sale proceeds settle on the next business
+   day and are excluded from buying power until then; the aggressive sleeve's daily turnover is
+   therefore bounded by settled cash, which is the venue's own rule. Property-tested like the rest
+   of the gate. The item-3 backtest stays as registered (its 1%-risk sizing is per trade; capital
+   reuse within a day is not assumed).
+4. **Sleeve size:** aggressive sleeve **25% of NAV** (judged 55 → 30; mechanical 15, baseline 30
+   unchanged), **risk budget 2% of the sleeve per trade** ($500 on $25k). The judged sizing bands
+   read off a 30% sleeve from the deploy (0.6 / 1.5 / 3.0% of NAV at 2/5/10% of sleeve).
+
 ### MERGER-ARBITRAGE BACKTEST — RESULT (2026-10-08 07:13 UTC, the pre-registered run on the corrected universe): criterion NOT MET; the spread premium is real but it is a beat-cash return, not a beat-SPY one
 
 **Universe and coverage (check 2 first, because it frames everything):** 3,082 single-filer
