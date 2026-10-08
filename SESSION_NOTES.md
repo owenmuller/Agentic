@@ -4102,6 +4102,44 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### NEWS-CATALYST BACKTEST, STAGE A — RESULT (2026-10-08 00:41 UTC, the pre-registered run): the next-open path has no signal; the intraday leg needed a fix
+
+**The run:** 2015-01..2026-10, **2,225,683 items read, 49,795 candidates (2.2%), 57,363 ticker-day
+events, 55,931 measured.** Tiers: research (≥ 1% of cap, issuer named) **19,735**, measure 3,765,
+below_floor 2,495, not_named 7,069 (the issuer-must-be-named amendment), unsized 22,794 (no SEC CIK
+for the ticker: delisted names, ADRs, ETFs, crypto tickers), no_bars 73. **Per session day: 16.8
+events, 5.9 in the research tier**; 20% of events publish in session. Excess vs SPY, points:
+
+| research tier (19,735 events, 3,602 tickers) | mean | median | hit | n |
+|---|---|---|---|---|
+| gap: next open vs reference close (in-session) | +0.06 | +0.06 | 53% | 2,909 |
+| next-open → t+1 | −0.10 | −0.11 | 49% | 19,704 |
+| **next-open → t+5** | **−0.20** | −0.24 | 48% | 19,653 |
+| next-open → t+20 | −0.63 | −0.77 | 46% | 19,431 |
+| t+5 clustered (3,596 tickers) | SE 0.10, t −2.07, **CI [−0.38, −0.01]** | | | |
+| t+5 in-session only / out-of-session | −0.38 / −0.17 | −0.34 / −0.22 | 46% / 48% | 2,891 / 16,762 |
+
+By year, t+5: 2016 +0.66, 2017 +0.39, 2018 +0.31, 2019 +0.37, 2020 +0.34, 2021 +0.47, 2022 +0.85,
+2023 +0.39, 2024 +0.19, **2025 −0.78, 2026 −2.00** — positive for eight years and sharply negative
+for the last two (n=3,374 and 3,362, the largest years). Measure tier (3,765): t+5 +0.04, CI
+[−0.43, +0.60]. **The pre-registered criterion (research tier next-open → t+5 mean > 0, CI excluding
+0, hit > 50%, net of 15bp > 0) FAILS**: the pooled mean is negative and the recent two years drive
+it. The size-matched secondary leg (below) says whether 2025–26 is the small-cap lag.
+
+**Intraday leg — a defect in the registered run, fixed in a second pass (2026-10-08, before any
+reading):** the 1-minute print at publish was fetched UNADJUSTED while the daily closes are
+split-adjusted, so 345 of 3,526 in-session rows (reverse splits — WKHS, TNXP, PFSA, …) carried
+absurd values: "mean +168 on a median of 0.00". Trimming |x| > 20 gives mean −0.02 / median −0.01 on
+3,138 rows — i.e. about nothing — but the honest number is a refetch: `news_fix.py` re-fetches the
+print at publish split-adjusted for the ticker, SPY and IWM plus the ticker's adjusted close that
+day, recomputes the leg, adds the size-matched daily leg, and writes `.fixed.txt`. Reported below.
+
+**VST check items (registered run; next-open legs not yet due):** 10-02 15:27 ET 'US to Offer $4B
+Loan…' (Bloomberg) — research tier, $4.0B / cap; publish → close +0.59 vs SPY (raw move ran +1.6%
+into the headline and faded), **gap to Monday's open +2.86**; 10-05 12:29 ET 'Vistra Gets $4.2B
+Federal Loan…' — research tier; publish → close −1.05; gap to 10-06 open +4.11. Both moves were in
+the GAP, not in the session that carried the headline — the 10-06 +10.8% day was the Google deal.
+
 ### RULINGS 2026-10-08, 8-K — accepted; and the SIZE-MATCHED BENCHMARK LEG, pre-registered
 
 1. **Accepted and recorded:** no 1.01 or 8.01 widening, the 8-K cap stays at 6, stage B closed.
