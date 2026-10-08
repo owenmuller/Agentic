@@ -53,8 +53,17 @@ def paper_mode(monkeypatch):
 
 
 @pytest.fixture(scope="session")
-def limits():
-    return RiskLimits.load()  # the SHIPPED weights: this file pins the ruling
+def shipped_limits():
+    return RiskLimits.load()  # the SHIPPED config: this file pins the rulings
+
+
+@pytest.fixture(scope="session")
+def limits(shipped_limits):
+    """The shipped caps with the sleeve's entries switched back ON: these tests
+    exercise the sleeve's machinery. The shipped switch - OFF by human ruling
+    2026-10-09 - is pinned in its own tests below."""
+    caps = shipped_limits.aggressive_sleeve.model_copy(update={"entries_enabled": True})
+    return shipped_limits.model_copy(update={"aggressive_sleeve": caps})
 
 
 @pytest.fixture(scope="session")
@@ -74,13 +83,15 @@ def research_config():
 # ================================================================================
 
 
-def test_the_shipped_weights_and_caps_are_as_ruled(limits, signals_config):
-    sleeves = limits.portfolio.sleeves
+def test_the_shipped_weights_and_caps_are_as_ruled(shipped_limits, signals_config):
+    sleeves = shipped_limits.portfolio.sleeves
     assert (sleeves.equity, sleeves.aggressive, sleeves.mechanical, sleeves.baseline, sleeves.prediction) == (
         Decimal("0.30"), Decimal("0.25"), Decimal("0.15"), Decimal("0.30"), Decimal("0.00"),
     )
-    caps = limits.aggressive_sleeve
-    assert caps is not None and caps.entries_enabled
+    caps = shipped_limits.aggressive_sleeve
+    # Entries OFF by human ruling 2026-10-09 (item 1): the attention screen
+    # measured -2.42% vs SPY, CI [-3.38, -1.38]. Exits keep running.
+    assert caps is not None and not caps.entries_enabled
     assert (caps.max_single_position, caps.max_positions, caps.max_daily_deployment, caps.max_sector_exposure) == (
         Decimal("0.25"), 5, Decimal("1.00"), Decimal("0.50"),
     )
@@ -419,3 +430,48 @@ def test_the_weekly_reports_the_sleeve_against_spy_in_its_own_bucket(tmp_path, l
     assert "vs SPY over each trade's own window" in rendered
     assert "aggressive, trailing 4 weeks" in rendered
     assert "EXCLUDED from every alpha line" in rendered
+
+
+
+# ================================================================================
+# Rulings 2026-10-09: entries off (item 1); no target, no trade (item 3)
+# ================================================================================
+
+
+def test_switched_off_the_sleeve_records_candidates_and_pays_for_no_research(tmp_path, shipped_limits, signals_config, research_config):
+    llm = RoutingLLM()
+    started = _session(tmp_path, shipped_limits, signals_config, research_config, llm=llm)
+    report = started.loop.tick()
+    assert report.processed == []
+    (record,) = [r for r in started.audit.stage_rejections() if r.code == "entries_disabled"]
+    assert "aggressive_sleeve.entries_enabled" in record.message
+    assert llm.calls == []  # not a cent of research on a sleeve that cannot buy
+    assert started.gate.state.position(("aggressive", "NUE")) is None
+
+
+def test_switched_off_the_sleeve_parks_no_cash_for_itself(shipped_limits, limits):
+    from orchestrator.sweep import liquidity_buffer
+
+    on = liquidity_buffer(_gate(limits, cash="100000"), limits.cash_management)
+    off = liquidity_buffer(_gate(shipped_limits, cash="100000"), shipped_limits.cash_management)
+    assert on - off == Decimal("100000") * Decimal("0.25")  # the sleeve's full daily cap, no longer parked
+
+
+def test_no_target_no_trade(tmp_path, limits, signals_config, research_config):
+    untargeted = {k: v for k, v in REPORT.items() if k != "target_price"}
+    llm = RoutingLLM(**{REPORT_TOOL_NAME: structured(untargeted)})
+    started = _session(tmp_path, limits, signals_config, research_config, llm=llm)
+    result = started.loop.tick().processed[0]
+    assert not result.traded
+    assert result.rejection.code == "insufficient_reward_risk"
+    assert "requires a stated target" in result.rejection.message
+    assert started.gate.state.position(("aggressive", "NUE")) is None
+
+
+def test_a_stated_target_below_the_floor_is_refused_and_above_it_trades(tmp_path, limits, signals_config, research_config):
+    # QUOTE 140, the screen's stop 10%: a 141 target is reward:risk 0.07, far below the floor.
+    low = RoutingLLM(**{REPORT_TOOL_NAME: structured({**REPORT, "target_price": "141"})})
+    started = _session(tmp_path / "a", limits, signals_config, research_config, llm=low)
+    assert started.loop.tick().processed[0].rejection.code == "insufficient_reward_risk"
+    started = _session(tmp_path / "b", limits, signals_config, research_config)
+    assert started.loop.tick().processed[0].traded

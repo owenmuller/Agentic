@@ -7,6 +7,7 @@ passes through the gate before touching a broker, and no bypass path may exist.
 Nothing reaches a broker without an ``ApprovedOrder``, and only ``RiskGate`` can
 construct one.
 """
+import datasafety  # noqa: F401,E402 - production-data write guard, installed on import (ruling 2026-10-09)
 
 from risk_gate.gate import (
     ApprovedOrder,

@@ -15,6 +15,7 @@ the system so it can describe what happened, and nothing outside it imports it e
 a top-level orchestrator — an audit trail that other modules could call into would be
 part of the machinery it is supposed to be recording.
 """
+import datasafety  # noqa: F401,E402 - production-data write guard, installed on import (ruling 2026-10-09)
 
 from audit.attribution import (
     DEFAULT_WINDOW_DAYS,

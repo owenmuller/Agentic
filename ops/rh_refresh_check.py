@@ -23,8 +23,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
-MCP_URL = "https://agent.robinhood.com/mcp/trading"
+# Production-data write guard (ruling 2026-10-09): every ops entry point
+# imports it before touching a path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+import datasafety  # noqa: E402,F401
+
+MCP_URL ="https://agent.robinhood.com/mcp/trading"
 AGENTIC_ACCOUNT = "742288012"
 
 

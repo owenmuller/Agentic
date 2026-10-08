@@ -1283,6 +1283,10 @@ class SignalPipeline:
 
     # -- the aggressive sleeve (risk-on redirect, human ruling 2026-10-08) -------
 
+    def is_aggressive(self, signal: Signal) -> bool:
+        """Public for the loop's entries switch (ruling 2026-10-09)."""
+        return self._is_aggressive(signal)
+
     def _is_aggressive(self, signal: Signal) -> bool:
         config = self._aggressive_config
         return bool(
@@ -1317,30 +1321,35 @@ class SignalPipeline:
         return stop, atr
 
     def _aggressive_reward_risk_reason(self, report, signal) -> Optional[str]:
-        """The aggressive sleeve's reward test: a momentum position exits on a
-        trailing stop, not a target, so a MISSING target passes; a STATED target
-        must still clear the absolute reward:risk floor against the stop the
-        position would actually get. The judged sleeve's annualized hurdle is
-        an opportunity-cost rule for that sleeve and does not apply here
-        (redirect 2026-10-08; flagged for the human in SESSION_NOTES)."""
-        config = self._rr_config
-        if config is None or not config.enabled or not report.tickers or report.target_price is None:
-            return None
+        """The aggressive sleeve's reward test (human ruling 2026-10-09, item 3:
+        "the sleeve requires a stated target. No target, no trade."). A
+        missing target refuses; a stated target must clear the absolute
+        reward:risk floor against the stop the position would actually get.
+        Anything that makes the test unverifiable - no instrument, no price -
+        refuses too (Constraint #6). The judged sleeve's annualized hurdle is
+        an opportunity-cost rule for that sleeve and does not apply here.
+        Superseded: a missing target passed (2026-10-08 to 2026-10-09)."""
+        if not report.tickers:
+            return "the aggressive sleeve requires a stated target and an instrument; none named"
+        if report.target_price is None:
+            return "the aggressive sleeve requires a stated target (ruling 2026-10-09): no target, no trade"
         symbol = report.tickers[0]
         try:
             entry = self._prices(symbol)
         except Exception:  # noqa: BLE001
             entry = None
         if entry is None or entry <= 0:
-            return None
+            return f"no price for {symbol}: the stated target's reward:risk cannot be verified"
+        config = self._rr_config
+        min_ratio = config.min_ratio if config is not None else Decimal("1.3")
         stop, _ = self._aggressive_stop(symbol, signal)
         risk = entry * stop
         ratio = (report.target_price - entry) / risk if risk > 0 else Decimal("0")
-        if ratio >= config.min_ratio:
+        if ratio >= min_ratio:
             return None
         return (
             f"stated target {report.target_price} vs entry {entry} with a {stop:.2%} "
-            f"trailing stop is reward:risk {ratio:.2f}, below the {config.min_ratio} floor"
+            f"trailing stop is reward:risk {ratio:.2f}, below the {min_ratio} floor"
         )
 
     def _propose_aggressive(self, report, sleeve_nav, signal: Signal) -> SizedProposal:

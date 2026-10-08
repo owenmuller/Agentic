@@ -9,6 +9,7 @@ This package deliberately imports nothing from ``risk_gate``, ``sizing`` or
 size, price, approve or send anything, so no amount of persuasive content in a post
 can produce a trade from here.
 """
+import datasafety  # noqa: F401,E402 - production-data write guard, installed on import (ruling 2026-10-09)
 
 from signals.classification import (
     ClassificationResult,

@@ -1479,8 +1479,47 @@ def contracts_backtest() -> int:
     return 0
 
 
+#: Emergency operator commands (ops/EMERGENCY.md): a human at a shell must be
+#: able to halt and resume production. They alone declare production writes
+#: outside a production unit (ruling 2026-10-09, item 4).
+OPERATOR_COMMANDS = frozenset({"halt", "resume"})
+
+
+def _data_safety(command: str) -> Optional[int]:
+    """Ruling 2026-10-09 (item 4): outside a production unit, `run` is refused
+    (a session trading the broker from scratch state could double-trade), the
+    operator commands write production by explicit declaration, and every
+    other command reads a fresh snapshot of production data in the scratch
+    directory and writes there. Returns an exit code to stop, or None."""
+    import datasafety
+
+    if datasafety.production_process():
+        return None
+    if command in OPERATOR_COMMANDS:
+        datasafety.declare_operator(command)
+        return None
+    if command == "run":
+        print(
+            "REFUSED: `run` trades the broker and writes production state; it runs only "
+            "inside the agentic-paper system unit (ruling 2026-10-09). This process is "
+            "not a production unit.",
+            file=sys.stderr,
+        )
+        return 2
+    snapshot = datasafety.refresh_snapshot()
+    print(
+        f"[datasafety] not a production unit: reading a snapshot of production data "
+        f"in {snapshot or datasafety.scratch_data_dir()}; nothing here writes production.",
+        file=sys.stderr,
+    )
+    return None
+
+
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "check"
+    stop = _data_safety(command)
+    if stop is not None:
+        return stop
     if command == "contracts-evening":
         return contracts_evening()
     if command == "contracts-backtest":

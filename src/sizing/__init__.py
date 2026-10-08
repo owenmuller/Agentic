@@ -12,6 +12,7 @@ a NAV figure it was handed, and the gate disposes against the real account.
 Deterministic by construction: no LLM, no network, no clock. The only thing this
 package takes from a research report is an integer.
 """
+import datasafety  # noqa: F401,E402 - production-data write guard, installed on import (ruling 2026-10-09)
 
 from sizing.engine import (
     EventStrategy,

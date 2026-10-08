@@ -61,10 +61,16 @@ class AuditLogError(RuntimeError):
 
 
 def default_data_dir() -> Path:
-    configured = os.environ.get("DATA_DIR")
-    if configured:
-        return Path(configured)
-    return Path(__file__).resolve().parents[2] / "data"
+    """Production data for a production unit; scratch for everything else.
+
+    Ruling 2026-10-09 (item 4): dry runs and backtests use a scratch data
+    directory BY CONSTRUCTION. A process outside the human-installed
+    ``agentic-*`` system units gets ``datasafety.scratch_data_dir()``; a
+    ``DATA_DIR`` that points into production data is refused rather than
+    honoured. The production unit marks its own directory on first use."""
+    import datasafety
+
+    return datasafety.resolve_data_dir(Path(__file__).resolve().parents[2] / "data")
 
 
 class AuditLog:

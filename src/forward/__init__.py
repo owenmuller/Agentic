@@ -11,6 +11,7 @@ weight consumes them, no LLM sees them. They exist so a HUMAN can tune the
 prefilter, the lag rules, and the sizing table as dated rulings — data argues,
 humans rule.
 """
+import datasafety  # noqa: F401,E402 - production-data write guard, installed on import (ruling 2026-10-09)
 
 from forward.funnel import FunnelEntry, funnel_entries
 from forward.returns import HORIZONS, ForwardReturns, ForwardRow, HorizonMark

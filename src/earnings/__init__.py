@@ -41,6 +41,7 @@ Every input can be absent — no calendar key, no chain, no quote, a name with n
 options — and absence is recorded as absence. Nothing here estimates a missing
 number, because the entire point of the exercise is to find out what was true.
 """
+import datasafety  # noqa: F401,E402 - production-data write guard, installed on import (ruling 2026-10-09)
 
 from earnings.calendar import (
     EarningsCalendar,

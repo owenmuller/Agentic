@@ -17,6 +17,7 @@ the defence:
 
 This package imports nothing from ``risk_gate``, ``sizing`` or ``execution``.
 """
+import datasafety  # noqa: F401,E402 - production-data write guard, installed on import (ruling 2026-10-09)
 
 from research.client import (
     WEB_SEARCH_TOOL_TYPE,

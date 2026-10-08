@@ -10,6 +10,7 @@ will serve the prediction-market sleeve, after the equity leg proves itself in p
 Everything that can move money takes an ``ApprovedOrder``, so an order that has not
 passed the risk gate cannot be submitted.
 """
+import datasafety  # noqa: F401,E402 - production-data write guard, installed on import (ruling 2026-10-09)
 
 from execution.alpaca import LIVE_BASE_URL, PAPER_BASE_URL, AlpacaAdapter
 from execution.market_data import (

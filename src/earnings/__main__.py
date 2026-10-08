@@ -42,7 +42,11 @@ SHADOW_LOG_NAME = "earnings_shadow.jsonl"
 
 
 def data_dir() -> Path:
-    return Path(__file__).resolve().parents[2] / "data"
+    """Production data inside the agentic-earnings unit, scratch everywhere
+    else (ruling 2026-10-09, item 4 - the one rule in datasafety)."""
+    import datasafety
+
+    return datasafety.resolve_data_dir(Path(__file__).resolve().parents[2] / "data")
 
 
 def shadow_pass() -> int:

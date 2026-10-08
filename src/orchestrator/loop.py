@@ -581,6 +581,24 @@ class TradingLoop:
                 )
                 report.prefiltered += 1
                 continue
+            # The aggressive sleeve's off switch (human ruling 2026-10-09,
+            # item 1): same discipline as the judged arm's - a sleeve that
+            # cannot open a position does not pay to research one. Exits run.
+            aggressive_caps = self._gate.limits.aggressive_sleeve
+            if (
+                self._pipeline.is_aggressive(signal)
+                and aggressive_caps is not None
+                and not aggressive_caps.entries_enabled
+            ):
+                self._pipeline.record_prefiltered(
+                    signal,
+                    "aggressive-sleeve entries are switched off in risk_limits.yaml "
+                    "(aggressive_sleeve.entries_enabled, ruling 2026-10-09); recorded, "
+                    "not researched, and exits keep running",
+                    code="entries_disabled",
+                )
+                report.prefiltered += 1
+                continue
             # Per-source daily cap (2026-08-25): after the content rules so the
             # rejection code stays precise, before triage so a capped source
             # spends nothing further today.

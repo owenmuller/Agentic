@@ -27,7 +27,9 @@ from orchestrator.config import OrchestratorConfig  # noqa: E402
 from signals import SignalQueue, SignalsConfig  # noqa: E402
 from signals.scanners import Class2CongressionalScanner  # noqa: E402
 
-data = Path(os.path.expanduser("~/Agentic/data"))
+import datasafety  # noqa: E402 - dry runs read a SNAPSHOT of production in scratch (ruling 2026-10-09)
+
+data = datasafety.refresh_snapshot() or datasafety.scratch_data_dir()
 production = AuditLog(path=data / "audit.jsonl")
 config = OrchestratorConfig.load().aggressive_sleeve.attention
 bars = AlpacaDailyBars(feed="sip")

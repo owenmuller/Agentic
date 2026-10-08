@@ -19,6 +19,7 @@ table, approval comes from the gate, and this package's contribution is to call 
 in order and record the answers. If a stage says no, the loop writes that down and
 moves to the next signal — there is no path here that reconsiders a rejection.
 """
+import datasafety  # noqa: F401,E402 - production-data write guard, installed on import (ruling 2026-10-09)
 
 from orchestrator.bootstrap import Preflight, Startup, preflight, start
 from orchestrator.budget import ResearchBudget

@@ -148,7 +148,18 @@ TOPOLOGY: dict[str, Rules] = {
         ),
         because="the loop; the single place the stages are wired together",
     ),
+    # PRODUCTION-DATA WRITE GUARD (ruling 2026-10-09, item 4). Every package
+    # imports it so the guard is installed before any entry point can resolve a
+    # data path; that is only safe because it imports NOTHING first-party and
+    # nothing that reaches a network - a leaf every package may depend on
+    # without acquiring anything (see UNIVERSAL below).
+    "datasafety": Rules(
+        because="the write guard; stdlib only, a leaf every package may import",
+    ),
 }
+
+#: Leaves any package may import (each stated in TOPOLOGY with its own rules).
+UNIVERSAL = frozenset({"datasafety"})
 
 
 # ================================================================================
@@ -181,7 +192,7 @@ def violations_for(package: str, rules: Rules) -> list[str]:
     for path in sorted((SRC / package).rglob("*.py")):
         for lineno, name in imports_in(path):
             root = name.split(".")[0]
-            if root == package:
+            if root == package or root in UNIVERSAL:
                 continue
             if root in first_party and not (
                 name in rules.may_import or root in rules.may_import
