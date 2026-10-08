@@ -4102,7 +4102,245 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### RULINGS 2026-10-09 — items 1–7, as done (deployed 3b9e4a5 on 2026-10-08 at 19:20 ET, outside the pre-open hour)
+
+1. **Aggressive entries OFF — DONE.** `risk_limits.yaml aggressive_sleeve.entries_enabled: false`.
+   The loop records the sleeve's candidates as `entries_disabled`, before triage and the budget, so
+   no research is paid for. This mirrors the judged arm's switch. Exits keep running. The
+   liquidity buffer no longer parks the sleeve's daily cap in cash while it is off, so about $25K
+   returns to the T-bill sweep. That is a consequence chosen here, and it reverses when the switch
+   goes back on.
+2. **Increment B — recorded:** neither part built.
+3. **No target, no trade — DONE.** A missing target refuses with `insufficient_reward_risk`. So does
+   an unverifiable test (no instrument, no price). A stated target must clear the configured
+   absolute floor, **0.8** (`reward_risk.min_ratio`, ruling 2026-10-06), against the sleeve's own
+   stop. **Correction:** the morning summary said 1.3; the code has always read the 0.8 floor.
+   **For the human:** the attention prompt never asks for a target. Before the sleeve is
+   re-enabled, the prompt must ask for one, and that is a prompt change with a golden replay and
+   a live round trip. With entries off it costs nothing today.
+4. **Production-data write guard — DONE** (`src/datasafety`, `tests/test_datasafety.py`).
+   - **Which process is production:** a human-installed SYSTEM unit `agentic-*.service`, read
+     from the process's cgroup (`0::/system.slice/agentic-<name>.service`). Only root can create
+     one. **Reading, flagged:** the ruling says "the paper unit". The other production system
+     units (earnings shadow, overreaction screen, weekly report) write production data too, so
+     every `agentic-*` system unit counts. Research jobs (user units) and shells (session scopes)
+     never do.
+   - **What is production data:** the directory tree marked `.agentic-production-data`
+     (`~/Agentic/data`, marked 2026-10-08 23:10 UTC). Paths are resolved through symlinks before
+     the check.
+   - **The guard:** in every other process, an interpreter audit hook, which cannot be removed
+     once added, refuses any write into the marked tree. That covers write-mode open and os.open,
+     rename and replace in either direction, remove, mkdir, copy, and writes through symlinks.
+     Every project package installs it on import, and every ops script imports a package (an
+     AST test enforces it). Reads are allowed.
+   - **By construction:** `default_data_dir()` is `~/agentic-scratch/data` outside production. A
+     `DATA_DIR` pointing into production is refused. `orchestrator run` is refused outside the
+     paper unit, since a session on scratch state could double-trade. Read-only commands (`check`,
+     `health`, `attribution` and the rest) refresh a snapshot of production into scratch and read
+     that. **Exception, flagged:** `orchestrator halt` and `resume`, the emergency path in
+     ops/EMERGENCY.md, declare operator writes, so a human at a shell can still stop and restart
+     production. A test pins that only that dispatch can declare it.
+   - **Research outputs moved:** 61 risk-on backtest artifacts went from `~/Agentic/data` to
+     `~/research-data`. Every `~/scratch` script now writes there and reads production through
+     the snapshot. The 11:00 ET options timer was re-created with the new paths. Older
+     September ad-hoc files were left in place.
+   - **Verified live** from a clone against the real tree. Refused: append to audit.jsonl, the
+     exact 2026-10-08 strike write, and a write through a fresh symlink. `run` is refused (exit 2).
+     `health` ran on the snapshot. **sha256 of audit.jsonl, unserved_symbols.json and
+     session_state.json were unchanged before and after.** The full suite is green (new tests: every package
+     against every write form, every ops script and package `__main__`, the cgroup parser and the operator pin). The
+     deployed tree is identical to the tested one.
+   - **4c, RWT and SBLK: no residual strikes.** `unserved_symbols.json` holds only AXIA3 (from
+     2026-09-04). **Correction:** RWT and SBLK are **not holdings**. RWT closed 2026-09-23
+     (review_close) and SBLK 2026-09-17 (trailing stop); neither is at the broker (34 positions)
+     or in the judged book (CELH, BPRE). The 2026-10-08 notes called them held names, which was
+     wrong. They are forward-funnel names, and today's session has no holding of either to see.
+   - **The production-detection path cannot be exercised before 09:15 ET:** no `agentic-*` unit
+     runs Python before then. The cgroup format was confirmed against a live system service on
+     this host (`0::/system.slice/ssh.service`). If detection failed, the paper unit would refuse
+     `run` and exit 2 at 09:15. **First thing to check this morning:**
+     `ssh agentic@137.184.59.200 'grep STARTED ~/Agentic/data/run.log | tail -1; systemctl status agentic-paper --no-pager | head -5'`
+5. **Static leverage — DONE**, information only, below.
+6. **ITEM 7, Quiver House replication — NOT QUEUED: its specification never reached this
+   session.** "Item 7" appears nowhere in the notes or in any transcript on this machine except
+   the ruling that refers to it. Nothing was started, and it needs the spec. The 11:00 options
+   rerun is in place for it to follow.
+7. **Options rerun at 11:00 ET — scheduled**, re-created with research paths:
+   `research-options-insession.timer`, 2026-10-09 15:00 UTC, output
+   `~/research-data/options_bt_2026-10-09_insession.txt`.
+
+**Item 5 — static leverage, buy and hold** (`~/research-data/lev_static_2026-10-09.txt`). A cash
+account cannot borrow, so L× is the index ETF blended with its 2× ETF (SSO, QLD), daily-rebalanced
+and synthetic. The 2× leg pays the T-bill rate + 0.5% on the borrowed unit plus the fund's expense.
+Index total return comes from Yahoo adjusted closes. No criterion.
+
+| SPY 1993-01 → 2026-10 | CAGR | max DD | that drawdown's window | peak back to peak | worst full year |
+|---|---|---|---|---|---|
+| 1.0× | +10.84% | −55.2% | 2007-10 → 2009-03 | 4.9 yr | 2008 −36.8% |
+| 1.25× | +12.04% | −64.9% | 2007-10 → 2009-03 | 5.3 yr | 2008 −45.5% |
+| 1.5× | +13.00% | −74.0% | 2000-03 → 2009-03 | **13.1 yr** | 2008 −53.5% |
+| 2.0× | +14.20% | −88.3% | 2000-03 → 2009-03 | 14.5 yr | 2008 −67.2% |
+
+| QQQ 1999-03 → 2026-10 | CAGR | max DD | that drawdown's window | peak back to peak | worst full year |
+|---|---|---|---|---|---|
+| 1.0× | +10.90% | −83.0% | 2000-03 → 2002-10 | 14.9 yr | 2008 −41.7% |
+| 1.25× | +11.56% | −90.5% | 2000-03 → 2002-10 | 17.1 yr | 2008 −50.7% |
+| 1.5× | +11.73% | −94.9% | 2000-03 → 2002-10 | 18.2 yr | 2008 −58.7% |
+| 2.0× | +10.54% | −98.8% | 2000-03 → 2009-03 | 20.4 yr | 2000 −72.8% |
+
+**1.5× through the two crises:**
+
+| | drawdown, peak → trough | return over the window | back to the peak |
+|---|---|---|---|
+| SPY 2000–02, 1.0× / 1.5× | −47.5% / **−66.2%** (2000-03-24 → 2002-10-09) | −36.9% / −56.4% | 2006-10 / **2013-05** |
+| SPY 2008, 1.0× / 1.5× | −55.2% / **−72.8%** (2007-10-09 → 2009-03-09) | −37.9% / −56.2% | 2012-08 / 2013-04 |
+| QQQ 2000–02, 1.0× / 1.5× | −83.0% / **−94.9%** | −74.3% / −91.0% | 2015-02 / **2018-06** |
+| QQQ 2008, 1.0× / 1.5× | −53.4% / **−70.6%** | −29.5% / −46.9% | 2010-12 / 2011-07 |
+
+The by-year table for all four levels is in the file.
+
+### DAY TRADING BUILD 2026-10-09 — PRE-REGISTRATIONS for A, B, C and D (written BEFORE any data was pulled or any backtest ran)
+
+**Sources, read in full before writing this.** Both papers came from the University of St. Gallen
+repository (SSRN serves a bot check, which was not circumvented); copies are in
+`~/research-data/papers/`.
+- **A:** Zarattini, Barbon & Aziz, *A Profitable Day Trading Strategy For The U.S. Equity Market*,
+  first version 2024-02-16, sample 2016-01-01 to 2023-12-31. Published result for the top 20
+  Stocks in Play: total 1,637%, IRR 41.6%, volatility 14.8%, Sharpe 2.81, hit 48.4%, max DD 12%,
+  beta 0.00. Long/short only; **no long-only figures and no slippage are reported**, only
+  commission.
+- **B:** Zarattini, Aziz & Barbon, *Beat the Market: An Effective Intraday Momentum Strategy for
+  S&P500 ETF (SPY)*, first version 2024-05-10, data May 2007 to April 2024. Published: Current Band
+  + VWAP at 100% equity, 9.7%/yr, Sharpe 1.24, MDD 12%; the same with volatility-targeted size
+  ("Dyn"), 19.6%/yr, Sharpe 1.33, MDD 25%; SPY buy & hold 7.2%/yr. The paper's own FAQ (Q24)
+  publishes the Dyn version's post-publication months: May–Dec 2024 −4.3, +1.6, +8.2, −2.8, +4.1,
+  +6.7, −2.6, +5.7 (**+16.9% compounded**), and Jan 2025 −1.2.
+
+**One discrepancy with the brief, stated rather than chosen silently.** The brief says A's stop is
+"at the other side" of the opening range; **the paper's stop is 10% of the 14-day ATR from the
+executed entry price**. "Replicate exactly" governs the replication, so A uses the 10%-ATR stop.
+The other-side-of-the-range stop runs as a named variant, A-OS, reported but not graded.
+
+**Data limit, stated.** Alpaca's SIP history starts 2016-01. B's in-sample replication therefore
+covers **2016-01 → 2024-04**, compared year by year against the paper's own monthly table. The
+2007–2015 years cannot be reproduced from this data. A's whole published sample, 2016–2023, is
+covered.
+
+#### B — SPY intraday momentum, noise-area method (first, by the ORDER)
+
+- **Data:** Alpaca SIP 1-minute bars, regular session, for SPY and SH, 2016-01-04 → the last
+  complete session. The daily close for the gap adjustment is the 15:59 bar's close.
+- **Noise area, as published:** for each minute HH:MM, σ(t, HH:MM) = mean over the previous 14
+  sessions of |close(t−i, HH:MM) / open(t−i, 9:30) − 1|.
+  UB = max(open(t), close(t−1)) × (1 + σ); LB = min(open(t), close(t−1)) × (1 − σ).
+- **Decisions only at HH:00 and HH:30, from 10:00 to 15:30.** Long when price > UB, short when
+  price < LB, flat inside. Stops are checked only at the same semi-hourly marks: the long stop is
+  max(UB, VWAP), the short stop is min(LB, VWAP). VWAP is session-only, from the 1-minute bars'
+  volume-weighted prices. A crossing to the opposite boundary closes the position and opens the
+  opposite one. Everything closes at the 16:00 close.
+- **Fills:** the close of the bar ending at the decision minute.
+- **Costs, as published:** $0.0035 per share commission plus $0.001 per share slippage, each side.
+  A sensitivity at 2× slippage is reported, not graded.
+- **Versions:**
+  - **B1, replication, Dyn:** shares = equity(t−1) × min(4, 0.02 / σ_SPY,14d) / open(t), where
+    σ is the sample stdev of the last 14 daily returns. Long/short.
+  - **B2, replication at 100%:** shares = equity(t−1) / open(t). Long/short.
+  - **B3, long-only, BINDING:** long SPY above UB. Below LB, **buy SH instead of shorting**, at
+    100% of equity at the day's first decision, 1× max, no margin. SH is priced from its own
+    minutes and exits on SPY's mirror stop, SPY crossing back above min(LB, VWAP). **Cash
+    account:** a day's capital is used once. A same-day re-entry after an exit would spend
+    unsettled proceeds, a good-faith violation, so it is skipped and counted. Same costs on SH.
+  - **B3u:** as B3 with same-day recycling allowed, to show what settlement costs. Reported, not
+    graded.
+- **Reproduction gate (in-sample 2016-01 → 2024-04, B1 against the paper's table):** sign agreement
+  in at least 6 of the 8 full years 2016–2023, and CAGR over 2016–2023 within ±50% of the
+  paper's same-years compounding, **+19.2%** a year (−12.8, −6.9, +61.1, +6.9, +26.8, +34.8,
+  +24.4, +37.2).
+- **SUCCESS (B3, post-publication, 2024-05-13 → now):** net CAGR above SPY's total return over the
+  same window **and** Sharpe above SPY's. A by-year table is reported.
+
+#### A — Stocks-in-Play 5-minute ORB (second; data harvest, then replication)
+
+- **Universe, point-in-time, delisted names included:** every Alpaca `us_equity` asset, active and
+  inactive, on NYSE, NASDAQ, AMEX, ARCA or BATS, excluding exchange-traded products by the asset
+  name (the corrected intraday filter). Known limit, reported: a ticker later reused by another
+  issuer carries the later issuer's history.
+- **Daily screen (as published):** open(t) > $5; mean daily volume over the previous 14 sessions
+  ≥ 1,000,000 shares; ATR(14) over the previous 14 sessions > $0.50.
+- **Relative volume (as published):** volume of the 9:30–9:35 bar ÷ the mean of the same bar over
+  the previous 14 sessions. RVOL ≥ 100%; the top 20 by RVOL trade.
+- **Entry (as published):** first 5-minute candle up, a buy-stop at its high; down, a sell-stop at
+  its low; doji (open = close) means no trade. The entry is live from 9:35 to the close.
+- **Stop loss (as published):** 10% of ATR(14) from the EXECUTED entry. Exit at the stop or at the
+  16:00 close. **A-OS variant:** stop at the other side of the opening range.
+- **Size (as published):** risk 1% of equity at the stop, total leverage capped at 4×, applied as
+  at most 4 × equity / 20 notional per position.
+- **Simulation data:** the first 5-minute bar for every symbol passing the daily screen, the input
+  for RVOL. **1-minute** full-day bars for each day's top 20; that is finer than the brief's
+  5-minute bars at the same request count, and it resolves stop-entry and stop-loss order.
+  Everything streams to disk under the memory cap.
+- **Costs, calibrated, not a flat bp:** $0.0035 per share commission, plus spread and OPENING
+  slippage measured from Alpaca's historical SIP trades and quotes. In a stratified sample of
+  triggered entries and stop exits (by year, price band and RVOL band, at least 1,500 entries, the
+  post-publication window included), slippage = the first trade price at or through the stop
+  level after the trigger, minus the stop level. The half-spread at the trigger comes from the
+  quote. The exit at the close pays the half-spread at 15:59. The median by bucket applies to
+  every simulated trade, and the published commission-only result is reported beside it.
+- **Versions:**
+  - **A1:** long/short, as published, 4× cap, commission only (the reproduction) and calibrated
+    costs.
+  - **A2:** long-only, bullish candles only, as published sizing and 4× cap.
+  - **A3, long-only, cash account, BINDING:** as A2 with total gross notional capped at 1× equity,
+    pro rata. One trade per symbol per day; each day's capital is used once.
+  - **A4:** long-only plus inverse-ETF hedging where relevant. A bearish setup on a stock that has
+    a listed single-stock inverse ETF on that date is taken by BUYING that ETF on the same trigger,
+    mirrored. Otherwise it is skipped. The count of relevant setups is reported. 1× cap.
+  - **A-OS:** A1 and A3 with the other-side stop.
+- **Reproduction gate (in-sample 2016–2023, A1, commission only as published):** IRR within ±50%
+  of 41.6% (20.8% to 62.4%) **and** Sharpe ≥ 1.4, half the published 2.81.
+- **SUCCESS (A3, BINDING, post-publication 2024-02-16 → now):** net CAGR, calibrated costs, above
+  SPY's total return over the same window, **and** positive in each half-year (H1 2024 from 02-16,
+  H2 2024, H1 2025, H2 2025, 2026 to date). Max drawdown reported.
+
+#### C — LLM catalyst filter on A's daily top 20 (third, on A's output)
+
+- **Categories, fixed now, before any return is seen:** `EARNINGS` (results, beat or miss),
+  `GUIDANCE`, `CONTRACT_OR_DEAL` (contracts, partnerships, M&A), `OFFERING_OR_DILUTION`,
+  `FDA_OR_BINARY` (regulatory or clinical decision, litigation verdict), `ANALYST_ACTION`,
+  `OTHER_NEWS`, `NO_NEWS`.
+- **Input:** the Alpaca/Benzinga news archive, headlines and summaries, for the symbol from 16:00
+  the prior session to 9:35. No news at all means `NO_NEWS` without a model call.
+- **Model:** the cheapest pinned model, `claude-haiku-4-5-20251001`, one forced-tool classification, run
+  through the Batches API. Reliability check first: 200 hand-labelled day-symbols (labelled by me
+  from headlines, before any return is joined), with accuracy and the confusion matrix reported. If
+  accuracy is under 80%, the next pinned tier is tested on the same 200. Cost is reported per
+  1,000 classifications and in total.
+- **Test:** the "worst" categories are fixed IN-SAMPLE, 2016–2023: those with negative mean net R
+  per trade at n ≥ 30. A3 is then rerun excluding them on the binding post-publication window.
+  **SUCCESS:** the filtered A3 beats the unfiltered A3 on net CAGR without a deeper max drawdown.
+
+#### D — live paper (after a reproduction gate passes)
+
+- A or B goes live in the aggressive paper sleeve only after its in-sample reproduction gate
+  passes. It runs in parallel with the out-of-sample analysis.
+- Rules decide entries, stops, exits and sizing. The LLM applies only C's filter, once C is
+  measured.
+- **PDT, as it applies:** the paper account reports multiplier 1, shorting disabled and equity
+  about $100K. The pattern-day-trader rule applies to MARGIN accounts under $25K equity. It does
+  not bind a cash account, and it would not bind this equity in a margin account either. **What
+  binds instead is settlement:** a cash account may not buy with unsettled proceeds and then sell
+  before they settle. The gate already enforces T+1 for aggressive buys. D will add **day-trade
+  counting to the gate for the sleeve regardless of account type:** a rolling 5-business-day
+  count that refuses a 4th opening day trade whenever account equity is under $25K, whatever the
+  account type. It is idle at today's equity and becomes binding automatically if equity ever
+  falls under $25K. It will be property-tested with the rest of the gate.
+- Entries stay switched off (ruling 2026-10-09) until a strategy passes its gate. The live build
+  re-enables only that strategy's source.
+
 ### MORNING SUMMARY 2026-10-09 (overnight rules) — the aggressive sleeve is live in paper from today's start; all four risk-on backtests failed their registered criteria
+
+**Superseded in part by RULINGS 2026-10-09 above:** aggressive entries are OFF, and the
+sleeve's reward floor is 0.8 not 1.3. RWT and SBLK were funnel names, not holdings.
 
 **Shipped to production.** The droplet HEAD, origin and vps all match at the final notes commit.
 The paper unit loads it at its 09:15 ET start on 2026-10-09.
