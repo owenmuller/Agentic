@@ -4102,6 +4102,198 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### RISK-ON INCREMENT A — the aggressive paper sleeve and the attention-momentum source: BUILT, GATED, DEPLOYED (2026-10-08)
+
+**What it is (redirect item 4 with item 6 as its first source, as amended).** A fourth trading
+sleeve, `aggressive`, at **25% of NAV**. The judged sleeve goes 55 → 30. Mechanical 15, baseline 30
+and prediction 0 are unchanged. Judged sizing bands now read off a 30% sleeve: 0.6 / 1.5 / 3.0% of
+NAV at the 2 / 5 / 10% bands.
+
+- **Gate.** The sleeve has its own cap table, `risk_limits.yaml aggressive_sleeve`: 25% of the
+  sleeve per position, 5 concurrent, 100% daily deployment, 50% per sector, $5 dust floor, and an
+  `entries_enabled` switch. It also has its own allocation ceiling. Cash-secured, never-negative,
+  the kill switch and the drawdown ladder apply exactly as they do to the judged sleeve.
+- **Settlement (amendment 3).** Sale proceeds go to an `unsettled_proceeds` ledger and settle on
+  the next business day. **Aggressive buys** must fit inside SETTLED buying power (`UNSETTLED_FUNDS`
+  rejection otherwise). Judged, mechanical, baseline and sweep orders are unchanged. PDT counting is
+  unchanged: the account is cash-type, so it does not apply.
+- **Sizing: a fixed risk budget, not the confidence table.** Capital = min(sleeve NAV × 2% / stop,
+  sleeve NAV × 25%). Stop = 2.5 × ATR(14)/price, clamped into [4%, 20%], using the screen's own ATR,
+  then the ATR source, then the 20% ceiling. Confidence gates entry (floor 50, the vote) and never
+  scales size. The post-table scalars apply. Equity only: options in this sleeve are increment B.
+- **Exits.** A separate exit engine for the sleeve: trailing stop from the highest close since
+  entry at the entry stop distance, an 84-day leash, no thesis reviews. Restart replay keeps each
+  sleeve's positions in its own engine.
+- **Source `attention_momentum`** (Class 2, cap 4/day, `signals.yaml`). A once-per-morning screen
+  at or after 09:35 ET over this system's OWN audit records: decisions and stage rejections from
+  the event sources in the last 10 calendar days. It applies the item-6 confirmation (pre-event
+  high, 2× volume, positive excess) on the latest completed session at offset 1–3. One item per
+  ticker per morning; an event already confirmed earlier is skipped. The priced-in check is exempt
+  for this source only. It sits outside convergence in a market-data-screen family. Prompt branch:
+  judge room to run; do not decline for the move or its age; decline squeezes; long only.
+- **Reward:risk, an interpretation flagged for the human.** A momentum position has no target, so
+  a missing target PASSES. A stated target must clear `min_ratio` against the aggressive stop. The
+  judged sleeve's annualized hurdle is not applied. The alternative is to require a target. That is
+  stricter and would block most attention trades, which is why it was not picked silently.
+- **Attribution.** Strategy `aggressive` is partitioned out of the judged trails and the book
+  beta. The liquidity buffer reserves the sleeve's daily deployment.
+
+**Gates, all passed:**
+
+| gate | result |
+|---|---|
+| full suite, clean checkout of the branch on the droplet (capped user service) | green, exit 0 |
+| golden replay, vote live, all 31 cases (two new: `attn-gnrc-8k-confirmed-breakout`, `attn-aemd-microcap-squeeze-decline`) | **31 / 31 PASS**, $11.55; GNRC long/62, vote held 3/3; AEMD declined at 82 |
+| live dry run of the changed path (`ops/experiments/attention_dry_run.py`) | today: 130 events on 107 symbols, 0 confirmed; 15-morning replay: 48 records end to end, ~3.2 a day |
+
+One vote in the replay overturned a verdict: `pelosi-intc-calls-entry`, no_position/80 to
+long/50. The case still graded PASS under its existing expectation. It is noted for the vote
+stability read.
+
+**Deployed** after the 15:10 ET gate result, outside the pre-open hour. The paper unit picks it up
+at its next session start (2026-10-09). **Read with the attention-momentum result below:** the
+mechanical screen's base rate is negative at significance. The live sleeve is LLM-judged on top of
+it. Turning entries off is one config value, and is the human's call.
+
+**Not built (increments B and C, designed in the redirect entry below):** the opening-gap screen and 15:50 close rule;
+options in the sleeve; the weekly sleeve-vs-SPY lines. Until C ships, the sleeve's return reads
+from attribution's `aggressive` bucket.
+
+### ATTENTION-MOMENTUM BACKTEST — RESULT (2026-10-08 18:17 UTC, item 6, the pre-registered run): criterion NOT MET; the mechanical screen loses to SPY with the CI excluding zero
+
+**Run.** All 65,574 harvested events (8-K 39,848; news 23,152; contract awards 3,213; congressional
+1,054; Form 4 430) on 5,677 tickers, rules exactly as registered: confirmation within t0+1..t0+3
+(close above the five-session pre-event high, volume ≥ 2× the 20-session average, positive excess
+since t0−1), entry next open, 2.5 × ATR(14) trailing stop from the highest close, 60-session cap,
+15bp per side, faders included. 57 minutes under the capped user service, exit 0, peak RSS ~160 MB.
+
+| outcome | events |
+|---|---|
+| unconfirmed (counted, not traded) | 58,244 |
+| closed trades | **6,361** |
+| still open / confirmed, entry pending | 321 / 22 |
+| no bars | 626 |
+
+Confirmation rate 10.3% of events with bars; offsets t0+1 4,171, t0+2 1,391, t0+3 1,142.
+
+| closed trades, n = 6,361 (3,036 tickers) | value |
+|---|---|
+| hit rate | 34% |
+| average winner / average loser | +25.09% / −14.39% → **payoff 1.74** |
+| net return mean / median | −1.06% / −4.61% |
+| **excess vs SPY mean** (ticker-cluster bootstrap 95% CI) | **−2.42% [−3.38%, −1.38%]**, median −5.70% |
+| excess vs QQQ mean (CI) | −2.84% [−3.79%, −1.87%] |
+| equal-weight curve (one unit per open trade) | +175% total, max drawdown −46.5% (trough 2022-10-21) |
+| exits | trailing stop 5,933, time cap 428; median hold 21 sessions |
+| years with positive mean excess vs SPY | **4 of 11** (2016, 2020, 2022, 2023) |
+
+**SUCCESS CRITERION (mean excess vs SPY > 0 with the cluster CI excluding 0; payoff ≥ 1.5;
+positive in ≥ 60% of years): NOT MET.** The payoff leg passes (1.74); the other two fail, and the
+first fails the wrong way: the interval excludes zero on the NEGATIVE side. The 2026 entries are
+the worst year (n = 1,230, excess −6.87%, hit 28%).
+
+| by source | n | hit | payoff | excess vs SPY mean | median |
+|---|---|---|---|---|---|
+| 8-K | 3,700 | 32% | 1.71 | −3.50% | −6.84% |
+| news | 2,805 | 36% | 1.88 | −0.74% | −4.37% |
+| contract awards | 126 | 43% | 1.57 | −0.67% | −2.15% |
+| congressional | 15 | 0% | — | −11.51% | −10.69% |
+| Form 4 | 8 | 12% | — | −11.53% | −11.62% |
+
+**Named cases.** **BE:** nine events (five 8-Ks 2025-10 → 2026-04, four congressional 2026-08); none
+confirmed, so the screen never traded BE — its run happened outside any confirmation window the
+rule recognises. **VST:** seventeen events; one closed trade (t0 2026-01-06, 8-K + news, confirmed
+01-09 at volume ×3.3, entry 01-12 at 164.67, trailing stop 02-02, **−4.56%**, −4.40% vs SPY); two
+open from this week (news, entries 10-06 at 151.47 and 10-07 at 154.77, marked +9.9% and +7.6%).
+
+**Exploratory split, NOT registered (read as a description, not a rule; no subset is
+proposed for trading):**
+
+| slice | n | excess vs SPY mean | 95% CI | median |
+|---|---|---|---|---|
+| entry < $5 | 1,489 | +2.23% | [−0.81, +5.65] | −9.52% |
+| entry $5–20 | 1,952 | −4.02% | [−5.39, −2.56] | −6.93% |
+| entry $20–100 | 2,097 | −2.82% | [−3.94, −1.69] | −4.35% |
+| entry ≥ $100 | 823 | −5.98% | [−7.69, −4.33] | −4.28% |
+| excess at confirmation < 5% | 1,578 | −1.02% | [−2.01, −0.05] | −3.46% |
+| excess 5–15% | 2,286 | −1.09% | [−2.30, +0.21] | −5.25% |
+| excess 15–40% | 1,718 | −0.94% | [−3.12, +1.68] | −8.46% |
+| **excess ≥ 40% (squeeze-like)** | 779 | **−12.39%** | [−15.71, −8.85] | −19.08% |
+| volume ×2–3 / ×3–6 / ≥ ×6 | 3,063 / 1,923 / 1,375 | −0.96% / −2.14% / −6.05% | — | — |
+
+No slice is positive with its interval clear of zero. The sub-$5 slice's positive mean is a
+lottery shape (median −9.5%). The one sharp structure is the squeeze tail: confirmations already
+40%+ ahead of SPY lose 12 points on average, and more volume is worse, not better. The live prompt
+already tells the model to decline squeezes; this says that instruction carries real weight.
+
+**What this means for the live sleeve (the human's call, flagged at the top of the morning
+summary).** The redirect made attention-momentum eligible for the aggressive sleeve immediately,
+ahead of this result, and the live sleeve is LLM-judged where this backtest is purely mechanical
+(every confirmation traded, faders included) — so the backtest is the screen's base rate, not a
+measurement of the judged sleeve. That base rate is now measured negative at significance. Deployed
+as ruled (paper, 2% risk per trade, five positions). The lever, if the human wants the sleeve to
+stop opening attention trades before the judged record accumulates, is one config value:
+`config/risk_limits.yaml aggressive_sleeve.entries_enabled: false` (exits keep running).
+
+Files: `~/Agentic/data/attn_backtest_2026-10-08.{txt,log,trades.jsonl}`; split script
+`~/scratch/attn_split.py`.
+
+### LEVERAGED TREND BACKTEST — RESULT (2026-10-08, item 2, the pre-registered run as amended): criterion NOT MET; the rule trails SPY over the full span
+
+ANALYSIS ONLY. Nothing is built: a leveraged ETF or a calls expression is structural leverage, which
+CLAUDE.md's posture ("aggression lives in signal selection and sizing conviction, never in leverage
+or structural exposure") rules out without a constraint change.
+
+**Data, as run.** 1993-11-11 → 2026-10-08. SPY total return from Yahoo adjusted closes (Stooq,
+named in the amendment, now serves a JavaScript proof-of-work bot check; it was not circumvented —
+Yahoo's adjusted series includes dividends, so the amendment's "dividends excluded" flag no longer
+applies). Real SSO from 2006-06-21 and UPRO from 2009-06-25; synthetic daily-rebalanced 2×/3×
+before (SPY TR × leverage, minus 0.89%/0.91% expense, minus T-bill + 50bp on the borrowed
+fraction). VIX from CBOE's full history; T-bill from Yahoo ^IRX (FRED timed out).
+
+| synthetic vs real, close-to-close where the ETF exists | mean gap | tracking error | CAGR gap | sessions |
+|---|---|---|---|---|
+| 2× vs SSO | +0.40%/yr | 3.64%/yr | +0.20%/yr | 5,106 |
+| 3× vs UPRO | +0.25%/yr | 2.99%/yr | +0.30%/yr | 4,348 |
+
+The synthetic legs run slightly rich (0.2–0.3%/yr), which flatters the pre-2006 span a little.
+
+| full span 1993-11 → 2026-10 | CAGR | max DD (window) | recovery | worst month | switches/yr |
+|---|---|---|---|---|---|
+| SPY buy & hold | +10.86% | −55.2% (2007-10 → 2009-03) | 1,773 days | −16.5% | — |
+| **RULE (F1 trend, registered)** | **+9.37%** | **−57.7%** (1999-07 → 2003-04) | **5,045 days** | −24.2% | 20.5 |
+| ALT F2 (50 > 200) | +12.42% | −50.3% (2018-01 → 2020-03) | 1,295 days | −22.4% | 15.6 |
+| ALT F5 (10-month) | +10.54% | −60.6% (2018-01 → 2019-10) | 2,831 days | −22.4% | 16.4 |
+| RULE, 3× state as 60-delta SPY calls (variant, not graded) | +13.17% | −61.9% (1999-07 → 2009-07) | 5,219 days | −20.1% | 20.5 |
+
+Time in state under the rule: 3× 57%, 2× 14%, 1× 6%, cash 23%.
+
+| regime (peak-to-trough window) | RULE | ALT F2 | ALT F5 | SPY |
+|---|---|---|---|---|
+| 2000–02 | −45.9% | −30.6% | −33.3% | −47.5% |
+| 2008 | −32.7% | −16.1% | −16.7% | −55.2% |
+| 2020 | −35.0% | −46.6% | −29.1% | −33.7% |
+| 2022 | −25.0% | −18.3% | −32.7% | −24.5% |
+
+**SUCCESS CRITERION (CAGR ≥ SPY + 3% with max DD ≤ SPY's and recovery ≤ SPY's): NOT MET** on all
+three legs — CAGR 1.5 points BELOW SPY, drawdown 2.5 points deeper, recovery nearly three times
+longer.
+
+**Reading.** The trend filter does what it says in slow bears (2008: −32.7% against −55.2%), but
+the rule pays for it in whipsaw years, where 3× exposure re-enters just before a fast reversal:
+1994 −24.5 vs +0.4, 2000 −36.2 vs −9.7, 2015 −28.7 vs +1.2, 2018 −30.4 vs −4.6. Twenty switches a
+year at 15bp is ~3%/yr of friction alone. The 2000–02 bear was not avoided at all (−45.9% vs
+−47.5%): the VIX and realized-vol legs kept the rule out of 3× but the F1 trend leg flipped back
+in on every bear-market rally. None of the alternates meets the criterion either: ALT F2 clears
+the CAGR bar (+1.56 over SPY, not +3) and the drawdown bar, and fails nothing else — it is the
+only leg worth naming, and it was an alternate, not the registered rule. The calls variant raises
+CAGR by being longer-convexity in the 3× state and deepens the drawdown. Nothing here is a
+candidate for paper.
+
+Result file: `~/Agentic/data/lev_trend_2026-10-08.txt` on the droplet. Defect found and fixed
+BEFORE the graded numbers were read: the calls variant priced "60 DTE" as 60 SESSIONS to expiry and rolled at expiry; it now
+prices 60 calendar days (42 sessions, T = 42/252) and rolls monthly (every 21 sessions), as registered. The registered rule was unaffected.
+
 ### REDIRECT 2026-10-08: RISK-ON — item 4 design and build plan; PRE-REGISTRATIONS for items 1, 2, 3 and 6 (written BEFORE any of those backtests ran)
 
 Supersedes the maintenance-mode and search-closed rulings. Kept: contract awards measuring, the
