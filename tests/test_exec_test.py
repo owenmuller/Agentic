@@ -306,3 +306,44 @@ def test_a_restart_drops_a_position_the_gate_does_not_hold(tmp_path):
     engine, gate, audit, broker = _engine(tmp_path, Bars(), quotes, clock)
     engine.replay()
     assert engine.held is None
+
+
+def test_the_full_loop_wires_the_test_in_and_ticks_it(tmp_path):
+    """Bootstrap with the test switched on: the loop builds the engine, ticks it
+    each pass, and its order lands in the aggressive sleeve."""
+    from orchestrator import start
+    from research.config import ResearchConfig
+    from signals import SignalsConfig
+    from test_orchestrator import orchestrator_config
+
+    clock = FakeClock(_at(10, 0, 20))
+    quotes = Quotes()
+    quotes.set("SPY", "502.00")
+    quotes.set("SH", "40.00")
+    from test_exits import RoutingLLM
+
+    started = start(
+        fetcher=lambda source: [],
+        prices=quotes,
+        llm_client=RoutingLLM(),
+        adapter=FakeBroker(),
+        clock=clock,
+        data_dir=tmp_path,
+        limits=RiskLimits.load(),
+        signals_config=SignalsConfig.load(),
+        research_config=ResearchConfig.load(),
+        orchestrator_config=orchestrator_config(
+            execution_test={"enabled": True, "first_session": DAY.isoformat()},
+            aggressive_sleeve={"enabled": True, "attention": {"enabled": False}},
+        ),
+        id_factory=counter("w"),
+        minute_bars=Bars(today_spy=_flat_today(500.5), today_sh=_flat_today(40.0)),
+    )
+    assert started.execution_test is not None
+    report = started.loop.tick()
+    assert report.exec_test_orders == 1
+    clock.advance(seconds=30)
+    started.loop.tick()
+    position = started.gate.state.position(("aggressive", "SPY"))
+    assert position is not None and position.quantity > 0
+    assert (tmp_path / "execution_test_state.json").exists()
