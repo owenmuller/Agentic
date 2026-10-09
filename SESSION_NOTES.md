@@ -4102,6 +4102,69 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### ITEM 7 — QUIVER "U.S. HOUSE LONG-SHORT" REPLICATION — PRE-REGISTERED (2026-10-09 evening, before any return was computed)
+
+**What Quiver states**, from its strategy page, fetched 2026-10-09: "takes a long position in stocks
+that have been purchased, and a short position in stocks which have been sold … weighted based on
+the reported size of the transactions … 130% long exposure and 30% short exposure, with weekly
+rebalancing." Backtest from 2020-04-01, reported CAGR 41.43%, max DD −24.5%, Sharpe 1.14, beta
+1.09. **Quiver does not state** the lookback ("recently"), the date it enters on (transaction or
+disclosure), how a range becomes a size, or how a name both bought and sold is treated. Each is
+fixed below and flagged.
+
+**Data.** Quiver's bulk congressional file (`beta/bulk/congresstrading?version=V2`, our key,
+pulled 2026-10-09): 104,175 House records, Traded 2012-02 →, Filed 2014-01 →. Prices are Alpaca
+SIP daily bars with `adjustment=all` (splits and dividends, total return), and they start
+2016-01-04. **The backtest therefore runs 2016-01-04 → the last session.** Holdings on the first
+day may use filings back to the window length. SPY and QQQ come from Yahoo adjusted closes; the
+T-bill rate from Yahoo ^IRX.
+
+**Rules:**
+- **Records:** Chamber = House; Transaction = Purchase or Sale (case-insensitive); Exchange and
+  other types are dropped. The ticker must have a price series; records without one are dropped
+  and counted. Options (TickerType OP) are excluded.
+- **Size:** the midpoint of the reported range ("$1,001 - $15,000" → 8,000.5). An open-ended range
+  takes its stated floor; a single figure is taken as given.
+- **Eligibility, DISCLOSURE version (primary):** a record counts from the first weekly rebalance
+  whose open is AFTER its Filed date. Entry is on the disclosure's next open, as ruled, rounded to
+  Quiver's weekly rebalance and never earlier. **TRANSACTION version** (look-ahead measure only):
+  the same rule from the Traded date.
+- **Book, at each weekly rebalance** (the first session of each ISO week, at the open), over
+  records eligible within the trailing **W = 182 days** (primary; 30, 90 and 365 reported as
+  sensitivity; **flagged**, because Quiver does not state it):
+  - per ticker, net = Σ purchase sizes − Σ sale sizes (**flagged**: a name both bought and sold
+    takes its net side);
+  - long book: net > 0, weight ∝ net, scaled to **130%**;
+  - short book: net < 0, weight ∝ |net|, scaled to **30%**.
+- **Returns:** on a rebalance day the old weights earn the overnight move (prior close → open) and
+  the new weights earn open → close; otherwise close → close. Short positions earn −r and pay a
+  0.5%/yr borrow fee; short proceeds fund the extra 30% long, so the 130/30 book pays no financing.
+- **Costs:** 15bp on traded notional at each rebalance (Σ|Δweight|), which also gives turnover.
+- **Legs reported:**
+  - (1) the 130/30 book;
+  - (2) the **long-only leg** — the long book at 130%, the extra 30% financed at T-bill + 0.5%;
+  - (2b) the long book at 100%, no borrowing — what this account could hold;
+  - (3) the short leg alone.
+- **Benchmarks:** SPY, QQQ, and **1.3× QQQ** = 1.3 × QQQ total return − 0.3 × (T-bill + 0.5%),
+  daily.
+- **Regression:** daily returns on QQQ daily returns; alpha annualized ×252, with a 95% CI from
+  standard errors clustered by calendar month.
+- **Start-date sensitivity:** every quarterly start (the first session of Jan/Apr/Jul/Oct) from
+  2016-01 through 2025-10, at least one year to the end. For each start: CAGR(leg) −
+  CAGR(benchmark) to the end, and the alpha CI over that window. The distribution is reported
+  (min, p25, median, p75, max).
+- **Reported for each leg:** CAGR, max drawdown, worst calendar year, annual turnover, and the
+  2020-04-01 start beside Quiver's 41.43%.
+
+**SUCCESS** — the ruling's test, on the primary version (disclosure dates, W = 182): **the long-only
+leg (2) beats 1.3× QQQ on CAGR AND its alpha CI vs QQQ excludes zero (positive), from at least 75%
+of the quarterly start dates.** Reported beside it, not graded: the same test for (2b) against QQQ
+and against 1.3× QQQ, the transaction-date version, and the window sensitivity.
+
+**Control arm:** the mechanical arm's live record since launch (2026-08-27, from the audit trail)
+is set against this replication's long-only leg over the identical window. That window is short;
+it is stated as such and not graded.
+
 ### STATUS 2026-10-09 evening — the day-trading build is measured; nothing passes; the production-data guard held in its first live session
 
 - **Production:** the paper unit started at 09:15 ET on the guarded code (deploys 3b9e4a5,
