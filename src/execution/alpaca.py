@@ -195,6 +195,17 @@ class AlpacaAdapter(BrokerAdapter):
         data = self._request("GET", "/v2/account")
         return Decimal(str(data["cash"]))
 
+    def account_snapshot(self) -> dict[str, Any]:
+        """``GET /v2/account`` verbatim: identity (``account_number``), cash,
+        equity. Read-only; the separate paper accounts (PAPER PUSH,
+        2026-10-09) pin their identity on it so keys can never be swapped
+        between books unnoticed."""
+        return dict(self._request("GET", "/v2/account"))
+
+    def market_clock(self) -> dict[str, Any]:
+        """``GET /v2/clock``: ``is_open``, ``next_open``, ``next_close``."""
+        return dict(self._request("GET", "/v2/clock"))
+
     def permissions(self) -> BrokerPermissions:
         """The account's configured permissions, from ``GET /v2/account``.
 

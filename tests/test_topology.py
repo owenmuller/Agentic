@@ -148,6 +148,15 @@ TOPOLOGY: dict[str, Rules] = {
         ),
         because="the loop; the single place the stages are wired together",
     ),
+    # THE PAPER LAB (PAPER PUSH, human ruling 2026-10-09 late): separate paper
+    # accounts. It reaches a broker only through the gate and the adapter, and
+    # imports NOTHING of the main book's machinery (orchestrator, audit, research,
+    # signals) - and nothing imports it - so the main book is untouched by
+    # construction. An LLM-driven lab sleeve will need its own ruling here.
+    "lab": Rules(
+        may_import=frozenset({"execution", "risk_gate"}),
+        because="separate paper accounts: the gate and the adapter, nothing of the main book",
+    ),
     # PRODUCTION-DATA WRITE GUARD (ruling 2026-10-09, item 4). Every package
     # imports it so the guard is installed before any entry point can resolve a
     # data path; that is only safe because it imports NOTHING first-party and

@@ -1,0 +1,23 @@
+# PAPER PUSH (human ruling 2026-10-09 late): the LEVERAGE LADDER, in its own
+# Alpaca paper account. One run per trigger: settle anything left working,
+# reconcile the rung books to the broker, snapshot, and - at the first session
+# of each month - rebalance the three rungs. Writes only data-lab/ladder/
+# (datasafety owner marker); can never write the main book's data/.
+# Keys: ALPACA_LAB_LADDER_API_KEY / ALPACA_LAB_LADDER_API_SECRET in .env.
+# Install (root):
+#   sudo cp ops/vps/agentic-lab-ladder.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now agentic-lab-ladder.timer
+[Unit]
+Description=Agentic paper lab: leverage ladder (separate paper account)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=agentic
+WorkingDirectory=/home/agentic/Agentic
+Environment=PYTHONIOENCODING=utf-8
+ExecStart=/home/agentic/Agentic/.venv/bin/python -m lab tick ladder
+TimeoutStartSec=30min
+MemoryMax=512M

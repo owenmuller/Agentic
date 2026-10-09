@@ -1,0 +1,81 @@
+# PAPER PUSH (human ruling 2026-10-09, late evening): aggressive strategies run
+# live in SEPARATE Alpaca paper accounts, ~$100K each, in parallel, and the
+# results sort them. The main paper book and its rules are untouched: nothing
+# here is read by the orchestrator, and no lab account can write the main
+# book's data (datasafety owner markers).
+#
+# Each account:
+#   - its own keys, from .env: ALPACA_LAB_<NAME>_API_KEY / ALPACA_LAB_<NAME>_API_SECRET
+#     (<NAME> = the account name upper-cased, '-' -> '_'). A human creates the paper
+#     account in the Alpaca dashboard and adds the keys; the agent never does.
+#   - its own ledger and state under data-lab/<name>/, writable only by its own
+#     system unit agentic-lab-<name>.service (installed by a human, root).
+#   - its own risk gate (the same deterministic RiskGate, its own cap table:
+#     config/risk_limits.yaml with this file's overrides) and its own kill switch
+#     (12% from its own high-water mark; manual human reset; halt marker).
+#   - pinned to one broker account number at its first run; refuses to start if
+#     the keys ever resolve to a different account, or to the main book's.
+#
+# Paper only: every lab process refuses to start unless PAPER_MODE resolves to
+# paper. It never reads, sets or suggests the live-trading variables.
+version: 1
+
+accounts:
+  ladder:
+    enabled: true
+    label: LEVERAGE LADDER
+    sleeve: leverage_ladder
+    # Paper benchmark. Leveraged ETFs were analysis-only before this ruling
+    # (CLAUDE.md § Risk-On Redirect); live eligibility is not ruled.
+    live_eligible: false
+    # The ladder holds 100% of its NAV through the gate's BASELINE path: cash-
+    # secured, dust-floored, bound by its allocation ceiling (1.00 + 0.03 drift),
+    # exempt from the judged sleeve's alpha caps, refused under the kill switch.
+    limits_overrides:
+      portfolio:
+        sleeves: {equity: 0, mechanical: 0, prediction: 0, baseline: 1, aggressive: 0}
+  ai-trader:
+    enabled: false
+    label: AUTONOMOUS AI TRADER
+    sleeve: ai_trader
+    live_eligible: false
+    status: "not built: build order is accounts, a (ladder), c, b"
+  unconstrained:
+    enabled: false
+    label: "UNCONSTRAINED (NOT LIVE-ELIGIBLE)"
+    sleeve: unconstrained
+    live_eligible: false
+    status: >-
+      BLOCKED: shorts and 2x margin contradict Inviolable Constraints #1 and #2,
+      which the code enforces (RiskLimits refuses margin_enabled and short
+      selling; the order schema cannot express a short). Needs the human's
+      explicit amendment of CLAUDE.md before it is built.
+
+# 2a. LEVERAGE LADDER (the benchmark every sleeve must beat). Three rungs, each
+# an independent sub-book of one third of the account, bought and held,
+# rebalanced to its weights at the first session of each month. No other logic.
+ladder:
+  rungs:
+    - name: spy_1_5x
+      label: "1.5x SPY (SPY + SSO)"
+      weights: {SPY: 0.5, SSO: 0.5}
+    - name: spy_2x
+      label: "2x SPY (SSO)"
+      weights: {SSO: 1.0}
+    - name: qqq_2x
+      label: "2x QQQ (QLD)"
+      weights: {QLD: 1.0}
+  # Held back in each rung so a marketable limit never asks for cash the rung
+  # does not have; the rebalance trades back to (1 - reserve) x weights.
+  cash_reserve_fraction: 0.005
+  # Trades smaller than this are skipped (dust, not drift).
+  min_trade_usd: 25
+  # Marketable limits: ask x (1 + buffer) for buys, bid x (1 - buffer) for sells.
+  limit_buffer: 0.002
+  # Within one run: an unfilled order is re-priced every reprice_seconds and
+  # abandoned (cancelled, retried next run) after fill_wait_seconds.
+  reprice_seconds: 60
+  fill_wait_seconds: 600
+  # The rebalance trades only inside this window of the session (ET).
+  trade_after: "09:45"
+  trade_before: "15:30"

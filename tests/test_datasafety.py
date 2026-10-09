@@ -47,9 +47,11 @@ def _run(code: str, tmp_path: Path, extra_env=None) -> subprocess.CompletedProce
 def trees(tmp_path):
     prod = tmp_path / "prod"
     prod.mkdir()
-    (prod / datasafety.MARKER).write_text("test production tree\n")
     (prod / "audit.jsonl").write_text('{"existing": true}\n')
     (prod / "sub").mkdir()
+    # the marker LAST: once it exists this (non-production) process may not
+    # write the tree, which is the point
+    (prod / datasafety.MARKER).write_text("test production tree\n")
     free = tmp_path / "free"
     free.mkdir()
     return tmp_path
@@ -207,11 +209,18 @@ def test_only_the_operator_commands_may_declare_production_writes(trees):
         trees,
     )
     assert result.returncode == 0 and "OK" in result.stdout, result.stdout + result.stderr
-    source = (SRC / "orchestrator" / "__main__.py").read_text(encoding="utf-8")
-    calls = [line for path in SRC.rglob("*.py") for line in path.read_text(encoding="utf-8").splitlines()
+    calls = [(path.relative_to(SRC).as_posix(), line) for path in SRC.rglob("*.py")
+             for line in path.read_text(encoding="utf-8").splitlines()
              if "declare_operator(" in line and "def declare_operator" not in line]
-    assert len(calls) == 1 and "declare_operator(command)" in calls[0], calls
-    assert "if command in OPERATOR_COMMANDS:" in source
+    # one declaration per operator CLI: the main book's and the paper lab's
+    # (PAPER PUSH, 2026-10-09), each behind its own OPERATOR_COMMANDS check
+    assert sorted(path for path, _ in calls) == ["lab/__main__.py", "orchestrator/__main__.py"], calls
+    assert all("declare_operator(command)" in line for _, line in calls), calls
+    for cli in ("orchestrator", "lab"):
+        assert "if command in OPERATOR_COMMANDS:" in (SRC / cli / "__main__.py").read_text(encoding="utf-8")
+    from lab.__main__ import OPERATOR_COMMANDS as LAB_OPERATOR_COMMANDS
+
+    assert LAB_OPERATOR_COMMANDS == {"halt", "resume"}
 
 
 # ------------------------------------------- every entry point imports it

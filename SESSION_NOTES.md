@@ -4102,6 +4102,77 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### PAPER PUSH 2026-10-09 (late) — separate paper accounts BUILT; 2a LEVERAGE LADDER BUILT (waits on keys + unit install); 2c BLOCKED on Constraints #1/#2; 2b next
+
+**1. Accounts and ledger: BUILT** (`src/lab/`, `config/lab.yaml`, CLAUDE.md § Paper Lab).
+- **How many accounts the plan allows:** Alpaca allows **three paper accounts per login**. The main book
+  uses one, which leaves two: the ladder and one more. A third lab account (a, b and c all live) needs a
+  second Alpaca login. Creating the accounts, setting ~$100K and adding the keys are human actions; the
+  agent never does them.
+- **Per account:**
+  - Its own keys (`ALPACA_LAB_<NAME>_API_KEY`/`_SECRET`).
+  - Its broker account number, pinned at first run. Preflight refuses:
+    - the main book's key;
+    - the main book's account;
+    - another lab account's account;
+    - a changed account (keys swapped);
+    - live mode (the lab is paper only, and it never touches the live variables).
+  - Its own append-only ledger (`data-lab/<name>/ledger.jsonl`: orders, settlements, funding, cash
+    adjustments, snapshots, faults, kill-switch events) and state file.
+  - Its own RiskGate, on `risk_limits.yaml` plus its overrides. These are validated by the same model,
+    so an override cannot switch margin or shorting on (tested).
+  - Its own kill switch at 12% from its own high-water mark. `python -m lab halt` is the operator
+    halt; `python -m lab resume --ack` is the HUMAN reset.
+- **Data guard extended (production-data rule applies to every account):**
+  - Markers may name an owner unit. The hook now runs in production units too: an owned tree is
+    writable only by its owner, and the main `data/` by every production unit except the lab units.
+  - Result: no lab unit can write the main book, the main units cannot write a lab account, and lab
+    accounts cannot write each other.
+  - A lab unit asking for the main data directory is refused. A real `lab tick` outside its own unit is
+    refused (`--dry-run` plans with live quotes, submits nothing, writes scratch).
+  - Only markers that exist are cached. Before this, a negative cache could miss a tree marked after the
+    process first looked; the test fixtures that relied on that now write their marker last.
+  - Inside a production unit, an internal guard ERROR (not a refusal) fails open rather than kill a live
+    session. Outside production it fails closed.
+- **Topology:** `lab` may import only `execution` and `risk_gate`; nothing imports `lab`. The main book
+  is untouched by construction.
+
+**2a. LEVERAGE LADDER: BUILT, not running** (`lab/ladder.py`, unit `ops/vps/agentic-lab-ladder.{service,timer}`).
+- **Rungs:** 1.5× SPY (SPY + SSO half and half), 2× SPY (SSO), 2× QQQ (QLD). Each is a third of the
+  starting cash and its own sub-book (the ruling did not split the account; equal thirds are my reading).
+  Each is bought at the first run and rebalanced to (1 − 0.5% reserve) × its weights at the first session
+  of each month. No other logic.
+- **Execution:** marketable limits, sells first. A partial fill is re-priced every 60 s; an order still
+  open after 10 minutes is abandoned, and the month stays due.
+- **Every run:** cancels and settles what a previous run left working, reconciles the books to the
+  broker (dividends and fees are allocated by NAV and logged; an unreconciled share count freezes
+  trading), and writes a snapshot.
+- **Kill switch or halt on:** the ladder neither buys nor sells, which is still buy-and-hold.
+- **Timer:** weekdays 10:00 ET (trades if due) and 16:10 ET (closing snapshot; outside the trading
+  window).
+- **Interpretation flagged:** 2× rungs will often draw down 12% and trip the account's kill switch,
+  after which the ladder is frozen buy-and-hold until a human resets it. I kept the main book's 12%
+  (Constraint #6) rather than exempt the benchmark.
+- **Leveraged ETFs:** recorded in CLAUDE.md as authorised for this separate paper account only; the
+  main book's posture is unchanged.
+
+**Gates.** Full suite **1,495 passed, 13 skipped** (+40: `tests/test_lab.py`, ownership cases in the
+guard tests, topology). Not yet run live: there are no lab keys on the box (`ALPACA_LAB_*` absent) and
+the unit is not installed. The live round trip waits on both, during market hours; weekend quotes are
+stale. No prompt changed, so no golden replay is required.
+
+**2c UNCONSTRAINED: BLOCKED.** Shorts and 2× margin contradict Inviolable Constraints #1 ("Margin disabled.
+No borrowed buying power under any circumstances") and #2 ("No over-leverage"), and the code enforces both
+structurally: `RiskLimits` refuses `margin_enabled` and short selling at load, and the order schema has no
+short-sale type. Per CLAUDE.md § Requires Explicit Human Approval, the agent stops and asks for the
+amendment's exact wording before building it, even in paper.
+
+**2b AUTONOMOUS AI TRADER:** next in order once c is ruled. It needs the third paper account (a second
+login), and before it goes live a golden replay plus a live round trip.
+
+**Service note.** The deploy changes the guard inside every production unit: the Monday 09:15 paper session
+is the first production run of the ownership hook. No production Python unit runs before then.
+
 ### RULINGS 2026-10-09 EVENING — the B execution test BUILT (live from Monday 2026-10-12, 20 sessions); learnings in CLAUDE.md; item 7 Quiver House replication RESULT: NOT MET
 
 **1. B as an execution test: BUILT, deployed for Monday's session.** Engine `orchestrator/exec_test.py`,

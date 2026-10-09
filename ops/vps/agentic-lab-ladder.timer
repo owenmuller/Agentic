@@ -1,0 +1,12 @@
+# Weekdays 10:00 ET (trade when due, snapshot) and 16:10 ET (closing snapshot;
+# outside the trading window, so it never trades).
+[Unit]
+Description=Agentic paper lab: leverage ladder trigger
+
+[Timer]
+OnCalendar=Mon..Fri 10:00 America/New_York
+OnCalendar=Mon..Fri 16:10 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

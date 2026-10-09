@@ -19,6 +19,7 @@ config/secrets*
 
 # Runtime data — audit records, order logs, fills
 data/
+data-lab/
 *.log
 
 # OS / editor

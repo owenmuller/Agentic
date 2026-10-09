@@ -1,4 +1,5 @@
-# Nightly backup of data/ (audit log = the system of record), two layers:
+# Nightly backup of data/ (audit log = the system of record) and data-lab/
+# (the separate paper accounts, PAPER PUSH 2026-10-09), two layers:
 #   1. On-box tarball, 14-day retention (always runs).
 #   2. Off-box push (ruling 2026-09-02): the newest tarball, gpg-encrypted
 #      client-side, to a DO Spaces bucket via ops/vps/push_backup.sh. Runs as
@@ -16,5 +17,5 @@ Description=Agentic data/ nightly backup
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash -c 'mkdir -p /var/backups/agentic && tar -czf /var/backups/agentic/data-$(date +%%F).tar.gz -C /home/agentic/Agentic data && find /var/backups/agentic -name "data-*.tar.gz" -mtime +14 -delete'
+ExecStart=/bin/bash -c 'mkdir -p /var/backups/agentic && tar -czf /var/backups/agentic/data-$(date +%%F).tar.gz -C /home/agentic/Agentic data $(cd /home/agentic/Agentic && ls -d data-lab 2>/dev/null) && find /var/backups/agentic -name "data-*.tar.gz" -mtime +14 -delete'
 ExecStart=/usr/local/bin/agentic-push-backup
