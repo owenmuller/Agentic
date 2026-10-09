@@ -605,6 +605,40 @@ class AggressiveSleeveConfig(BaseModel):
     attention: AttentionMomentumConfig = Field(default_factory=AttentionMomentumConfig)
 
 
+class ExecutionTestConfig(BaseModel):
+    """The B execution test (human ruling 2026-10-09 evening): the SPY
+    noise-area momentum rules, long SPY above the upper band, SH bought below
+    the lower band, run LIVE in the aggressive paper sleeve for a fixed number
+    of sessions to prove the intraday plumbing - entries, trailing stops, the
+    15:50 close-out, the inverse-ETF leg, the PDT gate. Not a strategy: fixed
+    risk per trade, no LLM, its own attribution bucket outside every alpha
+    line. Stops itself after ``max_sessions``."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = False
+    #: The first session that counts; the test runs ``max_sessions`` sessions.
+    first_session: Optional[date] = None
+    max_sessions: int = Field(default=20, ge=1, le=60)
+    symbol: str = "SPY"
+    inverse_symbol: str = "SH"
+    #: Fixed risk per trade, as a fraction of the aggressive sleeve NAV.
+    risk_fraction: Decimal = Field(default=Decimal("0.01"), gt=0, le=Decimal("0.02"))
+    lookback_sessions: int = Field(default=14, ge=5, le=30)
+    #: Decision marks, New York time: first, last, step (minutes).
+    first_decision: str = "10:00"
+    last_decision: str = "15:30"
+    step_minutes: int = Field(default=30, ge=5, le=60)
+    close_out: str = "15:50"
+    #: A decision evaluated later than this after its mark is a timing fault.
+    decision_grace_minutes: int = Field(default=5, ge=1, le=15)
+    #: The smallest stop distance used for sizing, as a fraction of price
+    #: (a stop sitting on the price would size without bound).
+    min_stop_fraction: Decimal = Field(default=Decimal("0.001"), gt=0)
+    #: Marketable-limit buffer for entries and exits, fraction of the quote.
+    limit_buffer: Decimal = Field(default=Decimal("0.001"), ge=0, le=Decimal("0.01"))
+
+
 class OrchestratorConfig(BaseModel):
     """Loop cadence and the daily research budget."""
 
@@ -685,6 +719,7 @@ class OrchestratorConfig(BaseModel):
     self_consistency: SelfConsistencyConfig = Field(default_factory=SelfConsistencyConfig)
     #: The aggressive sleeve (risk-on redirect, human ruling 2026-10-08).
     aggressive_sleeve: AggressiveSleeveConfig = Field(default_factory=AggressiveSleeveConfig)
+    execution_test: ExecutionTestConfig = Field(default_factory=ExecutionTestConfig)
     #: Add decisions (ruling 2026-09-16): one judged position per symbol, adds
     #: under a combined cap. The combined cap can never exceed the hard cap, so
     #: absent-section defaults are safe.

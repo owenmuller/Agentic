@@ -184,10 +184,12 @@ aggressive_sleeve:
   max_daily_deployment: 1.00 # of aggressive sleeve NAV per trading day
   max_sector_exposure: 0.50 # of aggressive sleeve NAV; config/sectors.yaml
   min_order_notional_usd: 5
-  # OFF by human ruling 2026-10-09 (item 1): the attention screen measured
-  # -2.42% mean excess vs SPY, CI [-3.38, -1.38], n=6,361. Not traded until a
-  # source passes. Exits keep running; candidates are recorded, not researched.
-  entries_enabled: false
+  # Attention entries OFF by human ruling 2026-10-09 (item 1): the screen
+  # measured -2.42% vs SPY, CI [-3.38, -1.38], n=6,361; the source itself is
+  # switched off in orchestrator.yaml (aggressive_sleeve.attention.enabled).
+  # Entries ON for the B EXECUTION TEST alone (human ruling 2026-10-09
+  # evening): 20 sessions, rule-based, 1% of the sleeve at risk per trade.
+  entries_enabled: true
 
 # Idle-cash yield sweep (human ruling 2026-09-02). The swept ETF is NEVER buying
 # power: the gate's cash model is unchanged and every order still reserves cash.

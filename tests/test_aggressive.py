@@ -58,6 +58,14 @@ def shipped_limits():
 
 
 @pytest.fixture(scope="session")
+def off_limits(shipped_limits):
+    """The sleeve with its entries switched OFF (the ruling-1 switch), whatever
+    the shipped value is today."""
+    caps = shipped_limits.aggressive_sleeve.model_copy(update={"entries_enabled": False})
+    return shipped_limits.model_copy(update={"aggressive_sleeve": caps})
+
+
+@pytest.fixture(scope="session")
 def limits(shipped_limits):
     """The shipped caps with the sleeve's entries switched back ON: these tests
     exercise the sleeve's machinery. The shipped switch - OFF by human ruling
@@ -89,9 +97,10 @@ def test_the_shipped_weights_and_caps_are_as_ruled(shipped_limits, signals_confi
         Decimal("0.30"), Decimal("0.25"), Decimal("0.15"), Decimal("0.30"), Decimal("0.00"),
     )
     caps = shipped_limits.aggressive_sleeve
-    # Entries OFF by human ruling 2026-10-09 (item 1): the attention screen
-    # measured -2.42% vs SPY, CI [-3.38, -1.38]. Exits keep running.
-    assert caps is not None and not caps.entries_enabled
+    # Entries ON for the B execution test alone (ruling 2026-10-09 evening);
+    # the attention source that ruling 1 stopped is switched off at its root.
+    assert caps is not None and caps.entries_enabled
+    assert not OrchestratorConfig.load().aggressive_sleeve.attention.enabled
     assert (caps.max_single_position, caps.max_positions, caps.max_daily_deployment, caps.max_sector_exposure) == (
         Decimal("0.25"), 5, Decimal("1.00"), Decimal("0.50"),
     )
@@ -438,9 +447,9 @@ def test_the_weekly_reports_the_sleeve_against_spy_in_its_own_bucket(tmp_path, l
 # ================================================================================
 
 
-def test_switched_off_the_sleeve_records_candidates_and_pays_for_no_research(tmp_path, shipped_limits, signals_config, research_config):
+def test_switched_off_the_sleeve_records_candidates_and_pays_for_no_research(tmp_path, off_limits, signals_config, research_config):
     llm = RoutingLLM()
-    started = _session(tmp_path, shipped_limits, signals_config, research_config, llm=llm)
+    started = _session(tmp_path, off_limits, signals_config, research_config, llm=llm)
     report = started.loop.tick()
     assert report.processed == []
     (record,) = [r for r in started.audit.stage_rejections() if r.code == "entries_disabled"]
@@ -449,11 +458,11 @@ def test_switched_off_the_sleeve_records_candidates_and_pays_for_no_research(tmp
     assert started.gate.state.position(("aggressive", "NUE")) is None
 
 
-def test_switched_off_the_sleeve_parks_no_cash_for_itself(shipped_limits, limits):
+def test_switched_off_the_sleeve_parks_no_cash_for_itself(off_limits, limits):
     from orchestrator.sweep import liquidity_buffer
 
     on = liquidity_buffer(_gate(limits, cash="100000"), limits.cash_management)
-    off = liquidity_buffer(_gate(shipped_limits, cash="100000"), shipped_limits.cash_management)
+    off = liquidity_buffer(_gate(off_limits, cash="100000"), off_limits.cash_management)
     assert on - off == Decimal("100000") * Decimal("0.25")  # the sleeve's full daily cap, no longer parked
 
 

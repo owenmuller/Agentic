@@ -16,6 +16,7 @@ from execution.alpaca import LIVE_BASE_URL, PAPER_BASE_URL, AlpacaAdapter
 from execution.market_data import (
     DATA_BASE_URL,
     AlpacaDailyBars,
+    AlpacaMinuteBars,
     AlpacaPriceSource,
     MarketContextBuilder,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "AlpacaAdapter",
     "AlpacaDailyBars",
     "AlpacaDailyBars",
+    "AlpacaMinuteBars",
     "AlpacaPriceSource",
     "MarketContextBuilder",
     "MarketContextBuilder",

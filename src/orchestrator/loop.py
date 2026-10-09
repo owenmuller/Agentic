@@ -109,6 +109,8 @@ class TickReport:
     sweep_orders: int = 0
     #: Baseline sleeve rebalance orders placed this tick (ruling 2026-09-18).
     baseline_orders: int = 0
+    #: Execution-test orders placed this tick (ruling 2026-10-09 evening).
+    exec_test_orders: int = 0
     halted: bool = False
 
     @property
@@ -142,6 +144,7 @@ class TradingLoop:
         mechanical: Optional[object] = None,
         sweeper: Optional[object] = None,
         baseline: Optional[object] = None,
+        execution_test: Optional[object] = None,
         budget: ResearchBudget,
         session: SessionState,
         gate: RiskGate,
@@ -219,6 +222,8 @@ class TradingLoop:
         #: The baseline market-beta sleeve (ruling 2026-09-18). None when its
         #: weight is zero or baseline_sleeve.enabled is false.
         self._baseline = baseline
+        #: The B execution test (ruling 2026-10-09 evening). None when disabled.
+        self._execution_test = execution_test
         self._budget = budget
         self._session = session
         self._gate = gate
@@ -402,6 +407,8 @@ class TradingLoop:
                 released += len(self._sweeper.cancel_working())
             if self._baseline is not None:
                 released += len(self._baseline.cancel_working())
+            if self._execution_test is not None:
+                released += len(self._execution_test.cancel_working())
             report.settled += released
             self._session.persist(self._gate, self._clock())
             message = (
@@ -754,6 +761,12 @@ class TradingLoop:
             report.baseline_orders = self._baseline.tick(now)
             self._session.capture_baseline(self._baseline)
 
+        # The B execution test (ruling 2026-10-09 evening): rule-based
+        # intraday orders in the aggressive sleeve, after the trading sleeves
+        # and before the sweep, which then defends their reservations.
+        if self._execution_test is not None:
+            report.exec_test_orders = self._execution_test.tick(now)
+
         # The sweep runs LAST, after every trading decision this tick has made
         # its reservations — the buffer it defends includes them, so ordering
         # it after the entries is what keeps it from racing them.
@@ -898,6 +911,8 @@ class TradingLoop:
         if self._baseline is not None:
             report.settled += len(self._baseline.cancel_working())
             self._session.capture_baseline(self._baseline)
+        if self._execution_test is not None:
+            report.settled += len(self._execution_test.cancel_working())
         # Signals still deferred at shutdown die with the process (ruling
         # 2026-10-07, 8-K funnel hole a): record them so the forward engine
         # can grade what the pool or the budget turned away today.

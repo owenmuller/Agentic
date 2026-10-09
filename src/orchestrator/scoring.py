@@ -420,6 +420,7 @@ def compute_slice_stats(
             "mechanical",
             "cash_sweep",
             "baseline",
+            "execution_test",
         ):
             continue
         snapshot = record.signal
@@ -564,7 +565,7 @@ def whatif_dispatch(
         seen.add(record.decision_id)
         paid = False
         if isinstance(record, DecisionRecord):
-            if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline"):
+            if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline", "execution_test"):
                 continue
             paid = True
         else:

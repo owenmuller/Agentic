@@ -1001,7 +1001,7 @@ class ExitEngine:
             decision = trail.decision
             if (decision.sizing.strategy == "aggressive") != (self._sleeve == "aggressive"):
                 continue  # each sleeve's engine replays only its own positions (2026-10-08)
-            if decision.sizing.strategy in ("mechanical", "cash_sweep", "baseline"):
+            if decision.sizing.strategy in ("mechanical", "cash_sweep", "baseline", "execution_test"):
                 # Not this engine's: the mechanical engine replays its own
                 # positions (no stops, its own exit regime) and the cash sweeper
                 # owns its parked lots (sleeve cash_management, keyed apart from

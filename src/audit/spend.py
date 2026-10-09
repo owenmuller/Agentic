@@ -58,7 +58,7 @@ from audit.records import (
 
 ZERO = Decimal("0")
 CENTS = Decimal("0.01")
-NON_JUDGED_STRATEGIES = ("mechanical", "cash_sweep", "baseline")
+NON_JUDGED_STRATEGIES = ("mechanical", "cash_sweep", "baseline", "execution_test")
 #: The stages at which a StageRejectionRecord is a funnel candidate — the
 #: forward report's rule (forward.funnel._STAGE_BUCKETS), restated here because
 #: audit may not import forward. Execution shares a decision's id and

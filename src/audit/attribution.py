@@ -520,6 +520,59 @@ def _aggressive_attribution(
 
 
 @dataclass(frozen=True, slots=True)
+class ExecutionTestAttribution:
+    """The B execution test's own line (human ruling 2026-10-09 evening):
+    labelled EXECUTION TEST, NOT a strategy - its trails are partitioned out of
+    every class, the alpha lines and the book beta before they are computed.
+    Reports what the test is for: how many orders filled, the realised P&L,
+    and the fill slippage against the live quote each decision acted on (the
+    modelled-price comparison lives in the daily morning report)."""
+
+    entries: int
+    round_trips: int
+    realised_pnl: Decimal
+    entry_slippage_bp: Optional[Decimal]
+    exit_slippage_bp: Optional[Decimal]
+
+    def summary(self) -> str:
+        def bp(x: Optional[Decimal]) -> str:
+            return f"{x:+.1f}bp" if x is not None else "n/a"
+
+        return (
+            f"EXECUTION TEST (ruling 2026-10-09 evening; not a strategy, outside every alpha "
+            f"line): {self.entries} entries filled, {self.round_trips} round trips closed, "
+            f"realised {self.realised_pnl:+.2f}; fill vs the decision's live quote: entries "
+            f"{bp(self.entry_slippage_bp)}, exits {bp(self.exit_slippage_bp)} (adverse positive)"
+        )
+
+
+def _execution_test_attribution(trails: list[AuditTrail]) -> Optional[ExecutionTestAttribution]:
+    entries = round_trips = 0
+    pnl = ZERO
+    entry_slip: list[Decimal] = []
+    exit_slip: list[Decimal] = []
+    for trail in trails:
+        for fill in trail.fills:
+            intended = getattr(fill, "intended_price", None)
+            if fill.side == "buy":
+                entries += 1
+                if intended:
+                    entry_slip.append((fill.fill_price - intended) / intended * 10000)
+            elif intended:
+                exit_slip.append((intended - fill.fill_price) / intended * 10000)
+        if trail.outcome is not None:
+            round_trips += 1
+            pnl += trail.outcome.realised_pnl
+    if entries == 0:
+        return None
+
+    def mean(xs: list[Decimal]) -> Optional[Decimal]:
+        return (sum(xs, ZERO) / len(xs)).quantize(Decimal("0.1")) if xs else None
+
+    return ExecutionTestAttribution(entries, round_trips, pnl.quantize(CENTS), mean(entry_slip), mean(exit_slip))
+
+
+@dataclass(frozen=True, slots=True)
 class CashManagementAttribution:
     """The sweep's own line (ruling 2026-09-02): what parked cash earned.
 
@@ -761,6 +814,8 @@ class AttributionReport:
     #: The aggressive sleeve's own lines (redirect 2026-10-08, increment C);
     #: None until its first buy fills. Never in by_class or an alpha line.
     aggressive: Optional[AggressiveAttribution] = None
+    #: The B execution test (ruling 2026-10-09 evening); None until it fills.
+    execution_test: Optional[ExecutionTestAttribution] = None
     #: Judged-sleeve P&L grouped by exit reason (2026-08-31).
     by_exit_reason: tuple["ExitReasonAttribution", ...] = ()
     #: The options doors and theme->ETF expressions (ruling 2026-09-15), since
@@ -1068,6 +1123,8 @@ class AttributionReport:
         if self.aggressive is not None:
             for line in self.aggressive.summary_lines():
                 lines.append(f"  {line}")
+        if self.execution_test is not None:
+            lines.append(f"  {self.execution_test.summary()}")
 
         if self.flagged_classes:
             lines.extend(
@@ -1408,12 +1465,15 @@ def build_attribution(
     aggressive_trails = [
         t for t in trails if t.decision.sizing.strategy == "aggressive"
     ]
+    execution_trails = [
+        t for t in trails if t.decision.sizing.strategy == "execution_test"
+    ]
     trails = [
         t
         for t in trails
         # The aggressive sleeve (redirect 2026-10-08) is its own bucket: its
         # fixed-risk swings never read as a judged class earning.
-        if t.decision.sizing.strategy not in ("mechanical", "cash_sweep", "baseline", "aggressive")
+        if t.decision.sizing.strategy not in ("mechanical", "cash_sweep", "baseline", "aggressive", "execution_test")
     ]
     buckets: dict[SignalClass, dict[str, object]] = {}
 
@@ -1644,6 +1704,7 @@ def build_attribution(
         cash_management=cash_management,
         baseline=baseline,
         aggressive=_aggressive_attribution(aggressive_trails, generated_at, price_on),
+        execution_test=_execution_test_attribution(execution_trails),
         feed_cost_detail=feed_cost_detail,
         scalar_forgone=scalar_forgone,
         scalar_scaled_entries=scalar_scaled_entries,

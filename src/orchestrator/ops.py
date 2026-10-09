@@ -660,7 +660,7 @@ def verdict_funnel(records, sessions: int = 10) -> dict:
         research = getattr(record, "research", None)
         if research is None or not isinstance(record, (DecisionRecord, StageRejectionRecord)):
             continue
-        if isinstance(record, DecisionRecord) and getattr(record.sizing, "strategy", None) in ("mechanical", "cash_sweep", "baseline"):
+        if isinstance(record, DecisionRecord) and getattr(record.sizing, "strategy", None) in ("mechanical", "cash_sweep", "baseline", "execution_test"):
             continue
         day = record.recorded_at.date().isoformat()
         bucket = by_day.setdefault(day, {"passes": 0, "longs": 0, "approved": 0, "long_fates": {}})

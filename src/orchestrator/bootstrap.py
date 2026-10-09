@@ -114,6 +114,33 @@ def _opportunity_context(registry) -> str:
     return head
 
 
+def _merge_open(*parts):
+    """Sum several strategies' replayed open positions, symbol by symbol."""
+    from decimal import Decimal
+
+    merged: dict = {}
+    for part in parts:
+        for symbol, (quantity, cost) in (part or {}).items():
+            q, c = merged.get(symbol, (Decimal("0"), Decimal("0")))
+            merged[symbol] = (q + quantity, c + cost)
+    return merged
+
+
+class _LazyMinuteBars:
+    """Opens the Alpaca minute-bar client on first use: a disabled or not-yet-
+    started execution test touches no network and needs no keys."""
+
+    def __init__(self) -> None:
+        self._client = None
+
+    def bars(self, symbol, start, end, feed):
+        if self._client is None:
+            from execution.market_data import AlpacaMinuteBars
+
+            self._client = AlpacaMinuteBars()
+        return self._client.bars(symbol, start, end, feed)
+
+
 def _sleeve_label(weight) -> str:
     """A 0%-weight sleeve is INACTIVE, not a sleeve earning 0% — say so rather
     than letting an operator read dead capital into a deliberate ruling.
@@ -201,6 +228,8 @@ class Startup:
     #: The baseline market-beta sleeve (ruling 2026-09-18), or None when its
     #: weight is zero or it is switched off.
     baseline: object = None
+    #: The B execution test (ruling 2026-10-09 evening), or None.
+    execution_test: object = None
 
     @property
     def gate(self) -> RiskGate:
@@ -341,7 +370,12 @@ def preflight(
         baseline_open=audit.strategy_open_positions("baseline"),
         # The aggressive sleeve (risk-on redirect, 2026-10-08), likewise, and
         # its own daily deployment counter so a restart cannot refill it.
-        aggressive_open=audit.strategy_open_positions("aggressive"),
+        aggressive_open=_merge_open(
+            audit.strategy_open_positions("aggressive"),
+            # the execution test (ruling 2026-10-09 evening) holds in the
+            # aggressive sleeve; a restart mid-session wakes it up there
+            audit.strategy_open_positions("execution_test"),
+        ),
         aggressive_deployed_today=replay_deployed_today(decisions, today, Sleeve.AGGRESSIVE),
         today=today,
         account_type=orchestrator_config.account_type,
@@ -395,6 +429,7 @@ def start(
     options_chain=None,
     vix_close: Optional[Callable] = None,
     atr_fraction: Optional[Callable] = None,
+    minute_bars: Optional[object] = None,
     **preflight_kwargs: object,
 ) -> Startup:
     """Run the startup sequence and return a loop ready to tick.
@@ -694,6 +729,36 @@ def start(
         if any(d.sizing.strategy == "baseline" for d in checks.audit.decisions()):
             baseline.replay(checks.audit.trails())
 
+    # The B execution test (ruling 2026-10-09 evening): rule-based intraday
+    # orders in the aggressive sleeve for a fixed number of sessions. Its
+    # minute bars are opened lazily, so a disabled or not-yet-started test
+    # touches no network.
+    execution_test = None
+    exec_config = checks.orchestrator_config.execution_test
+    if (
+        exec_config.enabled
+        and checks.limits.aggressive_sleeve is not None
+        and checks.limits.portfolio.sleeves.aggressive > 0
+    ):
+        from orchestrator.exec_test import ExecutionTest
+
+        data_directory = checks.audit.path.parent
+        execution_test = ExecutionTest(
+            config=exec_config,
+            gate=checks.gate,
+            adapter=checks.adapter,
+            audit=checks.audit,
+            bars=minute_bars or _LazyMinuteBars(),
+            prices=prices,
+            bids=getattr(prices, "bid", None),
+            clock=checks.clock,
+            id_factory=id_factory or (lambda: _uuid.uuid4().hex[:16]),
+            state_path=data_directory / "execution_test_state.json",
+            daily_path=data_directory / "execution_test_daily.jsonl",
+            note=mechanical_sink,
+        )
+        execution_test.replay()
+
     # The idle-cash yield sweeper (ruling 2026-09-02): deterministic, config-
     # switched, replayed from its own trails. Never buying power, never alpha.
     sweeper = None
@@ -727,6 +792,7 @@ def start(
         mechanical=mechanical,
         sweeper=sweeper,
         baseline=baseline,
+        execution_test=execution_test,
         cost_meter=cost_meter,
         error_sink=error_sink,
         source_caps={
@@ -763,6 +829,7 @@ def start(
         credibility=credibility,
         mechanical=mechanical,
         baseline=baseline,
+        execution_test=execution_test,
         preflight=checks,
     )
 

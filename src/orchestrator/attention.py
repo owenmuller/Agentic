@@ -153,7 +153,7 @@ class AttentionMomentumFetcher:
             signal = record.signal
             if signal.source_id not in sources or signal.observed_at < since:
                 continue
-            if isinstance(record, DecisionRecord) and record.sizing.strategy in ("mechanical", "cash_sweep", "baseline"):
+            if isinstance(record, DecisionRecord) and record.sizing.strategy in ("mechanical", "cash_sweep", "baseline", "execution_test"):
                 continue
             code = getattr(record, "code", "") or ""
             if code in _EXCLUDED_CODES:

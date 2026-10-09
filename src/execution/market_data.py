@@ -366,6 +366,73 @@ class UnservedSymbols:
             logger.warning("could not persist unserved symbols: %s", error)
 
 
+class AlpacaMinuteBars:
+    """One-minute bars for the execution test (human ruling 2026-10-09
+    evening). Two feeds, used deliberately: ``sip`` (the consolidated tape,
+    which this subscription serves only 15 minutes delayed) for the history
+    the noise area is built from and for the next-morning modelled replay;
+    ``iex`` (real time, a partial-volume venue) for the live decision's VWAP.
+    Returns raw Alpaca bar dicts; an unserved window is an empty list, never
+    an exception."""
+
+    def __init__(
+        self,
+        client: Optional[httpx.Client] = None,
+        *,
+        base_url: str = DATA_BASE_URL,
+        timeout: float = 15.0,
+    ) -> None:
+        if client is not None:
+            self._client = client
+        else:
+            load_environment()
+            self._client = httpx.Client(
+                base_url=base_url,
+                timeout=timeout,
+                headers={
+                    "APCA-API-KEY-ID": require_env("ALPACA_API_KEY"),
+                    "APCA-API-SECRET-KEY": require_env("ALPACA_API_SECRET"),
+                },
+            )
+
+    def bars(self, symbol: str, start: datetime, end: datetime, feed: str) -> list[dict]:
+        out: list[dict] = []
+        token: Optional[str] = None
+        for _ in range(40):
+            params: dict[str, Any] = {
+                "timeframe": "1Min",
+                "start": start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "end": end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "limit": 10000,
+                "feed": feed,
+                "adjustment": "raw",
+            }
+            if token:
+                params["page_token"] = token
+            try:
+                response = self._client.get(f"/v2/stocks/{quote(symbol)}/bars", params=params)
+            except Exception as error:  # noqa: BLE001 - an outage is missing data
+                logger.warning("minute bars for %s (%s) failed: %s", symbol, feed, error)
+                return out
+            if response.status_code >= 400:
+                logger.warning(
+                    "minute bars for %s (%s) returned HTTP %d", symbol, feed, response.status_code
+                )
+                return out
+            try:
+                payload = response.json()
+            except ValueError:
+                return out
+            out.extend(b for b in payload.get("bars") or [] if isinstance(b, dict))
+            token = payload.get("next_page_token")
+            if not token:
+                break
+        return out
+
+    def close(self) -> None:
+        self._client.close()
+
+
 class AlpacaDailyBars:
     """Daily bars from the same data host — the deterministic raw material for
     market context and benchmark returns.

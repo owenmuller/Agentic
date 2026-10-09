@@ -165,7 +165,7 @@ def render_whatif_report(
 
     for record in records:
         if isinstance(record, DecisionRecord):
-            if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline"):
+            if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline", "execution_test"):
                 continue
             snapshot, research = record.signal, record.research
             decision_id = record.decision_id

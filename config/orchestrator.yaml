@@ -430,7 +430,7 @@ aggressive_sleeve:
   stop_ceiling: 0.20
   leash_days: 84
   attention:
-    enabled: true
+    enabled: false # OFF by human ruling 2026-10-09 (item 1): measured -2.42% vs SPY, CI excluding zero. The only aggressive entries are the execution test below.
     event_sources: [congressional_disclosures, form4_insiders, gov_contract_awards, form_8k]
     lookback_calendar_days: 10
     confirm_sessions: 3
@@ -439,3 +439,28 @@ aggressive_sleeve:
     volume_multiple: 2.0
     earliest_new_york: "09:35"
     max_symbols: 600
+
+# THE B EXECUTION TEST (human ruling 2026-10-09 evening). The SPY noise-area
+# momentum rules (measured 2026-10-09: reproduces its paper in-sample, the edge
+# did not survive publication) run LIVE in the aggressive paper sleeve for 20
+# sessions, then stop by themselves. Purpose: prove the intraday plumbing -
+# entries, trailing stops, the 15:50 close-out, the inverse-ETF leg (SH, not a
+# short), the PDT gate - and report live fills against the modelled prices
+# every morning. NOT a strategy: fixed 1% of the sleeve at risk per trade, no
+# LLM, its own attribution bucket labelled EXECUTION TEST, outside every alpha
+# line. Engine: orchestrator/exec_test.py.
+execution_test:
+  enabled: true
+  first_session: 2026-10-12
+  max_sessions: 20
+  symbol: SPY
+  inverse_symbol: SH
+  risk_fraction: 0.01
+  lookback_sessions: 14
+  first_decision: "10:00"
+  last_decision: "15:30"
+  step_minutes: 30
+  close_out: "15:50"
+  decision_grace_minutes: 5
+  min_stop_fraction: 0.001
+  limit_buffer: 0.001

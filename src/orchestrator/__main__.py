@@ -100,6 +100,29 @@ def check() -> int:
     return 0
 
 
+def exec_test_report() -> int:
+    """The B execution test's daily reports and running totals (ruling
+    2026-10-09 evening). Read-only; outside production it reads the snapshot."""
+    import json as _json
+
+    path = default_data_dir() / "execution_test_daily.jsonl"
+    if not path.exists():
+        print("execution test: no daily report yet (the first one is written the morning after session 1)")
+        return 0
+    rows = [_json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    for row in rows:
+        print(_json.dumps(row))
+    live = sum(row.get("pnl_live", 0) for row in rows)
+    modelled = sum(row.get("pnl_modelled_at_live_sizes", 0) for row in rows)
+    faults = sum(len(row.get("faults") or []) for row in rows)
+    print()
+    print(
+        f"EXECUTION TEST, {len(rows)} sessions reported: P&L live {live:+.2f} vs modelled {modelled:+.2f} "
+        f"(gap {live - modelled:+.2f}); faults {faults}"
+    )
+    return 0
+
+
 def health() -> int:
     """Read-only. Builds the same reconstructed state as startup and prints it."""
     logging.basicConfig(level=logging.WARNING)  # health output is the report, not logs
@@ -260,6 +283,7 @@ def _attribution_text(checks) -> str:
                     "mechanical",
                     "cash_sweep",
                     "baseline",
+                    "execution_test",
                 ):
                     continue
                 symbol = str((trail.decision.gate.order or {}).get("symbol") or "")
@@ -1528,6 +1552,8 @@ def main() -> int:
         return check()
     if command == "health":
         return health()
+    if command == "exec-test":
+        return exec_test_report()
     if command == "run":
         return run()
     if command == "attribution":

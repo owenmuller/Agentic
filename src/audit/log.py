@@ -279,6 +279,50 @@ class AuditLog:
         self._append(record)
         return record
 
+    def record_execution_test(
+        self,
+        *,
+        side: str,
+        detail: str,
+        gate_decision: object,
+        capital: Decimal,
+        decision_id: Optional[str] = None,
+    ) -> DecisionRecord:
+        """An execution-test entry (human ruling 2026-10-09 evening): the B
+        noise-area rules run live in the aggressive paper sleeve to prove the
+        intraday plumbing. A DecisionRecord with no research snapshot and
+        ``strategy="execution_test"`` - its own bucket, labelled EXECUTION
+        TEST, partitioned out of every class and alpha line like the baseline."""
+        now = self._clock()
+        record_id = decision_id or self._id_factory()
+        snapshot = SignalSnapshot(
+            signal_id=f"exectest-{record_id}",
+            source_id="execution_test",
+            signal_class=SignalClass.CLASS_1_REALTIME,
+            observed_at=now,
+            content=detail,
+            raw_content=detail,
+        )
+        record = DecisionRecord(
+            decision_id=record_id,
+            recorded_at=now,
+            signal=snapshot,
+            research=None,
+            sizing=SizingSnapshot(
+                instrument="equity",
+                sleeve="aggressive",
+                confidence=0,  # not applicable: rules, no research, by ruling
+                sleeve_nav=capital,
+                fraction_of_sleeve_nav=Decimal("1"),
+                capital=capital,
+                rationale=f"EXECUTION TEST ({side}): rule-based, no LLM in the path - {detail}",
+                strategy="execution_test",
+            ),
+            gate=GateSnapshot.of(gate_decision),  # type: ignore[arg-type]
+        )
+        self._append(record)
+        return record
+
     def record_stage_rejection(
         self,
         decision_id: str,
@@ -881,7 +925,7 @@ class AuditLog:
             if record.recorded_at.date() != day:
                 continue
             if isinstance(record, DecisionRecord):
-                if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline"):
+                if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline", "execution_test"):
                     # No LLM ran (defect fix 2026-09-02): a mechanical entry or
                     # a cash sweep spent no pass, and counting it here was
                     # quietly consuming the judged source cap on every restart.
@@ -909,7 +953,7 @@ class AuditLog:
             if record.recorded_at.date() != day:
                 continue
             if isinstance(record, DecisionRecord):
-                if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline"):
+                if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline", "execution_test"):
                     continue
             elif isinstance(record, StageRejectionRecord):
                 if record.stage in (RejectedStage.PRE_FILTER, RejectedStage.TRIAGE):
@@ -964,7 +1008,7 @@ class AuditLog:
             # quietly shrinking the day's research budget after every restart.
             and not (
                 isinstance(record, DecisionRecord)
-                and record.sizing.strategy in ("mechanical", "cash_sweep", "baseline")
+                and record.sizing.strategy in ("mechanical", "cash_sweep", "baseline", "execution_test")
             )
         )
         # Self-consistency votes (ruling 2026-10-07): every extra sample was a

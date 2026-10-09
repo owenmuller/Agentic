@@ -4102,6 +4102,96 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### RULINGS 2026-10-09 EVENING — the B execution test BUILT (live from Monday 2026-10-12, 20 sessions); learnings in CLAUDE.md; item 7 Quiver House replication RESULT: NOT MET
+
+**1. B as an execution test: BUILT, deployed for Monday's session.** Engine `orchestrator/exec_test.py`,
+config `orchestrator.yaml execution_test`, CLAUDE.md § Risk-On Redirect.
+- **Rules:** the SPY noise-area rules, long-only. Long SPY above the upper band. **SH is bought
+  below the lower band, never a short.** The trailing stop is max(UB, VWAP), mirrored for SH.
+  Decisions come only at 10:00 … 15:30 ET, and a decision more than 5 minutes late is a recorded
+  timing fault, not a trade. **Everything closes at 15:50 ET.** Fixed risk is **1% of the
+  aggressive sleeve per trade**: shares = risk ÷ stop distance (floored at 0.1% of price), capped
+  at the sleeve's 25% single-position cap. Orders are marketable limits through the gate, one
+  working order at a time. An unfilled entry is cancelled after 120 seconds (a fault); an exit is
+  re-priced until it fills. No LLM.
+- **Data:** live decisions use the IEX quote midpoint and IEX session VWAP, because SIP is served
+  15 minutes delayed on this subscription. The 14-session noise area and the open come from SIP.
+- **Every morning** the previous session is replayed from SIP minute bars on the backtest's own
+  fill model, the close of the bar ending at each mark. The report covers decision agreement,
+  slippage against the modelled price at entry, stop, reversal and close-out (bp), seconds to
+  fill, late decisions, faults, P&L live vs modelled at the live sizes, and the gate's day-trade
+  count. It lands in run.log and `data/execution_test_daily.jsonl`; `python -m orchestrator
+  exec-test` prints the running totals.
+- **After session 20** it notes "EXECUTION TEST COMPLETE" with modelled vs live P&L and the fill
+  gap, and opens nothing more. The weekly carries an **EXECUTION TEST** line outside every alpha
+  line. The test is partitioned out of every class, the funnel, the research budget, the registry,
+  scoring, the judged exit engine's replay and the book beta.
+- **Switches:** aggressive-sleeve entries are **ON for this test alone**. The attention source
+  (ruling 1) is now off at its root, `aggressive_sleeve.attention.enabled: false`. A mid-session
+  restart wakes an open test position up in the aggressive sleeve.
+
+**Gates.**
+- **Full suite: 1,454 passed, 13 skipped.** New: `tests/test_exec_test.py`, 18 tests covering the
+  published bands, the rule table, a scripted session (SPY entry → trailing stop → SH leg → 15:50
+  close-out, with the same-day round trip counted for PDT), a late-decision fault, the auto-stop
+  after 20 sessions, partitioning, the morning report and restart replay.
+- **Live-data dry run on today's real session (2026-10-09):** SIP history built the bands (open
+  776.24 from SIP, prior close 773.89, σ(10:00) 0.144%). IEX VWAP tracks SIP VWAP within 0.13. IEX
+  quotes returned for SPY and SH. The model replay acts correctly: 10-09 enters at 15:00 and is
+  closed at 15:50; the trend day 2025-04-09 enters at 10:00, stops at 10:30 and re-enters at 13:30.
+- **Defects the dry run caught, and fixed:** the replay asked SIP for bars past now − 15 minutes
+  and was refused (it now caps the window); entry size was capped at the ask, not the limit price
+  the gate checks (it now caps at the limit).
+
+**2. Learnings: recorded in CLAUDE.md** (§ Learnings). Published intraday edges decay after
+publication. Stop-based entries and exits are costed at measured stop slippage, and intrabar
+stops are resolved from trades.
+
+**3. ITEM 7 — QUIVER "U.S. HOUSE LONG-SHORT" REPLICATION: NOT MET** (pre-registered 7fa978e).
+- **Data:** 101,951 House records from Quiver's bulk file, 95,949 with a price series (3,449
+  tickers); Alpaca total-return daily bars 2016-01-04 → 2026-10-08.
+- **Two corrections before the verdict was read:**
+  - The first run priced only 45 tickers: one malformed ticker in a 100-symbol request fails the
+    whole request. Fixed by normalizing class shares (BRK-B → BRK.B), dropping preferreds,
+    warrants, units and Quiver's numbered legacy tickers (1,000 records), and splitting a failed
+    batch. That output was discarded and kept as `.INVALID_45_tickers_priced.txt`.
+  - **Data correction:** one-day gains above +300% are ticker breaks, mostly bankruptcy
+    re-listings reusing the symbol (CRC 2020-10-28 +1,172%, ATNF, ATOS, CARM, PTEST; 5
+    ticker-days), and earn zero that day. Before/after are both on disk; the verdict is 0/40
+    either way.
+
+| primary: disclosure dates, W = 182 days, net 15bp, 2016-01 → 2026-10 | CAGR | max DD | worst year | alpha vs QQQ, month-clustered 95% CI | beta |
+|---|---|---|---|---|---|
+| 130/30 book | +13.58% | −34.4% | 2022 −16.1% | −0.11%/yr [−11.6, +11.4] | 0.74 |
+| **long-only leg at 130%** | **+16.58%** | −43.7% | 2022 −20.8% | −0.89%/yr [−13.7, +11.9] | 0.96 |
+| long book at 100% (what this account could hold) | +14.03% | −35.1% | 2022 −15.1% | −0.05%/yr [−9.9, +9.8] | 0.74 |
+| short leg | −15.89% | −87.1% | 2020 −32.8% | −0.17%/yr | −0.73 |
+| SPY / QQQ / **1.3× QQQ** | +15.16% / +20.36% / **+24.97%** | −33.7 / −35.1 / −44.6% | | | |
+
+- **From Quiver's own start, 2020-04-01:** our 130/30 book returns +18.04% a year (max DD −27.8%)
+  against Quiver's published **+41.43%**. The long leg at 130% returns +23.08% against 1.3× QQQ's
+  +29.58%. We cannot reproduce Quiver's number.
+- **SUCCESS CRITERION** (the long-only leg beats 1.3× QQQ on CAGR AND its alpha CI excludes zero,
+  from at least 75% of 40 quarterly starts): **NOT MET — 0 of 40.** CAGR minus 1.3× QQQ across
+  starts: min −32.6, median −10.5, max −5.5 points. Every alpha interval spans zero.
+- **Not graded:**
+  - The 100% long book against QQQ trails at every start (median −7.9 points).
+  - Window sensitivity: 30, 90 and 365 days all fail at every start. W = 30 comes closest
+    (median −6.4 against 1.3× QQQ; best start +2.7) and its alpha still spans zero.
+  - **Look-ahead:** dating trades by transaction instead of disclosure adds **+2.34 points a
+    year** to the long leg (+18.92% vs +16.58%), and even then no start passes. A replication on
+    trade dates reports returns no disclosure-date trader could have.
+- **Reading:** the House book is a diversified, roughly 350-name long book with beta about 0.74
+  to QQQ and no measurable alpha; the short side is a heavy drag in a rising market. **Control arm
+  (g)**, over 2026-08-27 → 2026-10-08: the mechanical arm's live record is **+0.93%** on cost (30
+  names). The replication's long book (100%) earns **+1.20%** over the same window, SPY +0.32% and
+  QQQ +3.46%. Six weeks — stated, not graded.
+
+Files: `~/research-data/quiver/house_2026-10-09.{txt,log}`, `bulk_v2_2026-10-09.json`. Script:
+`~/scratch/quiver_house_bt.py`.
+
+**4. PDT gate and data guard: accepted as built.**
+
 ### ITEM 7 — QUIVER "U.S. HOUSE LONG-SHORT" REPLICATION — PRE-REGISTERED (2026-10-09 evening, before any return was computed)
 
 **What Quiver states**, from its strategy page, fetched 2026-10-09: "takes a long position in stocks
