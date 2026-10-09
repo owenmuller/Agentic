@@ -185,6 +185,25 @@ class AlpacaOptionsChain:
             return None
         return (bid + ask) / Decimal("2")
 
+    def option_bid_ask(self, occ_symbol: str) -> Optional[tuple[Decimal, Decimal]]:
+        """Latest (bid, ask) for one contract, or None - the marketable floor
+        for a sell-to-close (the paper lab's exit engine, 2026-10-10)."""
+        try:
+            data = self._get_json(
+                self._data,
+                "/v1beta1/options/quotes/latest",
+                params={"symbols": occ_symbol},
+            )
+        except Exception as error:  # noqa: BLE001
+            logger.warning("option quote for %s unavailable (%s: %s)", occ_symbol, type(error).__name__, error)
+            return None
+        quote = ((data or {}).get("quotes") or {}).get(occ_symbol) or {}
+        bid = _decimal_or_none(quote.get("bp"))
+        ask = _decimal_or_none(quote.get("ap"))
+        if bid is None or ask is None or bid < 0 or ask <= 0 or ask < bid:
+            return None
+        return bid, ask
+
     # -- endpoints -------------------------------------------------------------------
 
     def _contracts(

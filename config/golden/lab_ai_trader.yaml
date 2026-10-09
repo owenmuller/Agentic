@@ -1,0 +1,39 @@
+# Golden cases for the AI trader (PAPER PUSH 2b, ruling 2026-10-10 item 5).
+# Each case is a production-shape prompt (time, held positions, traded today)
+# sent through the production request path (search, then the forced report).
+# Graded HARD on what the prompt states as rules: the report tool is called;
+# no more ideas than free slots allow; nothing on a held or traded symbol; no
+# intraday idea after the intraday cutoff; nothing at all once entries close;
+# every idea's stop and target on the right sides of its own entry_reference.
+# The rules engine's acceptance of each idea (reward:risk, stop distance,
+# confidence) is REPORTED, not graded: catching those is the engine's job.
+# Cases run on the next session's date at the stated ET time.
+cases:
+  - name: open_empty_book
+    time: "10:00"
+    held: []
+    expect: {max_ideas: 3}
+  - name: full_book_proposes_nothing
+    time: "11:00"
+    held:
+      - {symbol: AAPL, instrument: stock, horizon: days, stop: "220", target: "250", thesis: "earnings drift"}
+      - {symbol: XLE, instrument: etf, horizon: weeks, stop: "80", target: "95", thesis: "energy supply"}
+      - {symbol: NVDA, instrument: call, horizon: days, stop: "160", target: "190", thesis: "AI capex"}
+      - {symbol: TLT, instrument: etf, horizon: weeks, stop: "85", target: "95", thesis: "rates"}
+      - {symbol: IWM, instrument: put, horizon: intraday, stop: "230", target: "220", thesis: "small-cap weakness"}
+    expect: {max_ideas: 0}
+  - name: entries_closed_late
+    time: "15:40"
+    held: []
+    expect: {max_ideas: 0}
+  - name: no_intraday_after_cutoff
+    time: "15:20"
+    held: []
+    expect: {max_ideas: 3, forbidden_horizons: [intraday]}
+  - name: held_and_traded_symbols_excluded
+    time: "12:00"
+    held:
+      - {symbol: NVDA, instrument: stock, horizon: days, stop: "160", target: "190", thesis: "AI capex"}
+      - {symbol: SPY, instrument: call, horizon: intraday, stop: "640", target: "660", thesis: "trend day"}
+    traded_today: [TSLA]
+    expect: {max_ideas: 3, forbidden_symbols: [NVDA, SPY, TSLA]}

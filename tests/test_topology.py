@@ -153,9 +153,14 @@ TOPOLOGY: dict[str, Rules] = {
     # imports NOTHING of the main book's machinery (orchestrator, audit, research,
     # signals) - and nothing imports it - so the main book is untouched by
     # construction. An LLM-driven lab sleeve will need its own ruling here.
+    #
+    # 2b, the AI trader (ruling 2026-10-10, item 5): the lab may also reach the
+    # main book's research CLIENT and its config - the live-validated request
+    # path, reused rather than duplicated (CLAUDE.md § LLM Request-Path
+    # Changes) - and nothing else of research: no prompts, no passes, no signals.
     "lab": Rules(
-        may_import=frozenset({"execution", "risk_gate"}),
-        because="separate paper accounts: the gate and the adapter, nothing of the main book",
+        may_import=frozenset({"execution", "risk_gate", "research.client", "research.config"}),
+        because="separate paper accounts: the gate, the adapter and the research client; nothing else of the main book",
     ),
     # PRODUCTION-DATA WRITE GUARD (ruling 2026-10-09, item 4). Every package
     # imports it so the guard is installed before any entry point can resolve a

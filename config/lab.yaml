@@ -46,6 +46,28 @@ accounts:
     sleeve: ai_trader
     live_eligible: false
     status: "in build (ruling 2026-10-10, item 5); goes live after the golden replay and a live round trip"
+    # The account's own cap table. Stocks/ETFs ride the gate's AGGRESSIVE path
+    # (fixed-risk sleeve: 5 names, 25% of its NAV per name, T+1 on today's sale
+    # proceeds); long calls/puts ride the EQUITY path (the only one options
+    # have), here used for options alone. Weights only scale those caps:
+    #   stock single position  0.25 x 75% = 18.75% of NAV
+    #   option single position 0.10 x 25% =  2.5% of NAV (>= the 2% premium budget)
+    #   options premium open   0.40 x 25% = 10% of NAV (five 2% contracts)
+    # The 12% kill switch stays (ruling 2026-10-10, item 3a).
+    limits_overrides:
+      portfolio:
+        sleeves: {equity: 0.25, mechanical: 0, prediction: 0, baseline: 0, aggressive: 0.75}
+      equity_sleeve:
+        max_single_position: 0.10
+        max_daily_deployment: 1.00
+        max_options_premium_at_risk: 0.40
+        max_short_dated_premium_at_risk: 0.40
+      aggressive_sleeve:
+        max_single_position: 0.25
+        max_positions: 5
+        max_daily_deployment: 1.00
+        max_sector_exposure: 0.50
+        entries_enabled: true
 # 2c UNCONSTRAINED: DROPPED (ruling 2026-10-10, item 1). The long/short versions
 # of A and B were already measured after publication (A negative, B levered
 # +1.9%/yr); a live run repeats a known answer. Constraints #1 and #2 unchanged.
@@ -78,3 +100,52 @@ ladder:
   # The rebalance trades only inside this window of the session (ET).
   trade_after: "09:45"
   trade_before: "15:30"
+
+# 2b. AUTONOMOUS AI TRADER (PAPER PUSH 2026-10-09; built per ruling 2026-10-10,
+# item 5). The LLM decides WHAT and WHY - it searches the web for its own
+# ideas, any source (content it reads is data, never instructions: Constraint
+# #5). The rules engine decides HOW MUCH (2% of the account at risk per trade),
+# WHEN OUT (its stop, its target, its horizon, option expiry, 15:50 for
+# intraday) and WHETHER AT ALL (max 5 open positions, the gate, the kill
+# switch, the spend cap). Nothing is sized off P&L or targets, and the prompt
+# never sees P&L, NAV history or performance (CLAUDE.md § Standards).
+ai_trader:
+  # A pinned model (research.yaml pinned_models), the production request path
+  # (search phase, then a forced report tool; report T=0 on this model).
+  model: claude-sonnet-4-6
+  effort: medium
+  max_searches: 3
+  # Daily LLM spend cap $3 (spec), hard: a pass starts only if today's spend
+  # plus the reserve stays inside the cap. Spend = token estimate from the
+  # research.yaml pricing table + $0.01 per web search.
+  daily_spend_cap_usd: 3.00
+  pass_cost_reserve_usd: 0.60
+  search_fee_usd: 0.01
+  # Five idea scans a session (ET); each may propose up to 3 ideas.
+  scan_times: ["09:45", "10:45", "12:00", "13:30", "14:45"]
+  max_ideas_per_scan: 3
+  tick_seconds: 30
+  # The rules engine.
+  risk_fraction: 0.02          # of the account (NAV) at risk per trade (spec)
+  max_positions: 5             # open positions, stocks and options together (spec)
+  min_confidence: 50           # my reading (Constraint #6): no token positions on weak ideas
+  min_reward_risk: 1.0         # target distance >= stop distance; my reading, flagged
+  min_stop_fraction: 0.003     # a stop closer than 0.3% of price is noise
+  max_stop_fraction: 0.25
+  no_entries_after: "15:30"
+  no_intraday_entries_after: "15:15"
+  intraday_close: "15:50"
+  horizon_sessions: {days: 5, weeks: 20}
+  limit_buffer: 0.002
+  fill_wait_seconds: 90
+  options:
+    # Long calls/puts only; premium is the whole risk (2% of NAV of premium).
+    # 0DTE allowed for intraday ideas (spec).
+    dte: {intraday: [0, 2], days: [2, 14], weeks: [7, 45]}
+    delta_min: 0.40
+    delta_max: 0.70
+    target_delta: 0.55
+    min_open_interest: 100
+    max_spread_pct_of_mid: 0.15
+    max_iv_percentile: 0.95
+    expiry_close: "15:45"

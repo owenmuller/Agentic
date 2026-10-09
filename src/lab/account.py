@@ -15,7 +15,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
@@ -32,6 +32,22 @@ ZERO = Decimal("0")
 
 class LabRefused(RuntimeError):
     """The lab account will not start (or will not act); the message says why."""
+
+
+_OCC = re.compile(r"^([A-Z.]{1,6})(\d{2})(\d{2})(\d{2})([CP])(\d{8})$")
+
+
+def parse_occ(symbol: str) -> Optional[tuple[str, "date", str, Decimal]]:
+    """``AAPL261016C00200000`` -> (underlying, expiry, "call"|"put", strike)."""
+    match = _OCC.match(symbol)
+    if not match:
+        return None
+    root, yy, mm, dd, right, strike = match.groups()
+    try:
+        expiry = date(2000 + int(yy), int(mm), int(dd))
+    except ValueError:
+        return None
+    return root, expiry, "call" if right == "C" else "put", Decimal(strike) / 1000
 
 
 def key_variables(account: str) -> tuple[str, str]:
@@ -130,7 +146,8 @@ class LabAccount:
         except FileNotFoundError:
             return None
 
-    def build_gate(self, cash: Decimal, positions: list[BrokerPosition], sleeve: Sleeve) -> RiskGate:
+    def build_gate(self, cash: Decimal, positions: list[BrokerPosition], sleeve: Sleeve,
+                   allow_options: bool = False) -> RiskGate:
         """The account's own RiskGate, seeded from the broker (cash and
         positions are read, never reconstructed) and this account's own
         high-water mark and kill switch."""
@@ -142,8 +159,17 @@ class LabAccount:
         )
         for holding in positions:
             if holding.is_option:
-                raise LabRefused(f"{self.name}: holds an option ({holding.symbol}); this account's engine trades none")
-            position = account.ensure_position((sleeve.value, holding.symbol), sleeve, 1, False)
+                if not allow_options:
+                    raise LabRefused(f"{self.name}: holds an option ({holding.symbol}); this account's engine trades none")
+                parsed = parse_occ(holding.symbol)
+                # Options key on the OCC symbol in the gate's EQUITY path (the
+                # only one options have), 100 shares per contract.
+                position = account.ensure_position(
+                    ("option", holding.symbol), Sleeve.EQUITY, 100, True,
+                    expiration=parsed[1] if parsed else None,
+                )
+            else:
+                position = account.ensure_position((sleeve.value, holding.symbol), sleeve, 1, False)
             position.quantity = holding.quantity
             position.cost_basis = holding.cost_basis
             position.market_value = holding.market_value
@@ -181,11 +207,12 @@ def open_account(
     data_dir: Optional[Path] = None,
     clock: Optional[Callable[[], datetime]] = None,
     limits_path: Optional[Path] = None,
+    allow_disabled: bool = False,
 ) -> LabAccount:
     """Preflight one lab account. Raises ``LabRefused`` rather than start
     on anything it cannot verify."""
     config = lab_config.account(name)
-    if not config.enabled:
+    if not config.enabled and not allow_disabled:
         raise LabRefused(f"lab account {name!r} is not enabled: {config.status or 'see config/lab.yaml'}")
     load_environment()
     if not require_paper_or_confirmed_live():
