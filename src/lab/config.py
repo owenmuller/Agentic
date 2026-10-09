@@ -26,6 +26,13 @@ class AccountConfig(_Strict):
     live_eligible: bool = False
     status: Optional[str] = None
     limits_overrides: dict[str, Any] = Field(default_factory=dict)
+    #: The account's drawdown kill switch (12% from its own high-water mark,
+    #: the main risk_limits value). OFF only for the leverage ladder (ruling
+    #: 2026-10-10, item 3a: the benchmark must keep rebalancing through
+    #: drawdowns); every other lab account keeps it - LabConfig enforces that.
+    kill_switch: bool = True
+    #: Drawdown from peak that raises an urgent alert (once per peak).
+    drawdown_alert: Optional[Decimal] = Field(default=None, gt=ZERO, lt=ONE)
 
 
 class Rung(_Strict):
@@ -62,6 +69,16 @@ class LabConfig(_Strict):
     accounts: dict[str, AccountConfig]
     ladder: LadderConfig
 
+    @model_validator(mode="after")
+    def _kill_switch_off_only_for_the_ladder(self) -> "LabConfig":
+        for name, account in self.accounts.items():
+            if not account.kill_switch and account.sleeve != "leverage_ladder":
+                raise ValueError(
+                    f"lab account {name!r}: only the leverage ladder may run without its kill switch "
+                    f"(ruling 2026-10-10, item 3a); the 12% switch stays for every other lab account"
+                )
+        return self
+
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "LabConfig":
         path = path or Path(__file__).resolve().parents[2] / "config" / "lab.yaml"
@@ -91,4 +108,10 @@ def account_limits(account: AccountConfig, base_path: Optional[Path] = None) -> 
     (Constraints #1 and #2 are not configuration)."""
     with open(base_path or default_limits_path(), "r", encoding="utf-8") as handle:
         base = yaml.safe_load(handle)
-    return RiskLimits.model_validate(_merge(base, account.limits_overrides))
+    merged = _merge(base, account.limits_overrides)
+    if not account.kill_switch:
+        # The drawdown trip at 100% of the high-water mark: unreachable in a
+        # cash account (NAV cannot go below zero). The operator halt marker
+        # still freezes the account by hand.
+        merged["kill_switch"]["drawdown_from_high_water_mark"] = "1"
+    return RiskLimits.model_validate(merged)

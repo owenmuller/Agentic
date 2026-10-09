@@ -30,26 +30,25 @@ accounts:
     live_eligible: false
     # The ladder holds 100% of its NAV through the gate's BASELINE path: cash-
     # secured, dust-floored, bound by its allocation ceiling (1.00 + 0.03 drift),
-    # exempt from the judged sleeve's alpha caps, refused under the kill switch.
+    # exempt from the judged sleeve's alpha caps; frozen by the operator halt.
     limits_overrides:
       portfolio:
         sleeves: {equity: 0, mechanical: 0, prediction: 0, baseline: 1, aggressive: 0}
+    # Ruling 2026-10-10, item 3a: NO drawdown kill switch for the ladder - it is
+    # the benchmark and keeps rebalancing through drawdowns. An urgent alert at
+    # -25% from peak instead (once per peak). The operator halt still works.
+    kill_switch: false
+    drawdown_alert: 0.25
+  # Ruling 2026-10-10, item 2: the third paper slot (main, ladder, this).
   ai-trader:
     enabled: false
     label: AUTONOMOUS AI TRADER
     sleeve: ai_trader
     live_eligible: false
-    status: "not built: build order is accounts, a (ladder), c, b"
-  unconstrained:
-    enabled: false
-    label: "UNCONSTRAINED (NOT LIVE-ELIGIBLE)"
-    sleeve: unconstrained
-    live_eligible: false
-    status: >-
-      BLOCKED: shorts and 2x margin contradict Inviolable Constraints #1 and #2,
-      which the code enforces (RiskLimits refuses margin_enabled and short
-      selling; the order schema cannot express a short). Needs the human's
-      explicit amendment of CLAUDE.md before it is built.
+    status: "in build (ruling 2026-10-10, item 5); goes live after the golden replay and a live round trip"
+# 2c UNCONSTRAINED: DROPPED (ruling 2026-10-10, item 1). The long/short versions
+# of A and B were already measured after publication (A negative, B levered
+# +1.9%/yr); a live run repeats a known answer. Constraints #1 and #2 unchanged.
 
 # 2a. LEVERAGE LADDER (the benchmark every sleeve must beat). Three rungs, each
 # an independent sub-book of one third of the account, bought and held,

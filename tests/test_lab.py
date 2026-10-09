@@ -140,6 +140,47 @@ def test_the_main_unit_cannot_write_a_lab_account(owned):
     assert result.returncode == 0 and "OK" in result.stdout, result.stdout + result.stderr
 
 
+def test_a_guard_error_fails_open_loudly_in_production(owned):
+    """Ruling 2026-10-10, item 4: a guard ERROR inside a production unit
+    allows the write, logs at ERROR and alerts exactly as a refusal does."""
+    result = _run(
+        r'''
+        import logging
+        from pathlib import Path
+        import lab, datasafety
+        records = []
+        class Grab(logging.Handler):
+            def emit(self, record):
+                records.append((record.levelname, record.getMessage()))
+        logging.getLogger("datasafety").addHandler(Grab())
+        alerts = []
+        datasafety.set_alert_sink(lambda kind, message: alerts.append(kind))
+        datasafety._unit_name = "agentic-lab-ladder"
+        try:
+            Path("data/audit.jsonl").write_text("x")
+        except datasafety.ProductionDataWriteRefused:
+            pass
+        assert alerts == ["WRITE REFUSED"], alerts
+        def broken(target, unit):
+            raise RuntimeError("guard defect")
+        datasafety.write_permitted = broken
+        Path("data/audit.jsonl").write_text("allowed")
+        assert Path("data/audit.jsonl").read_text() == "allowed"
+        assert alerts == ["WRITE REFUSED", "GUARD ERROR, WRITE ALLOWED"], alerts
+        assert [lvl for lvl, _ in records] == ["ERROR", "ERROR"], records
+        assert "guard defect" in records[1][1]
+        # outside production the same defect fails CLOSED
+        datasafety._unit_name = None
+        try:
+            Path("data/audit.jsonl").write_text("y")
+        except RuntimeError:
+            print("OK")
+        ''',
+        owned,
+    )
+    assert result.returncode == 0 and "OK" in result.stdout, result.stdout + result.stderr
+
+
 def test_outside_its_unit_a_lab_account_resolves_to_scratch(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENTIC_SCRATCH_DATA_DIR", str(tmp_path / "scratch" / "data"))
     assert datasafety.resolve_lab_data_dir("ladder") == tmp_path / "scratch" / "lab" / "ladder"
@@ -158,7 +199,7 @@ def test_a_real_lab_run_is_refused_outside_its_unit(tmp_path):
 def test_the_lab_config_loads_and_only_the_ladder_is_enabled():
     config = LabConfig.load()
     assert [n for n, a in config.accounts.items() if a.enabled] == ["ladder"]
-    assert "BLOCKED" in (config.account("unconstrained").status or "")
+    assert "unconstrained" not in config.accounts  # sleeve c dropped, ruling 2026-10-10
     assert config.ladder.symbols == ("QLD", "SPY", "SSO")
     assert key_variables("ai-trader") == ("ALPACA_LAB_AI_TRADER_API_KEY", "ALPACA_LAB_AI_TRADER_API_SECRET")
 
@@ -167,7 +208,7 @@ def test_the_ladder_cap_table_is_the_main_one_with_baseline_at_one():
     limits = account_limits(LabConfig.load().account("ladder"))
     assert limits.portfolio.sleeves.baseline == 1 and limits.portfolio.sleeves.equity == 0
     assert limits.account.margin_enabled is False and limits.account.short_selling == "forbidden"
-    assert limits.kill_switch.drawdown_from_high_water_mark == D("0.12")
+    assert limits.kill_switch.drawdown_from_high_water_mark == 1  # no kill switch (2026-10-10)
 
 
 def test_an_override_cannot_switch_margin_or_shorting_on():
@@ -357,14 +398,38 @@ def test_a_halt_freezes_the_ladder_both_ways(lab_env):
     assert len(broker.orders) == orders
 
 
-def test_a_drawdown_past_twelve_percent_trips_the_accounts_own_switch(lab_env):
+def test_the_ladder_has_no_kill_switch_only_a_drawdown_alert(lab_env):
+    """Ruling 2026-10-10, item 3a: through a 23% and then a 30% drawdown the
+    ladder keeps rebalancing; at 25% it alerts once per peak."""
     broker = FakeBroker()
     _engine(_open(broker, lab_env)).tick(NOW)
     account = _open(broker, lab_env)
-    account.state.high_water_mark = "130000"  # NAV ~100K is a 23% drawdown
-    notes = _engine(account).tick(datetime(2026, 11, 2, 15, 0, tzinfo=timezone.utc))
-    assert account.state.kill_switch_tripped and any("FROZEN" in n for n in notes)
+    account.state.high_water_mark = "130000"  # NAV ~100K: a 23% drawdown
+    alerts = []
+    notes = _engine(account, alert=lambda s, b: alerts.append(s)).tick(datetime(2026, 11, 2, 15, 0, tzinfo=timezone.utc))
+    assert not account.state.kill_switch_tripped and not any("FROZEN" in n for n in notes)
+    assert account.state.engine["rebalanced_month"] == "2026-11" and alerts == []
+    account = _open(broker, lab_env)
+    account.state.high_water_mark = "145000"  # a 31% drawdown
+    for day in (3, 4):
+        account = _open(broker, lab_env)
+        account.state.high_water_mark = "145000"
+        notes = _engine(account, alert=lambda s, b: alerts.append(s)).tick(datetime(2026, 11, day, 15, 0, tzinfo=timezone.utc))
+        assert not account.state.kill_switch_tripped
+    assert len(alerts) == 1 and "drawdown" in alerts[0]
+    assert len(account.ledger.events(["drawdown_alert"])) == 1
 
+
+def test_every_other_lab_account_keeps_the_twelve_percent_switch():
+    from lab.config import AccountConfig
+
+    config = LabConfig.load()
+    assert account_limits(config.account("ladder")).kill_switch.drawdown_from_high_water_mark == 1
+    assert account_limits(config.account("ai-trader")).kill_switch.drawdown_from_high_water_mark == D("0.12")
+    raw = config.model_dump(mode="json")
+    raw["accounts"]["ai-trader"]["kill_switch"] = False
+    with pytest.raises(Exception, match="only the leverage ladder"):
+        LabConfig.model_validate(raw)
 
 def test_an_unfilled_order_is_recovered_by_the_next_run(lab_env):
     broker = FakeBroker(fill=False)
@@ -412,7 +477,7 @@ def test_preflight_refuses_what_it_cannot_verify(lab_env, monkeypatch):
     with pytest.raises(LabRefused, match="no keys"):
         _open(FakeBroker(), lab_env)
     with pytest.raises(LabRefused, match="not enabled"):
-        open_account("unconstrained", LabConfig.load(), adapter=FakeBroker())
+        open_account("ai-trader", LabConfig.load(), adapter=FakeBroker())
 
 
 def test_the_lab_refuses_to_run_live(lab_env, monkeypatch):

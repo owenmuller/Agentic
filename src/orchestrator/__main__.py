@@ -42,6 +42,8 @@ from decimal import Decimal, InvalidOperation
 import time
 from datetime import datetime, timezone, timedelta
 
+import datasafety
+
 from audit.attribution import DEFAULT_WINDOW_DAYS, build_attribution
 from audit.log import AuditLog, default_data_dir
 from execution import AlpacaDailyBars, AlpacaPriceSource, MarketContextBuilder
@@ -782,6 +784,10 @@ def run() -> int:
             alerter.urgent("operator_halt_loop", "OPERATOR HALT honoured by the live session", detail)
 
     run_log = RunLog(data_dir / "run.log", observer=observe)
+    # The data guard's production events (a refused write, or a guard error
+    # that failed open) ride the run log's ERROR line, so both reach the same
+    # urgent alert and the same health view (ruling 2026-10-10, item 4).
+    datasafety.set_alert_sink(lambda kind, message: run_log.note("ERROR", f"DATASAFETY {kind}: {message}"))
 
     # One instance per data directory: two runs would interleave one audit file,
     # double-spend a budget each replayed as unspent, and trade one account twice.

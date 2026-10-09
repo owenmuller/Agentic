@@ -22,10 +22,12 @@ Mechanics
   adjustments). Each run reconciles them to the broker: unexplained cash
   (dividends, fees) is allocated across rungs by NAV and logged; a share
   count that does not reconcile FREEZES trading (a human's problem).
-* Kill switch (the account's own, 12% from its own high-water mark, manual
-  human reset) and the halt marker: while either is on, the ladder NEITHER
-  buys NOR sells - frozen at current holdings, the baseline sleeve's rule. A
-  frozen ladder is still buy-and-hold, so it still measures the benchmark.
+* NO drawdown kill switch (ruling 2026-10-10, item 3a): the benchmark keeps
+  rebalancing through drawdowns. Its trip is set at 100% of the high-water
+  mark, which a cash account cannot reach. Instead, a drawdown of
+  ``drawdown_alert`` (25%) from peak raises an urgent alert, once per peak.
+  The operator halt marker still freezes it by hand: while halted (or if a
+  switch were ever tripped) the ladder NEITHER buys NOR sells.
 * Settlement recovery: an order the previous run left working is cancelled
   and its fills settled into the ledger before anything else happens.
 """
@@ -164,9 +166,12 @@ class LadderEngine:
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
         dry_run: bool = False,
+        alert: Optional[Callable[[str, str], None]] = None,
     ) -> None:
         self.account = account
         self.config = config
+        #: ``alert(subject, body)``: the urgent tier (the drawdown alert).
+        self._alert = alert
         self._quotes = quotes or self._alpaca_quotes()
         self._sleep = sleep
         self._monotonic = monotonic
@@ -234,6 +239,7 @@ class LadderEngine:
                 account.persist_gate(self.gate, reason=f"operator halt marker: {halt}")
         if not self.dry_run:
             account.persist_gate(self.gate)
+            self._drawdown_alert()
         if self.gate.kill_switch_tripped:
             self.notes.append(
                 f"FROZEN: kill switch tripped ({account.state.trip_reason or 'halt'}); the ladder neither "
@@ -278,6 +284,31 @@ class LadderEngine:
         return self._finish(marks, books=books)
 
     # -- steps -------------------------------------------------------------------
+
+    def _drawdown_alert(self) -> None:
+        """Ruling 2026-10-10, item 3a: an urgent alert at ``drawdown_alert``
+        from peak, once per peak (a new high-water mark re-arms it). The
+        alert changes nothing the ladder does."""
+        threshold = self.account.config.drawdown_alert
+        state = self.gate.state
+        if threshold is None:
+            return
+        drawdown = state.drawdown()
+        peak = str(state.high_water_mark)
+        if drawdown < threshold or self.account.state.engine.get("drawdown_alerted_peak") == peak:
+            return
+        message = (
+            f"lab account {self.account.name}: NAV {state.nav:.2f} is {drawdown:.1%} below its peak "
+            f"{state.high_water_mark:.2f} (alert at {threshold:.0%}). The ladder has no kill switch by "
+            f"ruling and keeps rebalancing; this is information, not a halt."
+        )
+        self.account.ledger.append("drawdown_alert", drawdown=drawdown, nav=state.nav,
+                                   high_water_mark=state.high_water_mark, threshold=threshold)
+        self.account.state.engine["drawdown_alerted_peak"] = peak
+        self.account.state.save(self.account.state_path)
+        self.notes.append(f"DRAWDOWN ALERT: {message}")
+        if self._alert is not None:
+            self._alert(f"LAB {self.account.name} drawdown {drawdown:.1%} from peak", message)
 
     def _in_window(self, now: datetime) -> bool:
         clock = self.account.adapter.market_clock()

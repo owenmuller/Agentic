@@ -40,6 +40,7 @@ state. This module makes that impossible by construction.
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -212,13 +213,21 @@ def _hook(event: str, args) -> None:
         for target in targets:
             try:
                 permitted = write_permitted(target, _unit_name)
-            except Exception:  # noqa: BLE001 - a bug in the guard, not a refusal
+            except Exception as error:  # noqa: BLE001 - a bug in the guard, not a refusal
                 # Fail CLOSED outside production (nothing there needs to write a
                 # marked tree); inside a production unit fail OPEN, as before
                 # the ownership rule existed, rather than kill a live session
-                # over a guard defect.
+                # over a guard defect - but LOUDLY (ruling 2026-10-10, item 4):
+                # an ERROR log line and the same health alert a refused write
+                # sends, so a silent fallback cannot hide.
                 if _unit_name is None:
                     raise
+                _report(
+                    "GUARD ERROR, WRITE ALLOWED",
+                    f"datasafety guard ERROR in production unit {_unit_name}: {event} on "
+                    f"{_safe_name(target)} was ALLOWED (fail-open) because the ownership "
+                    f"check raised {type(error).__name__}: {error}",
+                )
                 continue
             if permitted:
                 continue
@@ -229,14 +238,51 @@ def _hook(event: str, args) -> None:
                     f"backtests write to the scratch data directory ({scratch_data_dir()}); "
                     f"see datasafety (ruling 2026-10-09)."
                 )
-            raise ProductionDataWriteRefused(
+            message = (
                 f"refused: production unit {_unit_name} may not write "
                 f"{os.fsdecode(target)}, which belongs to another account "
                 f"(owner {_nearest_owner(target) or 'the main book'}); each paper account "
                 f"writes only its own data (datasafety, PAPER PUSH 2026-10-09)."
             )
+            _report("WRITE REFUSED", message)
+            raise ProductionDataWriteRefused(message)
     finally:
         _reentry.busy = False
+
+
+#: Where a production unit's guard events go besides the log: the unit's
+#: alerter (``set_alert_sink``), called as ``sink(kind, message)``.
+_alert_sink: Optional[Callable[[str, str], None]] = None
+
+
+def set_alert_sink(sink: Optional[Callable[[str, str], None]]) -> None:
+    """Register the production unit's alert route (its urgent-tier email).
+    A refused write and a fail-open guard error both go through it, with the
+    same alert key, so neither can be quieter than the other."""
+    global _alert_sink
+    _alert_sink = sink
+
+
+def _safe_name(target) -> str:
+    try:
+        return os.fsdecode(target)
+    except Exception:  # noqa: BLE001
+        return repr(target)
+
+
+def _report(kind: str, message: str) -> None:
+    """An ERROR log line and the alert sink, for a production guard event.
+    Never raises: reporting must not turn a refusal into a different error,
+    or a fail-open into a crash."""
+    try:
+        logging.getLogger("datasafety").error("DATASAFETY %s: %s", kind, message)
+    except Exception:  # noqa: BLE001
+        pass
+    if _alert_sink is not None:
+        try:
+            _alert_sink(kind, message)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def install(is_production: Optional[Callable[[], bool]] = None) -> bool:

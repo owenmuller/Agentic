@@ -25,6 +25,7 @@ from pathlib import Path
 import datasafety
 from lab.account import LabAccount, LabRefused, LabState, Ledger, open_account
 from lab.config import LabConfig
+from execution.alerts import Alerter
 from lab.ladder import LadderEngine
 
 OPERATOR_COMMANDS = frozenset({"halt", "resume"})
@@ -61,10 +62,23 @@ def tick(name: str, dry_run: bool) -> int:
     if account.config.sleeve != "leverage_ladder":
         print(f"LAB {name}: sleeve {account.config.sleeve!r} has no engine yet", file=sys.stderr)
         return 3
-    engine = LadderEngine(account, config.ladder, dry_run=dry_run)
-    notes = engine.tick(datetime.now(timezone.utc))
-    for note in notes:
-        print(f"LAB {name}{' DRY RUN' if dry_run else ''}: {note}")
+    # The urgent email tier (the drawdown alert, and - in the unit - the data
+    # guard's refused writes and fail-open errors, ruling 2026-10-10 item 4).
+    alerter = Alerter(status_path=account.data_dir / "alerts_status.json")
+    if not dry_run:
+        datasafety.set_alert_sink(
+            lambda kind, message: alerter.urgent(f"lab-{name}-datasafety-{kind}", f"LAB {name} DATASAFETY {kind}", message)
+        )
+    try:
+        engine = LadderEngine(
+            account, config.ladder, dry_run=dry_run,
+            alert=lambda subject, body: alerter.urgent(f"lab-{name}-drawdown", subject, body),
+        )
+        notes = engine.tick(datetime.now(timezone.utc))
+        for note in notes:
+            print(f"LAB {name}{' DRY RUN' if dry_run else ''}: {note}")
+    finally:
+        alerter.close()
     return 0
 
 
