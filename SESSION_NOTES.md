@@ -4102,6 +4102,147 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### STATUS 2026-10-09 evening — the day-trading build is measured; nothing passes; the production-data guard held in its first live session
+
+- **Production:** the paper unit started at 09:15 ET on the guarded code (deploys 3b9e4a5,
+  5a5ba7f; notes since). It ran normally, writing production data with no refusals, so production
+  detection works in the real unit. Aggressive entries are off. The attention screen found no
+  candidates today, so the off switch did not fire. Exits run.
+- **Verdicts, all pre-registered:**
+  - **B** (SPY noise-area momentum): reproduces the paper in-sample; long-only binding test NOT
+    MET (−2.2%/yr vs SPY +19.6%).
+  - **A** (stocks-in-play ORB): reproduction gate NOT PASSED; binding NOT MET (−31.5%/yr).
+  - **C** (catalyst filter): met only by not trading.
+  - **Options rerun:** binding NOT MET. **Static leverage:** reported.
+- **Running:** nothing. All research jobs have exited. Outputs live in `~/research-data`.
+
+**Waiting on the human:**
+1. **Item 7, Quiver House replication:** its specification never reached this session. Nothing
+   is queued; send the spec and it runs.
+2. **B live or not:** D said "live on in-sample reproduction"; ruling 1 said "not until a
+   source passes". B reproduced and failed its binding test. It is held (Constraint #6). One
+   sentence takes it live as an execution measurement.
+3. **The attention prompt and targets:** before the aggressive sleeve is ever re-enabled, the
+   prompt must ask for a target (ruling 3). That is a prompt change: golden replay plus a live
+   round trip.
+4. **Item 5 is information for your sizing decision.** 1.5× SPY from 1993: +13.0%/yr, −74% max
+   drawdown, 13.1 years from peak back to peak.
+5. Still outstanding: the swap and backup root commands, and the Oct-15 scorecard.
+
+**One status command:**
+```
+ssh agentic@137.184.59.200 'tail -8 ~/research-data/item6_backtests.log; systemctl --user list-units --type=service --no-pager | grep research; grep STARTED ~/Agentic/data/run.log | tail -1; tail -2 ~/Agentic/data/run.log'
+```
+
+### A — STOCKS-IN-PLAY ORB and C — CATALYST FILTER, RESULTS (2026-10-09, the pre-registered runs): A does NOT reproduce the paper and the binding test is NOT MET; C meets its registered criterion only by barely trading
+
+**Data, as built.**
+- **Universe:** 10,452 symbols. Alpaca's asset master omits many delisted names (TWTR, SIVB, FRC,
+  BBBY, ATVI and SPLK have bars but no asset record), so the master is unioned with every ticker
+  in this system's 2015–2026 archives. Exchange-traded products and non-common shares are
+  excluded by name; 3,400 names are known only from the archives.
+- **Screen and selection:** the daily screen passed 2,581,840 stock-days, in raw prices with
+  split-normalized 14-day windows. Opening 5-minute bars were pulled for every screened name and
+  its 14-day history. The top 20 by relative volume came to 53,560 stock-days from 2016-02-12:
+  Alpaca's daily history starts 2016-01-04 and the screen needs 14 sessions. Full-day 1-minute
+  bars were pulled for the top 20. That gave 41,810 triggered setups.
+- **Calibrated costs** come from SIP trades and quotes at each trigger (1,651 entries, 1,487 stop
+  exits, 166 closes):
+
+| cost | median | mean | 90th percentile |
+|---|---|---|---|
+| entry, the ask at the first trade through the stop-entry level, against the raw fill | **0.003%** | 0.050% | 0.131% |
+| **stop exit**, the bid at the first trade through the stop | **0.097%** | 0.271% | 0.751% |
+| close, the half-spread | 0.023% | 0.043% | 0.081% |
+
+**DATA CORRECTION before any verdict (rules, groups and criteria unchanged).** The first full run
+counted a stop that sat inside the entry minute's high–low as hit in that minute. The minute's
+range includes prices from BEFORE the trigger, and a 10%-ATR stop is usually inside it. That
+stopped about 90% of trades by construction: hit rate 10%, A1 in-sample −52.8%/yr. **The fix
+reads the entry minute's actual SIP trades** (about 21,000 minutes). The entry is the first trade
+through the stop-entry level, and the stop counts only if a LATER trade in the same minute reaches
+it. Of 21,313 ambiguous entry minutes, **9,855 had touched the stop only before entry** (the
+artifact) and **11,458 were genuinely stopped after entry**. None stayed unresolved. The
+other-side stop needed 150 checks. Pre-correction outputs are kept as
+`report_unresolved_calibrated.txt` and `report_commission_only.txt`.
+
+**Reproduction gate first** (A1: long/short, 4×, published 10%-ATR stop, commission only as
+published, 2016–2023):
+
+| | ours | the paper |
+|---|---|---|
+| IRR | +31.14% | 41.6% |
+| Sharpe | **1.09** | 2.81 |
+| max DD | **−56.4%** | 12% |
+
+**REPRODUCTION GATE: NOT PASSED** (IRR is inside ±50%; Sharpe is below 1.4). By year: 2016 +67.5,
+2017 −0.1, 2018 +70.3, 2019 +33.0, 2020 −42.5, 2021 +66.0, 2022 +170.9, 2023 −13.1. The return
+level is the right order, but the risk is not.
+
+**With calibrated costs, nothing survives.** The 10%-ATR stop is about 0.3% of price, and the stop
+exit's median slippage of 0.097% is about 0.3R on a trade that is stopped most of the time. The
+paper models commission only.
+
+| post-publication 2024-02-16 → 2026-10-07 (pre-publication in brackets) | commission only | calibrated |
+|---|---|---|
+| A1, long/short 4×, published stop | −24.3% [IS +31.1%] | −41.6% [IS −40.6%] |
+| A2, long-only 4× | −19.1% [IS +9.7%] | −43.7% [IS −27.1%] |
+| **A3, long-only, cash account 1× — BINDING** | −13.1% [IS +2.4%] | **−31.5%** [IS −20.5%] |
+| A4, A3 plus single-stock inverse ETFs (48 relevant setups of 20,687 bearish) | −12.3% | −30.8% |
+| A-OS A1, other-side stop | +70.0% [IS +121.0%] | +7.6% [IS +34.7%], Sharpe 0.39, max DD −65.8% |
+| A-OS A3, other-side stop | +7.7% [IS +5.7%] | −7.4% [IS −9.8%] |
+| SPY total return | +19.46% | |
+
+**SUCCESS CRITERION (A3, calibrated, post-publication: net CAGR above SPY AND positive every
+half-year): NOT MET** — −31.5% vs +19.5%. The half-years run −10.5%, −10.4%, −15.5%, −25.3% and
+−27.3%, with a max drawdown of −64.7%.
+
+The other-side stop (A-OS) is the brief's variant, not the paper's. Commission-only it out-runs the
+paper. With real stop fills, its long/short form keeps a thin, very volatile +7.6% after
+publication, and its long-only form loses. Neither is a candidate for this account: no shorting,
+1× cash.
+
+**C — the catalyst filter** (`claude-haiku-4-5-20251001`, Batches API):
+- **Reliability:** 87.5% agreement with my 200 hand labels, above the registered 80%. It was
+  weakest on OTHER_NEWS (11 of 23), mostly read as NO_NEWS.
+- **Scale and cost:** 29,475 stock-days with news, 33.99M input and 1.04M output tokens,
+  **$19.61**. One label fell outside the enum (`REGULATORY_OR_BINARY`, n = 1).
+
+| A3 longs, mean net R per trade (calibrated) | in-sample n | in-sample R | post-publication n | post-publication R |
+|---|---|---|---|---|
+| EARNINGS | 2,925 | −0.183 | 1,319 | −0.501 |
+| GUIDANCE | 360 | **+0.139** | 134 | −0.072 |
+| ANALYST_ACTION | 1,670 | −0.320 | 413 | −0.593 |
+| CONTRACT_OR_DEAL | 736 | −0.565 | 298 | −0.482 |
+| OFFERING_OR_DILUTION | 455 | −0.322 | 213 | −0.388 |
+| FDA_OR_BINARY | 273 | −0.481 | 142 | −0.767 |
+| OTHER_NEWS | 477 | −0.284 | 171 | −0.596 |
+| NO_NEWS | 8,650 | −0.286 | 2,641 | −0.356 |
+
+**"Worst", fixed in-sample by the registered rule (negative mean R at n ≥ 30): every category but
+GUIDANCE.** The filtered A3 therefore trades guidance names only. After publication that is 505
+trades: CAGR −0.21%, max DD −4.7%, against the unfiltered −31.5% and −64.7%. **SUCCESS CRITERION
+(the filtered A3 beats the unfiltered on net CAGR without a deeper drawdown): MET as registered,
+and empty in substance.** The filter wins by not trading. What it keeps still loses after
+publication, and it is nowhere near SPY.
+
+**D: nothing goes live.** A failed its reproduction gate. B passed its gate, but its binding test
+failed, and it is held by Constraint #6 (see B). Aggressive entries stay off.
+
+**Survivorship check.** Archive-only names were 6,614 setups on 836 symbols (PSTG, TPX, SKX, GPS,
+WRK, MMC, TWTR, SPLK, BBBYQ and others). The top-30 list shows only common stocks, no ETN or
+fund.
+
+Files: `~/research-data/orb/` (report.txt, trades_resolved.tsv, calib.json and its .obs.jsonl,
+top20.tsv, news.jsonl, labels_model.jsonl, human_labels.jsonl, resolve_stats.json). Scripts:
+`~/scratch/orb_harvest.py`, `orb_top20.py`, `orb_sim.py` and `orb_news.py`.
+
+**The options rerun at 11:00 ET (ruling item 7), recorded:** in session, the bucketed spread is
+17.6% of mid (Apple 9.2%). The free "indicative" options feed is not the true best bid and offer,
+so no feed this account can reach gives a true spread. **BINDING (real chains): NOT MET for every
+strategy** under all three spread measurements. Covered calls pass only on the synthetic-heavy
+full span (+15.44% vs +15.24%), which the synthetic pricing flatters.
+
 ### B — SPY INTRADAY MOMENTUM, RESULT (2026-10-09, the pre-registered run): reproduction gate PASSED; binding long-only test NOT MET — the edge did not survive publication
 
 **Reproduction first.** B1 is the paper's volatility-targeted long/short version: Alpaca SIP
