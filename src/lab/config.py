@@ -100,6 +100,11 @@ class AiTraderConfig(_Strict):
     model: str
     effort: str
     max_searches: int = Field(ge=1, le=5)
+    #: The search tool version (see research.config.WebSearchConfig.tool_type).
+    search_tool: str
+    #: Per-request timeout; one retry. A pass that cannot finish is a fault
+    #: (no trade), never a frozen session.
+    request_timeout_seconds: int = Field(gt=0, le=600)
     # -- spend: the daily cap is hard; a pass starts only with reserve left ---
     daily_spend_cap_usd: Decimal = Field(gt=ZERO)
     pass_cost_reserve_usd: Decimal = Field(gt=ZERO)

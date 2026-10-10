@@ -1,0 +1,29 @@
+# PAPER PUSH 2b (ruling 2026-10-10, item 5): the AUTONOMOUS AI TRADER, in its
+# own Alpaca paper account (the third paper slot). One session per trigger:
+# waits for the open, ticks every 30 s until the close (exits every tick,
+# idea scans at the configured times under the $3/day LLM cap), then exits.
+# Writes only data-lab/ai-trader/ (datasafety owner marker).
+# Keys: ALPACA_LAB_AI_TRADER_API_KEY / ALPACA_LAB_AI_TRADER_API_SECRET in .env.
+# GOES LIVE ONLY AFTER the golden replay and the live round trip pass and
+# config/lab.yaml sets the account enabled (a reviewed commit). Install (root):
+#   sudo cp ops/vps/agentic-lab-ai-trader.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now agentic-lab-ai-trader.timer
+[Unit]
+Description=Agentic paper lab: autonomous AI trader (separate paper account)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=1h
+StartLimitBurst=3
+
+[Service]
+Type=exec
+User=agentic
+WorkingDirectory=/home/agentic/Agentic
+Environment=PYTHONIOENCODING=utf-8
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/agentic/Agentic/.venv/bin/python -m lab run ai-trader
+Restart=on-failure
+RestartSec=300
+RuntimeMaxSec=8h
+MemoryMax=768M

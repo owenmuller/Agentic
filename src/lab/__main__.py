@@ -13,6 +13,8 @@
                                session: one SPY share and one SPY call, bought and
                                sold through the gate; writes only scratch.
   status [<account>]           read-only: pin, kill switch, last snapshot, spend.
+  scoreboard [--email]         read-only: the weekly table, every sleeve vs SPY and
+                               the ladder, raw and slippage-adjusted.
   halt <account> --reason R    operator: write the account's halt marker; its
                                next run trips its own kill switch (frozen).
   resume <account> --ack A     operator, A HUMAN ONLY: clear the halt marker and
@@ -344,6 +346,65 @@ def roundtrip(name: str) -> int:
     print(f"left holding after the round trip: {left or 'nothing in SPY'}")
     return 0 if not left and not faults else 1
 
+
+# -- items 3 and 4: the weekly scoreboard ------------------------------------------
+
+def scoreboard(email: bool) -> int:
+    """Read-only: every lab sleeve, the execution test and the main book
+    against SPY and the leverage ladder. ``--email`` sends it on the DAILY
+    tier (the Friday weekly unit runs it)."""
+    from datetime import timedelta
+
+    from execution import AlpacaAdapter, AlpacaDailyBars
+    from execution.market_data import UnservedSymbols
+    from lab import scoreboard as board_mod
+    from lab.ai_trader import NY
+
+    config = LabConfig.load()
+
+    def events(name: str) -> list[dict]:
+        return board_mod.read_jsonl(datasafety.lab_production_dir(name) / "ledger.jsonl")
+
+    ladder_events = events("ladder")
+    ai_events = events("ai-trader") if "ai-trader" in config.accounts else []
+    main_data = datasafety.production_data_dir()
+    exec_lines = board_mod.read_jsonl(main_data / "execution_test_daily.jsonl") if main_data else []
+    today = datetime.now(timezone.utc).astimezone(NY).date()
+    stamps = [e["at"] for e in ladder_events + ai_events if e.get("event") == "snapshot"]
+    start = min([datetime.fromisoformat(s).astimezone(NY).date() for s in stamps]
+                + [date_from(line["day"]) for line in exec_lines] + [today]) - timedelta(days=7)
+    spy: dict = {}
+    for bar in AlpacaDailyBars(unserved=UnservedSymbols()).bars(
+            "SPY", datetime.combine(start, datetime.min.time(), timezone.utc), datetime.now(timezone.utc)):
+        spy[date_from(str(bar["t"])[:10])] = float(bar["c"])
+    main_equity: dict = {}
+    try:
+        with AlpacaAdapter() as main:
+            history = main.portfolio_history(start.isoformat())
+        for stamp, equity in zip(history.get("timestamp") or [], history.get("equity") or []):
+            if equity:
+                main_equity[datetime.fromtimestamp(int(stamp), timezone.utc).astimezone(NY).date()] = float(equity)
+    except Exception as error:  # noqa: BLE001 - the main line is optional on the board
+        print(f"(main book history unavailable: {error})", file=sys.stderr)
+    board = board_mod.build(
+        ladder_events=ladder_events, ai_events=ai_events, exec_lines=exec_lines, spy=spy,
+        main_equity=dict(sorted(main_equity.items())),
+        rung_labels={rung.name: rung.label for rung in config.ladder.rungs},
+    )
+    text = board_mod.render(board, today)
+    print(text)
+    if email:
+        alerter = Alerter()
+        alerter.daily(f"lab-scoreboard-{today}", f"PAPER LAB SCOREBOARD {today}", text)
+        alerter.close()
+    return 0
+
+
+def date_from(text: str):
+    from datetime import date
+
+    return date.fromisoformat(text[:10])
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     parser = argparse.ArgumentParser(prog="python -m lab")
@@ -359,6 +420,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("resume")
     p.add_argument("account")
     p.add_argument("--ack", required=True)
+    p = sub.add_parser("scoreboard")
+    p.add_argument("--email", action="store_true")
     for name in ("run", "golden", "roundtrip"):
         p = sub.add_parser(name)
         p.add_argument("account")
@@ -376,6 +439,8 @@ def main(argv: list[str] | None = None) -> int:
         return halt(args.account, args.reason)
     if args.command == "run":
         return run_session(args.account)
+    if args.command == "scoreboard":
+        return scoreboard(args.email)
     if args.command == "golden":
         return golden(args.account)
     if args.command == "roundtrip":

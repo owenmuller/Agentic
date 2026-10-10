@@ -1,0 +1,10 @@
+# Weekdays 09:20 ET; the session waits for the open and runs to the close.
+[Unit]
+Description=Agentic paper lab: AI trader session trigger (weekdays 9:20 ET)
+
+[Timer]
+OnCalendar=Mon..Fri 09:20 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

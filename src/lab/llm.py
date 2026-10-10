@@ -60,8 +60,20 @@ class LabLLM:
         tier = ModelTier(model=ai_config.model, effort=ai_config.effort, max_searches=ai_config.max_searches)
         overrides = base.tiers.model_dump() if base.tiers is not None else {}
         overrides[self.TIER] = tier
-        self.config = base.model_copy(update={"tiers": TierOverrides(**overrides)})
+        web_search = base.web_search.model_copy(update={"tool_type": ai_config.search_tool})
+        self.config = base.model_copy(update={"tiers": TierOverrides(**overrides), "web_search": web_search})
         self._fee = Decimal(str(ai_config.search_fee_usd))
+        if client is None:
+            # The same SDK client the research client would build, with the
+            # lab's per-request timeout and one retry: a pass that cannot
+            # finish raises (a fault, no trade) instead of holding a tick.
+            import anthropic
+
+            from execution.environment import load_environment, require_env
+
+            load_environment()
+            client = anthropic.Anthropic(api_key=require_env("ANTHROPIC_API_KEY"),
+                                         timeout=float(ai_config.request_timeout_seconds), max_retries=1)
         self._client = _CountingClient(self.config, client=client)
 
     def scan(self, *, system: str, user: str, tool: dict[str, Any]) -> PassResult:

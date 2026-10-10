@@ -15,3 +15,5 @@ User=agentic
 WorkingDirectory=/home/agentic/Agentic
 Environment=PYTHONIOENCODING=utf-8
 ExecStart=/home/agentic/Agentic/.venv/bin/python -m orchestrator weekly
+# PAPER PUSH item 4 (ruling 2026-10-09 late): the paper lab scoreboard, read-only.
+ExecStart=-/home/agentic/Agentic/.venv/bin/python -m lab scoreboard --email

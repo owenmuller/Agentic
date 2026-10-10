@@ -4102,6 +4102,64 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### RULINGS 2026-10-10 — C dropped; slots main/ladder/AI trader; ladder kill switch off (−25% alert); guard fallback alerts; 2b AI TRADER BUILT (golden 5/5); scoreboard + slippage line BUILT
+
+**1. Sleeve C: DROPPED.** It is removed from `config/lab.yaml`. Constraints #1 and #2 are unchanged (CLAUDE.md § Paper Lab).
+
+**2. Account slots:** main book, ladder, AI trader. No second login.
+
+**3. Ladder.**
+- **a.** No kill switch: its trip sits at 100% of the high-water mark, which a cash account cannot reach. An urgent alert fires at −25% from peak, once per peak (a new peak re-arms it), and changes nothing the ladder does. `LabConfig` refuses `kill_switch: false` on any other account, so the 12% switch stays for the AI trader. The operator halt still freezes the ladder by hand.
+- **b.** Equal thirds: approved.
+- **c.** Monday, before the first 10:00 ET run: a dry run with live quotes, reported; only then does the timer go live. Still waiting on the human:
+  - create the ladder paper account and add `ALPACA_LAB_LADDER_API_*`;
+  - install the unit files without enabling the timer;
+  - I run `python -m lab tick ladder --dry-run` between 09:30 and 09:55 and report;
+  - the human then enables the timer.
+
+**4. Guard fallback.**
+- Inside a production unit, a guard ERROR still allows the write, but now logs at ERROR and goes through `datasafety.set_alert_sink`, the same route as a refused write.
+- The main session routes both through its run log's ERROR line, so they get the urgent email and the health view. A lab unit routes them through its alerter.
+- Tested in a cold interpreter posing as a production unit: refusal, then a forced guard defect, each producing one ERROR line and one alert; outside production the same defect fails closed.
+
+**5. 2b AUTONOMOUS AI TRADER: BUILT** (`lab/ai_trader.py`, `ai_prompts.py`, `llm.py`, `golden.py`; config `lab.yaml ai_trader`; full description in CLAUDE.md § Paper Lab). `enabled: false` until the order-path round trip passes.
+- **Scans:** the model proposes; the rules engine validates, sizes (2% of NAV at risk), picks the option contract (0DTE allowed intraday), exits and refuses. Max 5 positions; every order passes the account's own RiskGate; the 12% kill switch applies. The prompt never carries P&L, NAV or held-position prices.
+- **Spend:** the $3/day cap is hard; a pass needs $0.60 of headroom. Spend = token estimate plus $0.01 per search, reported by `lab status`.
+- **Request path:** the main book's research client, reused. Two changes, both lab-only:
+  - **The search tool version.** `research.yaml` does not set the new `web_search.tool_type`, so the main book's request is byte-identical (tested). The lab sets the plain `web_search_20250305`. Measured: on this open-ended idea search the dynamic-filtering tool (`web_search_20260209`) ran server-side code execution, 24 tool calls of which 19 were code runs. One streamed pass took 200 s, and two golden passes hung past the 10-minute client timeout (the first golden run was killed at 25 minutes). The plain tool did the same request in 33 s.
+  - **A 300 s per-request timeout with one retry.** A failed pass is a recorded fault with no trade.
+- **Golden replay** (`python -m lab golden ai-trader`, production prompt and request path, which also makes it the live search→report round trip): **5/5 PASS, total $0.604**.
+  - open_empty_book: 1 idea, MRNA put (days), accepted by the engine.
+  - full_book_proposes_nothing: 0 ideas ($0.016).
+  - entries_closed_late: 0 ideas.
+  - no_intraday_after_cutoff: 2 ideas, JPM and GS calls on the "days" horizon (earnings Oct 13), both accepted.
+  - held_and_traded_symbols_excluded: 0 ideas.
+  - Note: golden grades the ideas against the model's own `entry_reference`. Live, the engine re-checks every level against the live quote, so a stale or invented reference is refused.
+- **Still to do before live:** the order-path round trip (`python -m lab roundtrip ai-trader`: one SPY share and one SPY call bought and sold through the gate, in session). It needs the AI-trader paper account, its keys (`ALPACA_LAB_AI_TRADER_API_*`) and market hours. After it passes: a reviewed commit sets `enabled: true` and the human installs and enables `agentic-lab-ai-trader.timer`.
+- **Flagged readings (mine):**
+  - confidence floor 50;
+  - reward:risk floor 1.0;
+  - stop band 0.3–25%;
+  - option floors: |delta| 0.40–0.70, open interest ≥ 100, spread ≤ 15%, IV percentile ≤ 95%;
+  - cap-table split 75/25 between the stock and option gate paths;
+  - five scans a day.
+
+**Items 3 and 4: SCOREBOARD and FILL-REALISM line: BUILT** (`lab/scoreboard.py`; `python -m lab scoreboard [--email]`; added as a second, non-fatal `ExecStart` to the Friday weekly unit).
+- **Rows:** ladder and each rung, AI trader, B execution test (live vs modelled P&L), main account (Alpaca portfolio history), SPY.
+- **Columns:** return, adjusted return, vs SPY and vs the ladder over the same days, max drawdown, trades, win rate, average win and loss, sessions. First grading at 20 sessions, verdict at 60.
+- **Adjusted line:** fills are charged the execution test's measured adverse bp by kind, pooled. A rate is used only from n ≥ 10 (until then "pending"); a favourable mean charges zero. Option fills are charged at the same SPY/SH bp, which the table says understates their spreads. The ladder and the execution test are not adjusted.
+
+**Gates:** full suite **1,541 passed, 13 skipped**. Golden 5/5 live.
+
+**Root actions for the human** (all files in `ops/vps/`):
+```
+sudo cp ops/vps/agentic-lab-ladder.{service,timer} ops/vps/agentic-lab-ai-trader.{service,timer} \
+        ops/vps/agentic-backup.service ops/vps/agentic-weekly.service /etc/systemd/system/
+sudo systemctl daemon-reload
+# after Monday's ladder dry run:      sudo systemctl enable --now agentic-lab-ladder.timer
+# after the AI trader's round trip:   sudo systemctl enable --now agentic-lab-ai-trader.timer
+```
+
 ### PAPER PUSH 2026-10-09 (late) — separate paper accounts BUILT; 2a LEVERAGE LADDER BUILT (waits on keys + unit install); 2c BLOCKED on Constraints #1/#2; 2b next
 
 **1. Accounts and ledger: BUILT** (`src/lab/`, `config/lab.yaml`, CLAUDE.md § Paper Lab).

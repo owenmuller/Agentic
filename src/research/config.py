@@ -21,9 +21,16 @@ class WebSearchConfig(_Strict):
     #: (with a marker) — result content is encrypted and must be replayed
     #: byte-identical or the API 400s, so elision is the only honest payload cut.
     replay_results_in_report: bool = True
+    #: The server-side search tool version. None (the main book: research.yaml
+    #: does not set it) keeps ``research.client.WEB_SEARCH_TOOL_TYPE``, so the
+    #: main book's request is byte-identical. The paper lab's AI trader sets
+    #: the plain ``web_search_20250305`` (2026-10-10): the dynamic-filtering
+    #: version runs server-side code execution, and on an open-ended idea
+    #: search it took 200 s to 15+ min per pass against 33 s for the plain one.
+    tool_type: Optional[str] = None
 
 
-Effort = Literal["low", "medium", "high", "xhigh", "max"]
+Effort =Literal["low", "medium", "high", "xhigh", "max"]
 
 #: The valid tier names: one per signal class, plus the exit thesis review.
 TIER_NAMES = ("class_1", "class_2", "class_3", "exit_review")

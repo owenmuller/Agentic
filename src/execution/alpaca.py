@@ -202,6 +202,12 @@ class AlpacaAdapter(BrokerAdapter):
         between books unnoticed."""
         return dict(self._request("GET", "/v2/account"))
 
+    def portfolio_history(self, start: str) -> dict[str, Any]:
+        """``GET /v2/account/portfolio/history``: daily equity from ``start``
+        (YYYY-MM-DD). Read-only; the lab scoreboard's main-book line."""
+        return dict(self._request("GET", "/v2/account/portfolio/history",
+                                  params={"start": start, "timeframe": "1D"}))
+
     def market_clock(self) -> dict[str, Any]:
         """``GET /v2/clock``: ``is_open``, ``next_open``, ``next_close``."""
         return dict(self._request("GET", "/v2/clock"))

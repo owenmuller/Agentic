@@ -479,7 +479,27 @@ def test_the_wrapper_meters_tokens_and_searches():
     search, report = fake.messages.requests
     assert search["model"] == report["model"] == "claude-sonnet-4-6"
     assert search["tools"][0]["max_uses"] == CFG.max_searches
+    assert search["tools"][0]["type"] == "web_search_20250305"  # the plain tool (2026-10-10)
     assert report["tool_choice"] == {"type": "tool", "name": "submit_trade_ideas"}
     tokens = (D(12000) * D("3.00") + D(800) * D("15.00")) / D(1_000_000)
     assert result.searches == 3 and result.token_cost_usd == tokens
     assert result.cost_usd == tokens + D("0.03")
+
+
+def test_a_failed_pass_is_a_fault_not_a_trade(lab_env):
+    class Broken(FakeLLM):
+        def scan(self, **kwargs):
+            raise TimeoutError("request timed out")
+
+    world = World()
+    trader = trader_for(world, lab_env, Broken())
+    notes = trader.tick(et(12, "09:46"))
+    assert any("pass failed" in n for n in notes) and not world.orders
+
+
+def test_the_main_books_search_tool_is_unchanged():
+    from research.client import WEB_SEARCH_TOOL_TYPE
+    from research.config import ResearchConfig
+
+    assert ResearchConfig.load().web_search.tool_type is None
+    assert WEB_SEARCH_TOOL_TYPE == "web_search_20260209"

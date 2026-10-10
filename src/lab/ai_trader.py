@@ -382,7 +382,12 @@ class AiTrader:
                 self.notes.append(note)
                 return ScanOutcome(False, note=note)
         user = self.user_prompt(now, held)
-        result = self.llm.scan(system=system_prompt(cfg), user=user, tool=TOOL)
+        try:
+            result = self.llm.scan(system=system_prompt(cfg), user=user, tool=TOOL)
+        except Exception as error:  # noqa: BLE001 - a failed pass is a fault, never a trade
+            self._fault(f"scan {label}: the model pass failed ({type(error).__name__}: {str(error)[:200]}); "
+                        f"nothing traded")
+            return ScanOutcome(False, note="pass failed")
         structured = result.structured or {}
         ideas = list(structured.get("ideas") or [])[: cfg.max_ideas_per_scan]
         outcome = ScanOutcome(True, cost_usd=result.cost_usd, ideas=ideas)

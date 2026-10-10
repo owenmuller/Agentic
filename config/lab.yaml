@@ -115,6 +115,11 @@ ai_trader:
   model: claude-sonnet-4-6
   effort: medium
   max_searches: 3
+  # The plain search tool (2026-10-10): the dynamic-filtering version ran
+  # server-side code execution and took 200 s to 15+ min per open-ended pass
+  # (two golden passes hung past the 10-minute client timeout); plain: 33 s.
+  search_tool: web_search_20250305
+  request_timeout_seconds: 300
   # Daily LLM spend cap $3 (spec), hard: a pass starts only if today's spend
   # plus the reserve stays inside the cap. Spend = token estimate from the
   # research.yaml pricing table + $0.01 per web search.

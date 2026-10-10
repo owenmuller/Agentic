@@ -160,6 +160,8 @@ TOPOLOGY: dict[str, Rules] = {
     # Changes) - and nothing else of research: no prompts, no passes, no signals.
     "lab": Rules(
         may_import=frozenset({"execution", "risk_gate", "research.client", "research.config"}),
+        # lab.llm builds the SDK client with the lab's own timeout (2026-10-10)
+        may_reach_network=True,
         because="separate paper accounts: the gate, the adapter and the research client; nothing else of the main book",
     ),
     # PRODUCTION-DATA WRITE GUARD (ruling 2026-10-09, item 4). Every package

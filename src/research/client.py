@@ -279,7 +279,7 @@ class AnthropicResearchClient:
                 output_config={"effort": resolved.effort},
                 tools=[
                     {
-                        "type": WEB_SEARCH_TOOL_TYPE,
+                        "type": self._config.web_search.tool_type or WEB_SEARCH_TOOL_TYPE,
                         "name": "web_search",
                         # Per-tier budget (2026-08-25); the global cap is the default.
                         "max_uses": (
