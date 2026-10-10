@@ -392,6 +392,7 @@ def scoreboard(email: bool) -> int:
         ladder_events=ladder_events, ai_events=ai_events, exec_lines=exec_lines, spy=spy,
         main_equity=dict(sorted(main_equity.items())),
         rung_labels={rung.name: rung.label for rung in config.ladder.rungs},
+        stop_floor=float(config.ai_trader.min_stop_fraction) if config.ai_trader else None,
     )
     text = board_mod.render(board, today)
     print(text)

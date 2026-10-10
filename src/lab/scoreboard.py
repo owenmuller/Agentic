@@ -202,6 +202,7 @@ def build(
     spy: dict[date, float],
     main_equity: dict[date, float],
     rung_labels: dict[str, str],
+    stop_floor: Optional[float] = None,
 ) -> Board:
     table = slippage_table(exec_lines)
     ladder = daily_last(ladder_events, "equity")
@@ -254,6 +255,7 @@ def build(
 
     notes = [
         f"Grading: first at {GRADE_AT} sessions, verdict at {VERDICT_AT}. Sessions counted per row.",
+        stop_floor_note(table, stop_floor),
         "Slippage (execution test, adverse bp vs its model, pooled): " + ", ".join(
             f"{k} n={n} {'%.2f' % m if m is not None else '-'}" for k, (n, m) in table.items()
         ) + f"; a rate is used from n >= {MIN_FILLS}. Measured on SPY/SH: option fills charged at the same bp "
@@ -262,6 +264,22 @@ def build(
         "started).",
     ]
     return Board(rows, table, notes)
+
+
+def stop_floor_note(table: dict[str, tuple[int, Optional[float]]], floor: Optional[float]) -> str:
+    """Human ruling 2026-10-10 (second): the AI trader's minimum stop distance
+    is 1% until the execution test has measured stop slippage on >= 10 fills;
+    then a floor of at least 3x the measured stop slippage is PROPOSED here.
+    The floor itself changes only by a human ruling - never automatically."""
+    n, mean = table.get("stop", (0, None))
+    current = "-" if floor is None else f"{floor:.2%}"
+    if n < MIN_FILLS or mean is None:
+        return (f"AI trader stop floor: {current} holds (ruling 2026-10-10) until stop slippage is measured on "
+                f">= {MIN_FILLS} fills (n = {n}).")
+    proposed = 3 * max(mean, 0.0) / 1e4
+    return (f"AI trader stop floor PROPOSAL (for a human ruling): measured stop slippage {mean:.2f} bp over n = {n}; "
+            f"3x = {proposed:.2%}; current floor {current}. A floor of at least {proposed:.2%} is proposed; "
+            f"nothing changes until a human rules.")
 
 
 def _parse(day: str) -> date:

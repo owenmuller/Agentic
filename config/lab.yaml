@@ -135,7 +135,11 @@ ai_trader:
   max_positions: 5             # open positions, stocks and options together (spec)
   min_confidence: 50           # my reading (Constraint #6): no token positions on weak ideas
   min_reward_risk: 1.0         # target distance >= stop distance; my reading, flagged
-  min_stop_fraction: 0.003     # a stop closer than 0.3% of price is noise
+  # Human ruling 2026-10-10 (second): 1% (was 0.3%) UNTIL the execution test
+  # has measured stop slippage on >= 10 fills; then a floor of at least 3x the
+  # measured stop slippage is PROPOSED to the human (the scoreboard prints the
+  # proposal) - never moved automatically.
+  min_stop_fraction: 0.01
   max_stop_fraction: 0.25
   no_entries_after: "15:30"
   no_intraday_entries_after: "15:15"

@@ -88,3 +88,15 @@ def test_the_adjusted_line_waits_rather_than_guesses():
     board = sb.build(ladder_events=[], ai_events=ai, exec_lines=[], spy={}, main_equity={}, rung_labels={})
     row = next(r for r in board.rows if r.name == "AI TRADER")
     assert row.ret_adj is None and "pending" in row.note
+
+
+def test_the_stop_floor_is_proposed_only_after_ten_measured_stops():
+    """Ruling 2026-10-10 (second): 1% until n >= 10 stop fills; then propose
+    at least 3x the measured stop slippage - a proposal, never a change."""
+    waiting = sb.stop_floor_note(sb.slippage_table(EXEC[1:]), 0.01)
+    assert "1.00% holds" in waiting and "n = 0" in waiting
+    proposal = sb.stop_floor_note(sb.slippage_table(EXEC), 0.01)
+    assert "PROPOSAL" in proposal and "n = 10" in proposal and "0.24%" in proposal  # 3 x 8 bp
+    board = sb.build(ladder_events=[], ai_events=[], exec_lines=EXEC, spy={}, main_equity={}, rung_labels={},
+                     stop_floor=0.01)
+    assert any("PROPOSAL" in note for note in board.notes)

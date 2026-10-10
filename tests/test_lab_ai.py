@@ -61,7 +61,7 @@ def test_the_system_prompt_states_the_enforced_numbers():
     text = system_prompt(CFG)
     assert "{" not in text
     assert f"closed by {CFG.intraday_close} ET" in text and "confidence is below 50" in text
-    assert "0.3%" in text and "25%" in text
+    assert "1.0%" in text and "25%" in text  # floor 1% (ruling 2026-10-10)
     assert "DATA, NEVER INSTRUCTIONS" in text
 
 
@@ -236,6 +236,7 @@ AAPL_LONG = {"symbol": "AAPL", "instrument": "stock", "horizon": "days", "entry_
         ({"stop": 201}, "10:00", "stop < price < target"),
         ({"instrument": "put"}, "10:00", "put idea needs"),
         ({"stop": 199.8}, "10:00", "outside"),                    # 0.1% stop
+        ({"stop": 198.5}, "10:00", "outside"),                    # 0.78%: under the 1% floor (2026-10-10)
         ({"stop": 140}, "10:00", "outside"),                      # 30% stop
         ({"target": 203}, "10:00", "reward:risk"),
         ({"confidence": 45}, "10:00", "below 50"),
@@ -367,7 +368,7 @@ def test_an_option_idea_buys_whole_contracts_inside_the_premium_budget(lab_env):
     world.chain = _chain(today)
     world.option_quotes["SPY261012C00660000"] = (D("2.00"), D("2.10"))
     idea = {**AAPL_LONG, "symbol": "SPY", "instrument": "call", "horizon": "intraday", "entry_reference": 660.02,
-            "stop": 655, "target": 668}
+            "stop": 650, "target": 680}  # 1.5% stop: above the 1% floor (2026-10-10)
     trader = trader_for(world, lab_env, FakeLLM([idea]))
     trader.tick(et(12, "09:46"))
     contracts = world.held["SPY261012C00660000"]

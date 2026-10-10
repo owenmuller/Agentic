@@ -4102,6 +4102,17 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### RULINGS 2026-10-10 (second) — AI trader APPROVED with a 1% stop floor; keys in .env and units installed; Monday checks scheduled
+
+- **Stop floor 0.3% → 1%** (`lab.yaml ai_trader.min_stop_fraction`) until the execution test has measured stop slippage on ≥ 10 fills.
+  - After that, the scoreboard prints a PROPOSAL of at least 3× the measured stop slippage. The floor moves only by a human ruling, never automatically (`scoreboard.stop_floor_note`, tested).
+  - All other AI-trader defaults are approved.
+- **Gates.**
+  - Full suite: **1,543 passed, 13 skipped**. One test's idea had a 0.76% stop that the new floor refused; its levels were widened.
+  - Golden replay re-run, because the prompt states the floor: **5/5 PASS, $0.575**.
+  - Finding: across cases the model gave JPM three different `entry_reference` prices (333, 352, 270). Golden grades against the model's own reference; live, the engine re-checks every level against the live quote, so ideas anchored on a wrong price are refused, not traded. Expect a share of live ideas rejected for that reason; the ledger records each one (`idea_rejected`).
+- **Monday 2026-10-12 (scheduled):** the ladder dry run with live quotes between 09:30 and 09:55 ET, then the AI-trader order-path round trip in session. Each is reported; the human enables the timers.
+
 ### RULINGS 2026-10-10 — C dropped; slots main/ladder/AI trader; ladder kill switch off (−25% alert); guard fallback alerts; 2b AI TRADER BUILT (golden 5/5); scoreboard + slippage line BUILT
 
 **1. Sleeve C: DROPPED.** It is removed from `config/lab.yaml`. Constraints #1 and #2 are unchanged (CLAUDE.md § Paper Lab).

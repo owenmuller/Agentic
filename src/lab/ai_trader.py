@@ -18,7 +18,8 @@ THE RULES ENGINE (this module) decides everything else, deterministically:
   validate  the instrument and horizon are known; the symbol is not held or
             already traded today; a slot is free; confidence >= the floor;
             the live price sits between the stop and the target on the right
-            sides; the stop is 0.3%-25% away; target distance >= min_reward_risk
+            sides; the stop is 1%-25% away (1% by ruling 2026-10-10 until stop
+            slippage is measured); target distance >= min_reward_risk
             x stop distance; an intraday idea arrives before 15:15 ET; no new
             entry after 15:30 ET; the kill switch and halt are clear.
   size      2% of the account's NAV at risk: shares = budget / (limit - stop)
