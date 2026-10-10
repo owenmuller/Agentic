@@ -375,7 +375,9 @@ def scoreboard(email: bool) -> int:
                 + [date_from(line["day"]) for line in exec_lines] + [today]) - timedelta(days=7)
     spy: dict = {}
     for bar in AlpacaDailyBars(unserved=UnservedSymbols()).bars(
-            "SPY", datetime.combine(start, datetime.min.time(), timezone.utc), datetime.now(timezone.utc)):
+            # two weeks earlier, so a close sits on or before every row's first day
+            "SPY", datetime.combine(start - timedelta(days=14), datetime.min.time(), timezone.utc),
+            datetime.now(timezone.utc)):
         spy[date_from(str(bar["t"])[:10])] = float(bar["c"])
     main_equity: dict = {}
     try:
