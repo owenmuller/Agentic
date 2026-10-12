@@ -52,6 +52,9 @@ SMTP_PORT = 465  # SSL
 #: transport. ALERT_FROM (else ALERT_SMTP_USER) must be a sender SendGrid has
 #: verified. Credentials are the operator's to set, never this code's.
 SENDGRID_URL = "https://api.sendgrid.com/v3/mail/send"
+#: Push transport (human ruling 2026-10-12): ntfy, public server by default.
+NTFY_SERVER = "https://ntfy.sh"
+NTFY_MAX_BYTES = 3900
 
 URGENT = "URGENT"
 DAILY = "DAILY"
@@ -83,6 +86,12 @@ class Alerter:
         self._to = (os.environ.get("ALERT_TO") or "").strip()
         self._sendgrid_key = (os.environ.get("SENDGRID_API_KEY") or "").strip()
         self._from = (os.environ.get("ALERT_FROM") or self._user).strip()
+        #: Push notifications (human ruling 2026-10-12): an ntfy topic the
+        #: operator subscribes to on their phone. Tried FIRST - the droplet's
+        #: SMTP egress is blocked and SendGrid is not configured. The topic
+        #: name is the only secret on a public server: keep it unguessable.
+        self._ntfy_topic = (os.environ.get("NTFY_TOPIC") or "").strip()
+        self._ntfy_server = (os.environ.get("NTFY_SERVER") or NTFY_SERVER).strip().rstrip("/")
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._window = timedelta(minutes=resend_window_minutes)
         #: Injectable transport for tests; None = the real transports.
@@ -97,7 +106,7 @@ class Alerter:
         self._worker: Optional[threading.Thread] = None
         if not self.enabled:
             logger.info(
-                "alerting disabled: neither SENDGRID_API_KEY nor ALERT_SMTP_USER / "
+                "alerting disabled: no NTFY_TOPIC, no SENDGRID_API_KEY and no ALERT_SMTP_USER / "
                 "ALERT_SMTP_PASSWORD is set with ALERT_TO; the run log remains the "
                 "operator"
             )
@@ -111,9 +120,15 @@ class Alerter:
         return bool(self._sendgrid_key and self._from and self._to)
 
     @property
+    def ntfy_configured(self) -> bool:
+        return bool(self._ntfy_topic)
+
+    @property
     def transports(self) -> tuple[str, ...]:
-        """In the order tried: HTTPS first when configured, SMTP second."""
+        """In the order tried: ntfy push, then SendGrid HTTPS, then SMTP."""
         order = []
+        if self.ntfy_configured:
+            order.append("ntfy")
         if self.sendgrid_configured:
             order.append("sendgrid")
         if self.smtp_configured:
@@ -208,7 +223,9 @@ class Alerter:
         errors: list[str] = []
         for transport in self.transports:
             try:
-                if transport == "sendgrid":
+                if transport == "ntfy":
+                    self._send_ntfy(message)
+                elif transport == "sendgrid":
                     self._send_sendgrid(message)
                 else:
                     self._send_smtp(message)
@@ -220,6 +237,34 @@ class Alerter:
         detail = "; ".join(errors) or "no transport configured"
         self._record(False, "none", detail)
         raise RuntimeError(detail)
+
+    def _send_ntfy(self, message: _Outbound) -> None:
+        """Publish as JSON to the server root (UTF-8 safe, unlike headers).
+        URGENT is ntfy's top priority (a phone alert that breaks through);
+        DAILY the default. Bodies are cut under ntfy.sh's 4 KB message limit."""
+        post = self._http_post
+        if post is None:
+            import httpx
+
+            post = httpx.post
+        urgent = message.subject.startswith(_PREFIX[URGENT])
+        body = message.body
+        if len(body.encode("utf-8")) > NTFY_MAX_BYTES:
+            body = body.encode("utf-8")[: NTFY_MAX_BYTES - 40].decode("utf-8", "ignore") + "\n[... truncated]"
+        response = post(
+            self._ntfy_server,
+            json={
+                "topic": self._ntfy_topic,
+                "title": message.subject,
+                "message": body,
+                "priority": 5 if urgent else 3,
+                "tags": ["rotating_light"] if urgent else ["chart_with_upwards_trend"],
+            },
+            timeout=20,
+        )
+        status = getattr(response, "status_code", None)
+        if status is None or status >= 300:
+            raise RuntimeError(f"ntfy HTTP {status}: {str(getattr(response, 'text', ''))[:120]}")
 
     def _send_sendgrid(self, message: _Outbound) -> None:
         post = self._http_post
