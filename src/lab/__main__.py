@@ -118,6 +118,14 @@ def status(names: list[str]) -> int:
                 total = sum(float(e["cost_usd"]) for e in rows)
                 print(f"  LLM spend {day}: ${total:.2f} over {len(rows)} pass(es), "
                       f"{sum(int(e.get('searches', 0)) for e in rows)} searches")
+        fills = [e for e in ledger.events(["settled"]) if float(e.get("filled_qty") or 0) > 0]
+        if fills:
+            print(f"  fills: {len(fills)}; last {min(len(fills), 10)}:")
+            for event in fills[-10:]:
+                mid = event.get("modelled")
+                print(f"    {event['at'][:19]} {event['side']:4} {event['symbol']} {event['filled_qty']} at "
+                      f"{event['avg_price']} (limit {event.get('limit')}, mid {mid}, {event.get('status')}"
+                      f"{', ' + event['reason'] if event.get('reason') else ''})")
         if snapshots:
             last = snapshots[-1]
             print(f"  last snapshot {last['at']}: equity {last.get('equity')}, rungs {json.dumps(last.get('rungs'))}")

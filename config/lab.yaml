@@ -41,11 +41,13 @@ accounts:
     drawdown_alert: 0.25
   # Ruling 2026-10-10, item 2: the third paper slot (main, ladder, this).
   ai-trader:
-    enabled: false
+    # ENABLED (human ruling 2026-10-10 approved it; order-path round trip passed
+    # 2026-10-12; price-anchoring golden 5/5 2026-10-12). Its timer is the human's.
+    enabled: true
     label: AUTONOMOUS AI TRADER
     sleeve: ai_trader
     live_eligible: false
-    status: "in build (ruling 2026-10-10, item 5); goes live after the golden replay and a live round trip"
+    status: "live in paper from its first timer-started session"
     # The account's own cap table. Stocks/ETFs ride the gate's AGGRESSIVE path
     # (fixed-risk sleeve: 5 names, 25% of its NAV per name, T+1 on today's sale
     # proceeds); long calls/puts ride the EQUITY path (the only one options

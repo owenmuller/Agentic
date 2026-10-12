@@ -196,9 +196,9 @@ def test_a_real_lab_run_is_refused_outside_its_unit(tmp_path):
 
 # ------------------------------------------------------------------ config
 
-def test_the_lab_config_loads_and_only_the_ladder_is_enabled():
+def test_the_lab_config_loads_with_both_lab_accounts_enabled():
     config = LabConfig.load()
-    assert [n for n, a in config.accounts.items() if a.enabled] == ["ladder"]
+    assert [n for n, a in config.accounts.items() if a.enabled] == ["ladder", "ai-trader"]
     assert "unconstrained" not in config.accounts  # sleeve c dropped, ruling 2026-10-10
     assert config.ladder.symbols == ("QLD", "SPY", "SSO")
     assert key_variables("ai-trader") == ("ALPACA_LAB_AI_TRADER_API_KEY", "ALPACA_LAB_AI_TRADER_API_SECRET")
@@ -476,8 +476,10 @@ def test_preflight_refuses_what_it_cannot_verify(lab_env, monkeypatch):
     monkeypatch.delenv("ALPACA_LAB_LADDER_API_KEY")
     with pytest.raises(LabRefused, match="no keys"):
         _open(FakeBroker(), lab_env)
+    raw = LabConfig.load().model_dump(mode="json")
+    raw["accounts"]["ai-trader"]["enabled"] = False
     with pytest.raises(LabRefused, match="not enabled"):
-        open_account("ai-trader", LabConfig.load(), adapter=FakeBroker())
+        open_account("ai-trader", LabConfig.model_validate(raw), adapter=FakeBroker())
 
 
 def test_the_lab_refuses_to_run_live(lab_env, monkeypatch):

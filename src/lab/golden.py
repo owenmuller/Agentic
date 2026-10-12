@@ -11,9 +11,11 @@ builds it live.
 
 Graded HARD (the prompt states these as rules): the report tool is called;
 no more ideas than the case allows; no held or traded symbol; no forbidden
-horizon; every idea's stop and target on the right sides of its own
-entry_reference. REPORTED, not graded: the rules engine's acceptance of each
-idea (reward:risk, stop distance, confidence floor) and the pass cost.
+horizon; every idea gives its stop and target as positive percentage
+distances (ruling 2026-10-10: levels come from the live quote, never from a
+price the model cites). REPORTED, not graded: the rules engine's acceptance
+of each idea (reward:risk, stop band, confidence floor), each idea's
+price_seen, and the pass cost.
 """
 from __future__ import annotations
 
@@ -27,7 +29,7 @@ from typing import Any, Optional
 import yaml
 
 from lab.account import LabState, Ledger
-from lab.ai_trader import NY, AiTrader, _reference, at, bullish
+from lab.ai_trader import NY, AiTrader, at
 from lab.config import AccountConfig, AiTraderConfig
 
 
@@ -107,16 +109,14 @@ def run_case(case: dict, config: AiTraderConfig, llm: Any, day: date) -> CaseRes
             failures.append(f"proposed {symbol}, which is held or traded today")
         if idea.get("horizon") in forbidden_horizons:
             failures.append(f"proposed a {idea.get('horizon')} idea on {symbol} after the cutoff")
-        price = _reference(idea)
         try:
-            stop, target = Decimal(str(idea.get("stop"))), Decimal(str(idea.get("target")))
+            stop_pct, target_pct = Decimal(str(idea.get("stop_pct"))), Decimal(str(idea.get("target_pct")))
+            valid = stop_pct.is_finite() and target_pct.is_finite() and stop_pct > 0 and target_pct > 0
         except (ArithmeticError, ValueError, TypeError):
-            failures.append(f"{symbol}: stop/target not numeric")
-            continue
-        sides_ok = (stop < price < target) if bullish(str(idea.get("instrument"))) else (target < price < stop)
-        if not sides_ok:
-            failures.append(f"{symbol} {idea.get('instrument')}: stop {stop} / reference {price} / target {target} "
-                            f"on the wrong sides")
+            valid = False
+        if not valid:
+            failures.append(f"{symbol}: stop_pct/target_pct are not positive percentage distances "
+                            f"({idea.get('stop_pct')!r} / {idea.get('target_pct')!r})")
     result.passed = not failures
     return result
 
@@ -138,7 +138,7 @@ def render(results: list[CaseResult], day: date) -> str:
             lines.append(f"        engine rejected {symbol}: {reason}")
         for idea in r.ideas:
             lines.append(f"        idea {idea.get('symbol')} {idea.get('instrument')} {idea.get('horizon')} "
-                         f"ref {idea.get('entry_reference')} stop {idea.get('stop')} target {idea.get('target')} "
+                         f"stop {idea.get('stop_pct')}% target {idea.get('target_pct')}% seen {idea.get('price_seen')} "
                          f"conf {idea.get('confidence')}: {str(idea.get('thesis', ''))[:140]}")
     passed = sum(1 for r in results if r.passed)
     lines.append(f"  {passed}/{len(results)} cases passed; total cost {total:.3f} USD")

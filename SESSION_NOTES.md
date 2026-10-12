@@ -4102,6 +4102,65 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-12 — ladder dry run PASSED; AI-trader round trip PASSED; price anchoring BUILT (golden 5/5); checks move to the droplet; AI trader ENABLED (its timer is the human's); CORRECTION to three golden replays
+
+**Setup verified (15:05 ET):** all four lab key names are in `.env`; `agentic-lab-{ladder,ai-trader}.{service,timer}`, `agentic-weekly.service` and `agentic-backup.service` are installed and match the repo; both lab timers are disabled.
+
+**Accounts** (read-only; account numbers shown by their last 4 characters):
+
+| Account | Number | Mode | Cash / equity | Positions | Margin multiplier | Shorting |
+|---|---|---|---|---|---|---|
+| Main | …1584 | paper, active | | 34 | 1× | off |
+| Ladder | …IAIL | paper, active | $100,000 / $100,000 | 0 | 2× | on |
+| AI trader | …50VV | paper, active | $100,000 / $100,000 | 0 | 2× | on |
+
+All three are distinct, and the lab accounts are flat. The lab accounts' 2× margin and shorting are broker defaults. The code cannot express either (schema and gate), and the lab gates use cash only, but tightening the broker setting to 1×, no shorting is recommended defence-in-depth.
+
+**Ladder dry run (15:05 ET, live IEX quotes 0–1 s old, nothing submitted).** Each rung is funded with $33,333.33. Planned buys:
+
+| Rung | Symbol | Shares | Limit | Mid | Notional |
+|---|---|---|---|---|---|
+| 1.5× SPY | SPY | 21.290706 | 778.90 | 777.33 | $16,583.33 |
+| 1.5× SPY | SSO | 230.132274 | 72.06 | 71.90 | $16,583.33 |
+| 2× SPY | SSO | 460.264548 | 72.06 | 71.90 | $33,166.66 |
+| 2× QQQ | QLD | 341.677792 | 97.07 | 96.865 | $33,166.66 |
+
+No faults.
+
+**AI-trader order-path round trip (15:06 ET, `lab roundtrip ai-trader` from the deployed checkout, writes scratch).** Adverse slippage vs the quote mid:
+
+| Order | Fill | Limit | Mid | Slippage | Fill time |
+|---|---|---|---|---|---|
+| Buy 1 SPY | 777.27 | 778.83 | 777.26 | +0.1 bp | 2 s |
+| Sell 1 SPY | 777.26 | 775.70 | 777.275 | +0.2 bp | 2 s |
+| Buy 1 SPY261013C00777000 (1 DTE) | 1.71 | 1.71 | 1.695 | +88.5 bp | 20 s |
+| Sell it, first try | unfilled (cancelled) | 1.72 | | | 30 s |
+| Sell it, re-priced | 1.70 | 1.68 | 1.695 | −29.5 bp | 2 s |
+
+- The first sell sat at a bid that the indicative option feed showed but the paper venue would not fill.
+- No faults; the account ended flat in SPY.
+
+**Price anchoring (human ruling 2026-10-10, third): BUILT.**
+- **The model gives distances, not prices:** `stop_pct` and `target_pct` (positive, % of entry) plus an optional `price_seen`; the tool can no longer carry an absolute level.
+- **Levels come from the live mid at order time,** rounded so neither is nearer than asked (`lab.ai_trader.levels`).
+- **Every idea logs an `anchor_check`:** the live mid, plus the gap to `price_seen` and to every $-figure in the thesis. It is logged and never used.
+- **Validation** is on the distances (stop 1–25%, target ≥ 1.0 × stop).
+- **Golden replay, run on the code under test** (`PYTHONPATH=src`, module path printed: `scratch/labtest/src/lab`): **5/5 PASS, $0.586**. All 9 ideas came as distances; `price_seen` was given on 2 (JPM 334.98, UNH 374.94).
+
+**CORRECTION (my error, reported 2026-10-10).** Running `python -m lab golden` from the scratch copy imports the INSTALLED `~/Agentic/src`, not the copy; pytest was unaffected (pyproject puts `src` on the path). So:
+
+| Golden run | Reported as | Actually ran | What it validated |
+|---|---|---|---|
+| 2026-10-10, $0.604 | plain search tool | deployed 5b2affe (dynamic-filtering tool) | the dynamic tool happened not to hang on that run; NOT the plain tool |
+| 2026-10-10, $0.575 | 1% floor | deployed 7854db2 (0.3% floor) | the plain tool through the production path, but NOT the 1% floor |
+| 2026-10-12, $0.630 | (not reported) | deployed 7a17987 | this is the valid golden for the 1% floor (5/5) |
+
+Today's anchoring golden ran the code under test, as above. Rule now in CLAUDE.md § Paper Lab and in memory: live checks of uncommitted code run with `PYTHONPATH=src` and print the module path, or run after deploying.
+
+**Checks move to the droplet (ruling, third):** `ops/vps/schedule_check.sh` (a transient systemd user timer, ET, lingering on) plus `ops/check_runner.py` (writes `~/checks/`, emails DAILY on pass and URGENT on failure; tested). This replaces laptop-session scheduling: the two Monday checks fired at 10:01 and 11:57 ET instead of 09:37 and 10:13. Also removed: the scratch helper `~/scratch/research_job.sh` set `PAPER_MODE=true` on jobs, which Constraint #4 forbids; that line is deleted.
+
+**AI trader ENABLED** in `config/lab.yaml`: the human approved it with the 1% floor, the round trip passed, and the anchoring golden passed. `lab status` now lists fills. Full suite **1,550 passed, 13 skipped**. The ladder and AI-trader timers are the human's to enable.
+
 ### RULINGS 2026-10-10 (second) — AI trader APPROVED with a 1% stop floor; keys in .env and units installed; Monday checks scheduled
 
 - **Stop floor 0.3% → 1%** (`lab.yaml ai_trader.min_stop_fraction`) until the execution test has measured stop slippage on ≥ 10 fills.

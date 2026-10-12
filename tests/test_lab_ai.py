@@ -223,8 +223,9 @@ def trader_for(world, tmp_path, llm=None, clock=None):
                     sleep=lambda s: None, monotonic=lambda: next(ticker))
 
 
-AAPL_LONG = {"symbol": "AAPL", "instrument": "stock", "horizon": "days", "entry_reference": 200.05,
-             "stop": 194, "target": 215, "confidence": 70, "thesis": "t", "source": "s", "invalidation": "i"}
+AAPL_LONG = {"symbol": "AAPL", "instrument": "stock", "horizon": "days",
+             "stop_pct": 3, "target_pct": 7.5, "confidence": 70, "thesis": "t", "source": "s", "invalidation": "i"}
+# live AAPL mid 200.05: stop 200.05 x 0.97 = 194.04 (down), target x 1.075 = 215.06 (up)
 
 
 # -------------------------------------------------------------- validation
@@ -233,12 +234,12 @@ AAPL_LONG = {"symbol": "AAPL", "instrument": "stock", "horizon": "days", "entry_
     "change, now, reason",
     [
         ({}, "10:00", None),
-        ({"stop": 201}, "10:00", "stop < price < target"),
-        ({"instrument": "put"}, "10:00", "put idea needs"),
-        ({"stop": 199.8}, "10:00", "outside"),                    # 0.1% stop
-        ({"stop": 198.5}, "10:00", "outside"),                    # 0.78%: under the 1% floor (2026-10-10)
-        ({"stop": 140}, "10:00", "outside"),                      # 30% stop
-        ({"target": 203}, "10:00", "reward:risk"),
+        ({"stop_pct": -1}, "10:00", "positive distances"),
+        ({"instrument": "put", "target_pct": 120}, "10:00", "not a price"),
+        ({"stop_pct": 0.1}, "10:00", "outside"),
+        ({"stop_pct": 0.78}, "10:00", "outside"),                # under the 1% floor (2026-10-10)
+        ({"stop_pct": 30}, "10:00", "outside"),
+        ({"target_pct": 1.5}, "10:00", "reward:risk"),
         ({"confidence": 45}, "10:00", "below 50"),
         ({"horizon": "intraday"}, "15:20", "no intraday entries"),
         ({}, "15:35", "no new entries"),
@@ -262,7 +263,7 @@ def test_held_traded_and_full_are_refused(lab_env):
 
 def test_a_put_needs_its_levels_inverted(lab_env):
     trader = trader_for(World(), lab_env)
-    put = {**AAPL_LONG, "instrument": "put", "stop": 206, "target": 185}
+    put = {**AAPL_LONG, "instrument": "put"}
     assert trader.validate(put, et(12, "10:00"), [], slots=5).ok
 
 
@@ -276,8 +277,8 @@ def test_a_scan_opens_a_stock_at_two_percent_risk(lab_env):
     assert any("opened AAPL" in n for n in notes), notes
     qty = world.held["AAPL"]
     limit = world.orders["o1"]["price"]
-    # 2% of 100,000 at risk to the 194 stop, capped at 18.75% of NAV notional
-    assert qty * (limit - 194) <= D("2000") + D("0.01")
+    # 2% of 100,000 at risk to the 194.04 stop (set from the live mid), capped at 18.75% of NAV
+    assert qty * (limit - D("194.04")) <= D("2000") + D("0.01")
     assert qty * limit <= D("100000") * D("0.75") * D("0.25")
     passes = trader.account.ledger.events(["llm_pass"])
     assert len(passes) == 1 and D(passes[0]["cost_usd"]) == D("0.20")
@@ -291,11 +292,11 @@ def test_a_scan_opens_a_stock_at_two_percent_risk(lab_env):
 
 def test_risk_sized_quantity_is_exact_when_uncapped(lab_env):
     world = World()
-    idea = {**AAPL_LONG, "stop": 170, "target": 260}  # 15% stop: risk-sized, under the cap
+    idea = {**AAPL_LONG, "stop_pct": 15, "target_pct": 30}  # 15% stop: risk-sized, under the cap
     trader = trader_for(world, lab_env, FakeLLM([idea]))
     trader.tick(et(12, "09:46"))
     limit = world.orders["o1"]["price"]
-    assert abs(world.held["AAPL"] * (limit - 170) - D("2000")) < D("0.01")
+    assert abs(world.held["AAPL"] * (limit - D("170.04")) - D("2000")) < D("0.01")
 
 
 def test_the_target_and_the_stop_close_it(lab_env):
@@ -367,8 +368,8 @@ def test_an_option_idea_buys_whole_contracts_inside_the_premium_budget(lab_env):
     today = date(2026, 10, 12)
     world.chain = _chain(today)
     world.option_quotes["SPY261012C00660000"] = (D("2.00"), D("2.10"))
-    idea = {**AAPL_LONG, "symbol": "SPY", "instrument": "call", "horizon": "intraday", "entry_reference": 660.02,
-            "stop": 650, "target": 680}  # 1.5% stop: above the 1% floor (2026-10-10)
+    idea = {**AAPL_LONG, "symbol": "SPY", "instrument": "call", "horizon": "intraday",
+            "stop_pct": 1.5, "target_pct": 3}  # 1.5% stop: above the 1% floor (2026-10-10)
     trader = trader_for(world, lab_env, FakeLLM([idea]))
     trader.tick(et(12, "09:46"))
     contracts = world.held["SPY261012C00660000"]
@@ -408,7 +409,7 @@ def test_under_the_kill_switch_no_pass_is_bought_and_exits_still_run(lab_env):
     trader.tick(et(12, "09:46"))
     trader.account.state.high_water_mark = "130000"
     world.quotes["AAPL"] = (D("193.00"), D("193.10"))  # through the stop
-    llm = FakeLLM([{**AAPL_LONG, "symbol": "SPY", "entry_reference": 660, "stop": 650, "target": 690}])
+    llm = FakeLLM([{**AAPL_LONG, "symbol": "SPY", "stop_pct": 1.5, "target_pct": 4.5}])
     trader.llm = llm
     notes = trader.tick(et(12, "10:46"))
     assert trader.account.state.kill_switch_tripped
@@ -433,7 +434,7 @@ def test_a_failed_entry_leaves_no_position(lab_env):
         ({"name": "x", "time": "12:00", "held": [], "expect": {"forbidden_symbols": ["AAPL"]}}, [AAPL_LONG], False),
         ({"name": "x", "time": "15:20", "held": [], "expect": {"forbidden_horizons": ["intraday"]}},
          [{**AAPL_LONG, "horizon": "intraday"}], False),
-        ({"name": "x", "time": "10:00", "held": [], "expect": {}}, [{**AAPL_LONG, "stop": 210}], False),
+        ({"name": "x", "time": "10:00", "held": [], "expect": {}}, [{**AAPL_LONG, "stop_pct": -2}], False),
     ],
 )
 def test_golden_grading(case, ideas, passed):
@@ -504,3 +505,37 @@ def test_the_main_books_search_tool_is_unchanged():
 
     assert ResearchConfig.load().web_search.tool_type is None
     assert WEB_SEARCH_TOOL_TYPE == "web_search_20260209"
+
+
+# ---------------------------------------- price anchoring (ruling 2026-10-10)
+
+def test_levels_are_set_from_the_live_price_at_the_stated_distances():
+    from lab.ai_trader import levels
+
+    assert levels("stock", D("200.05"), D("0.03"), D("0.075")) == (D("194.04"), D("215.06"))
+    # a put: stop above, target below; each rounded to keep at least the stated distance
+    assert levels("put", D("200.05"), D("0.03"), D("0.075")) == (D("206.06"), D("185.04"))
+
+
+def test_the_model_cannot_anchor_a_level_to_a_price_it_cites(lab_env):
+    """The model 'saw' AAPL at 300 (and cites $310 in its thesis); the live
+    mid is 200.05. The levels come from 200.05; the gap is logged, not used."""
+    world = World()
+    idea = {**AAPL_LONG, "price_seen": 300, "thesis": "breakout above $310 resistance"}
+    trader = trader_for(world, lab_env, FakeLLM([idea]))
+    trader.tick(et(12, "09:46"))
+    opened = trader.account.ledger.events(["position_opened"])[0]
+    assert (opened["stop"], opened["target"], opened["anchor_mid"]) == ("194.04", "215.06", "200.05")
+    check = trader.account.ledger.events(["anchor_check"])[0]
+    assert check["live_mid"] == "200.05" and check["price_seen"] == "300"
+    assert D(check["price_seen_gap"]) == D("0.4996")
+    assert check["thesis_prices"] == ["310"] and D(check["thesis_gaps"][0]) == D("0.5496")
+
+
+def test_the_report_tool_carries_no_absolute_level():
+    item = TOOL["input_schema"]["properties"]["ideas"]["items"]
+    assert not {"stop", "target", "entry_reference"} & set(item["properties"])
+    assert {"stop_pct", "target_pct"} <= set(item["required"])
+    assert "price_seen" not in item["required"]
+    text = system_prompt(CFG)
+    assert "PERCENTAGE DISTANCES" in text and "entry_reference" not in text

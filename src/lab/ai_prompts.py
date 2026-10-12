@@ -35,12 +35,14 @@ INSTRUMENTS YOU MAY PROPOSE
 
 WHAT THE RULES ENGINE DOES WITH AN IDEA
 - Risk per trade is fixed by the rules, never by you: a stock or ETF is sized so that a move from entry to your stop loses a fixed small fraction of the account; an option's whole premium is that fixed fraction.
-- It exits at your stop or your target (both are UNDERLYING price levels, checked through the session), at the end of your horizon (intraday ideas are closed by {intraday_close} ET; "days" within {days_sessions} sessions; "weeks" within {weeks_sessions}), and closes options before they expire.
-- It refuses an idea whose stop and target are on the wrong sides of the current price, whose stop is closer than {min_stop} or farther than {max_stop} from the price, whose target is less than {min_rr} times as far as its stop, whose confidence is below {min_confidence}, on a symbol already held or traded today, or when no slot is free.
+- You give the stop and the target as PERCENTAGE DISTANCES from the entry price, never as prices. The rules engine reads the live price of the underlying when it places the order and sets the levels from it: for calls, stocks and ETFs the stop that far BELOW the entry and the target that far ABOVE it; for puts the stop ABOVE and the target BELOW.
+- It exits at those levels (checked through the session on the underlying), at the end of your horizon (intraday ideas are closed by {intraday_close} ET; "days" within {days_sessions} sessions; "weeks" within {weeks_sessions}), and closes options before they expire.
+- It refuses an idea whose stop distance is under {min_stop} or over {max_stop}, whose target distance is less than {min_rr} times its stop distance, whose confidence is below {min_confidence}, on a symbol already held or traded today, or when no slot is free.
 
 YOUR JOB
-- Search for current, specific opportunities: a dated catalyst, a fresh development, a setup with a reason to move within your horizon. Check the current price before you set levels: entry_reference must be the underlying's current price, and your stop and target must make sense from there.
-- For calls, stocks and ETFs the stop is BELOW the current price and the target ABOVE it. For puts the stop is ABOVE the current price and the target BELOW it.
+- Search for current, specific opportunities: a dated catalyst, a fresh development, a setup with a reason to move within your horizon.
+- Size the distances to the setup: stop_pct is how far the underlying can move against you before the idea is wrong; target_pct is how far it should move for the idea to have paid. Both are positive numbers in percent (2.5 means 2.5%).
+- Prices you read in search results may be stale. If you saw a current price, give it as price_seen; the engine compares it with the live price and records any gap. Do not assume a price you did not see.
 - Say where the idea came from (source) and what would kill it (invalidation).
 - Returning no ideas is a complete, valid answer. Propose nothing rather than something weak; give the reason in no_trade_reason.
 
@@ -64,16 +66,19 @@ TOOL: dict[str, Any] = {
                         "symbol": {"type": "string", "description": "Underlying ticker, e.g. AAPL or SPY."},
                         "instrument": {"type": "string", "enum": list(INSTRUMENTS)},
                         "horizon": {"type": "string", "enum": list(HORIZONS)},
-                        "entry_reference": {"type": "number", "description": "The underlying's current price as you found it."},
-                        "stop": {"type": "number", "description": "Underlying price that invalidates the idea."},
-                        "target": {"type": "number", "description": "Underlying price where the idea has paid."},
+                        "stop_pct": {"type": "number", "exclusiveMinimum": 0,
+                                     "description": "Stop distance from entry, in percent of the underlying's price (2.5 = 2.5%)."},
+                        "target_pct": {"type": "number", "exclusiveMinimum": 0,
+                                       "description": "Target distance from entry, in percent of the underlying's price."},
+                        "price_seen": {"type": "number",
+                                       "description": "The underlying's current price as you saw it, if you saw one. Optional."},
                         "confidence": {"type": "integer", "minimum": 0, "maximum": 100},
                         "thesis": {"type": "string"},
                         "catalyst": {"type": "string"},
                         "source": {"type": "string", "description": "Where the idea came from: outlets, filings, posts (URLs where you have them)."},
                         "invalidation": {"type": "string"},
                     },
-                    "required": ["symbol", "instrument", "horizon", "entry_reference", "stop", "target",
+                    "required": ["symbol", "instrument", "horizon", "stop_pct", "target_pct",
                                  "confidence", "thesis", "source", "invalidation"],
                 },
             },

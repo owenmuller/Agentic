@@ -11,17 +11,21 @@ Division of labour
 ------------------
 THE MODEL (``lab.ai_prompts``, ``lab.llm``) proposes ideas at the scheduled
 scans: an underlying, an instrument (stock / etf / call / put), a horizon
-(intraday / days / weeks), a stop and a target as underlying price levels, a
+(intraday / days / weeks), a stop and a target as PERCENTAGE DISTANCES from entry
+(ruling 2026-10-10; never prices), an optional price_seen, a
 confidence, a thesis, a source, an invalidation. That is all it can do.
 
 THE RULES ENGINE (this module) decides everything else, deterministically:
   validate  the instrument and horizon are known; the symbol is not held or
             already traded today; a slot is free; confidence >= the floor;
-            the live price sits between the stop and the target on the right
-            sides; the stop is 1%-25% away (1% by ruling 2026-10-10 until stop
-            slippage is measured); target distance >= min_reward_risk
-            x stop distance; an intraday idea arrives before 15:15 ET; no new
-            entry after 15:30 ET; the kill switch and halt are clear.
+            a live quote exists; the stop distance is 1%-25% (1% by ruling
+            2026-10-10 until stop slippage is measured); target distance >=
+            min_reward_risk x stop distance; an intraday idea arrives before
+            15:15 ET; no new entry after 15:30 ET; kill switch and halt clear.
+  levels    stop and target are set from the LIVE mid at order time, at the
+            stated distances; the gap between that mid and any price the model
+            cites (price_seen, $-figures in its thesis) is logged
+            (``anchor_check``), never used.
   size      2% of the account's NAV at risk: shares = budget / (limit - stop)
             for a stock or ETF (capped by the gate's single-position cap and
             the cash), contracts = floor(budget / premium) for an option -
@@ -72,6 +76,8 @@ CENTS = Decimal("0.01")
 STEP = Decimal("0.000001")
 NY = ZoneInfo("America/New_York")
 _SYMBOL = re.compile(r"^[A-Z]{1,5}(\.[A-Z])?$")
+#: A price cited in a thesis: "$123.45", "$1,234" (logged against the live price).
+_CITED = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)")
 OPTIONS = ("call", "put")
 
 logger = logging.getLogger("lab.ai_trader")
@@ -406,8 +412,14 @@ class AiTrader:
             return outcome
         taken: list[str] = [p.symbol for p in held] + self.traded_today(day)
         for idea in ideas:
+            if not dry_run:
+                quote = self._quotes(str(idea.get("symbol", "")).upper().strip()) if _SYMBOL.match(
+                    str(idea.get("symbol", "")).upper().strip()) else None
+                if quote is not None:
+                    self.account.ledger.append("anchor_check", scan=label, symbol=idea.get("symbol"),
+                                               **self.anchor_check(idea, (quote[0] + quote[1]) / 2))
             verdict = self.validate(idea, now, taken, slots=cfg.max_positions - len(held) - len(outcome.opened),
-                                    price=_reference(idea) if dry_run else None)
+                                    live=not dry_run)
             if not verdict.ok:
                 outcome.rejected.append((str(idea.get("symbol")), verdict.reason))
                 if not dry_run:
@@ -446,10 +458,12 @@ class AiTrader:
 
     # -- validation --------------------------------------------------------
 
-    def validate(self, idea: dict, now: datetime, taken: list[str], *, slots: int,
-                 price: Optional[Decimal] = None) -> Verdict:
-        """The deterministic verdict on one idea. ``price`` overrides the live
-        quote (the golden replay grades against the model's own reference)."""
+    def validate(self, idea: dict, now: datetime, taken: list[str], *, slots: int, live: bool = True) -> Verdict:
+        """The deterministic verdict on one idea. Stop and target are DISTANCES
+        (percent of the entry price, human ruling 2026-10-10): the levels are
+        set from the live quote at order time, so a model's stale or invented
+        price can no longer misplace them. ``live`` = False (the golden
+        replay) skips the live-quote requirement."""
         cfg = self.config
         local = now.astimezone(NY)
         day = local.date()
@@ -470,33 +484,47 @@ class AiTrader:
             return Verdict(False, f"no intraday entries after {cfg.no_intraday_entries_after} ET")
         try:
             confidence = int(idea.get("confidence"))
-            stop = Decimal(str(idea.get("stop")))
-            target = Decimal(str(idea.get("target")))
+            stop_fraction = Decimal(str(idea.get("stop_pct"))) / 100
+            target_fraction = Decimal(str(idea.get("target_pct"))) / 100
         except (TypeError, ValueError, ArithmeticError):
-            return Verdict(False, "confidence, stop or target missing or not numeric")
+            return Verdict(False, "confidence, stop_pct or target_pct missing or not numeric")
+        if not (stop_fraction.is_finite() and target_fraction.is_finite()) or stop_fraction <= 0 or target_fraction <= 0:
+            return Verdict(False, "stop_pct and target_pct must be positive distances")
         if confidence < cfg.min_confidence:
             return Verdict(False, f"confidence {confidence} below {cfg.min_confidence}")
-        if price is None:
-            quote = self._quotes(symbol)
-            if quote is None:
-                return Verdict(False, "no live quote for the underlying")
-            price = (quote[0] + quote[1]) / 2
-        if price <= ZERO:
-            return Verdict(False, "no usable price")
-        if bullish(instrument):
-            if not stop < price < target:
-                return Verdict(False, f"long idea needs stop < price < target; got {stop} / {price:.2f} / {target}")
-        elif not target < price < stop:
-            return Verdict(False, f"put idea needs target < price < stop; got {target} / {price:.2f} / {stop}")
-        risk = abs(price - stop)
-        fraction = risk / price
-        if not cfg.min_stop_fraction <= fraction <= cfg.max_stop_fraction:
-            return Verdict(False, f"stop {fraction:.2%} from price, outside [{cfg.min_stop_fraction:.1%}, "
+        if not cfg.min_stop_fraction <= stop_fraction <= cfg.max_stop_fraction:
+            return Verdict(False, f"stop {stop_fraction:.2%} from entry, outside [{cfg.min_stop_fraction:.1%}, "
                                   f"{cfg.max_stop_fraction:.0%}]")
-        reward = abs(target - price)
-        if reward < cfg.min_reward_risk * risk:
-            return Verdict(False, f"reward:risk {reward / risk:.2f} below {cfg.min_reward_risk}")
+        if target_fraction < cfg.min_reward_risk * stop_fraction:
+            return Verdict(False, f"reward:risk {target_fraction / stop_fraction:.2f} below {cfg.min_reward_risk}")
+        if bullish(instrument) is False and target_fraction >= 1:
+            return Verdict(False, "a put target 100% or more below entry is not a price")
+        if live and self._quotes(symbol) is None:
+            return Verdict(False, "no live quote for the underlying")
         return Verdict(True)
+
+    def anchor_check(self, idea: dict, live_mid: Decimal) -> dict:
+        """Ruling 2026-10-10: log the gap between the live price and any price
+        the model cites (``price_seen``, and $-figures in its thesis). Logged,
+        never gated: the levels come from the live quote either way."""
+        cited: list[Decimal] = []
+        seen = idea.get("price_seen")
+        try:
+            seen_value = Decimal(str(seen)) if seen not in (None, "") else None
+        except (ArithmeticError, ValueError):
+            seen_value = None
+        for match in _CITED.finditer(str(idea.get("thesis", ""))):
+            try:
+                cited.append(Decimal(match.group(1).replace(",", "")))
+            except ArithmeticError:
+                continue
+
+        def gap(value: Decimal) -> Optional[str]:
+            return f"{(value / live_mid - 1):.4f}" if live_mid > ZERO and value > ZERO else None
+
+        return dict(live_mid=str(live_mid), price_seen=str(seen_value) if seen_value is not None else None,
+                    price_seen_gap=gap(seen_value) if seen_value is not None else None,
+                    thesis_prices=[str(c) for c in cited[:10]], thesis_gaps=[gap(c) for c in cited[:10]])
 
     # -- entries -----------------------------------------------------------
 
@@ -508,21 +536,29 @@ class AiTrader:
         nav = gate.state.nav
         budget = (nav * cfg.risk_fraction).quantize(CENTS, rounding=ROUND_DOWN)
         pid = uuid.uuid4().hex[:12]
+        stop_fraction = Decimal(str(idea["stop_pct"])) / 100
+        target_fraction = Decimal(str(idea["target_pct"])) / 100
         plan = dict(pid=pid, symbol=symbol, instrument=instrument, horizon=idea["horizon"],
-                    stop=str(Decimal(str(idea["stop"]))), target=str(Decimal(str(idea["target"]))),
+                    stop_pct=str(idea["stop_pct"]), target_pct=str(idea["target_pct"]),
                     thesis=str(idea.get("thesis", ""))[:1000], source=str(idea.get("source", ""))[:1000],
                     catalyst=str(idea.get("catalyst", ""))[:500], invalidation=str(idea.get("invalidation", ""))[:500],
                     confidence=int(idea["confidence"]), scan=label, risk_budget=budget, nav=nav)
+        # The levels come from the LIVE quote at order time (ruling 2026-10-10),
+        # never from a price the model cited.
+        quote = self._quotes(symbol)
+        if quote is None:
+            plan.update(stop="0", target="0")
+            self._reject(plan, "quote vanished before entry")
+            return None
+        bid, ask = quote
+        anchor = (bid + ask) / 2
+        stop, target = levels(instrument, anchor, stop_fraction, target_fraction)
+        plan.update(anchor_mid=str(anchor), stop=str(stop), target=str(target))
         if instrument in OPTIONS:
             return self._enter_option(plan, idea, now, budget)
         if not self.account.adapter.tradeable_equity(symbol):
             self._reject(plan, "not tradeable at the broker (inactive, untradable or not fractionable)")
             return None
-        quote = self._quotes(symbol)
-        if quote is None:
-            self._reject(plan, "quote vanished before entry")
-            return None
-        bid, ask = quote
         limit = (ask * (1 + cfg.limit_buffer)).quantize(CENTS, rounding=ROUND_UP)
         per_share = limit - Decimal(plan["stop"])
         if per_share <= ZERO:
@@ -712,11 +748,15 @@ def select_contract(chain: Optional[list], right: str, today: date, cfg: Any) ->
     return None, f"no {right} in the window clears delta, open-interest and spread floors"
 
 
-def _reference(idea: dict) -> Optional[Decimal]:
-    """The model's own entry_reference (the golden replay grades the idea's
-    internal consistency against it; live runs use the live quote)."""
-    try:
-        value = Decimal(str(idea.get("entry_reference")))
-    except (ArithmeticError, ValueError, TypeError):
-        return Decimal("0")
-    return value if value.is_finite() else Decimal("0")
+def levels(instrument: str, anchor: Decimal, stop_fraction: Decimal, target_fraction: Decimal) -> tuple[Decimal, Decimal]:
+    """Stop and target as underlying prices, from the live anchor (ruling
+    2026-10-10): below/above for calls, stocks and ETFs; above/below for puts.
+    Rounded toward the anchor's side that keeps each level at least its stated
+    distance away (a stop never tighter, a target never nearer than asked)."""
+    if bullish(instrument):
+        stop = (anchor * (1 - stop_fraction)).quantize(CENTS, rounding=ROUND_DOWN)
+        target = (anchor * (1 + target_fraction)).quantize(CENTS, rounding=ROUND_UP)
+    else:
+        stop = (anchor * (1 + stop_fraction)).quantize(CENTS, rounding=ROUND_UP)
+        target = (anchor * (1 - target_fraction)).quantize(CENTS, rounding=ROUND_DOWN)
+    return stop, target
