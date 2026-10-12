@@ -42,6 +42,8 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from execution.cards import COLORS, LOOK, Card
+
 logger = logging.getLogger("execution.alerts")
 
 SMTP_HOST = "smtp.gmail.com"
@@ -73,6 +75,9 @@ class _Outbound:
     #: (filename, text) sent as a file where the transport supports it
     #: (Discord); the text-only transports send ``body``.
     attachment: Optional[tuple[str, str]] = None
+    #: A plain-English card (ruling 2026-10-12): Discord renders it as an
+    #: embed, the text transports as its text. None = a legacy text alert.
+    card: Optional[Card] = None
 
 
 class Alerter:
@@ -170,8 +175,14 @@ class Alerter:
               attachment: Optional[tuple[str, str]] = None) -> bool:
         return self._alert(DAILY, key, subject, body, attachment)
 
+    def card(self, key: str, card: Card) -> bool:
+        """Queue one plain-English card (ruling 2026-10-12) on its channel's
+        tier. Same rate limit, queue and never-raise contract as every alert."""
+        attachment = card.attachment
+        return self._alert(card.channel, key, card.title, card.text(), attachment, card=card)
+
     def _alert(self, tier: str, key: str, subject: str, body: str,
-               attachment: Optional[tuple[str, str]] = None) -> bool:
+               attachment: Optional[tuple[str, str]] = None, card: Optional[Card] = None) -> bool:
         """Queue one alert. Returns whether it was queued (False = disabled,
         rate-limited, or the queue is full). Never blocks, never raises."""
         if not self.enabled:
@@ -187,6 +198,7 @@ class Alerter:
             body=body or subject,
             tier=tier,
             attachment=attachment,
+            card=card,
         )
         try:
             self._queue.put_nowait(message)
@@ -268,11 +280,11 @@ class Alerter:
         raise RuntimeError(detail)
 
     def _send_discord(self, message: _Outbound) -> None:
-        """Post to the tier's channel webhook. The title in bold and the body
-        in a code block (monospace, so tables line up) when it fits Discord's
-        2,000-character limit; otherwise a short preview, with the FULL text
-        attached as a .txt file. An explicit attachment is always sent as a
-        file. Mentions are disabled: no alert can ping @everyone."""
+        """Post one EMBED to the tier's channel webhook (ruling 2026-10-12):
+        colour = status, title = the verdict, a few plain lines; anything
+        longer rides as an attached .txt. A legacy text alert (no card) is
+        shown the same way - its first line in the embed, the rest attached -
+        so no message is ever a code block. Mentions are disabled."""
         url = self._discord.get(message.tier) or ""
         if not url:
             raise RuntimeError(f"no Discord webhook for the {message.tier} tier")
@@ -281,21 +293,23 @@ class Alerter:
             import httpx
 
             post = httpx.post
-        body = message.body.replace("```", "'''")
-        title = f"**{message.subject}**"
-        inline = f"{title}\n```\n{body}\n```"
         attachment = message.attachment
-        if attachment is None and len(inline) > DISCORD_LIMIT:
-            attachment = ("alert.txt", message.subject + "\n\n" + message.body)
-        if attachment is None:
-            content = inline
+        if message.card is not None:
+            card = message.card
+            embed = {"title": card.title, "description": card.description, "color": card.color}
+            attachment = card.attachment
         else:
-            room = DISCORD_LIMIT - len(title) - 40
-            preview = body if len(body) <= room else body[: max(room, 0)].rsplit("\n", 1)[0] + "\n..."
-            content = f"{title}\n```\n{preview}\n```" if preview.strip() else title
-            content += f"\n(full text: {attachment[0]})"
-            content = content[:DISCORD_LIMIT]
-        payload = {"content": content, "username": "Agentic", "allowed_mentions": {"parse": []}}
+            title = message.subject.split("] ", 1)[-1] if message.subject.startswith("[") else message.subject
+            body = " ".join(message.body.replace("`", "'").split())
+            short = len(body) <= 300
+            embed = {
+                "title": title[:256],
+                "description": (body if short else body[:280].rsplit(" ", 1)[0] + "... (full text attached)"),
+                "color": COLORS[LOOK],
+            }
+            if not short and attachment is None:
+                attachment = ("alert.txt", message.subject + "\n\n" + message.body)
+        payload = {"username": "Agentic", "embeds": [embed], "allowed_mentions": {"parse": []}}
         if attachment is None:
             response = post(url, json=payload, timeout=20)
         else:

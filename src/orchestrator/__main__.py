@@ -60,7 +60,9 @@ from signals import (
 )
 from orchestrator.contracts_feed import build_awards_fetcher, pending_path_for
 
+from execution import cards
 from execution.alerts import Alerter
+from execution.market_data import BenchmarkMoves
 from execution.atr import AtrSource
 from execution.alpaca import AlpacaAdapter
 from risk_gate.limits import RiskLimits
@@ -173,6 +175,97 @@ def attribution() -> int:
     return 0
 
 
+def _main_day(adapter) -> tuple:
+    """(account value, today's return) from the broker: equity against the
+    previous close's equity. (None, None) when unreadable."""
+    try:
+        snap = adapter.account_snapshot()
+        value, prior = float(snap.get("equity") or 0), float(snap.get("last_equity") or 0)
+        return (value or None), (value / prior - 1 if value and prior > 0 else None)
+    except Exception:  # noqa: BLE001 - "n/a" on the card, never a crash
+        return None, None
+
+
+def _spy_today():
+    try:
+        return BenchmarkMoves().today()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _now_et() -> str:
+    """'Oct 13, 10:42 ET' - the time a card names."""
+    from zoneinfo import ZoneInfo
+
+    local = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York"))
+    return f"{local:%b} {local.day}, {local:%H:%M} ET"
+
+
+def _exec_test_card(text: str):
+    """The execution test's daily report line (JSON from the engine) as a
+    plain-English card, with SPY's move that day beside the result."""
+    import json as _json
+    from datetime import date as _date
+
+    try:
+        line = _json.loads(text)
+    except ValueError:
+        return None
+    if line.get("error"):
+        return cards.error_card("Execution test", line.get("day", "?"), f"the daily report failed: {line['error']}")
+    day = _date.fromisoformat(line["day"])
+    try:
+        from orchestrator.config import OrchestratorConfig
+
+        total = OrchestratorConfig.load().execution_test.max_sessions
+    except Exception:  # noqa: BLE001
+        total = 20
+    try:
+        spy_day = BenchmarkMoves().between(day - timedelta(days=1), day)
+    except Exception:  # noqa: BLE001
+        spy_day = None
+    slips = line.get("slippage_bp_vs_model") or {}
+    detail = "\n".join([
+        f"Day: {line['day']} (session {line.get('session')} of {total})",
+        f"Live result: ${line.get('pnl_live')}; the backtest model at the same sizes: "
+        f"${line.get('pnl_modelled_at_live_sizes')}",
+        f"Decisions matching the model: {line.get('decisions_agree_with_model')} "
+        f"(decisions made live: {line.get('decisions_live')}, late: {line.get('late_decisions')})",
+        f"Fills: {line.get('fills')}; average seconds to fill: {line.get('seconds_to_fill_mean')}",
+        "Fill cost against the model, by kind (basis points; 1 bp = 0.01%; positive = worse than modelled):",
+        *[f"  {kind.replace('_', ' ')}: {cell.get('n')} fill(s), average {cell.get('mean')}"
+          for kind, cell in slips.items()],
+        f"Day trades in the 5-day window: {line.get('day_trades_in_window')}",
+        "Problems:" + ("" if line.get("faults") else " none"),
+        *[f"  - {fault}" for fault in line.get("faults") or []],
+    ])
+    return cards.exec_test_card(
+        day=f"{day:%b} {day.day}", session=int(line.get("session") or 0), total=total,
+        live=float(line.get("pnl_live") or 0), modelled=float(line.get("pnl_modelled_at_live_sizes") or 0),
+        spy_day=spy_day, agree=str(line.get("decisions_agree_with_model") or "n/a").replace("/", " of "),
+        fills=int(line.get("fills") or 0), seconds=line.get("seconds_to_fill_mean"),
+        faults=list(line.get("faults") or []), detail=detail,
+    )
+
+
+def _weekly_card(report: str, today):
+    """The Friday report as a card: account value and the week beside SPY's,
+    the full attribution report attached (ruling 2026-10-12)."""
+    value = week = spy_week = None
+    start = today - timedelta(days=7)
+    try:
+        with AlpacaAdapter() as main:
+            value = float(main.account_snapshot().get("equity") or 0) or None
+            history = main.portfolio_history(start.isoformat())
+        equities = [float(e) for e in history.get("equity") or [] if e]
+        if len(equities) >= 2 and equities[0] > 0:
+            week = equities[-1] / equities[0] - 1
+        spy_week = BenchmarkMoves().between(start, today)
+    except Exception:  # noqa: BLE001 - a missing number is "n/a", never a lost report
+        pass
+    return cards.weekly_main_card(value, week, spy_week, report)
+
+
 def weekly() -> int:
     """Friday delivery (ruling 2026-09-02): the attribution + forward report,
     emailed on the DAILY tier. Falls back to stdout when alerting is not
@@ -186,9 +279,7 @@ def weekly() -> int:
     text = _attribution_text(checks)
     alerter = Alerter()
     if alerter.enabled:
-        sent = alerter.daily(
-            f"weekly-{checks.clock().date()}", "Friday report", text
-        )
+        sent = alerter.card(f"weekly-{checks.clock().date()}", _weekly_card(text, checks.clock().date()))
         alerter.close()
         print("weekly report emailed" if sent else "weekly report NOT sent "
               "(rate-limited or queue refused); printing instead")
@@ -774,14 +865,28 @@ def run() -> int:
     alerter = Alerter(status_path=data_dir / "alerts_status.json")
 
     def observe(event: str, detail: str) -> None:
-        """Run-log events that must reach a phone: errors, cost tripwires,
-        billing anomalies, and a mechanical breaker trip riding a MECH line."""
-        if event in ("ERROR", "COST", "READS"):
-            alerter.urgent(f"{event}:{detail[:40]}", f"{event}: {detail[:120]}", detail)
+        """Run-log events that must reach a phone (errors, cost tripwires,
+        billing anomalies, a mechanical breaker trip, an operator halt) and
+        the execution test's daily report - each as a plain-English card
+        (ruling 2026-10-12)."""
+        when = _now_et()
+        if event == "ERROR" and detail.startswith("DATASAFETY "):
+            kind, _, message = detail[len("DATASAFETY "):].partition(": ")
+            alerter.card(f"guard:{detail[:40]}", cards.guard_card("Main book", "REFUSED" in kind, when, message))
+        elif event == "ERROR":
+            alerter.card(f"ERROR:{detail[:40]}", cards.error_card("Main book", when, detail))
+        elif event == "COST":
+            alerter.card(f"COST:{detail[:40]}", cards.cost_card("Main book", when, detail))
+        elif event == "READS":
+            alerter.card(f"READS:{detail[:40]}", cards.billing_card("Main book", when, detail))
         elif event == "MECH" and "BREAKER" in detail.upper():
-            alerter.urgent("mech_breaker", "mechanical circuit breaker tripped", detail)
+            alerter.card("mech_breaker", cards.breaker_card(detail))
         elif event == "HALT":
-            alerter.urgent("operator_halt_loop", "OPERATOR HALT honoured by the live session", detail)
+            alerter.card("operator_halt_loop", cards.halt_card("Main book", detail))
+        elif "EXEC-TEST daily " in detail:
+            card = _exec_test_card(detail.split("EXEC-TEST daily ", 1)[1])
+            if card is not None:
+                alerter.card(f"exec-test-{card.lines[0]}", card)
 
     run_log = RunLog(data_dir / "run.log", observer=observe)
     # The data guard's production events (a refused write, or a guard error
@@ -1010,19 +1115,12 @@ def run() -> int:
         # left money in an unknown state.
         unmanaged = unmanaged_exposure(startup.gate, startup.exits.tracked)
         if unmanaged:
-            alerter.urgent(
-                "unmanaged",
-                f"UNMANAGED positions: {', '.join(sorted(unmanaged))}",
-                "Held at the broker with no audit trail and no stops armed: "
-                + ", ".join(f"{q} x {s}" for s, q in sorted(unmanaged.items())),
-            )
+            alerter.card("unmanaged", cards.unmanaged_card(
+                [f"{s} ({q} held)" for s, q in sorted(unmanaged.items())]))
         still_pending = pending_settlement(checks.audit)
         if still_pending:
-            alerter.urgent(
-                "pending_settlement",
-                f"{len(still_pending)} orders still pending settlement after recovery",
-                "\n".join(str(item) for item in still_pending),
-            )
+            alerter.card("pending_settlement", cards.pending_card(
+                len(still_pending), "\n".join(str(item) for item in still_pending)))
 
         while datetime.now(timezone.utc) < open_utc:
             time.sleep(min(30, (open_utc - datetime.now(timezone.utc)).total_seconds()))
@@ -1038,36 +1136,20 @@ def run() -> int:
             if startup.gate.kill_switch_tripped and not kill_switch_alerted:
                 kill_switch_alerted = True
                 state = startup.gate.state
-                alerter.urgent(
-                    "kill_switch",
-                    "KILL SWITCH TRIPPED - opening orders halted",
-                    f"drawdown {state.drawdown():.2%} from high-water "
-                    f"{state.high_water_mark}; NAV {state.nav}. Reset is "
-                    f"manual-human-only.",
-                )
+                _, day_return = _main_day(checks.adapter)
+                alerter.card("kill_switch", cards.kill_switch_card(
+                    "Main book", float(state.nav), float(state.high_water_mark), day_return, _spy_today(),
+                    "python -m orchestrator resume (see ops/EMERGENCY.md)"))
             if tick.exits_started:
                 stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-                alerter.urgent(
-                    f"exits-{stamp}",
-                    f"{tick.exits_started} exit order(s) started",
-                    f"stop/ratchet/leash/review exits this tick: "
-                    f"{tick.exits_started} started, {tick.positions_closed} "
-                    f"closed. Details: run.log and the audit trail.",
-                )
+                alerter.card(f"exits-{stamp}", cards.exits_card(tick.exits_started, tick.positions_closed))
             if tick.traded and not first_judged_alerted:
                 first_judged_alerted = True
-                alerter.daily(
-                    f"first-judged-{now.date()}",
-                    "first judged entry of the day",
-                    f"{tick.traded} judged order(s) approved this tick.",
-                )
+                alerter.card(f"first-judged-{now.date()}", cards.first_entry_card("judged", tick.traded))
             if tick.mechanical_entries and not first_mechanical_alerted:
                 first_mechanical_alerted = True
-                alerter.daily(
-                    f"first-mechanical-{now.date()}",
-                    "first mechanical entry of the day",
-                    f"{tick.mechanical_entries} mechanical order(s) this tick.",
-                )
+                alerter.card(f"first-mechanical-{now.date()}",
+                             cards.first_entry_card("mechanical copy-trading", tick.mechanical_entries))
             remaining = (close_utc - datetime.now(timezone.utc)).total_seconds()
             if remaining <= 0:
                 break
@@ -1089,18 +1171,19 @@ def run() -> int:
             hour=0, minute=0, second=0, microsecond=0
         )
         spend = checks.audit.research_cost_between(day_start)
-        alerter.daily(
-            f"close-{now.date()}",
-            "close summary",
-            f"NAV {state.nav} | drawdown {state.drawdown():.2%} "
-            f"(high-water {state.high_water_mark}) | kill switch "
-            f"{'TRIPPED' if report.halted else 'clear'}\n"
-            f"positions ({len(held)}): {', '.join(held) or 'none'}\n"
-            f"research spend today: ${spend or 0} (estimates; console bill is "
-            f"truth)\n"
-            f"session: settled_or_released={report.settled} "
-            f"closed={report.positions_closed}",
-        )
+        value, day_return = _main_day(checks.adapter)
+        alerter.card(f"close-{now.date()}", cards.close_card(
+            value=value if value is not None else float(state.nav), today=day_return, spy_today=_spy_today(),
+            drawdown=float(state.drawdown()), positions=len(held),
+            spend=float(spend) if spend is not None else None, halted=report.halted,
+            detail="\n".join([
+                f"Account value: ${state.nav}; peak ${state.high_water_mark}",
+                f"Kill switch: {'ON' if report.halted else 'off'}",
+                f"Orders settled or released at the close: {report.settled}; positions closed: "
+                f"{report.positions_closed}",
+                "Research spend is an estimate from token prices; the provider's bill is the truth.",
+                f"Positions held ({len(held)}):", *[f"  {h}" for h in held]]),
+        ))
         return 0
     except KeyboardInterrupt:
         run_log.note("STOPPED", "interrupted by operator")

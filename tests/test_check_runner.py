@@ -1,10 +1,14 @@
-"""Server-side one-shot checks (human ruling 2026-10-10)."""
+"""Server-side one-shot checks (human ruling 2026-10-10), reported as cards
+(ruling 2026-10-12): a pass is a green card for #reports, a failure a red one
+for #urgent that says what to tell Claude Code."""
 from __future__ import annotations
 
 import importlib.util
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+from execution import cards
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("check_runner", ROOT / "ops" / "check_runner.py")
@@ -14,24 +18,35 @@ spec.loader.exec_module(check_runner)
 NOW = datetime(2026, 10, 13, 14, 25, tzinfo=timezone.utc)
 
 
-def test_a_passing_check_is_written_and_sent_on_the_daily_tier(tmp_path):
+def test_a_passing_check_is_written_and_sent_as_a_green_card(tmp_path):
     sent = []
     code = check_runner.run_check(
-        "demo", [sys.executable, "-c", "print('HTTP Request: noise'); print('ladder ok')"], out_dir=tmp_path,
-        alert=lambda ok, subject, body: sent.append((ok, subject, body)), clock=lambda: NOW)
-    assert code == 0 and sent[0][0] is True and sent[0][1] == "CHECK demo: PASS (exit 0)"
-    text = (tmp_path / "demo-20261013T142500Z.txt").read_text()
+        "ladder-day1", [sys.executable, "-c", "print('HTTP Request: noise'); print('ladder ok')"], out_dir=tmp_path,
+        alert=sent.append, clock=lambda: NOW)
+    card = sent[0]
+    assert code == 0 and card.status == cards.GOOD and card.channel == cards.DAILY
+    assert card.title == "Leverage ladder: scheduled check 'ladder-day1' ran, nothing to do"
+    assert "When: Oct 13, 10:25 ET." in card.shown_lines
+    text = (tmp_path / "ladder-day1-20261013T142500Z.txt").read_text()
     body = text.split("\n\n", 1)[1]  # the header echoes the command itself
     assert body.strip() == "ladder ok"
+    assert "ladder ok" in card.attachment[1]
 
 
-def test_a_failing_or_unstartable_check_is_urgent(tmp_path):
+def test_a_failing_or_unstartable_check_is_a_red_card(tmp_path):
     sent = []
-    alert = lambda ok, subject, body: sent.append((ok, subject))  # noqa: E731
-    assert check_runner.run_check("bad", [sys.executable, "-c", "raise SystemExit(3)"], out_dir=tmp_path,
-                                  alert=alert, clock=lambda: NOW) == 3
-    assert check_runner.run_check("gone", ["/no/such/binary"], out_dir=tmp_path, alert=alert, clock=lambda: NOW) == 127
-    assert [ok for ok, _ in sent] == [False, False] and "FAIL" in sent[1][1]
+    assert check_runner.run_check("ai-trader-day1", [sys.executable, "-c", "raise SystemExit(3)"],
+                                  out_dir=tmp_path, alert=sent.append, clock=lambda: NOW) == 3
+    assert check_runner.run_check("gone", ["/no/such/binary"], out_dir=tmp_path, alert=sent.append,
+                                  clock=lambda: NOW) == 127
+    assert [c.status for c in sent] == [cards.ACTION, cards.ACTION]
+    assert sent[0].account == "AI trader" and sent[1].account == "Server" and sent[0].channel == cards.URGENT
+    assert "~/checks/ai-trader-day1-20261013T142500Z.txt" in sent[0].what_to_do
+
+
+def test_the_check_says_what_it_checked_in_words():
+    assert check_runner.describe("ladder-day1", ["python", "-m", "lab", "status", "ladder"]) == (
+        "Leverage ladder", "the leverage ladder account's state, trades and problems so far")
 
 
 def test_the_scheduler_sets_no_trading_variable():

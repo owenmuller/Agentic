@@ -177,6 +177,13 @@ class LadderEngine:
         self._monotonic = monotonic
         self.dry_run = dry_run
         self.notes: list[str] = []
+        #: What this run did, for the rebalance report card (ruling 2026-10-12):
+        #: the filled trades, and "complete" / "incomplete" when a rebalance ran.
+        self.fills: list[dict] = []
+        self.rebalance: Optional[str] = None
+        self.month: Optional[str] = None
+        self.books: Optional[dict] = None
+        self.equity: Optional[str] = None
         self.gate: Optional[RiskGate] = None
 
     # -- quotes ------------------------------------------------------------------
@@ -274,11 +281,13 @@ class LadderEngine:
         )
         if remaining:
             self.notes.append(f"{month} rebalance incomplete ({len(remaining)} trades left); retried next run")
+            self.rebalance, self.month = "incomplete", month
         else:
             account.state.engine["rebalanced_month"] = month
             account.state.save(account.state_path)
             account.ledger.append("rebalanced", month=month)
             self.notes.append(f"{month} rebalance complete")
+            self.rebalance, self.month = "complete", month
         positions = account.adapter.get_positions()
         marks = {p.symbol: (p.market_value / p.quantity) for p in positions if p.quantity}
         return self._finish(marks, books=books)
@@ -437,6 +446,9 @@ class LadderEngine:
             filled_qty=filled, avg_price=status.filled_avg_price or ZERO, status=status.status,
             limit=trade.limit, modelled=trade.modelled,
         )
+        if filled > ZERO and status.filled_avg_price is not None:
+            self.fills.append(dict(rung=trade.rung, symbol=trade.symbol, side=trade.side, quantity=filled,
+                                   price=status.filled_avg_price, limit=trade.limit, modelled=trade.modelled))
         return filled
 
     def _execute(self, trades: list[Trade]) -> None:
@@ -486,6 +498,7 @@ class LadderEngine:
         if books is not None:
             rungs = {name: book.value({s: marks.get(s, ZERO) for s in book.qty}).quantize(CENTS)
                      for name, book in books.items()}
+        self.books, self.equity = rungs, snap.get("equity")
         gate = self.gate
         record = dict(
             equity=snap.get("equity"), cash=snap.get("cash"), marks=marks, rungs=rungs, frozen=frozen,

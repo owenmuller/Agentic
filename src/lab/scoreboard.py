@@ -56,6 +56,9 @@ class Row:
     win_rate: Optional[float] = None
     avg_win: Optional[float] = None
     avg_loss: Optional[float] = None
+    #: The execution test only: live and modelled dollars.
+    live_pnl: Optional[float] = None
+    model_pnl: Optional[float] = None
     note: str = ""
 
 
@@ -236,6 +239,7 @@ def build(
         modelled = sum(float(line.get("pnl_modelled_at_live_sizes") or 0) for line in exec_lines)
         row.start, row.sessions = days[0], len(days)
         row.trades = sum(int(line.get("fills") or 0) for line in exec_lines) // 2
+        row.live_pnl, row.model_pnl = live, modelled
         row.note = f"live P&L ${live:,.2f} vs modelled ${modelled:,.2f} (gap {live - modelled:+,.2f}); the measurement itself"
     rows.append(row)
 

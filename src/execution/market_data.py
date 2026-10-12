@@ -801,3 +801,43 @@ class MarketContextBuilder:
                     f"({days_until} days away)"
                 )
         return "\n".join(lines)
+
+
+class BenchmarkMoves:
+    """SPY's move beside every return a card shows (ruling 2026-10-12).
+    Read-only; every failure is None ("n/a" on the card), never zero."""
+
+    def __init__(self, symbol: str = "SPY", *, client: Optional[httpx.Client] = None,
+                 api_key: Optional[str] = None, api_secret: Optional[str] = None) -> None:
+        self.symbol = symbol
+        if client is None:
+            load_environment()
+            client = httpx.Client(base_url=DATA_BASE_URL, timeout=10.0, headers={
+                "APCA-API-KEY-ID": api_key or require_env("ALPACA_API_KEY"),
+                "APCA-API-SECRET-KEY": api_secret or require_env("ALPACA_API_SECRET"),
+            })
+        self._client = client
+
+    def today(self) -> Optional[float]:
+        """Today's change: the latest daily bar's close against the prior
+        day's (after the close, the session's full move)."""
+        try:
+            data = self._client.get(f"/v2/stocks/{quote(self.symbol)}/snapshot", params={"feed": "iex"}).json()
+            now = float((data.get("latestTrade") or {}).get("p") or (data.get("dailyBar") or {}).get("c"))
+            prior = float((data.get("prevDailyBar") or {}).get("c"))
+            return now / prior - 1 if prior > 0 else None
+        except Exception:  # noqa: BLE001 - n/a on the card, never a crash
+            return None
+
+    def between(self, start: date, end: date) -> Optional[float]:
+        """Close on or before ``start`` to close on or before ``end``."""
+        try:
+            response = self._client.get(f"/v2/stocks/{quote(self.symbol)}/bars", params={
+                "timeframe": "1Day", "start": (start - timedelta(days=10)).isoformat() + "T00:00:00Z",
+                "end": end.isoformat() + "T23:59:00Z", "feed": "iex", "limit": 1000, "adjustment": "split"})
+            closes = {str(bar["t"])[:10]: float(bar["c"]) for bar in (response.json().get("bars") or [])}
+            first = [closes[d] for d in sorted(closes) if d <= start.isoformat()]
+            last = [closes[d] for d in sorted(closes) if d <= end.isoformat()]
+            return last[-1] / first[-1] - 1 if first and last and first[-1] > 0 else None
+        except Exception:  # noqa: BLE001
+            return None

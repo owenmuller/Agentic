@@ -34,10 +34,15 @@ from pathlib import Path
 import datasafety
 from lab.account import LabAccount, LabRefused, LabState, Ledger, open_account
 from lab.config import LabConfig
+from execution import cards
 from execution.alerts import Alerter
+from execution.market_data import BenchmarkMoves
+from lab import reports
 from lab.ladder import LadderEngine
 
 OPERATOR_COMMANDS = frozenset({"halt", "resume"})
+#: How each account is named on a card (ruling 2026-10-12).
+DISPLAY = {"ladder": "Leverage ladder", "ai-trader": "AI trader"}
 
 
 def _snapshot(account: str) -> Path:
@@ -74,21 +79,51 @@ def tick(name: str, dry_run: bool) -> int:
     # The urgent email tier (the drawdown alert, and - in the unit - the data
     # guard's refused writes and fail-open errors, ruling 2026-10-10 item 4).
     alerter = Alerter(status_path=account.data_dir / "alerts_status.json")
+    label = DISPLAY.get(name, name)
     if not dry_run:
-        datasafety.set_alert_sink(
-            lambda kind, message: alerter.urgent(f"lab-{name}-datasafety-{kind}", f"LAB {name} DATASAFETY {kind}", message)
-        )
+        _guard_cards(alerter, name, label)
+    benchmark = BenchmarkMoves(api_key=account.api_key, api_secret=account.api_secret)
+    holder: dict = {}
+
+    def drawdown(subject: str, body: str) -> None:
+        state = holder["engine"].gate.state
+        start_day, start_value = reports.start_of(account.ledger.events(["snapshot"]))
+        today = datetime.now(timezone.utc).astimezone(reports.NY).date()
+        alerter.card(f"lab-{name}-drawdown", cards.drawdown_card(
+            label, float(state.nav), float(state.high_water_mark),
+            float(state.nav) / start_value - 1 if start_value else None,
+            benchmark.between(start_day, today) if start_day else None))
+
     try:
-        engine = LadderEngine(
-            account, config.ladder, dry_run=dry_run,
-            alert=lambda subject, body: alerter.urgent(f"lab-{name}-drawdown", subject, body),
-        )
+        engine = LadderEngine(account, config.ladder, dry_run=dry_run, alert=drawdown)
+        holder["engine"] = engine
         notes = engine.tick(datetime.now(timezone.utc))
         for note in notes:
             print(f"LAB {name}{' DRY RUN' if dry_run else ''}: {note}")
+        if not dry_run:
+            # The rebalance report (#reports) after a run that rebalanced or
+            # traded; a snapshot-only run sends nothing (ruling 2026-10-12).
+            today = datetime.now(timezone.utc).astimezone(reports.NY).date()
+            card = reports.ladder_report(engine, account.ledger.events(),
+                                         {rung.name: rung.label for rung in config.ladder.rungs},
+                                         benchmark.between, today)
+            if card is not None:
+                alerter.card(f"lab-{name}-rebalance-{today}-{engine.rebalance}", card)
     finally:
         alerter.close()
     return 0
+
+
+def _guard_cards(alerter: Alerter, name: str, label: str) -> None:
+    """The data guard's production events for this unit, as red cards."""
+    from lab.ai_trader import NY
+
+    def sink(kind: str, message: str) -> None:
+        local = datetime.now(timezone.utc).astimezone(NY)
+        alerter.card(f"lab-{name}-datasafety-{kind}", cards.guard_card(
+            label, "REFUSED" in kind, f"{local:%b} {local.day}, {local:%H:%M} ET", message))
+
+    datasafety.set_alert_sink(sink)
 
 
 def status(names: list[str]) -> int:
@@ -212,12 +247,23 @@ def run_session(name: str) -> int:
         print(f"LAB {name} REFUSED TO START: {refusal}", file=sys.stderr)
         return 3
     alerter = Alerter(status_path=account.data_dir / "alerts_status.json")
-    datasafety.set_alert_sink(
-        lambda kind, message: alerter.urgent(f"lab-{name}-datasafety-{kind}", f"LAB {name} DATASAFETY {kind}", message)
-    )
+    label = DISPLAY.get(name, name)
+    _guard_cards(alerter, name, label)
+    benchmark = BenchmarkMoves(api_key=account.api_key, api_secret=account.api_secret)
     quotes, chain, llm = _ai_parts(account, config)
-    trader = AiTrader(account, config.ai_trader, llm=llm, quotes=quotes, chain=chain,
-                      alert=lambda subject, body: alerter.urgent(f"lab-{name}-{subject[:30]}", subject, body))
+    holder: dict = {}
+
+    def kill_switch(subject: str, body: str) -> None:
+        state = holder["trader"].gate.state
+        snap = account.adapter.account_snapshot()
+        prior = float(snap.get("last_equity") or 0)
+        alerter.card(f"lab-{name}-kill-switch", cards.kill_switch_card(
+            label, float(state.nav), float(state.high_water_mark),
+            float(snap.get("equity") or 0) / prior - 1 if prior > 0 else None, benchmark.today(),
+            f'python -m lab resume {name} --ack "your name"'))
+
+    trader = AiTrader(account, config.ai_trader, llm=llm, quotes=quotes, chain=chain, alert=kill_switch)
+    holder["trader"] = trader
     try:
         clock = account.adapter.market_clock()
         now = datetime.now(timezone.utc)
@@ -239,13 +285,21 @@ def run_session(name: str) -> int:
             except Exception as error:  # noqa: BLE001 - one bad tick must not end the session
                 logging.getLogger("lab").exception("tick failed")
                 account.ledger.append("fault", message=f"tick failed: {type(error).__name__}: {error}")
-                alerter.urgent(f"lab-{name}-tick", f"LAB {name} tick failed", f"{type(error).__name__}: {error}")
+                local = datetime.now(timezone.utc).astimezone(reports.NY)
+                alerter.card(f"lab-{name}-tick", cards.crash_card(
+                    label, f"{local:%b} {local.day}, {local:%H:%M} ET", f"{type(error).__name__}: {error}"))
             if _time.monotonic() - last_snapshot > 900:
                 _ai_snapshot(account, trader)
                 last_snapshot = _time.monotonic()
             _time.sleep(config.ai_trader.tick_seconds)
         _ai_snapshot(account, trader)
         print(f"LAB {name}: session closed")
+        # End of day (#reports; red if the kill switch is on) - ruling 2026-10-12.
+        today = datetime.now(timezone.utc).astimezone(reports.NY).date()
+        alerter.card(f"lab-{name}-eod-{today}", reports.ai_day_report(
+            account.ledger.events(), account.adapter.account_snapshot(), list(trader.positions().values()),
+            benchmark.today(), float(config.ai_trader.daily_spend_cap_usd), account.state.kill_switch_tripped,
+            today))
         return 0
     finally:
         alerter.close()
@@ -406,10 +460,10 @@ def scoreboard(email: bool) -> int:
     print(text)
     if email:
         alerter = Alerter()
-        # #reports, with the full table attached (Discord caps a message at
-        # 2,000 characters and the table is wider than a phone; ruling 2026-10-12)
-        alerter.daily(f"lab-scoreboard-{today}", f"PAPER LAB SCOREBOARD {today}", text,
-                      attachment=(f"scoreboard-{today}.txt", text))
+        # #reports: one plain line per account and whether it is too early to
+        # judge; the full table attached (ruling 2026-10-12).
+        alerter.card(f"lab-scoreboard-{today}", reports.scoreboard_report(
+            board, today, text, board_mod.GRADE_AT, board_mod.VERDICT_AT))
         alerter.close()
     return 0
 
