@@ -55,6 +55,8 @@ SENDGRID_URL = "https://api.sendgrid.com/v3/mail/send"
 #: Push transport (human ruling 2026-10-12): ntfy, public server by default.
 NTFY_SERVER = "https://ntfy.sh"
 NTFY_MAX_BYTES = 3900
+#: Discord message content limit (characters).
+DISCORD_LIMIT = 2000
 
 URGENT = "URGENT"
 DAILY = "DAILY"
@@ -66,6 +68,11 @@ _PREFIX = {URGENT: "[AGENTIC URGENT]", DAILY: "[AGENTIC DAILY]"}
 class _Outbound:
     subject: str
     body: str
+    #: URGENT or DAILY: picks the Discord channel (and the ntfy priority).
+    tier: str = DAILY
+    #: (filename, text) sent as a file where the transport supports it
+    #: (Discord); the text-only transports send ``body``.
+    attachment: Optional[tuple[str, str]] = None
 
 
 class Alerter:
@@ -92,6 +99,13 @@ class Alerter:
         #: name is the only secret on a public server: keep it unguessable.
         self._ntfy_topic = (os.environ.get("NTFY_TOPIC") or "").strip()
         self._ntfy_server = (os.environ.get("NTFY_SERVER") or NTFY_SERVER).strip().rstrip("/")
+        #: Discord (human ruling 2026-10-12): the PRIMARY channel. URGENT to
+        #: #urgent, DAILY (daily and weekly reports) to #reports. The webhook
+        #: URLs are secrets: never logged, never in an error message.
+        self._discord = {
+            URGENT: (os.environ.get("DISCORD_WEBHOOK_URGENT") or "").strip(),
+            DAILY: (os.environ.get("DISCORD_WEBHOOK_REPORTS") or "").strip(),
+        }
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._window = timedelta(minutes=resend_window_minutes)
         #: Injectable transport for tests; None = the real transports.
@@ -124,9 +138,16 @@ class Alerter:
         return bool(self._ntfy_topic)
 
     @property
+    def discord_configured(self) -> bool:
+        return any(self._discord.values())
+
+    @property
     def transports(self) -> tuple[str, ...]:
-        """In the order tried: ntfy push, then SendGrid HTTPS, then SMTP."""
+        """In the order tried: Discord, ntfy push, SendGrid HTTPS, SMTP. A
+        message whose tier has no Discord webhook skips straight to ntfy."""
         order = []
+        if self.discord_configured:
+            order.append("discord")
         if self.ntfy_configured:
             order.append("ntfy")
         if self.sendgrid_configured:
@@ -141,13 +162,16 @@ class Alerter:
 
     # -- the two tiers ----------------------------------------------------------------
 
-    def urgent(self, key: str, subject: str, body: str = "") -> bool:
-        return self._alert(URGENT, key, subject, body)
+    def urgent(self, key: str, subject: str, body: str = "",
+               attachment: Optional[tuple[str, str]] = None) -> bool:
+        return self._alert(URGENT, key, subject, body, attachment)
 
-    def daily(self, key: str, subject: str, body: str = "") -> bool:
-        return self._alert(DAILY, key, subject, body)
+    def daily(self, key: str, subject: str, body: str = "",
+              attachment: Optional[tuple[str, str]] = None) -> bool:
+        return self._alert(DAILY, key, subject, body, attachment)
 
-    def _alert(self, tier: str, key: str, subject: str, body: str) -> bool:
+    def _alert(self, tier: str, key: str, subject: str, body: str,
+               attachment: Optional[tuple[str, str]] = None) -> bool:
         """Queue one alert. Returns whether it was queued (False = disabled,
         rate-limited, or the queue is full). Never blocks, never raises."""
         if not self.enabled:
@@ -161,6 +185,8 @@ class Alerter:
         message = _Outbound(
             subject=f"{_PREFIX[tier]} {subject}",
             body=body or subject,
+            tier=tier,
+            attachment=attachment,
         )
         try:
             self._queue.put_nowait(message)
@@ -170,16 +196,17 @@ class Alerter:
         self._ensure_worker()
         return True
 
-    def send_test(self) -> bool:
-        """One synchronous test message, for delivery verification and mail
-        filters. Bypasses the rate limiter; used at build/setup time only."""
+    def send_test(self, tier: str = DAILY) -> bool:
+        """One synchronous test message on ``tier``'s route, for delivery
+        verification and filters. Bypasses the rate limiter; setup only."""
         if not self.enabled:
             logger.error("cannot send test message: alerting is not configured")
             return False
         try:
             self._send(
                 _Outbound(
-                    subject=f"{_PREFIX[DAILY]} test message",
+                    tier=tier,
+                    subject=f"{_PREFIX[tier]} test message",
                     body=(
                         "Alerting is wired. Filters to set up:\n"
                         f"  {_PREFIX[URGENT]}  -> notify immediately\n"
@@ -223,7 +250,9 @@ class Alerter:
         errors: list[str] = []
         for transport in self.transports:
             try:
-                if transport == "ntfy":
+                if transport == "discord":
+                    self._send_discord(message)
+                elif transport == "ntfy":
                     self._send_ntfy(message)
                 elif transport == "sendgrid":
                     self._send_sendgrid(message)
@@ -238,6 +267,50 @@ class Alerter:
         self._record(False, "none", detail)
         raise RuntimeError(detail)
 
+    def _send_discord(self, message: _Outbound) -> None:
+        """Post to the tier's channel webhook. The title in bold and the body
+        in a code block (monospace, so tables line up) when it fits Discord's
+        2,000-character limit; otherwise a short preview, with the FULL text
+        attached as a .txt file. An explicit attachment is always sent as a
+        file. Mentions are disabled: no alert can ping @everyone."""
+        url = self._discord.get(message.tier) or ""
+        if not url:
+            raise RuntimeError(f"no Discord webhook for the {message.tier} tier")
+        post = self._http_post
+        if post is None:
+            import httpx
+
+            post = httpx.post
+        body = message.body.replace("```", "'''")
+        title = f"**{message.subject}**"
+        inline = f"{title}\n```\n{body}\n```"
+        attachment = message.attachment
+        if attachment is None and len(inline) > DISCORD_LIMIT:
+            attachment = ("alert.txt", message.subject + "\n\n" + message.body)
+        if attachment is None:
+            content = inline
+        else:
+            room = DISCORD_LIMIT - len(title) - 40
+            preview = body if len(body) <= room else body[: max(room, 0)].rsplit("\n", 1)[0] + "\n..."
+            content = f"{title}\n```\n{preview}\n```" if preview.strip() else title
+            content += f"\n(full text: {attachment[0]})"
+            content = content[:DISCORD_LIMIT]
+        payload = {"content": content, "username": "Agentic", "allowed_mentions": {"parse": []}}
+        if attachment is None:
+            response = post(url, json=payload, timeout=20)
+        else:
+            name, text = attachment
+            response = post(
+                url,
+                data={"payload_json": json.dumps(payload)},
+                files={"files[0]": (name, text.encode("utf-8"), "text/plain")},
+                timeout=30,
+            )
+        status = getattr(response, "status_code", None)
+        if status is None or status >= 300:
+            # never the URL: it is the channel's credential
+            raise RuntimeError(f"Discord HTTP {status}: {str(getattr(response, 'text', ''))[:120]}")
+
     def _send_ntfy(self, message: _Outbound) -> None:
         """Publish as JSON to the server root (UTF-8 safe, unlike headers).
         URGENT is ntfy's top priority (a phone alert that breaks through);
@@ -247,7 +320,7 @@ class Alerter:
             import httpx
 
             post = httpx.post
-        urgent = message.subject.startswith(_PREFIX[URGENT])
+        urgent = message.tier == URGENT
         body = message.body
         if len(body.encode("utf-8")) > NTFY_MAX_BYTES:
             body = body.encode("utf-8")[: NTFY_MAX_BYTES - 40].decode("utf-8", "ignore") + "\n[... truncated]"

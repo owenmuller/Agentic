@@ -406,7 +406,10 @@ def scoreboard(email: bool) -> int:
     print(text)
     if email:
         alerter = Alerter()
-        alerter.daily(f"lab-scoreboard-{today}", f"PAPER LAB SCOREBOARD {today}", text)
+        # #reports, with the full table attached (Discord caps a message at
+        # 2,000 characters and the table is wider than a phone; ruling 2026-10-12)
+        alerter.daily(f"lab-scoreboard-{today}", f"PAPER LAB SCOREBOARD {today}", text,
+                      attachment=(f"scoreboard-{today}.txt", text))
         alerter.close()
     return 0
 

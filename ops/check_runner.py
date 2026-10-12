@@ -23,6 +23,7 @@ from typing import Callable, Optional, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from execution import load_environment  # noqa: E402
 from execution.alerts import Alerter  # noqa: E402 - installs the data guard
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,6 +53,7 @@ def main(argv: Sequence[str]) -> int:
     if len(argv) < 3 or argv[1] != "--":
         print("usage: check_runner.py NAME -- COMMAND [ARGS...]", file=sys.stderr)
         return 2
+    load_environment()  # the alert routes (Discord, ntfy, ...) live in .env
     alerter = Alerter()
 
     def alert(ok: bool, subject: str, body: str) -> None:

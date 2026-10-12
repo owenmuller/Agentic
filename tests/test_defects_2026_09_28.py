@@ -189,7 +189,8 @@ def test_the_bars_client_strikes_on_a_400_and_clears_on_a_200(tmp_path):
 
 
 def _https_alerter(monkeypatch, tmp_path, post, smtp=False):
-    monkeypatch.delenv("NTFY_TOPIC", raising=False)  # ntfy is tested on its own
+    for name in ("NTFY_TOPIC", "DISCORD_WEBHOOK_URGENT", "DISCORD_WEBHOOK_REPORTS"):
+        monkeypatch.delenv(name, raising=False)  # tested on their own
     monkeypatch.setenv("SENDGRID_API_KEY", "sg-test-key")
     monkeypatch.setenv("ALERT_TO", "ops@example.test")
     monkeypatch.setenv("ALERT_FROM", "agentic@example.test")

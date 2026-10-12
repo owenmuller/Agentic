@@ -77,7 +77,8 @@ def test_distinct_keys_are_independent():
 
 
 def test_unconfigured_alerter_is_disabled_and_silent(monkeypatch):
-    for name in ("ALERT_SMTP_USER", "ALERT_SMTP_PASSWORD", "ALERT_TO", "SENDGRID_API_KEY", "NTFY_TOPIC"):
+    for name in ("ALERT_SMTP_USER", "ALERT_SMTP_PASSWORD", "ALERT_TO", "SENDGRID_API_KEY", "NTFY_TOPIC",
+                 "DISCORD_WEBHOOK_URGENT", "DISCORD_WEBHOOK_REPORTS"):
         monkeypatch.delenv(name, raising=False)
     alerter = Alerter(clock=Clock())
     assert not alerter.enabled

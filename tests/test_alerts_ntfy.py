@@ -13,6 +13,8 @@ from execution.alerts import NTFY_MAX_BYTES, Alerter
 def _alerter(monkeypatch, tmp_path, post, sendgrid=False):
     monkeypatch.setenv("NTFY_TOPIC", "agentic-test-topic")
     monkeypatch.delenv("NTFY_SERVER", raising=False)
+    monkeypatch.delenv("DISCORD_WEBHOOK_URGENT", raising=False)
+    monkeypatch.delenv("DISCORD_WEBHOOK_REPORTS", raising=False)
     for name in ("ALERT_SMTP_USER", "ALERT_SMTP_PASSWORD"):
         monkeypatch.delenv(name, raising=False)
     if sendgrid:
@@ -30,7 +32,7 @@ def test_urgent_goes_out_as_a_top_priority_push(monkeypatch, tmp_path):
     alerter = _alerter(monkeypatch, tmp_path, lambda url, **kw: calls.append((url, kw)) or SimpleNamespace(status_code=200))
     assert alerter.transports == ("ntfy",) and alerter.enabled
     alerter._send(alerter_message := __import__("execution.alerts", fromlist=["_Outbound"])._Outbound(  # noqa: F841
-        subject="[AGENTIC URGENT] LAB ladder drawdown 25.1% — from peak", body="x" * 10000))
+        subject="[AGENTIC URGENT] LAB ladder drawdown 25.1% — from peak", body="x" * 10000, tier="URGENT"))
     url, kw = calls[0]
     assert url == "https://ntfy.sh"
     payload = kw["json"]
