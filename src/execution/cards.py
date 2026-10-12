@@ -126,13 +126,128 @@ def cents(value: Optional[float]) -> str:
     return f"${value:,.0f}" if value == int(value) else f"${value:,.2f}"
 
 
+def _trim(number: str) -> str:
+    """'25.0' -> '25', '+1.0' -> '+1' (card polish 2026-10-12)."""
+    return number[:-2] if number.endswith(".0") else number
+
+
 def pct(fraction: Optional[float], signed: bool = True) -> str:
+    """One decimal at most, never a trailing '.0': '+1.2%', '25%', '0%'."""
     if fraction is None:
         return "n/a"
     value = float(fraction) * 100
     if abs(value) < 0.05:
-        value = 0.0
-    return f"{value:+.1f}%" if signed else f"{value:.1f}%"
+        return "0%"
+    return _trim(f"{value:+.1f}" if signed else f"{value:.1f}") + "%"
+
+
+def count(n: int, noun: str, plural: Optional[str] = None) -> str:
+    """'1 problem', '2 problems' - never 'problem(s)'."""
+    return f"{n} {noun if n == 1 else (plural or noun + 's')}"
+
+
+# -- what a problem means, in plain words ----------------------------------------------
+
+#: The gate's refusal codes as reasons a person can read.
+_GATE_REASONS = {
+    "kill_switch_active": "the kill switch is on",
+    "insufficient_buying_power": "there wasn't enough cash",
+    "unsettled_funds": "today's sale proceeds hadn't settled yet",
+    "below_min_notional": "the order was too small",
+    "position_not_held": "there was no position to sell",
+    "close_exceeds_held_quantity": "it tried to sell more than was held",
+    "max_single_position_exceeded": "it would have made one position too large",
+    "max_daily_deployment_exceeded": "today's spending limit was reached",
+    "max_options_premium_exceeded": "the options budget was full",
+    "max_short_dated_premium_exceeded": "the short-dated options budget was full",
+    "sector_concentration": "too much would have sat in one sector",
+    "sleeve_allocation_exceeded": "the account's allocation limit was reached",
+    "pdt_limit_reached": "the day-trading limit was reached",
+    "illiquid_position": "the stock trades too thinly",
+    "max_positions_exceeded": "all position slots were full",
+}
+
+
+def _side(word: Optional[str]) -> str:
+    return {"buy": "a purchase", "sell": "a sale", "entry": "a purchase", "exit": "a sale"}.get(
+        (word or "").lower(), "an order")
+
+
+def explain(message: str) -> tuple[int, str]:
+    """(importance, plain sentence) for one logged problem; 0 is the most
+    important. Unknown messages fall back to a cleaned copy of the text."""
+    text = str(message)
+    low = text.lower()
+    symbol = (re.search(r"\b([A-Z]{1,5}(?:\.[A-Z])?)\b(?! \d)", text) or [None, None])[1]
+    if "broker holds" in low and "rung books" in low:
+        sym = text.split(":", 1)[0].strip()
+        return 0, f"the ladder's records don't match the broker for {sym}, so trading is paused until it's reconciled"
+    if "does not trade" in low and "frozen" in low:
+        return 0, "the account holds a stock the ladder doesn't trade, so trading is paused"
+    if "not flat" in low:
+        return 0, "the account wasn't empty at its first run, so trading is paused"
+    if "tick failed" in low:
+        return 1, "a trading cycle crashed and was retried"
+    if "holds no such position" in low:
+        sym = (re.search(r"exit (\S+)", text) or [None, symbol])[1]
+        return 2, f"an exit of {sym} found no position to sell, so the broker's record was taken as correct"
+    if ("gate rejected" in low or "gate refused" in low):
+        side = (re.search(r"gate (?:rejected|refused) (buy|sell|entry|exit)", low) or [None, None])[1]
+        sym = (re.search(r"gate (?:rejected|refused) (?:buy |sell |entry |exit )?([A-Za-z0-9.]+)", text) or
+               [None, symbol])[1]
+        reason = next((why for code, why in _GATE_REASONS.items() if code in low), "it broke a risk limit")
+        return 2, f"the risk gate refused {_side(side)} of {sym} because {reason}"
+    if "broker refused" in low:
+        side = (re.search(r"broker refused (buy|sell|entry|exit)", low) or [None, None])[1]
+        sym = (re.search(r"broker refused (?:buy |sell |entry |exit )?([A-Za-z0-9.]+)", text) or [None, symbol])[1]
+        return 2, f"the broker refused {_side(side)} of {sym}"
+    if "decision at" in low and "missed" in low:
+        when = (re.search(r"decision at (\d\d:\d\d)", text) or [None, "one"])[1]
+        return 2, f"the {when} decision was missed because the check ran late"
+    if "no cap table or no nav" in low:
+        return 2, "an entry was skipped because the account had no limits or value set"
+    if "unfilled after" in low:
+        side = (re.search(r"\b(buy|sell)\b", low) or [None, None])[1]
+        sym = (re.search(r"\b(?:buy|sell) ([A-Z]{1,5})", text) or [None, symbol])[1]
+        seconds = int((re.search(r"after (\d+)s", low) or [None, "0"])[1])
+        wait = count(round(seconds / 60), "minute") if seconds >= 60 else count(seconds, "second")
+        tail = "; the next run finishes it" if "next run" in low else " and was cancelled"
+        return 3, f"an order to {side or 'trade'} {sym} didn't fill within {wait}{tail}"
+    if "left unfilled" in low:
+        sym = (re.search(r"exit of (\S+?):", text) or [None, symbol])[1]
+        return 3, f"an exit of {sym} only partly filled, so it keeps retrying"
+    if "exit of" in low and "no quote" in low or ("exit" in low and "delayed: no quote" in low):
+        sym = (re.search(r"exit (?:of )?([A-Za-z0-9.]+)", text) or [None, symbol])[1]
+        return 3, f"a planned exit of {sym} waited because no live price was available"
+    if "model pass failed" in low:
+        return 3, "one model research pass failed, so that scan placed no trades"
+    if "returned no report" in low:
+        return 4, "the model gave no usable answer on one scan"
+    if "no usable quote" in low or "skipped: no quote" in low:
+        sym = (re.search(r"(?:quote for|entry) ([A-Z]{1,5})", text) or [None, symbol])[1]
+        return 4, f"there was no live price for {sym}, so it waited"
+    if "no live quote or vwap" in low:
+        when = (re.search(r"decision (\d\d:\d\d)", text) or [None, "one"])[1]
+        return 4, f"the {when} decision was skipped because no live price was available"
+    if "inputs unavailable" in low:
+        when = (re.search(r"decision (\d\d:\d\d)", text) or [None, "one"])[1]
+        return 4, f"the {when} decision was skipped because the price history was missing"
+    if "reversal entry" in low and "dropped" in low:
+        return 4, f"a switch into {symbol} was dropped because the exit filled too late"
+    if "sized to zero" in low:
+        return 5, f"an entry in {symbol} was skipped because its size came out to zero"
+    return 6, plain(text, 120)
+
+
+def worth_a_look(problems: Sequence[str], extra: Sequence[tuple[int, str]] = ()) -> Optional[str]:
+    """The yellow line: the most important issue in plain words, then
+    'plus N more in the attachment' when there are others."""
+    issues = sorted([explain(p) for p in problems] + list(extra), key=lambda item: item[0])
+    if not issues:
+        return None
+    head = issues[0][1]
+    more = len(issues) - 1
+    return head + (f", plus {more} more in the attachment" if more else "")
 
 
 def with_spy(fraction: Optional[float], spy: Optional[float]) -> str:
@@ -147,7 +262,7 @@ def plain(text: str, limit: int = 160) -> str:
     cleaned = " ".join(str(text).replace("`", "'").replace("{", "(").replace("}", ")").split())
     cleaned = re.sub(r"\b[A-Za-z]+(?:_[A-Za-z0-9]+)+\b", lambda m: m.group(0).replace("_", " ").lower(), cleaned)
     cleaned = re.sub(r"\$(\d[\d,]*\.\d+)", lambda m: f"${round(float(m.group(1).replace(',', ''))):,}", cleaned)
-    cleaned = re.sub(r"(?<![\d.])(\d+(?:\.\d+)?)%", lambda m: f"{float(m.group(1)):.1f}%", cleaned)
+    cleaned = re.sub(r"(?<![\d.])(\d+(?:\.\d+)?)%", lambda m: _trim(f"{float(m.group(1)):.1f}") + "%", cleaned)
     if len(cleaned) <= limit:
         return cleaned
     return cleaned[:limit].rsplit(" ", 1)[0] + "..."
@@ -213,7 +328,7 @@ def drawdown_card(account: str, value: float, peak: float, since_start: Optional
         f"Account value: {usd(value)}; peak {usd(peak)}.",
         f"Since start: {with_spy(since_start, spy_since)}.",
         "By your ruling the ladder has no kill switch and keeps rebalancing. This is information, not a halt.",
-    ), look_at=f"the benchmark has fallen {pct(drawdown, signed=False)} from its peak, past the 25.0% alert line",
+    ), look_at=f"the benchmark has fallen {pct(drawdown, signed=False)} from its peak, past the 25% alert line",
         channel=URGENT, sample=sample)
 
 
@@ -239,16 +354,16 @@ def crash_card(account: str, when: str, what: str, sample: bool = False) -> Card
 
 
 def unmanaged_card(holdings: Sequence[str], sample: bool = False) -> Card:
-    return Card("Main book", f"{len(holdings)} position(s) held with no record and no stop", ACTION, (
+    return Card("Main book", f"{count(len(holdings), 'position')} held with no record and no stop", ACTION, (
         f"Positions: {_joined([plain(h, 40) for h in holdings][:8])}.",
         "The broker holds them, but the system has no record of buying them, so no stop protects them.",
     ), what_to_do=_ask("Reconcile the unmanaged positions in the main book and tell me where they came from."),
         detail="\n".join(holdings), channel=URGENT, sample=sample)
 
 
-def pending_card(count: int, detail: str, sample: bool = False) -> Card:
-    return Card("Main book", f"{count} order(s) still unresolved after a restart", ACTION, (
-        f"Orders in an unknown state: {count}.",
+def pending_card(orders: int, detail: str, sample: bool = False) -> Card:
+    return Card("Main book", f"{count(orders, 'order')} still unresolved after a restart", ACTION, (
+        f"Orders in an unknown state: {orders}.",
         "A crash may have left money committed to orders the system cannot see.",
     ), what_to_do=_ask("Resolve the main book's orders still pending settlement after recovery."),
         detail=detail, channel=URGENT, sample=sample)
@@ -272,10 +387,11 @@ def halt_card(account: str, what: str, sample: bool = False) -> Card:
 
 
 def exits_card(started: int, closed: int, sample: bool = False) -> Card:
-    return Card("Main book", f"{started} position(s) being sold by the exit rules", LOOK, (
+    return Card("Main book", f"{count(started, 'position')} being sold by the exit rules", LOOK, (
         f"Sell orders started: {started}; positions fully closed so far: {closed}.",
         "These are the system's own stop, time and review exits working as designed.",
-    ), look_at=f"{started} position(s) are being closed; the trade details are in the main book's log",
+    ), look_at=(f"{count(started, 'position')} {'is' if started == 1 else 'are'} being closed by the stop, time or "
+                f"review rules; which ones and why are in the main book's log"),
         channel=URGENT, sample=sample)
 
 
@@ -311,8 +427,8 @@ def weekly_main_card(value: Optional[float], week: Optional[float], spy_week: Op
 
 
 def ladder_card(month: str, complete: bool, bought: dict[str, float], sold: dict[str, float], value: float,
-                since_start: Optional[float], spy_since: Optional[float], rungs: dict[str, float], faults: int,
-                detail: str = "", sample: bool = False) -> Card:
+                since_start: Optional[float], spy_since: Optional[float], rungs: dict[str, float],
+                faults: Sequence[str], detail: str = "", sample: bool = False) -> Card:
     status = GOOD if complete and not faults else LOOK
     trades = []
     if bought:
@@ -325,19 +441,17 @@ def ladder_card(month: str, complete: bool, bought: dict[str, float], sold: dict
         f"Since start: {with_spy(since_start, spy_since)}.",
         "Rungs: " + _joined([f"{name} {usd(v)}" for name, v in rungs.items()]) + ".",
     ]
-    look = []
-    if not complete:
-        look.append("some orders did not fill, and the next run (10:00 ET) finishes the rebalance")
-    if faults:
-        look.append(f"{faults} problem(s) were recorded (in the attached detail)")
+    # an unfilled order explains itself; say so only when no fault does
+    extra = [] if complete or any("unfilled" in f for f in faults) else [
+        (3, "some orders didn't fill; the next run (10:00 ET) finishes the rebalance")]
     return Card("Leverage ladder", f"{month} rebalance {'done' if complete else 'partly done'}", status,
-                tuple(lines), look_at="; ".join(look) or None, detail=detail or None,
-                detail_name=f"ladder-rebalance-{month}.txt", sample=sample)
+                tuple(lines), look_at=worth_a_look(faults, extra) if status == LOOK else None,
+                detail=detail or None, detail_name=f"ladder-rebalance-{month}.txt", sample=sample)
 
 
 def ai_day_card(today: Optional[float], today_usd: Optional[float], spy_today: Optional[float], opened: int,
                 closed: int, wins: int, losses: int, holding: Sequence[str], ideas: int, taken: int, spend: float,
-                cap: float, faults: int, halted: bool, detail: str = "", sample: bool = False) -> Card:
+                cap: float, faults: Sequence[str], halted: bool, detail: str = "", sample: bool = False) -> Card:
     status = LOOK if faults or spend >= cap - 0.01 else GOOD
     lines = [
         f"Today: {with_spy(today, spy_today)}, {usd(today_usd, signed=True)}.",
@@ -350,12 +464,9 @@ def ai_day_card(today: Optional[float], today_usd: Optional[float], spy_today: O
         return Card("AI trader", "market closed with the kill switch on", ACTION, tuple(lines),
                     what_to_do=_ask("Explain the AI trader's kill-switch trip and whether to reset it."),
                     detail=detail or None, detail_name="ai-trader-day.txt", sample=sample)
-    look = []
-    if faults:
-        look.append(f"{faults} problem(s) were recorded today (in the attached detail)")
-    if spend >= cap - 0.01:
-        look.append("the model used its whole daily spend cap, so later scans were skipped")
-    return Card("AI trader", "market closed", status, tuple(lines), look_at="; ".join(look) or None,
+    extra = [(5, "the model used its whole daily budget, so later scans were skipped")] if spend >= cap - 0.01 else []
+    return Card("AI trader", "market closed", status, tuple(lines),
+                look_at=worth_a_look(faults, extra) if status == LOOK else None,
                 detail=detail or None, detail_name="ai-trader-day.txt", sample=sample)
 
 
@@ -374,8 +485,7 @@ def exec_test_card(day: str, session: int, total: int, live: float, modelled: fl
     if not faults:
         lines.append("Problems: none.")
     return Card("Execution test", f"session {session} of {total} checked", status, tuple(lines),
-                look_at=(f"{len(faults)} problem(s) during the session, such as {plain(faults[0], 80)} "
-                         f"(all in the attached detail)" if faults else None),
+                look_at=worth_a_look(faults) if faults else None,
                 detail=detail or None, detail_name=f"execution-test-{day}.txt", sample=sample)
 
 

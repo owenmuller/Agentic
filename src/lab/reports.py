@@ -57,7 +57,7 @@ def ladder_report(engine: Any, events: list[dict], labels: dict[str, str], spy_b
         month=month_name, complete=engine.rebalance == "complete", bought=bought, sold=sold, value=value,
         since_start=since, spy_since=spy,
         rungs={labels.get(name, name).split(" (")[0]: float(v) for name, v in (engine.books or {}).items()},
-        faults=len(faults), detail=detail,
+        faults=[e["message"] for e in faults], detail=detail,
     )
 
 
@@ -107,7 +107,8 @@ def ai_day_report(events: list[dict], snapshot: dict, open_positions: list[Any],
     return cards.ai_day_card(
         today=(equity / prior - 1) if prior > 0 else None, today_usd=(equity - prior) if prior > 0 else None,
         spy_today=spy_today, opened=len(opened), closed=len(results), wins=wins, losses=len(results) - wins,
-        holding=holding, ideas=ideas, taken=len(opened), spend=spend, cap=cap, faults=len(faults), halted=halted,
+        holding=holding, ideas=ideas, taken=len(opened), spend=spend, cap=cap,
+        faults=[e["message"] for e in faults], halted=halted,
         detail=detail,
     )
 

@@ -225,6 +225,8 @@ def _exec_test_card(text: str):
     except Exception:  # noqa: BLE001
         spy_day = None
     slips = line.get("slippage_bp_vs_model") or {}
+    # the engine records each problem as {"at": ..., "fault": text}
+    faults = [str(f.get("fault", f)) if isinstance(f, dict) else str(f) for f in line.get("faults") or []]
     detail = "\n".join([
         f"Day: {line['day']} (session {line.get('session')} of {total})",
         f"Live result: ${line.get('pnl_live')}; the backtest model at the same sizes: "
@@ -233,18 +235,18 @@ def _exec_test_card(text: str):
         f"(decisions made live: {line.get('decisions_live')}, late: {line.get('late_decisions')})",
         f"Fills: {line.get('fills')}; average seconds to fill: {line.get('seconds_to_fill_mean')}",
         "Fill cost against the model, by kind (basis points; 1 bp = 0.01%; positive = worse than modelled):",
-        *[f"  {kind.replace('_', ' ')}: {cell.get('n')} fill(s), average {cell.get('mean')}"
+        *[f"  {kind.replace('_', ' ')}: {cell.get('n')} fill{'' if cell.get('n') == 1 else 's'}, average {cell.get('mean')}"
           for kind, cell in slips.items()],
         f"Day trades in the 5-day window: {line.get('day_trades_in_window')}",
         "Problems:" + ("" if line.get("faults") else " none"),
-        *[f"  - {fault}" for fault in line.get("faults") or []],
+        *[f"  - {text}" for text in faults],
     ])
     return cards.exec_test_card(
         day=f"{day:%b} {day.day}", session=int(line.get("session") or 0), total=total,
         live=float(line.get("pnl_live") or 0), modelled=float(line.get("pnl_modelled_at_live_sizes") or 0),
         spy_day=spy_day, agree=str(line.get("decisions_agree_with_model") or "n/a").replace("/", " of "),
         fills=int(line.get("fills") or 0), seconds=line.get("seconds_to_fill_mean"),
-        faults=list(line.get("faults") or []), detail=detail,
+        faults=faults, detail=detail,
     )
 
 

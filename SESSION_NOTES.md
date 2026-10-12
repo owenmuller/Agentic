@@ -4126,6 +4126,11 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
   2. **Model spend in dollars and cents against the cap** ("$1.85 of $3 daily cap"); the main book's research spend likewise. The whole-dollar rule is for trading P&L only.
   - Cleaned error text with the raw text attached: approved.
   - Suite 1,596 passed, 13 skipped. The yellow AI-trader end-of-day sample was re-sent to #reports.
+- **Card polish (human ruling 2026-10-12):**
+  1. **The yellow line names the actual issue in plain words.** `cards.explain` translates every problem message the engines log (gate refusals with a reason per refusal code, broker refusals, unfilled orders, missing prices, missed decisions, model-pass failures, book mismatches, crashes) into a sentence, ranked by importance. The line names the most important one, then "plus N more in the attachment". No counts or "problem(s)" pointing at the attachment; plurals are real ("1 position", "2 positions").
+  2. **Percents drop a trailing ".0"** ("25%", "+1%", "0%"), also in cleaned error text.
+  - Suite 1,613 passed, 13 skipped. Yellow AI-trader and ladder samples were re-sent to #reports.
+
 
 
 ### 2026-10-12 (night) — Discord is the primary alert channel; #urgent live, #reports webhook INVALID (fell back to ntfy)

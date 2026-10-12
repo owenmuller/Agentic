@@ -29,7 +29,7 @@ def test_the_rebalance_report_names_trades_value_and_spy():
     card = reports.ladder_report(engine, events, LABELS, lambda a, b: 0.0021, DAY)
     assert card.title == "Leverage ladder: October rebalance done, nothing to do" and card.status == cards.GOOD
     assert card.shown_lines[0] == "Trades: bought SPY $16,566 and SSO $33,116."
-    assert "Since start: -0.0% (SPY +0.2%)." in card.shown_lines or "Since start: +0.0% (SPY +0.2%)." in card.shown_lines
+    assert "Since start: 0% (SPY +0.2%)." in card.shown_lines
     assert "1.5x SPY $33,329" in card.shown_lines[3]
     assert "778.1" in card.attachment[1]
 
@@ -67,7 +67,7 @@ def test_the_scoreboard_card_has_a_line_per_account_and_the_too_early_note():
                      "pnl_live": -12.4, "pnl_modelled_at_live_sizes": -9.1, "slippage_bp_vs_model": {}}],
                      spy=spy, main_equity={}, rung_labels={})
     card = reports.scoreboard_report(board, date(2026, 10, 16), "TABLE", 20, 60)
-    assert card.shown_lines[0] == "Leverage ladder: +1.0% (SPY +0.5%) since Oct 12."
+    assert card.shown_lines[0] == "Leverage ladder: +1% (SPY +0.5%) since Oct 12."
     assert any(line.startswith("Execution test: 1 session, -$12 live vs -$9") for line in card.shown_lines)
     assert card.shown_lines[-1].startswith("Too early to judge: 2 of 20 sessions")
     assert card.attachment[0] == "scoreboard-2026-10-16.txt"
