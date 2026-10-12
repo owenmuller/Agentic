@@ -50,7 +50,7 @@ ALL = {
     ], 4, 20, 60, "TABLE"),
 }
 
-TITLE = re.compile(r"^[A-Z][^:]+: .+, (nothing to do|action needed)$")
+TITLE = re.compile(r"^[A-Z][^:]+: .+, (nothing to do|worth a look|action needed)$")
 SNAKE = re.compile(r"\b[a-z]+_[a-z_]+\b")
 CENTS = re.compile(r"\$\d[\d,]*\.\d")
 PERCENT = re.compile(r"(\d+(?:\.\d+)?)%")
@@ -60,12 +60,19 @@ PERCENT = re.compile(r"(\d+(?:\.\d+)?)%")
 def test_every_card_follows_the_rules(name):
     card = ALL[name]
     assert TITLE.match(card.title), card.title
-    assert (card.status == cards.ACTION) == card.title.endswith("action needed")
+    assert card.title.endswith(cards.VERDICTS[card.status])
     assert 1 <= len(card.shown_lines) <= 6
     body = card.description
     assert "```" not in body and "{" not in body and "}" not in body
     assert not SNAKE.search(body.split("What to do:")[0]), SNAKE.search(body)
-    assert not CENTS.search(body.split("What to do:")[0]), body
+    # whole dollars for trading P&L; spend lines carry cents (card review 2026-10-12)
+    pnl_lines = [line for line in card.shown_lines if not re.match(r"(Model|Research) spend", line)]
+    assert not CENTS.search("\n".join(pnl_lines)), body
+    if card.status == cards.LOOK:
+        assert card.shown_lines[0].startswith("Worth a look: ") and card.shown_lines[0].endswith(".")
+        assert sum(line.startswith("Worth a look") for line in card.shown_lines) == 1
+    else:
+        assert not any(line.startswith("Worth a look") for line in card.shown_lines)
     for number in PERCENT.findall(body):
         assert "." in number and len(number.split(".")[1]) == 1, (name, number)
     for line in card.shown_lines:
@@ -92,7 +99,8 @@ def test_numbers_are_rounded_and_returns_carry_spy():
     assert cards.pct(0.01234) == "+1.2%" and cards.pct(-0.00004) == "+0.0%" and cards.pct(None) == "n/a"
     assert cards.with_spy(0.0123, 0.0081) == "+1.2% (SPY +0.8%)"
     assert "Today: -0.4% (SPY +0.6%), -$412." in ALL["ai_day"].shown_lines
-    assert "Model spend: 61.7% of the $3 daily cap." in ALL["ai_day"].shown_lines
+    assert "Model spend: $1.85 of $3 daily cap." in ALL["ai_day"].shown_lines
+    assert cards.cents(1.8) == "$1.80" and cards.cents(3.0) == "$3"
 
 
 def test_detail_goes_to_the_attachment_and_overflow_lines_too():
@@ -117,3 +125,23 @@ def test_a_red_card_without_what_to_do_cannot_exist():
 def test_sample_cards_say_so_in_the_title():
     card = cards.exits_card(1, 0, sample=True)
     assert card.title.startswith("SAMPLE - Main book:")
+
+
+def test_three_verdicts_and_the_yellow_line():
+    """Card review 2026-10-12: green 'nothing to do', yellow 'worth a look'
+    with one line saying what, red 'action needed'."""
+    assert ALL["first"].title.endswith(", nothing to do")
+    assert ALL["ladder_partial"].title.endswith(", worth a look")
+    assert ALL["ladder_partial"].shown_lines[0] == (
+        "Worth a look: some orders did not fill, and the next run (10:00 ET) finishes the rebalance; "
+        "1 problem(s) were recorded (in the attached detail).")
+    assert ALL["ai_day"].title == "AI trader: market closed, nothing to do"
+    yellow_ai = cards.ai_day_card(0.001, 100, 0.002, 1, 1, 1, 0, [], 3, 1, 3.0, 3.0, 2, False, "d")
+    assert yellow_ai.title == "AI trader: market closed, worth a look"
+    assert yellow_ai.shown_lines[0].startswith("Worth a look: 2 problem(s) were recorded today")
+    assert "the model used its whole daily spend cap" in yellow_ai.shown_lines[0]
+    assert ALL["error"].title.endswith(", action needed")
+    with pytest.raises(ValueError, match="worth a look"):
+        cards.Card("X", "y", cards.LOOK, ("a.",))
+    with pytest.raises(ValueError, match="only a yellow"):
+        cards.Card("X", "y", cards.GOOD, ("a.",), look_at="z")

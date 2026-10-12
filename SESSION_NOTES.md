@@ -4121,6 +4121,12 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
   - #urgent: the AI trader kill switch (red);
   - #reports: the ladder rebalance (green), AI-trader end of day (yellow, one problem), execution-test session (green), server check (green), weekly scoreboard with the table attached (green).
 - **Waiting on the human's review** of the look before anything else changes; the cards are live from the next send.
+- **Card review (human ruling 2026-10-12): KEEP DEPLOYED, with two changes, both made:**
+  1. **Three verdicts:** green "nothing to do", yellow "worth a look", red "action needed". A yellow card opens with exactly one "Worth a look: ..." line saying what (a yellow card cannot be built without it, and no other card can carry one).
+  2. **Model spend in dollars and cents against the cap** ("$1.85 of $3 daily cap"); the main book's research spend likewise. The whole-dollar rule is for trading P&L only.
+  - Cleaned error text with the raw text attached: approved.
+  - Suite 1,596 passed, 13 skipped. The yellow AI-trader end-of-day sample was re-sent to #reports.
+
 
 ### 2026-10-12 (night) — Discord is the primary alert channel; #urgent live, #reports webhook INVALID (fell back to ntfy)
 

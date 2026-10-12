@@ -5,10 +5,13 @@ Every Discord message is a CARD, rendered as an embed:
   1. colour = status: green (all good), yellow (worth a look), red (action
      needed);
   2. title = the verdict: "[Account]: [what happened], [nothing to do |
-     action needed]";
+     worth a look | action needed]" (green / yellow / red); a yellow body
+     opens with one "Worth a look: ..." line (card review, 2026-10-12);
   3. body = 3-6 short lines, sentences or "label: value" with human labels -
      no variable names, raw JSON, tables or code blocks;
-  4. dollars whole, percents to one decimal, and every return beside SPY's;
+  4. trading P&L in whole dollars (model spend in dollars and cents against
+     its cap - card review 2026-10-12), percents to one decimal, and every
+     return beside SPY's;
   5. a red card ends with "What to do:" - exactly what to tell Claude Code;
   6. anything more goes in an attached .txt, never in the message;
   7. nobody is ever pinged (the transport disables mentions).
@@ -25,6 +28,8 @@ from typing import Iterable, Optional, Sequence
 
 GOOD, LOOK, ACTION = "good", "look", "action"
 COLORS = {GOOD: 0x2ECC71, LOOK: 0xF1C40F, ACTION: 0xE74C3C}
+#: The title verdict for each colour (ruling 2026-10-12, card review).
+VERDICTS = {GOOD: "nothing to do", LOOK: "worth a look", ACTION: "action needed"}
 MAX_LINES = 6
 URGENT, DAILY = "URGENT", "DAILY"
 
@@ -41,28 +46,39 @@ class Card:
     #: URGENT -> #urgent, DAILY -> #reports.
     channel: str = DAILY
     sample: bool = False
+    #: Yellow only (ruling 2026-10-12, card review): one line saying what is
+    #: worth looking at, shown first as "Worth a look: ...".
+    look_at: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.status not in COLORS:
             raise ValueError(f"unknown card status {self.status!r}")
         if self.status == ACTION and not self.what_to_do:
             raise ValueError("a red card must say what to do")
+        if self.status == LOOK and not self.look_at:
+            raise ValueError("a yellow card must say what is worth a look")
+        if self.status != LOOK and self.look_at:
+            raise ValueError("only a yellow card carries a 'worth a look' line")
         if not self.lines:
             raise ValueError("a card needs at least one line")
 
     @property
     def title(self) -> str:
-        verdict = "action needed" if self.status == ACTION else "nothing to do"
         prefix = "SAMPLE - " if self.sample else ""
-        return f"{prefix}{self.account}: {self.happened}, {verdict}"[:256]
+        return f"{prefix}{self.account}: {self.happened}, {VERDICTS[self.status]}"[:256]
 
     @property
     def color(self) -> int:
         return COLORS[self.status]
 
     @property
+    def all_lines(self) -> tuple[str, ...]:
+        head = (f"Worth a look: {self.look_at.rstrip('.')}.",) if self.look_at else ()
+        return head + self.lines
+
+    @property
     def shown_lines(self) -> tuple[str, ...]:
-        return self.lines[:MAX_LINES]
+        return self.all_lines[:MAX_LINES]
 
     @property
     def description(self) -> str:
@@ -74,7 +90,7 @@ class Card:
     @property
     def attachment(self) -> Optional[tuple[str, str]]:
         """The detail file: the card's own detail plus any line beyond six."""
-        overflow = self.lines[MAX_LINES:]
+        overflow = self.all_lines[MAX_LINES:]
         parts = [self.title, ""]
         if overflow:
             parts += list(overflow) + [""]
@@ -99,6 +115,15 @@ def usd(value: Optional[float], signed: bool = False) -> str:
     if signed:
         return f"{'+' if rounded >= 0 else '-'}${abs(rounded):,}"
     return f"{'-' if rounded < 0 else ''}${abs(rounded):,}"
+
+
+def cents(value: Optional[float]) -> str:
+    """Model spend and its cap (card review 2026-10-12: the whole-dollar rule
+    is for trading P&L only): "$1.85", and a whole cap as "$3"."""
+    if value is None:
+        return "n/a"
+    value = float(value)
+    return f"${value:,.0f}" if value == int(value) else f"${value:,.2f}"
 
 
 def pct(fraction: Optional[float], signed: bool = True) -> str:
@@ -188,7 +213,8 @@ def drawdown_card(account: str, value: float, peak: float, since_start: Optional
         f"Account value: {usd(value)}; peak {usd(peak)}.",
         f"Since start: {with_spy(since_start, spy_since)}.",
         "By your ruling the ladder has no kill switch and keeps rebalancing. This is information, not a halt.",
-    ), channel=URGENT, sample=sample)
+    ), look_at=f"the benchmark has fallen {pct(drawdown, signed=False)} from its peak, past the 25.0% alert line",
+        channel=URGENT, sample=sample)
 
 
 def guard_card(account: str, refused: bool, when: str, what: str, sample: bool = False) -> Card:
@@ -242,14 +268,15 @@ def halt_card(account: str, what: str, sample: bool = False) -> Card:
         "Someone ran the halt command and the live session obeyed it.",
         "New positions are blocked; sales and stops keep working.",
         f"Note: {plain(what)}",
-    ), channel=URGENT, sample=sample)
+    ), look_at="trading stays halted until someone resumes it", channel=URGENT, sample=sample)
 
 
 def exits_card(started: int, closed: int, sample: bool = False) -> Card:
     return Card("Main book", f"{started} position(s) being sold by the exit rules", LOOK, (
         f"Sell orders started: {started}; positions fully closed so far: {closed}.",
         "These are the system's own stop, time and review exits working as designed.",
-    ), channel=URGENT, sample=sample)
+    ), look_at=f"{started} position(s) are being closed; the trade details are in the main book's log",
+        channel=URGENT, sample=sample)
 
 
 # -- reports -------------------------------------------------------------------------
@@ -268,10 +295,10 @@ def close_card(value: float, today: Optional[float], spy_today: Optional[float],
         f"Account value: {usd(value)}.",
         f"Today: {with_spy(today, spy_today)}.",
         f"Positions held overnight: {positions}.",
-        f"Down from peak: {pct(drawdown, signed=False)}" + (" (worth a look: the size-reduction rungs start at 6%)."
-                                                             if status == LOOK else "."),
-        f"Research spend today: {usd(spend)}." + (" The kill switch is ON." if halted else ""),
-    ), detail=detail or None, sample=sample)
+        f"Down from peak: {pct(drawdown, signed=False)}.",
+        f"Research spend today: {cents(spend)}." + (" The kill switch is ON." if halted else ""),
+    ), look_at=(f"the account is {pct(drawdown, signed=False)} below its peak, so new positions are being sized "
+                f"down" if status == LOOK else None), detail=detail or None, sample=sample)
 
 
 def weekly_main_card(value: Optional[float], week: Optional[float], spy_week: Optional[float], report: str,
@@ -298,12 +325,14 @@ def ladder_card(month: str, complete: bool, bought: dict[str, float], sold: dict
         f"Since start: {with_spy(since_start, spy_since)}.",
         "Rungs: " + _joined([f"{name} {usd(v)}" for name, v in rungs.items()]) + ".",
     ]
+    look = []
     if not complete:
-        lines.append("Some orders did not fill; the next run (10:00 ET tomorrow) finishes the rebalance.")
+        look.append("some orders did not fill, and the next run (10:00 ET) finishes the rebalance")
     if faults:
-        lines.append(f"Problems recorded: {faults} (in the attached detail).")
+        look.append(f"{faults} problem(s) were recorded (in the attached detail)")
     return Card("Leverage ladder", f"{month} rebalance {'done' if complete else 'partly done'}", status,
-                tuple(lines), detail=detail or None, detail_name=f"ladder-rebalance-{month}.txt", sample=sample)
+                tuple(lines), look_at="; ".join(look) or None, detail=detail or None,
+                detail_name=f"ladder-rebalance-{month}.txt", sample=sample)
 
 
 def ai_day_card(today: Optional[float], today_usd: Optional[float], spy_today: Optional[float], opened: int,
@@ -315,16 +344,19 @@ def ai_day_card(today: Optional[float], today_usd: Optional[float], spy_today: O
         f"Trades: {opened} opened, {closed} closed ({wins} won, {losses} lost).",
         f"Holding overnight: {len(holding)}" + (f" ({_joined(list(holding)[:5])})." if holding else "."),
         f"Ideas from the model: {ideas}; the rules took {taken} and turned down {ideas - taken}.",
-        f"Model spend: {pct(spend / cap if cap else None, signed=False)} of the {usd(cap)} daily cap.",
+        f"Model spend: {cents(spend)} of {cents(cap)} daily cap.",
     ]
-    if faults:
-        lines.append(f"Problems recorded today: {faults} (in the attached detail).")
     if halted:
         return Card("AI trader", "market closed with the kill switch on", ACTION, tuple(lines),
                     what_to_do=_ask("Explain the AI trader's kill-switch trip and whether to reset it."),
                     detail=detail or None, detail_name="ai-trader-day.txt", sample=sample)
-    return Card("AI trader", "market closed", status, tuple(lines), detail=detail or None,
-                detail_name="ai-trader-day.txt", sample=sample)
+    look = []
+    if faults:
+        look.append(f"{faults} problem(s) were recorded today (in the attached detail)")
+    if spend >= cap - 0.01:
+        look.append("the model used its whole daily spend cap, so later scans were skipped")
+    return Card("AI trader", "market closed", status, tuple(lines), look_at="; ".join(look) or None,
+                detail=detail or None, detail_name="ai-trader-day.txt", sample=sample)
 
 
 def exec_test_card(day: str, session: int, total: int, live: float, modelled: float, spy_day: Optional[float],
@@ -338,9 +370,12 @@ def exec_test_card(day: str, session: int, total: int, live: float, modelled: fl
         f"SPY that day: {pct(spy_day)}.",
         f"Decisions matching the model: {agree}.",
         f"Fills: {fills}" + (f", about {round(seconds)} seconds each." if seconds is not None else "."),
-        f"Problems: {len(faults)}" + (" (in the attached detail)." if faults else ", none."),
     ]
+    if not faults:
+        lines.append("Problems: none.")
     return Card("Execution test", f"session {session} of {total} checked", status, tuple(lines),
+                look_at=(f"{len(faults)} problem(s) during the session, such as {plain(faults[0], 80)} "
+                         f"(all in the attached detail)" if faults else None),
                 detail=detail or None, detail_name=f"execution-test-{day}.txt", sample=sample)
 
 
