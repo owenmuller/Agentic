@@ -4102,6 +4102,26 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-12 (late) — every Discord message is a plain-English card (embed); six SAMPLE cards sent for review
+
+- **Built and deployed (552e841): `execution/cards.py`.** Each message is a card rendered as a Discord embed:
+  - colour by status: green good, yellow worth a look, red action needed;
+  - title "[Account]: [what happened], [nothing to do | action needed]";
+  - 3-6 human lines: whole dollars, one-decimal percents, SPY beside every return;
+  - a red card ends with "What to do: Tell Claude Code: ...";
+  - detail goes in an attached .txt; mentions are disabled;
+  - ntfy and email get the same card as text.
+- **Every send site was converted:**
+  - main book: errors, cost and usage tripwires, guard events, breaker, halt, unmanaged positions, pending orders, kill switch, exits, first entries, close, weekly;
+  - paper lab: kill switch, drawdown, guard events, cycle failures, scoreboard, and the **new** ladder rebalance report and AI-trader end-of-day card;
+  - the **new** execution-test daily card (from its morning report);
+  - the check runner.
+- **Rules enforced by tests:** `tests/test_cards.py` holds all 24 card variants to the rules, and `tests/test_lab_reports.py` builds the lab's cards from ledgers. Suite 1,595 passed, 13 skipped.
+- **Samples, all delivered by Discord, titles prefixed "SAMPLE -":**
+  - #urgent: the AI trader kill switch (red);
+  - #reports: the ladder rebalance (green), AI-trader end of day (yellow, one problem), execution-test session (green), server check (green), weekly scoreboard with the table attached (green).
+- **Waiting on the human's review** of the look before anything else changes; the cards are live from the next send.
+
 ### 2026-10-12 (night) — Discord is the primary alert channel; #urgent live, #reports webhook INVALID (fell back to ntfy)
 
 - **Built (7ab87f2):** `execution.alerts` tries Discord first, then ntfy, then SendGrid, then SMTP.
