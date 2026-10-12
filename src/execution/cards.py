@@ -175,7 +175,10 @@ def _side(word: Optional[str]) -> str:
 
 def explain(message: str) -> tuple[int, str]:
     """(importance, plain sentence) for one logged problem; 0 is the most
-    important. Unknown messages fall back to a cleaned copy of the text."""
+    important: a book that no longer matches the broker; then anything that
+    blocks a SALE or a crash (risk stays open); then refused purchases;
+    then unfilled orders, missing prices and model hiccups. Unknown messages
+    fall back to a cleaned copy of the text."""
     text = str(message)
     low = text.lower()
     symbol = (re.search(r"\b([A-Z]{1,5}(?:\.[A-Z])?)\b(?! \d)", text) or [None, None])[1]
@@ -196,11 +199,11 @@ def explain(message: str) -> tuple[int, str]:
         sym = (re.search(r"gate (?:rejected|refused) (?:buy |sell |entry |exit )?([A-Za-z0-9.]+)", text) or
                [None, symbol])[1]
         reason = next((why for code, why in _GATE_REASONS.items() if code in low), "it broke a risk limit")
-        return 2, f"the risk gate refused {_side(side)} of {sym} because {reason}"
+        return (1 if side in ("sell", "exit") else 2), f"the risk gate refused {_side(side)} of {sym} because {reason}"
     if "broker refused" in low:
         side = (re.search(r"broker refused (buy|sell|entry|exit)", low) or [None, None])[1]
         sym = (re.search(r"broker refused (?:buy |sell |entry |exit )?([A-Za-z0-9.]+)", text) or [None, symbol])[1]
-        return 2, f"the broker refused {_side(side)} of {sym}"
+        return (1 if side in ("sell", "exit") else 2), f"the broker refused {_side(side)} of {sym}"
     if "decision at" in low and "missed" in low:
         when = (re.search(r"decision at (\d\d:\d\d)", text) or [None, "one"])[1]
         return 2, f"the {when} decision was missed because the check ran late"
@@ -215,10 +218,10 @@ def explain(message: str) -> tuple[int, str]:
         return 3, f"an order to {side or 'trade'} {sym} didn't fill within {wait}{tail}"
     if "left unfilled" in low:
         sym = (re.search(r"exit of (\S+?):", text) or [None, symbol])[1]
-        return 3, f"an exit of {sym} only partly filled, so it keeps retrying"
+        return 1, f"an exit of {sym} only partly filled, so it keeps retrying"
     if "exit of" in low and "no quote" in low or ("exit" in low and "delayed: no quote" in low):
         sym = (re.search(r"exit (?:of )?([A-Za-z0-9.]+)", text) or [None, symbol])[1]
-        return 3, f"a planned exit of {sym} waited because no live price was available"
+        return 1, f"a planned exit of {sym} waited because no live price was available"
     if "model pass failed" in low:
         return 3, "one model research pass failed, so that scan placed no trades"
     if "returned no report" in low:

@@ -204,3 +204,13 @@ def test_the_most_important_problem_leads():
                                "tick failed: X"])
     assert line.startswith("the ladder's records don't match the broker for SSO") and line.endswith(
         ", plus 2 more in the attachment")
+
+
+def test_a_blocked_sale_outranks_a_refused_purchase():
+    """An exit that cannot execute leaves risk open; a refused entry does not."""
+    line = cards.worth_a_look(["gate refused buy NVDA: max_positions_exceeded: 5 of 5",
+                               "stop exit of XLE: no quote; retried next tick"])
+    assert line == ("a planned exit of XLE waited because no live price was available, plus 1 more in the "
+                    "attachment")
+    assert cards.explain("gate refused exit SPY (stop): close_exceeds_held_quantity")[0] < cards.explain(
+        "gate refused buy AAPL: max_positions_exceeded")[0]
