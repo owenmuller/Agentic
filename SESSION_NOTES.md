@@ -4102,6 +4102,19 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-12 (night) — Discord is the primary alert channel; #urgent live, #reports webhook INVALID (fell back to ntfy)
+
+- **Built (7ab87f2):** `execution.alerts` tries Discord first, then ntfy, then SendGrid, then SMTP.
+  - **Routing:** URGENT goes to `DISCORD_WEBHOOK_URGENT`; DAILY (daily and weekly reports, check passes) goes to `DISCORD_WEBHOOK_REPORTS`.
+  - **Format:** a bold title, then the body in a code block. Over 2,000 characters, the full text goes as an attached `.txt` with a preview; the lab scoreboard always attaches `scoreboard-<date>.txt`.
+  - **Safety:** mentions are disabled, and webhook URLs never appear in errors or the status file.
+  - **Fixes:** the check runner now loads `.env`, so checks reach the channels. Tests in `tests/test_alerts_discord.py`; suite 1,560 passed, 13 skipped.
+- **Live tests:**
+  - URGENT test: delivered by Discord to #urgent.
+  - DAILY test, and the real scoreboard (2,080 characters, with attachment): Discord refused both, and they were **delivered by ntfy** (the fallback worked).
+  - Cause: Discord answers the #reports webhook with **401 "Invalid Webhook Token" (code 50027)**. The URL has the right shape (discord.com/api/webhooks, https, no whitespace), so the token part is wrong: truncated, or the webhook was regenerated or deleted after copying.
+  - Fix: the human re-copies the #reports webhook URL into `.env`; then re-send the two #reports tests.
+
 ### 2026-10-12 (evening) — lab timers enabled; ladder's first run was snapshot-only; ntfy push alerts live
 
 - **Ladder, 16:10 ET** (first timer run, minutes after the human enabled it):
