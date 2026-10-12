@@ -4102,6 +4102,23 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-12 (evening) — lab timers enabled; ladder's first run was snapshot-only; ntfy push alerts live
+
+- **Ladder, 16:10 ET** (first timer run, minutes after the human enabled it):
+  - The ledger shows `account_pinned`, three `rung_funded` events ($33,333.33 each), one $0.01 `cash_adjustment` (the funding split's rounding) and one `snapshot`, with no `order` events.
+  - The broker shows 0 positions, 0 open orders, 0 orders ever placed, $100,000 cash.
+  - Run log: "2026-10 rebalance due; outside the trading window".
+  - `data-lab/ladder` carries `owner=agentic-lab-ladder`.
+  - Next run is 10:00 ET 2026-10-13: inside the 09:45-15:30 window, October not yet marked rebalanced, so that run does the first rebalance.
+- **AI trader:** its timer is enabled; first session 09:20 ET 2026-10-13.
+- **Server-side checks queued:** `check-ladder-day1` at 10:20 ET and `check-ai-trader-day1` at 16:05 ET (systemd user timers; results in `~/checks/`).
+- **Alerts.** No alert had been delivered: SMTP egress is blocked and `SENDGRID_API_KEY` is absent. ntfy push is now the first transport (`execution.alerts`, 8ef8575):
+  - JSON publish (UTF-8 titles); URGENT at priority 5, DAILY at 3; bodies cut under 4 KB; a failed push falls through to SendGrid, then SMTP.
+  - `NTFY_TOPIC` (an unguessable `agentic-…` name) is appended to the server `.env`.
+  - A live test push was delivered and read back from ntfy.sh.
+  - Processes pick it up at their next start; the main session and both lab units start fresh tomorrow.
+  - The topic name is the only secret on the public ntfy.sh server; anyone holding it can read the alerts.
+
 ### 2026-10-12 — ladder dry run PASSED; AI-trader round trip PASSED; price anchoring BUILT (golden 5/5); checks move to the droplet; AI trader ENABLED (its timer is the human's); CORRECTION to three golden replays
 
 **Setup verified (15:05 ET):** all four lab key names are in `.env`; `agentic-lab-{ladder,ai-trader}.{service,timer}`, `agentic-weekly.service` and `agentic-backup.service` are installed and match the repo; both lab timers are disabled.
