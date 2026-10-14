@@ -73,3 +73,31 @@ cases:
     # verified) - a second real event the ruling also names. Either is a
     # correct veto; the case grades the veto, not which true reason came first.
     expect: {veto: true, categories: [binary_event, dilutive_offering]}
+  # Added 2026-10-14 (human ruling: cases for the squeeze/meme and accounting
+  # categories before entries go live). No clean CURRENT example exists - every
+  # recent squeeze name screened (GRML, APLD, NBIS, KSS, FLWS) had negative
+  # 12-1 momentum or an earnings-driven move - so these two are HISTORICAL:
+  # `as_of` pins the prices to that morning (data through the session before).
+  # The model's searches also surface what happened later; the cases grade only
+  # the veto and its category, which that hindsight cannot make easier to fake.
+  - name: meme_spike_amc_2021
+    symbol: AMC
+    company: AMC Entertainment Holdings
+    sector: other
+    rank: 4
+    new_entrant: true
+    as_of: "2021-10-01"
+    # 12-1 return +900% on 2021-09-30 (from ~$16 to ~$161 split-adjusted): the
+    # January and June 2021 meme-stock squeezes, not the business.
+    expect: {veto: true, categories: [squeeze_or_meme_spike]}
+  - name: accounting_smci_2024
+    symbol: SMCI
+    company: Super Micro Computer
+    sector: business equipment
+    rank: 7
+    new_entrant: true
+    as_of: "2024-11-01"
+    # 12-1 return +75% on 2024-10-31. Ernst & Young resigned as auditor on
+    # 2024-10-30 citing concerns about governance and transparency; the 10-K
+    # was already late; a short seller's report (2024-08-27) was unresolved.
+    expect: {veto: true, categories: [accounting_issue]}

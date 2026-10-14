@@ -84,7 +84,7 @@ def test_a_missing_session_carries_the_last_price():
 def test_plain_and_inverse_vol_variants_run():
     store = make_store()
     starts = engine.month_starts(store.calendar)
-    for name in ("plain_12_1", "inverse_vol", "top_500", "market_filter_only", "vol_scaling_only"):
+    for name in ("plain_12_1", "inverse_vol", "v1_1_no_veto", "v1_top_1000", "market_filter_only", "vol_scaling_only"):
         run = engine.run(store, rules.SHADOWS[name], starts[13], len(store.calendar) - 1)
         assert run.decisions and run.nav[-1][1] > 0
 

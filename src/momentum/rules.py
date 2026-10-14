@@ -71,11 +71,24 @@ class Spec:
 
 V1 = Spec(name="v1")
 
-#: The declared shadows (ruling item 4). Names are stable keys in the ledger.
+#: v1.1 - THE LIVE SPEC (human ruling 2026-10-14): v1's rules on the top-500
+#: universe. Chosen after the sanity backtest (v1 8.55% vs top_500 16.35% CAGR,
+#: 2017-03 to 2026-10), on prior evidence that broad momentum lags large-cap
+#: momentum in the live fund records. SPMO is the binding comparison. Frozen
+#: like V1: a change is a new Spec, never an edit.
+V1_1 = replace(V1, name="v1.1", universe=500)
+LIVE = V1_1
+
+#: The shadows (ruling item 4; revised 2026-10-14 with v1.1). Names are stable
+#: keys in the ledger. Shadows never use the veto (the live book's leg).
+#:   v1_1_no_veto   the live spec without the veto: measures the veto
+#:   v1_top_1000    the original v1 (top 1,000), demoted to a shadow by the ruling
+#:   the rest       the declared variants, unchanged (top-1,000 variants of v1);
+#:                  "top_500" is retired - it IS v1.1 without the veto
 SHADOWS = {
-    "v1_no_veto": replace(V1, name="v1_no_veto", ai_veto=False),
+    "v1_1_no_veto": replace(V1_1, name="v1_1_no_veto", ai_veto=False),
+    "v1_top_1000": replace(V1, name="v1_top_1000", ai_veto=False),
     "inverse_vol": replace(V1, name="inverse_vol", weighting="inverse_vol", ai_veto=False),
-    "top_500": replace(V1, name="top_500", universe=500, ai_veto=False),
     "market_filter_only": replace(V1, name="market_filter_only", vol_scaling=False, ai_veto=False),
     "vol_scaling_only": replace(V1, name="vol_scaling_only", market_filter=False, ai_veto=False),
     "plain_12_1": replace(V1, name="plain_12_1", score="plain_12_1", ai_veto=False),

@@ -37,7 +37,7 @@ from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from momentum import engine, rules
-from momentum.rules import SECTOR_NAMES, SHADOWS, V1, Spec
+from momentum.rules import LIVE, SECTOR_NAMES, SHADOWS, Spec
 
 from orchestrator.momentum_sleeve import PLAN_VERSION, plan_path
 from orchestrator.momentum_veto import Review
@@ -110,7 +110,7 @@ def compute(
     x_pick: Optional[str] = None,
     names: Optional[dict[str, str]] = None,
     max_reviews: int = 30,
-    spec: Spec = V1,
+    spec: Spec = LIVE,
 ) -> Prep:
     view = engine.live_view(store, rebalance_day)
     t = len(view.calendar) - 1

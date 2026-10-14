@@ -16,9 +16,13 @@ def test_v1_is_frozen_and_the_shadows_are_declared():
         V1.holdings = 20  # type: ignore[misc]
     assert (V1.universe, V1.holdings, V1.sell_rank, V1.sector_cap, V1.position_cap) == (1000, 15, 30, 0.30, 0.10)
     assert V1.weighting == "equal" and V1.market_filter and V1.vol_scaling and V1.ai_veto
-    assert set(rules.SHADOWS) == {"v1_no_veto", "inverse_vol", "top_500", "market_filter_only",
+    assert set(rules.SHADOWS) == {"v1_1_no_veto", "v1_top_1000", "inverse_vol", "market_filter_only",
                                   "vol_scaling_only", "plain_12_1"}
     assert not any(s.ai_veto for s in rules.SHADOWS.values())
+    # v1.1 (human ruling 2026-10-14): v1 on the top 500, the live spec; v1 itself is a shadow
+    assert rules.LIVE is rules.V1_1 and rules.V1_1.universe == 500 and rules.V1_1.ai_veto
+    assert replace(rules.V1_1, universe=1000, name="v1") == V1
+    assert rules.SHADOWS["v1_top_1000"].universe == 1000 and rules.SHADOWS["v1_1_no_veto"].universe == 500
     assert rules.SHADOWS["market_filter_only"].market_filter and not rules.SHADOWS["market_filter_only"].vol_scaling
 
 

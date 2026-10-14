@@ -4102,6 +4102,22 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-14 — RULINGS: v1.1 goes live (top 500); veto settings approved; squeeze/meme and accounting golden cases; the global LEARNING LOOP rule
+
+**Rulings (human, 2026-10-14):**
+1. **Go live 2026-11-02 with v1.1 = v1's rules on the top-500 universe.** The original v1 (top 1,000) becomes a shadow (`v1_top_1000`). **The switch was made AFTER the sanity backtest** (v1 8.55% vs top_500 16.35% CAGR, 2017-03 to 2026-10), **justified by prior evidence: broad momentum lagging large-cap momentum in the live fund records. SPMO is the binding comparison: if v1.1 trails SPMO after 12 months, the human will consider replacing the sleeve with SPMO.** Recorded so the choice can never be read as an unflagged in-sample pick: the top-500 number that motivated it is in-sample on the same data.
+2. Veto request settings approved: 3 searches, the plain search tool, a 300-second timeout.
+3. Before entries go live: golden cases for the squeeze/meme and accounting categories, and a rerun.
+4. The human installs the prep unit after the deploy; entries stay off until the round trip passes and a reviewed commit switches them on.
+5. GLOBAL RULE: the learning loop (journal, pattern mining, hypotheses as shadows, an evidence-gated playbook, process vs outcome, the scoreboard rule, frozen controls, a weekly card) - recorded in CLAUDE.md § Learning Loop. Build after the first live rebalance unless interleaving is warranted.
+
+**v1.1 in code:** `momentum.rules.V1_1` (= V1 with universe 500), `LIVE = V1_1`; the prep decides on `LIVE`. Shadows: `v1_1_no_veto` (measures the veto), `v1_top_1000` (the original v1), the declared top-1,000 variants unchanged; `top_500` retired (it is v1.1 without the veto). **Open, flagged:** the declared variants (inverse_vol, market_filter_only, vol_scaling_only, plain_12_1) are still top-1,000 variants of v1; moving them to top 500, so each varies one thing from the live spec, is a one-line change if the human wants it.
+
+**Golden (8 cases; the replay runs the production client with the approved settings, PYTHONPATH=src from the scratch copy, module path printed):**
+- New: `meme_spike_amc_2021` (as of 2021-10-01, 12-1 +900%) and `accounting_smci_2024` (as of 2024-11-01, 12-1 +75%, EY resigned 2024-10-30). **Historical, by necessity:** no clean current example existed (GRML, APLD, NBIS, KSS, FLWS screened: negative 12-1 or an earnings-driven move). `as_of` pins the prices; the model's searches can see the aftermath, which cannot help it fake the category.
+- Prompt changes this round: the twelve-month search window is tied to the "Data through" date; `squeeze_or_meme_spike` now requires the rise to be STILL built on the squeeze ("a squeeze that has fully reversed is not a reason") - prompted by replay 5 vetoing CAR (12-1 -19%) for the April squeeze, which is not what any momentum in it is built on.
+- Replay 5: 7/8 (CAR vetoed). Replay 6, final prompt: **8/8**, $0.98. **CAR is a boundary case** - it has gone both ways across replays (3: no veto; 5: veto; 6: no veto); watch it if it recurs.
+
 ### 2026-10-13/14 — MOMENTUM: sanity backtest RESULT (v1 trails SPY and SPMO); a data defect found and fixed; session engine, monthly prep and the AI veto BUILT; veto golden 6/6 (after two honest re-specifications); prep dry run end to end
 
 **1. Sanity backtest (informational, not decisive), Alpaca daily data 2016-2026, delisted names included, 0.10%/side costs, 2017-03 to 2026-10-13.** Corrected run (after the data fix in 2), in `~/research-data/momentum-v2/report.txt`:

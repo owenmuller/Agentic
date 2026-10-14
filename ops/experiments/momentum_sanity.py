@@ -97,7 +97,8 @@ def main() -> int:
     log(f"backtest {cal[first]} .. {cal[end]}")
 
     results = {}
-    specs = {"v1 (no AI veto in a backtest)": rules.V1, **{k: v for k, v in rules.SHADOWS.items() if k != "v1_no_veto"}}
+    specs = {"v1.1 (live spec, no AI veto in a backtest)": rules.LIVE, "v1 (top 1,000; a shadow since 2026-10-14)": rules.V1,
+             **{k: v for k, v in rules.SHADOWS.items() if k not in ("v1_1_no_veto", "v1_top_1000")}}
     for name, spec in specs.items():
         t0 = time.time()
         run = engine.run(store, spec, first, end)

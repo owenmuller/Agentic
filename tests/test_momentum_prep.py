@@ -74,8 +74,8 @@ def test_the_plan_is_one_the_session_accepts(world, caps, tmp_path):
     # the same decision the backtest makes on that day
     starts = engine.month_starts(full.calendar)
     t = full.index[day]
-    book = engine.run(full, engine.rules.V1, max(1, t - 1 - 756 - 30), t - 1).book_returns
-    expected = engine.decide(full, t, engine.rules.V1, [], book, starts)
+    book = engine.run(full, engine.rules.LIVE, max(1, t - 1 - 756 - 30), t - 1).book_returns
+    expected = engine.decide(full, t, engine.rules.LIVE, [], book, starts)
     assert {x.symbol for x in plan.targets} == {full.by_key[k].symbol for k in expected.holdings}
     assert any("the AI leg is off" in p for p in result.problems)
 
@@ -159,7 +159,7 @@ def test_every_shadow_is_computed_and_its_state_rolls_forward(world, tmp_path):
     assert all(sum(b["weights"].values()) <= 1 + 1e-9 for b in books.values())
     prep.write(tmp_path, result)
     held, pick = prep.read_shadow_state(tmp_path)
-    assert held["top_500"] == sorted(books["top_500"]["weights"])
+    assert held["v1_top_1000"] == sorted(books["v1_top_1000"]["weights"])
     assert (tmp_path / f"detail-{day[:7]}.json").exists() and plan_path(tmp_path, day[:7]).exists()
 
 
@@ -254,6 +254,7 @@ def test_the_golden_grades_the_veto_alone():
 
     cases = golden.load_cases()
     assert {c["name"] for c in cases} >= {"pending_acquisition_ptc", "resolved_squeeze_avis", "clean_leader_micron",
+                                           "meme_spike_amc_2021", "accounting_smci_2024",
                                            "held_name_is_never_vetoed"}
     veto_case = next(c for c in cases if c["name"] == "pending_acquisition_ptc")
     hit = Review("PTC", True, True, "pending_acquisition", "deal 2026-10-05", 5, "pinned")
@@ -266,7 +267,7 @@ def test_the_golden_grades_the_veto_alone():
     got = golden.facts(closes)
     assert got["return_12_1"] == pytest.approx(closes[-22] / closes[-253] - 1)
     assert got["max_daily_move_3m"] == pytest.approx(0.2 * 1.001 / 1.0 + 0.001, rel=0.05)
-    outcomes = golden.run([veto_case], lambda ctx: hit, lambda s: (closes, "2026-10-12"))
+    outcomes = golden.run([veto_case], lambda ctx: hit, lambda s, as_of=None: (closes, "2026-10-12"))
     assert outcomes[0].passed and "1/1 passed" in golden.summary(outcomes, Decimal("0.11"))
 
 

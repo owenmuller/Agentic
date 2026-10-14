@@ -174,8 +174,9 @@ Standing lessons from pre-registered tests. Each is a rule for every future back
 The MOMENTUM LIVE BUILD runs v1 as a sleeve inside the main book: no data purchase, no new account. It replaces the separate momentum paper account.
 
 - **Size:** 30% of main-book NAV in two steps, from idle cash, nothing sold. Step 1 now: 15% from the judged sleeve (30 → 15). Step 2 after execution-test session 20 (~2026-11-06): +15% from the aggressive sleeve (25 → 10). Step 2 is scheduled as a one-shot server timer that REPORTS; it is applied by a reviewed commit, and the added capital goes in at the next scheduled monthly rebalance (Constraint #6: no extra mid-month trade).
-- **v1 is FROZEN** (`src/momentum/rules.py` `V1`, never edited in place):
-  - Universe: top 1,000 US companies (10-K/10-Q filers) by SEC shares × close, price > $5.
+- **v1.1 GOES LIVE (human ruling 2026-10-14): v1's rules on the top-500 universe** (`momentum.rules.V1_1`, `LIVE`). The switch was made AFTER the sanity backtest, justified by prior evidence (broad momentum lagging large-cap momentum in the live fund records). **SPMO is the binding comparison: if v1.1 trails SPMO after 12 months, replacing the sleeve with SPMO is considered.** The original v1 (top 1,000) is a shadow (`v1_top_1000`).
+- **v1 is FROZEN** (`src/momentum/rules.py` `V1`, never edited in place; v1.1 differs only in the universe size and is frozen the same way):
+  - Universe: top 1,000 US companies (10-K/10-Q filers) by SEC shares × close, price > $5 (v1.1: top 500).
   - Score: 50% residual 12-1 momentum (36-month regression on SPY and the stock's own-universe Fama-French-12 industry) plus 50% earnings momentum (the sum of [-1,+1]-day excess returns around each 8-K 2.02 release in the past 12 months; after-close filings count to the next session).
   - Exclusions gate buys: any single-day move over 15% in the past 63 sessions, a pending acquisition target, or a close below the 100-day average.
   - Portfolio: top 15, equal weight, buy at rank ≤ 15 and sell at rank > 30, sector cap 30%, monthly on the first trading day.
@@ -192,13 +193,13 @@ The MOMENTUM LIVE BUILD runs v1 as a sleeve inside the main book: no data purcha
   - (a) a veto on new entrants: pending acquisition, single binary event, squeeze or meme spike, accounting issue, dilutive offering. The slot goes to the next rank, and every veto is tracked as a shadow.
   - (b) a 6-month news-sentiment score, logged only.
   - (c) a monthly maintenance card to #reports with up to 3 improvement proposals, each a new shadow variant. **The AI never changes v1.**
-- **Shadows** run in software on live prices (`momentum.rules.SHADOWS`, plus the X thread and SPMO). A shadow replaces v1 only by human approval, after at least 6 months ahead of v1 net of modelled costs.
-- **Reporting:** its own attribution bucket (`strategy="momentum"`), partitioned out of every judged accounting path and every alpha line. A weekly line shows v1 vs SPY and SPMO, with the shadow table attached. First look at 6 months, real read at 12.
-- **Going live:** sanity backtest first (informational), then the veto's golden replay and the live order-path round trip. The first live rebalance is the first trading day of the month after the round trip passes.
+- **Shadows** run in software on live prices (`momentum.rules.SHADOWS`: `v1_1_no_veto` measures the veto, `v1_top_1000` is the original v1, plus the declared top-1,000 variants, the X thread and SPMO; `top_500` retired 2026-10-14 as identical to v1.1 without the veto). A shadow replaces the live spec only by human approval, after at least 6 months ahead of it net of modelled costs.
+- **Reporting:** its own attribution bucket (`strategy="momentum"`), partitioned out of every judged accounting path and every alpha line. A weekly line shows the live spec (v1.1) vs SPY and SPMO, with the shadow table attached. First look at 6 months, real read at 12.
+- **Going live:** sanity backtest first (informational), then the veto's golden replay (with squeeze/meme and accounting cases, human ruling 2026-10-14) and the live order-path round trip; entries stay off until a reviewed commit switches them on. The first live rebalance is the first trading day of the month after the round trip passes.
 - **Build state (2026-10-14; SESSION_NOTES 2026-10-13/14):**
-  - Sanity backtest DONE: v1 8.55% CAGR, max DD −36.6%, against SPY 14.80% / −33.8% and SPMO 20.10% / −31.2% (2017-03 to 2026-10); top_500 16.35% / −26.5%. Informational by ruling; whether v1 still goes live is the human's call.
+  - Sanity backtest DONE: v1 8.55% CAGR, max DD −36.6%, against SPY 14.80% / −33.8% and SPMO 20.10% / −31.2% (2017-03 to 2026-10); top_500 16.35% / −26.5%. Informational by ruling; the human chose v1.1 (above) on 2026-10-14.
   - Built: the session engine (`orchestrator/momentum_sleeve.py`, executes `data/momentum/plan-YYYY-MM.json`), the monthly prep (`python -m orchestrator momentum-prep`, unit `agentic-momentum` for the human to install), the AI veto and sentiment (`orchestrator/momentum_veto.py`, golden `config/golden/momentum_veto.yaml` 6/6).
-  - **Reviewer request path (pending human approval):** the production client and pinned model on the class_3 tier, with 3 searches (not 1), the plain search tool `web_search_20250305` and a 300 s timeout with one retry (the lab's 2026-10-10 settings); $8 hard cap per run. Production research config is unchanged.
+  - **Reviewer request path (APPROVED, human ruling 2026-10-14):** the production client and pinned model on the class_3 tier, with 3 searches (not 1), the plain search tool `web_search_20250305` and a 300 s timeout with one retry (the lab's 2026-10-10 settings); $8 hard cap per run. Production research config is unchanged.
   - Market data: runs of 10+ identical closes are blanked as dormant prints (`feeds.drop_flat_runs`) so a reused ticker splits (the LINE defect).
 
 ## Paper Lab — separate paper accounts (PAPER PUSH, human ruling 2026-10-09 late)
@@ -226,6 +227,19 @@ The MOMENTUM LIVE BUILD runs v1 as a sleeve inside the main book: no data purcha
   - The ladder (not intraday) and the execution test (the measurement itself) are not adjusted.
 - **Scheduled one-shot checks run ON THE DROPLET (human ruling 2026-10-10, third)**, never in a laptop session: `ops/vps/schedule_check.sh NAME "YYYY-MM-DD HH:MM" -- COMMAND` creates a transient systemd user timer (ET; lingering is on), which fires on its own clock. `ops/check_runner.py` writes `~/checks/NAME-<stamp>.txt` and emails the result (DAILY tier on pass, URGENT on failure). A check is a non-production process: the data guard confines it to reads and scratch. Origin: on 2026-10-12 two checks scheduled in the laptop session fired late (10:01 and 11:57 ET instead of 09:37 and 10:13).
 - **Live checks of uncommitted code** (golden replays, dry runs, round trips) run either with `PYTHONPATH=src` from the copy or after deploying. They print the imported module path. On the droplet, `python -m` from a scratch copy imports the INSTALLED `~/Agentic/src`; three golden replays on 2026-10-10/12 ran the deployed code instead of the change under test.
+
+## Learning Loop — every strategy learns from its own record (GLOBAL RULE, human ruling 2026-10-14)
+
+Every sleeve and every lab account learns through ONE shared, structured loop, gated by evidence. Build order: after the momentum sleeve's first live rebalance (2026-11-02) unless there is a reason to interleave. Golden replay (and the live round trip) for the journal and hypothesis prompts.
+
+1. **Journal.** When any decision resolves (a trade closed; a decline or veto past its grading horizon) the model writes a structured post-mortem: thesis, expected outcome, actual outcome, **right for the right reason** (process vs luck), and tags from a FIXED vocabulary (sector, setup, catalyst/news type, market regime, confidence band, source). Stored in a journal table. The cheapest model that does it reliably; its cost is reported.
+2. **Pattern mining** (weekly, code, no LLM): outcomes and forward excess tallied by tag and tag pair, with n and confidence intervals. A pattern is flagged only at n ≥ 20 with its CI excluding zero, **corrected for the number of patterns tested**.
+3. **Hypotheses → shadows.** The model reads the flagged patterns and proposes at most 3 hypotheses a week, each written as a concrete rule change and auto-registered as a software shadow variant on live prices. **No hypothesis touches a live decision directly.**
+4. **Playbook.** A lesson enters the playbook only when its shadow beats the live version **on data collected after the lesson was proposed**, at n ≥ 20 resolved cases, **and the human approves**. Each lesson shows its evidence (cases, effect size, date). The playbook is rendered as fenced data into the relevant decision prompts. Lessons are re-checked monthly; one whose effect falls inside the noise band is demoted automatically and the human is notified.
+5. **Process vs outcome.** Grading and the playbook weight "right for the right reason". A winning trade with a wrong thesis is logged as luck and teaches nothing.
+6. **The scoreboard rule holds** (§ Standards below; Constraint #6): lessons come from aggregated decision outcomes, never from recent P&L, account value or distance to any target. Topology test: playbook builders import nothing from P&L, attribution totals or target modules.
+7. **Control.** Each sleeve's frozen baseline keeps running as a shadow, so learning can be measured against standing still.
+8. **Reporting.** A weekly #reports card, "What we learned this week": new patterns flagged, hypotheses opened, shadows ahead or behind, lessons promoted or demoted. Plain English, card format.
 
 ## Standards Move With the Opportunity Set, Never With the Scoreboard (human rulings 2026-10-06)
 

@@ -71,10 +71,10 @@ def grade(case: dict[str, Any], review: Review) -> tuple[bool, str]:
 
 
 def run(cases: list[dict[str, Any]], review: Callable[[dict], Review],
-        closes_of: Callable[[str], tuple[list[float], str]]) -> list[Outcome]:
+        closes_of: Callable[..., tuple[list[float], str]]) -> list[Outcome]:
     outcomes = []
     for case in cases:
-        closes, through = closes_of(case["symbol"])
+        closes, through = closes_of(case["symbol"], case.get("as_of"))
         result = review(context(case, closes, through))
         passed, why = grade(case, result)
         outcomes.append(Outcome(case["name"], passed, result, why))
@@ -94,12 +94,14 @@ def summary(outcomes: list[Outcome], spent: Any) -> str:
     return "\n".join(lines)
 
 
-def alpaca_closes(alpaca) -> Callable[[str], tuple[list[float], str]]:
-    """Adjusted daily closes for the last ~400 days, through yesterday."""
-    end = date.today() - timedelta(days=1)
-    start = end - timedelta(days=400)
+def alpaca_closes(alpaca) -> Callable[..., tuple[list[float], str]]:
+    """Adjusted daily closes for the ~400 days before ``as_of`` (default:
+    today), through the session before it. A historical case (``as_of`` set)
+    sees only the prices it would have seen on that morning."""
 
-    def closes_of(symbol: str) -> tuple[list[float], str]:
+    def closes_of(symbol: str, as_of: Optional[str] = None) -> tuple[list[float], str]:
+        end = (date.fromisoformat(as_of) if as_of else date.today()) - timedelta(days=1)
+        start = end - timedelta(days=400)
         rows = alpaca.bars([symbol], start.isoformat() + "T00:00:00Z", end.isoformat() + "T23:59:00Z", "all")
         series = rows.get(symbol, [])
         return [c for _, c in series], (series[-1][0] if series else end.isoformat())
