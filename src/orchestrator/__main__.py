@@ -1752,6 +1752,37 @@ def momentum_veto_golden() -> int:
     return 0 if all(o.passed for o in outcomes) else 1
 
 
+def momentum_roundtrip() -> int:
+    """One share bought and sold through the momentum engine and gate path in
+    the main paper account (ruling 2026-10-13). Run in session, 10:00-15:30 ET.
+    Entries are switched on IN THIS PROCESS ONLY; the config is untouched.
+
+        python -m orchestrator momentum-roundtrip [--symbol F]"""
+    from orchestrator import momentum_roundtrip as roundtrip
+
+    logging.basicConfig(level=logging.WARNING)
+    print(f"module: {roundtrip.__file__}")
+    args = sys.argv[2:]
+    symbol = args[args.index("--symbol") + 1].upper() if "--symbol" in args else "F"
+    shipped = RiskLimits.load()
+    limits = shipped.model_copy(update={
+        "momentum_sleeve": shipped.momentum_sleeve.model_copy(update={"entries_enabled": True})})
+    checks = preflight(limits=limits)
+    if not checks.paper:
+        print("REFUSED: the round trip runs in paper only", file=sys.stderr)
+        return 2
+    prices = AlpacaPriceSource(
+        feed=checks.orchestrator_config.market_data.feed,
+        max_quote_age_seconds=checks.orchestrator_config.market_data.max_quote_age_seconds,
+    )
+    work = datasafety.scratch_data_dir() / "momentum-roundtrip" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    result = roundtrip.run(checks, prices, symbol, work)
+    for step in result.steps:
+        print(step)
+    print("ROUND TRIP PASSED" if result.passed else "ROUND TRIP FAILED")
+    return 0 if result.passed else 1
+
+
 _NY = ZoneInfo("America/New_York")
 OPERATOR_COMMANDS = frozenset({"halt", "resume"})
 
@@ -1821,6 +1852,8 @@ def main() -> int:
         return resume()
     if command == "stress":
         return stress()
+    if command == "momentum-roundtrip":
+        return momentum_roundtrip()
     if command == "momentum-veto-golden":
         return momentum_veto_golden()
     if command == "momentum-prep":

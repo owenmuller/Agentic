@@ -332,3 +332,38 @@ def test_the_session_runs_the_plan_and_a_restart_wakes_it_up_in_its_own_sleeve(t
     assert all(p.key[0] != "momentum" for p in again.exits.tracked)
     again.loop.tick()
     assert venue.submitted == [] or all(p["symbol"] not in ("AAPL", "MSFT") for p in venue.payloads)
+
+
+# ================================================================================
+# The order-path round trip (run live in the main paper account)
+# ================================================================================
+
+
+def test_the_round_trip_buys_one_share_and_sells_it_with_a_full_trail(tmp_path, limits):
+    from types import SimpleNamespace
+
+    from orchestrator import momentum_roundtrip
+
+    rig = Rig(tmp_path, limits)
+    rig.prices.set("F", "11.20")
+    checks = SimpleNamespace(gate=rig.gate, audit=rig.audit, adapter=rig.broker)
+    result = momentum_roundtrip.run(checks, rig.prices, "F", tmp_path / "rt", clock=rig.clock,
+                                    sleep=lambda s: rig.clock.advance(seconds=s), timeout=30, step=1,
+                                    id_factory=counter("rt"))
+    assert result.passed, result.steps
+    assert [p["symbol"] for p in rig.broker.payloads] == ["F", "F"]
+    assert [p["qty"] for p in rig.broker.payloads] == [D(1), D(1)]
+    assert rig.gate.state.position(("momentum", "F")) is None
+
+
+def test_the_round_trip_refuses_a_gate_with_entries_off(tmp_path, limits):
+    from types import SimpleNamespace
+
+    from orchestrator import momentum_roundtrip
+
+    off = limits.model_copy(update={"momentum_sleeve": limits.momentum_sleeve.model_copy(
+        update={"entries_enabled": False})})
+    rig = Rig(tmp_path, off)
+    result = momentum_roundtrip.run(SimpleNamespace(gate=rig.gate, audit=rig.audit, adapter=rig.broker),
+                                    rig.prices, "AAPL", tmp_path / "rt", clock=rig.clock)
+    assert not result.passed and rig.broker.submitted == []
