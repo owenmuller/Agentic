@@ -4102,6 +4102,13 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-14 (night) — momentum prep unit installed (human); schedule verified; two fixes
+
+- Unit and timer installed by the human at 7780ee1: weekdays 18:30 and 07:30 ET, enabled, Persistent. The next run showed 07:30 Thu because it was installed after 18:30 Wed.
+- `due()` replayed against Alpaca's real calendar for all 32 weekday firings from 2026-10-15 to 2026-11-03: exactly two act - **Fri 2026-10-30 18:30 ET builds the November plan** (rebalance 2026-11-02, data through 10-30); Mon 2026-11-02 07:30 ET is the catch-up (a no-op when the plan exists). Every other firing exits 0 after one read-only calendar call; a live run today changed no file under data/, data-lab/ or the cache.
+- **Fix 1:** the prep built its alerter before loading `.env`, so in production its plan card AND its failure card would have been silently disabled. `.env` now loads first.
+- **Fix 2:** the session engine cached a missing plan for the whole month at its first look (10:00 ET); a late catch-up (the morning build takes ~80 minutes on a fresh cache, ~07:30-08:50) would have been ignored if it finished after 10:00. It now looks every tick until a usable plan loads; a rejected plan is re-read only when the file changes.
+
 ### 2026-10-14 (evening) — RULING: AI-trader gross cap stays on face; leverage watch at 150% / 130%
 
 The 100% gross cap stays on FACE value for the AI-trader account (confirmed). New: an URGENT card when leverage-adjusted gross passes 150% of NAV, once per crossing, re-armed below 130%; no blocking on that figure. Checked every tick after the gate is rebuilt; the armed flag lives in the account's engine state (`leverage_alert_armed`), and each crossing and re-arm is a ledger event. The card (yellow, #urgent) names the four largest leverage-adjusted contributors; its alert key is unique per crossing, so the 4-hour resend window cannot swallow a second crossing. At 138% today it is armed and silent.

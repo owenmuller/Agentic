@@ -367,3 +367,28 @@ def test_the_round_trip_refuses_a_gate_with_entries_off(tmp_path, limits):
     result = momentum_roundtrip.run(SimpleNamespace(gate=rig.gate, audit=rig.audit, adapter=rig.broker),
                                     rig.prices, "AAPL", tmp_path / "rt", clock=rig.clock)
     assert not result.passed and rig.broker.submitted == []
+
+
+def test_a_plan_written_after_ten_is_picked_up_without_a_restart(tmp_path, limits):
+    # 2026-10-14: a late catch-up prep must still trade the same day; the
+    # engine used to cache "missing" for the whole month at its first look.
+    rig = Rig(tmp_path, limits)
+    assert rig.run(3) == 0                      # 10:30, no plan yet: nothing
+    write_plan(rig.plans)
+    assert rig.run(4) >= 1                      # the plan lands: it trades
+    assert rig.held("AAPL") == 7
+
+
+def test_a_rejected_plan_is_re_read_when_the_file_changes(tmp_path, limits, caplog):
+    rig = Rig(tmp_path, limits)
+    path = write_plan(rig.plans, targets=[("AAPL", "0.11", 1)])  # past the 10% cap: rejected
+    with caplog.at_level(logging.ERROR, logger="orchestrator.momentum_sleeve"):
+        rig.run(3)
+    assert sum("plan rejected" in r.message for r in caplog.records) == 1  # once, not every tick
+    assert rig.broker.submitted == []
+    import os
+    import time
+    write_plan(rig.plans)                       # the corrected rerun (--force)
+    os.utime(path, ns=(time.time_ns() + 10**9, time.time_ns() + 10**9))
+    rig.run(4)
+    assert rig.held("AAPL") == 7

@@ -1655,6 +1655,10 @@ def momentum_prep() -> int:
     directory = default_data_dir() / "momentum"
     now = datetime.now(timezone.utc)
     when = now.astimezone(_NY).strftime("%Y-%m-%d %H:%M ET")
+    # .env first: the alerter reads its webhooks from the environment, and a
+    # prep that fails must be able to say so (2026-10-14: built before the
+    # environment, it was silently disabled).
+    load_environment()
     alerter = Alerter() if send_card else None
 
     def fail(what: str, detail: str = "") -> int:

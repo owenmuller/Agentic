@@ -241,6 +241,7 @@ class MomentumSleeve:
         self._state = self._load_state()
         self._plan: Optional[Plan] = None
         self._plan_month: Optional[str] = None
+        self._plan_seen: Optional[int] = None
         #: Names the gate refused today: not resubmitted until tomorrow.
         self._refused: set[str] = set()
         self._refused_day: Optional[date] = None
@@ -645,11 +646,17 @@ class MomentumSleeve:
     # -- the plan and the month ----------------------------------------------------------
 
     def _current_plan(self, month: str, today: date) -> Optional[Plan]:
+        # Looked for on every tick until a usable plan is loaded (2026-10-14:
+        # a plan written after 10:00 ET - a late catch-up - was cached as
+        # missing for the whole month). A rejected file is re-read only when
+        # it changes, so a corrected rerun is picked up without a restart.
+        path = plan_path(self._plan_dir, month)
         if self._plan_month != month:
-            self._plan_month = month
-            self._plan = None
-            path = plan_path(self._plan_dir, month)
-            if path.exists():
+            self._plan_month, self._plan, self._plan_seen = month, None, None
+        if self._plan is None and path.exists():
+            stamp = path.stat().st_mtime_ns
+            if stamp != self._plan_seen:
+                self._plan_seen = stamp
                 try:
                     self._plan = load_plan(path, self._limits)
                 except PlanError as error:
