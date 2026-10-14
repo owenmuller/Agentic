@@ -17,6 +17,9 @@ from pathlib import Path
 import httpx
 from dotenv import dotenv_values
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+import datasafety  # noqa: E402,F401 - the data guard: this script reads only
+
 path = Path.home() / "Agentic" / ".env"
 env = dotenv_values(path)
 now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")

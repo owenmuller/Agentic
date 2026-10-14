@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from execution.cards import COLORS, LOOK, Card
+from execution.logredact import redact
 
 logger = logging.getLogger("execution.alerts")
 
@@ -78,6 +79,8 @@ class _Outbound:
     #: A plain-English card (ruling 2026-10-12): Discord renders it as an
     #: embed, the text transports as its text. None = a legacy text alert.
     card: Optional[Card] = None
+    #: The caller's dedupe key (e.g. "weekly-2026-10-16"): the ledger's type.
+    key: str = ""
 
 
 class Alerter:
@@ -92,6 +95,7 @@ class Alerter:
         max_queued: int = 50,
         http_post: Optional[Callable[..., Any]] = None,
         status_path: Optional[Path] = None,
+        ledger_path: Optional[Path] = None,
     ) -> None:
         self._user = (os.environ.get("ALERT_SMTP_USER") or "").strip()
         self._password = (os.environ.get("ALERT_SMTP_PASSWORD") or "").strip()
@@ -120,6 +124,18 @@ class Alerter:
         #: Delivery status file the health check reads (ruling 2026-09-28:
         #: 28 silent failures in three weeks reached neither run.log nor health).
         self._status_path = status_path
+        #: Alert ledger (human ruling 2026-10-14, audit item 4): one JSON line
+        #: per card ATTEMPT - delivered, failed or refused - beside the status
+        #: file; a process with no status file writes the scratch ledger. Not
+        #: written when a test injects its transport.
+        if ledger_path is None and sender is None and http_post is None:
+            if status_path is not None:
+                ledger_path = status_path.parent / "alerts_ledger.jsonl"
+            else:
+                import datasafety
+
+                ledger_path = datasafety.scratch_data_dir() / "alerts_ledger.jsonl"
+        self._ledger_path = ledger_path
         self._last_sent: dict[tuple[str, str], datetime] = {}
         self._queue: queue.Queue[Optional[_Outbound]] = queue.Queue(maxsize=max_queued)
         self._worker: Optional[threading.Thread] = None
@@ -185,25 +201,29 @@ class Alerter:
                attachment: Optional[tuple[str, str]] = None, card: Optional[Card] = None) -> bool:
         """Queue one alert. Returns whether it was queued (False = disabled,
         rate-limited, or the queue is full). Never blocks, never raises."""
-        if not self.enabled:
-            return False
-        now = self._clock()
-        identity = (tier, key)
-        last = self._last_sent.get(identity)
-        if last is not None and now - last < self._window:
-            return False
-        self._last_sent[identity] = now
         message = _Outbound(
             subject=f"{_PREFIX[tier]} {subject}",
             body=body or subject,
             tier=tier,
             attachment=attachment,
             card=card,
+            key=key,
         )
+        if not self.enabled:
+            self._ledger(message, False, "none", "alerting not configured")
+            return False
+        now = self._clock()
+        identity = (tier, key)
+        last = self._last_sent.get(identity)
+        if last is not None and now - last < self._window:
+            self._ledger(message, False, "none", "rate-limited: the same card was sent less than the resend window ago")
+            return False
+        self._last_sent[identity] = now
         try:
             self._queue.put_nowait(message)
         except queue.Full:
             logger.error("alert queue full; dropping %r", message.subject)
+            self._ledger(message, False, "none", "queue full; dropped")
             return False
         self._ensure_worker()
         return True
@@ -217,6 +237,7 @@ class Alerter:
         try:
             self._send(
                 _Outbound(
+                    key="test-message",
                     tier=tier,
                     subject=f"{_PREFIX[tier]} test message",
                     body=(
@@ -271,12 +292,14 @@ class Alerter:
                 else:
                     self._send_smtp(message)
             except Exception as error:  # noqa: BLE001 - try the next transport
-                errors.append(f"{transport}: {type(error).__name__}: {str(error)[:120]}")
+                errors.append(redact(f"{transport}: {type(error).__name__}: {str(error)[:120]}"))
                 continue
             self._record(True, transport, "")
+            self._ledger(message, True, transport, "")
             return
         detail = "; ".join(errors) or "no transport configured"
         self._record(False, "none", detail)
+        self._ledger(message, False, "none", detail)
         raise RuntimeError(detail)
 
     def _send_discord(self, message: _Outbound) -> None:
@@ -383,6 +406,30 @@ class Alerter:
         with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20) as smtp:
             smtp.login(self._user, self._password)
             smtp.send_message(email)
+
+    def _ledger(self, message: _Outbound, delivered: bool, transport: str, reason: str) -> None:
+        """Append one attempt to the alert ledger (best-effort, never raises)."""
+        if self._ledger_path is None:
+            return
+        channel = {URGENT: "#urgent", DAILY: "#reports"}.get(message.tier, message.tier)
+        if delivered and transport != "discord":
+            channel = f"{transport} (fallback for {channel})"
+        entry = {
+            "at": self._clock().isoformat(timespec="seconds"),
+            "channel": channel,
+            "tier": message.tier,
+            "type": message.key or "legacy-text",
+            "title": message.card.title if message.card is not None else message.subject,
+            "delivered": delivered,
+            "transport": transport,
+            "reason": redact(reason)[:300],
+        }
+        try:
+            self._ledger_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._ledger_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(entry) + "\n")
+        except Exception as error:  # noqa: BLE001
+            logger.warning("could not write the alert ledger: %s", error)
 
     def _record(self, ok: bool, transport: str, detail: str) -> None:
         """Persist the last delivery outcome (best-effort, never raises)."""

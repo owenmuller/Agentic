@@ -552,3 +552,75 @@ def test_the_explicit_gross_cap_refuses_an_entry_past_it(lab_env):
     assert "AAPL" not in world.held or not world.held["AAPL"]
     rejected = trader.account.ledger.events(["idea_rejected"])
     assert rejected and "gross cap" in rejected[-1]["reason"]
+
+
+# ------------------------------------------------- leverage, measured (2026-10-14)
+
+def test_leverage_factors_come_from_the_table_then_the_fund_name():
+    from lab import leverage
+
+    assert leverage.from_name("Direxion Daily Semiconductor Bear 3X Shares") == D("-3")
+    assert leverage.from_name("ProShares UltraPro QQQ") == D("3")
+    assert leverage.from_name("ProShares UltraShort S&P500") == D("-2")
+    assert leverage.from_name("ProShares Short S&P500") == D("-1")
+    assert leverage.from_name("SPDR S&P 500 ETF Trust") is None
+    assert leverage.from_name("iShares 7-10 Year Treasury Bond ETF") is None
+    table = {"SOXS": D("-3")}
+    assert leverage.factor("SOXS", "etf", table) == D("-3")
+    assert leverage.factor("SOXS", "call", table) == D("1")  # an option counts its premium
+    assert leverage.factor("XYZ", "etf", table, "Some Bull 2X Shares") == D("2")
+    assert leverage.tag(D("-3")) == leverage.LEVERAGED and leverage.tag(D("-1")) == leverage.INVERSE
+    assert leverage.tag(D("1")) is None
+    assert CFG.leverage_factors["SOXS"] == D("-3") and CFG.gross_basis == "face"
+
+
+SOXS_LONG = {**AAPL_LONG, "symbol": "SOXS", "instrument": "etf"}
+
+
+def _soxs_world():
+    world = World()
+    world.quotes["SOXS"] = (D("40.00"), D("40.02"))
+    return world
+
+
+def test_a_leveraged_etf_entry_is_tagged_and_counted_at_its_leverage(lab_env):
+    world = _soxs_world()
+    trader = trader_for(world, lab_env, FakeLLM([SOXS_LONG]))
+    trader.tick(et(12, "09:46"))
+    plan = trader.account.ledger.events(["position_opened"])[-1]
+    assert plan["leverage"] == "-3" and plan["tag"] == "leveraged_etf"
+    face, adjusted = trader.gross()
+    assert face > 0 and adjusted == face * 3
+    assert abs(D(plan["gross_after_leverage_adjusted"]) - D(plan["gross_after_face"]) * 3) < D("0.0005")
+
+
+def test_the_gross_cap_enforces_on_the_configured_basis(lab_env):
+    # face: an 18.75%-of-NAV SOXS entry passes a 30% cap; leverage-adjusted
+    # (x3 = 56%) does not. Face is shipped until the human rules.
+    face_world = _soxs_world()
+    trader = trader_for(face_world, lab_env, FakeLLM([SOXS_LONG]))
+    trader.config = CFG.model_copy(update={"max_gross_fraction": D("0.30")})
+    trader.tick(et(12, "09:46"))
+    assert face_world.held.get("SOXS")
+    adjusted_world = _soxs_world()
+    trader = trader_for(adjusted_world, lab_env / "b", FakeLLM([SOXS_LONG]))
+    trader.config = CFG.model_copy(update={"max_gross_fraction": D("0.30"), "gross_basis": "leverage_adjusted"})
+    trader.tick(et(12, "09:46"))
+    assert not adjusted_world.held.get("SOXS")
+    reason = trader.account.ledger.events(["idea_rejected"])[-1]["reason"]
+    assert "gross cap (leverage_adjusted)" in reason and "face" in reason
+
+
+def test_the_scoreboard_shows_leveraged_trades_apart():
+    from lab import scoreboard
+
+    events = [
+        {"event": "position_opened", "pid": "a", "symbol": "SOXS", "instrument": "etf", "at": "2026-10-13T14:00:00+00:00"},
+        {"event": "position_opened", "pid": "b", "symbol": "GS", "instrument": "stock", "at": "2026-10-13T14:00:00+00:00"},
+    ]
+    for pid, buy, sell in (("a", "40", "42"), ("b", "900", "890")):
+        events += [{"event": "settled", "pid": pid, "side": "buy", "filled_qty": "10", "avg_price": buy},
+                   {"event": "settled", "pid": pid, "side": "sell", "filled_qty": "10", "avg_price": sell, "reason": "stop"},
+                   {"event": "position_closed", "pid": pid}]
+    trades = scoreboard.lab_trades(events, {}, {"SOXS": D("-3")})  # opened before tagging: the table tags it
+    assert {t.symbol: t.tag for t in trades} == {"SOXS": "leveraged_etf", "GS": None}

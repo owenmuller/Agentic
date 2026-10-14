@@ -60,6 +60,7 @@ from execution import BrokerError
 from execution.base import OrderStatus
 from lab.account import LabAccount
 from lab.ai_prompts import HORIZONS, INSTRUMENTS, TOOL, HeldView, build_user, system_prompt
+from lab import leverage
 from lab.config import AiTraderConfig
 from risk_gate.gate import ApprovedOrder, RiskGate
 from risk_gate.schema import (
@@ -205,6 +206,35 @@ class AiTrader:
 
     def positions(self) -> dict[str, Position]:
         return replay_positions(self.account.ledger.events())
+
+    def leverage_factor(self, symbol: str, instrument: str) -> Decimal:
+        """The signed leverage of a stock/ETF entry: the configured table,
+        else the fund's name at the broker, else 1. Options: 1 (premium)."""
+        if instrument not in ("stock", "etf"):
+            return leverage.ONE
+        table = self.config.leverage_factors
+        name = None
+        lookup = getattr(self.account.adapter, "asset_name", None)
+        if symbol.upper() not in table and lookup is not None:
+            name = lookup(symbol)
+        return leverage.factor(symbol, "etf", table, name)
+
+    def gross(self) -> tuple[Decimal, Decimal]:
+        """(face, leverage-adjusted) gross exposure from the gate: each
+        position's exposure, and that times |its leverage factor| (as recorded
+        on its plan; for one opened before the factor was recorded, the
+        configured table)."""
+        recorded: dict[str, Decimal] = {}
+        for event in self.account.ledger.events(["position_opened"]):
+            if event.get("leverage"):
+                recorded[event.get("occ") or event["symbol"]] = Decimal(str(event["leverage"]))
+        face = adjusted = ZERO
+        for position in self.gate.state.positions.values():
+            symbol = position.key[1]
+            factor = recorded.get(symbol) or leverage.factor(symbol, "etf", self.config.leverage_factors)
+            face += position.exposure
+            adjusted += position.exposure * abs(factor)
+        return face, adjusted
 
     def spent_today(self, day: date) -> Decimal:
         return sum(
@@ -543,6 +573,11 @@ class AiTrader:
                     thesis=str(idea.get("thesis", ""))[:1000], source=str(idea.get("source", ""))[:1000],
                     catalyst=str(idea.get("catalyst", ""))[:500], invalidation=str(idea.get("invalidation", ""))[:500],
                     confidence=int(idea["confidence"]), scan=label, risk_budget=budget, nav=nav)
+        # Leverage is allowed and MEASURED (ruling 2026-10-14, second): the
+        # factor and its tag ride on the plan, so the gross figures, the
+        # scoreboard and the journal can tell a 3x fund from a stock pick.
+        factor = self.leverage_factor(symbol, instrument)
+        plan.update(leverage=str(factor), tag=leverage.tag(factor))
         # The levels come from the LIVE quote at order time (ruling 2026-10-10),
         # never from a price the model cited.
         quote = self._quotes(symbol)
@@ -602,16 +637,25 @@ class AiTrader:
                             horizon=plan["horizon"], stop=Decimal(plan["stop"]), target=Decimal(plan["target"]),
                             thesis=plan["thesis"], opened_at="", occ=plan.get("occ"))
         # Explicit gross cap (human ruling 2026-10-14, audit item 4): what is
-        # open (with working reservations) plus this order, against NAV.
+        # open (with working reservations) plus this order, against NAV - on
+        # the configured basis (face until the human rules; ruling 2026-10-14,
+        # second, item 2). Both figures are measured and ride on the plan.
         if hasattr(order, "contracts"):
             cost = Decimal(order.contracts) * limit * Decimal(order.multiplier)
         else:
             cost = order.quantity * limit
-        gross = sum((p.exposure for p in self.gate.state.positions.values()), ZERO)
-        ceiling = self.gate.state.nav * self.config.max_gross_fraction
-        if gross + cost > ceiling:
-            self._reject(plan, f"gross cap: {gross:.2f} open + {cost:.2f} would pass "
-                               f"{self.config.max_gross_fraction:.0%} of NAV ({ceiling:.2f})")
+        face, adjusted = self.gross()
+        factor = abs(Decimal(str(plan.get("leverage", "1"))))
+        after_face, after_adjusted = face + cost, adjusted + cost * factor
+        nav = self.gate.state.nav
+        plan.update(gross_after_face=str(round(after_face / nav, 4)) if nav > 0 else None,
+                    gross_after_leverage_adjusted=str(round(after_adjusted / nav, 4)) if nav > 0 else None)
+        ceiling = nav * self.config.max_gross_fraction
+        basis = after_adjusted if self.config.gross_basis == "leverage_adjusted" else after_face
+        if basis > ceiling:
+            self._reject(plan, f"gross cap ({self.config.gross_basis}): {basis:.2f} after this order would pass "
+                               f"{self.config.max_gross_fraction:.0%} of NAV ({ceiling:.2f}); face {after_face:.2f}, "
+                               f"leverage-adjusted {after_adjusted:.2f}")
             return None
         decision = self.gate.submit(order)
         if not decision.is_approved:

@@ -37,6 +37,8 @@ from pathlib import Path
 from typing import Iterable, Optional
 from zoneinfo import ZoneInfo
 
+from lab import leverage
+
 NY = ZoneInfo("America/New_York")
 MIN_FILLS = 10
 GRADE_AT, VERDICT_AT = 20, 60
@@ -142,9 +144,12 @@ class Trade:
     symbol: str
     pnl: float
     cost: Optional[float]  # slippage charge at the measured rates; None = pending
+    #: leveraged_etf / inverse_etf / None (ruling 2026-10-14, second, item 2)
+    tag: Optional[str] = None
 
 
-def lab_trades(events: list[dict], table: dict[str, tuple[int, Optional[float]]]) -> list[Trade]:
+def lab_trades(events: list[dict], table: dict[str, tuple[int, Optional[float]]],
+               leverage_table: Optional[dict] = None) -> list[Trade]:
     """Closed round trips from a lab ledger (settled fills grouped by pid),
     with each fill charged the measured slippage of its kind."""
     plans = {e["pid"]: e for e in events if e.get("event") == "position_opened"}
@@ -168,7 +173,11 @@ def lab_trades(events: list[dict], table: dict[str, tuple[int, Optional[float]]]
                 pending = True
             else:
                 cost += notional * rate
-        trades.append(Trade(pid, plans[pid]["symbol"], pnl, None if pending else cost))
+        plan = plans[pid]
+        tag = plan.get("tag") if "tag" in plan else leverage.tag(
+            leverage.factor(plan["symbol"], "etf", leverage_table or {}) if plan.get("instrument") in ("stock", "etf")
+            else leverage.ONE)
+        trades.append(Trade(pid, plan["symbol"], pnl, None if pending else cost, tag))
     return trades
 
 
@@ -206,6 +215,7 @@ def build(
     main_equity: dict[date, float],
     rung_labels: dict[str, str],
     stop_floor: Optional[float] = None,
+    leverage_table: Optional[dict] = None,
 ) -> Board:
     table = slippage_table(exec_lines)
     ladder = daily_last(ladder_events, "equity")
@@ -222,7 +232,7 @@ def build(
     ai = daily_last(ai_events, "equity")
     row = Row("AI TRADER")
     _versus(row, ai, spy, ladder)
-    trades = lab_trades(ai_events, table)
+    trades = lab_trades(ai_events, table, leverage_table)
     _trade_stats(row, trades)
     if row.ret is not None:
         if any(t.cost is None for t in trades):
@@ -231,6 +241,14 @@ def build(
             first = list(ai.values())[0]
             row.ret_adj = row.ret - sum(t.cost or 0.0 for t in trades) / first
     rows.append(row)
+    # Leveraged and inverse ETFs apart from the other picks (ruling 2026-10-14,
+    # second, item 2): closed-trade statistics only; the account has one equity line.
+    for label, subset in (("  AI trader: leveraged / inverse ETFs", [t for t in trades if t.tag]),
+                          ("  AI trader: stocks, plain ETFs, options", [t for t in trades if not t.tag])):
+        sub = Row(label)
+        _trade_stats(sub, subset)
+        sub.note = "closed-trade statistics only" + (f"; net ${sum(t.pnl for t in subset):+,.0f}" if subset else "")
+        rows.append(sub)
 
     row = Row("B EXECUTION TEST (not a strategy)")
     if exec_lines:

@@ -108,6 +108,19 @@ class AlpacaAdapter(BrokerAdapter):
             and bool(asset.get("fractionable"))
         )
 
+    def asset_name(self, symbol: str) -> Optional[str]:
+        """The asset's name at the broker ("Direxion Daily ... Bear 3X
+        Shares"), or None on any error. Read-only; used to measure an ETF's
+        leverage (ruling 2026-10-14)."""
+        try:
+            response = self._client.get(f"/v2/assets/{symbol}")
+            if response.status_code != 200:
+                return None
+            name = response.json().get("name")
+        except Exception:  # noqa: BLE001 - a missing name means "unknown", never an error
+            return None
+        return str(name) if name else None
+
     def __init__(
         self,
         client: Optional[httpx.Client] = None,

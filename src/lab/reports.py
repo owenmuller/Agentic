@@ -89,8 +89,16 @@ def ai_day_report(events: list[dict], snapshot: dict, open_positions: list[Any],
     equity = float(snapshot.get("equity") or 0)
     prior = float(snapshot.get("last_equity") or 0)
     holding = [f"{p.symbol} {p.instrument}" for p in open_positions]
+    # Leverage is measured (ruling 2026-10-14, second, item 2).
+    snaps = [e for e in events if e.get("event") == "snapshot" and e.get("gross_face") is not None]
+    gross_line = (f"Gross exposure (latest): face {float(snaps[-1]['gross_face']):.0%} of equity, "
+                  f"leverage-adjusted {float(snaps[-1]['gross_leverage_adjusted']):.0%}"
+                  if snaps else "Gross exposure: not measured yet")
+    levered = [p for p in opened if p.get("tag")]
+    levered_line = f"Leveraged or inverse ETF entries today: {len(levered)}" + (
+        " (" + ", ".join(f"{p['symbol']} {p.get('leverage')}x" for p in levered) + ")" if levered else "")
     detail = "\n".join(
-        [f"Account value: ${equity:,.2f} (previous close ${prior:,.2f})", "",
+        [f"Account value: ${equity:,.2f} (previous close ${prior:,.2f})", gross_line, levered_line, "",
          "Positions closed today (symbol, why, result):"]
         + [f"  {s}: {r.replace('_', ' ')}, ${pnl:,.2f}" for s, r, pnl in results] + ([] if results else ["  none"])
         + ["", "Positions opened today:"]

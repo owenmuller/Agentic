@@ -12,6 +12,10 @@ passed the risk gate cannot be submitted.
 """
 import datasafety  # noqa: F401,E402 - production-data write guard, installed on import (ruling 2026-10-09)
 
+from execution import logredact as _logredact  # noqa: E402
+
+_logredact.install()  # secrets never reach a log line (ruling 2026-10-14)
+
 from execution.alpaca import LIVE_BASE_URL, PAPER_BASE_URL, AlpacaAdapter
 from execution.market_data import (
     DATA_BASE_URL,

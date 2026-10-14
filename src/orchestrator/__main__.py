@@ -1826,6 +1826,41 @@ def momentum_step2_report() -> int:
     return 0 if result.ready else 1
 
 
+def alerts_ledger() -> int:
+    """Every card attempt from every process (ruling 2026-10-14, audit item
+    4): the main book, each lab account and the scratch ledger (checks and
+    one-off scripts), merged by time. Read-only.
+
+        python -m orchestrator alerts [--days N]"""
+    args = sys.argv[2:]
+    days = int(args[args.index("--days") + 1]) if "--days" in args else 3
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+    production = datasafety.production_data_dir()
+    paths = [datasafety.scratch_data_dir() / "alerts_ledger.jsonl"]
+    if production is not None:
+        paths.append(production / "alerts_ledger.jsonl")
+        paths += sorted((production.parent / "data-lab").glob("*/alerts_ledger.jsonl"))
+    rows = []
+    for path in paths:
+        if not path.exists():
+            continue
+        source = path.parent.name if path.parent.parent.name == "data-lab" else (
+            "main" if production is not None and path.parent == production else "scratch")
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if row.get("at", "") >= since:
+                rows.append((row["at"], source, row))
+    for at, source, row in sorted(rows, key=lambda r: r[0]):
+        status = "delivered" if row.get("delivered") else f"FAILED: {row.get('reason', '')}"
+        print(f"{at}  {source:10s} {row.get('channel', ''):28s} {row.get('type', ''):32s} {status}  | {row.get('title', '')[:90]}")
+    if not rows:
+        print(f"no card attempts recorded in the last {days} days (the ledger starts 2026-10-14)")
+    return 0
+
+
 _NY = ZoneInfo("America/New_York")
 OPERATOR_COMMANDS = frozenset({"halt", "resume"})
 
@@ -1895,6 +1930,8 @@ def main() -> int:
         return resume()
     if command == "stress":
         return stress()
+    if command == "alerts":
+        return alerts_ledger()
     if command == "momentum-step2-report":
         return momentum_step2_report()
     if command == "momentum-roundtrip":

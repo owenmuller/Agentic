@@ -164,6 +164,9 @@ def status(names: list[str]) -> int:
         if snapshots:
             last = snapshots[-1]
             print(f"  last snapshot {last['at']}: equity {last.get('equity')}, rungs {json.dumps(last.get('rungs'))}")
+            if last.get("gross_face") is not None:
+                print(f"  gross exposure: face {float(last['gross_face']):.0%} of equity, leverage-adjusted "
+                      f"{float(last['gross_leverage_adjusted']):.0%} (the cap enforces on {config.ai_trader.gross_basis if config.ai_trader else 'face'})")
         if faults:
             print(f"  faults: {len(faults)}, last: {faults[-1]['at']} {faults[-1]['message']}")
     return 0
@@ -310,12 +313,20 @@ def _ai_snapshot(account: LabAccount, trader) -> None:
 
     snap = account.adapter.account_snapshot()
     today = datetime.now(timezone.utc).astimezone(NY).date()
+    # Gross exposure, face and leverage-adjusted, as fractions of equity
+    # (ruling 2026-10-14, second, item 2); None before the first tick's gate.
+    gross_face = gross_adjusted = None
+    equity = float(snap.get("equity") or 0)
+    if trader.gate is not None and equity > 0:
+        face, adjusted = trader.gross()
+        gross_face, gross_adjusted = round(float(face) / equity, 4), round(float(adjusted) / equity, 4)
     account.ledger.append(
         "snapshot", equity=snap.get("equity"), cash=snap.get("cash"),
         positions=[{"symbol": p.trade_symbol, "instrument": p.instrument, "quantity": p.quantity}
                    for p in trader.positions().values()],
         spend_today=trader.spent_today(today), high_water_mark=account.state.high_water_mark,
         kill_switch=account.state.kill_switch_tripped,
+        gross_face=gross_face, gross_leverage_adjusted=gross_adjusted,
     )
 
 
@@ -455,6 +466,7 @@ def scoreboard(email: bool) -> int:
         main_equity=dict(sorted(main_equity.items())),
         rung_labels={rung.name: rung.label for rung in config.ladder.rungs},
         stop_floor=float(config.ai_trader.min_stop_fraction) if config.ai_trader else None,
+        leverage_table=dict(config.ai_trader.leverage_factors) if config.ai_trader else None,
     )
     text = board_mod.render(board, today)
     print(text)

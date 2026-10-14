@@ -139,6 +139,51 @@ ai_trader:
   # a new order may not pass 100% of NAV. Per position the gate already binds
   # tighter than 25%: stocks 18.75% of NAV, option premium 2.5%.
   max_gross_fraction: 1.00
+  # Leverage is ALLOWED here and MEASURED (human ruling 2026-10-14, second,
+  # item 2): gross counts notional x |factor|; leveraged-ETF trades are tagged.
+  # The cap enforces on gross_basis - "face" until the human decides (today's
+  # leverage-adjusted gross already exceeds 100%: SOXS and SQQQ at 3x each).
+  gross_basis: face
+  # Signed factors; a fund not listed is read from its name at the broker.
+  leverage_factors:
+    SOXS: -3
+    SOXL: 3
+    SQQQ: -3
+    TQQQ: 3
+    SPXU: -3
+    SPXS: -3
+    SPXL: 3
+    UPRO: 3
+    SDS: -2
+    SSO: 2
+    QID: -2
+    QLD: 2
+    SH: -1
+    PSQ: -1
+    TZA: -3
+    TNA: 3
+    LABD: -3
+    LABU: 3
+    FAZ: -3
+    FAS: 3
+    TECS: -3
+    TECL: 3
+    TMV: -3
+    TMF: 3
+    YANG: -3
+    YINN: 3
+    DUST: -2
+    NUGT: 2
+    ERY: -2
+    ERX: 2
+    DRIP: -2
+    GUSH: 2
+    SCO: -2
+    UCO: 2
+    KOLD: -2
+    BOIL: 2
+    UVXY: 1.5
+    SVXY: -0.5
   min_confidence: 50           # my reading (Constraint #6): no token positions on weak ideas
   min_reward_risk: 1.0         # target distance >= stop distance; my reading, flagged
   # Human ruling 2026-10-10 (second): 1% (was 0.3%) UNTIL the execution test

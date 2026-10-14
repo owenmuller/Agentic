@@ -4,7 +4,7 @@ from __future__ import annotations
 import copy
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -121,6 +121,13 @@ class AiTraderConfig(_Strict):
     #: position the gate's caps already bind tighter than 25%: stocks
     #: 18.75% of NAV (aggressive 0.25 x 0.75), option premium 2.5%.
     max_gross_fraction: Decimal = Field(default=Decimal("1.00"), gt=ZERO, le=ONE)
+    #: Which gross the cap enforces (human ruling 2026-10-14, second, item 2):
+    #: "face" (notional) until the human decides; "leverage_adjusted" counts
+    #: notional x |leverage factor|. Both are always measured and reported.
+    gross_basis: Literal["face", "leverage_adjusted"] = "face"
+    #: Signed leverage factors by symbol (SOXS -3, SSO 2, ...). A fund not
+    #: listed is read from its name at the broker; anything else is 1.
+    leverage_factors: dict[str, Decimal] = Field(default_factory=dict)
     min_confidence: int = Field(ge=0, le=100)
     min_reward_risk: Decimal = Field(ge=ZERO)
     min_stop_fraction: Decimal = Field(gt=ZERO, lt=ONE)

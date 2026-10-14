@@ -4102,6 +4102,14 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-14 (late) — RULINGS on the audit: log redaction; leverage measured, not blocked; main account 1x / no shorting; alert ledger; Spaces prerequisites
+
+1. **Webhook logging fix (approved):** `execution/logredact.py` redacts every log record at the record factory - Discord webhook tokens, ntfy topics, token-like query values - installed when the `execution` package loads; alert failure details are redacted before the status file. Old journal lines keep the old token until it is rotated (human: not urgent).
+2. **AI trader leverage: ALLOWED, MEASURED.** Each entry records its signed factor and a tag; gross is reported at face and leverage-adjusted (snapshots, `lab status`, end-of-day card); the scoreboard splits leveraged/inverse-ETF trades from the rest (trades opened before tagging take the table's factor). **Today's gross: face 59%, leverage-adjusted 138% of equity** (SOXS and SQQQ at 3x). The 100% cap therefore keeps enforcing on FACE (`gross_basis: face`) - the human decides whether it should be leverage-adjusted for this account. No position was touched.
+3. **Main account:** max_margin_multiplier 1 and no_shorting true via the API; read back confirmed (account multiplier 1, shorting_enabled false).
+4. **Alert ledger:** every card attempt - delivered, failed with reason, refused (not configured, rate-limited, queue full) - is a JSON line beside each process's status file; `python -m orchestrator alerts [--days N]`. **The failed Oct 12 urgent card** (11:31 ET): the legacy text alert "ERROR: Class2CongressionalScanner failed to poll: QuiverError: Quiver congress feed returned HTTP 500"; SMTP was the only configured transport then (Discord and ntfy came later that day) and the droplet blocks outbound SMTP.
+5. **Before Saturday:** a Spaces subscription ($5/month, 250 GiB included; the backups need ~1 GB), one bucket in NYC3 and one Spaces access key (shown once); generate the backup passphrase on the day. A pre-reboot snapshot is ~$0.06/GB/month (~7 GB used: ~$0.40/month while kept).
+
 ### 2026-10-14 (afternoon) — FULL SYSTEM AUDIT (human request): 7 of 13 pass; two changes made as instructed (AI-trader gross cap; lab broker 1x / no shorting)
 
 ```
