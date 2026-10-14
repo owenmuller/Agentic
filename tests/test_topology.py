@@ -158,6 +158,16 @@ TOPOLOGY: dict[str, Rules] = {
     # main book's research CLIENT and its config - the live-validated request
     # path, reused rather than duplicated (CLAUDE.md § LLM Request-Path
     # Changes) - and nothing else of research: no prompts, no passes, no signals.
+    # THE MOMENTUM BOOK (human rulings 2026-10-13): one rules package for the
+    # sanity backtest, the main book's momentum sleeve and the shadows. Its
+    # rules and engine are pure; its feeds read Alpaca bars and SEC filings,
+    # so it may reach the network - but it imports nothing of the trading
+    # machinery: it proposes target weights, the orchestrator and the gate act.
+    "momentum": Rules(
+        may_import=frozenset({"execution.environment", "execution.market_data"}),
+        may_reach_network=True,
+        because="pure momentum rules plus read-only data feeds; never the gate, the broker or the audit log",
+    ),
     "lab": Rules(
         may_import=frozenset({"execution", "risk_gate", "research.client", "research.config"}),
         # lab.llm builds the SDK client with the lab's own timeout (2026-10-10)
