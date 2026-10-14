@@ -134,3 +134,22 @@ def test_vol_scaling_never_levers():
 def test_zscores_clip_and_neutralize_missing():
     z = rules.zscores({"a": 1.0, "b": 2.0, "c": 3.0, "d": None, "e": 100.0})
     assert z["d"] == 0.0 and max(z.values()) <= 3.0 and math.isfinite(z["a"])
+
+
+def test_each_declared_shadow_is_one_rule_away_from_the_live_spec():
+    # Human ruling 2026-10-14 (second): the declared variants sit on v1.1's
+    # top-500 universe, so each differs from it in exactly one rule; the
+    # original v1 (top 1,000) is the universe comparison.
+    from dataclasses import fields
+
+    base = replace(rules.LIVE, ai_veto=False)
+
+    def differences(spec):
+        return {f.name for f in fields(spec) if f.name != "name" and getattr(spec, f.name) != getattr(base, f.name)}
+
+    assert differences(rules.SHADOWS["v1_1_no_veto"]) == set()
+    assert differences(rules.SHADOWS["v1_top_1000"]) == {"universe"}
+    assert differences(rules.SHADOWS["inverse_vol"]) == {"weighting"}
+    assert differences(rules.SHADOWS["market_filter_only"]) == {"vol_scaling"}
+    assert differences(rules.SHADOWS["vol_scaling_only"]) == {"market_filter"}
+    assert differences(rules.SHADOWS["plain_12_1"]) == {"score"}

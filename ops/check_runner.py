@@ -2,7 +2,7 @@
 
 Scheduled checks used to live in the laptop's Claude session and fired only
 while it was open and idle (two fired late on 2026-10-12). They now run as
-transient systemd USER timers on the droplet (``ops/vps/schedule_check.sh``),
+installed, persistent systemd USER timers on the droplet (``ops/vps/schedule_check.sh``),
 which fire on their own clock regardless of any laptop.
 
   python ops/check_runner.py NAME -- COMMAND [ARGS...]

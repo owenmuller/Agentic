@@ -31,9 +31,13 @@ cases:
     # not a veto. RE-SPECIFIED 2026-10-13 after the first replay: the case was
     # first written expecting a one-off spike veto, which was wrong on the facts (CAR
     # is not a momentum entrant at all); the replay found the squeeze and
-    # declined to veto, correctly. The squeeze_or_meme_spike, binary_event,
-    # accounting_issue and dilutive_offering categories have NO live case yet;
-    # each is added by a dated edit when a real, current example exists.
+    # declined to veto, correctly. (Coverage since 2026-10-14: squeeze and
+    # accounting have dated historical cases below; binary_event has only COGT,
+    # which vetoed on its dilutive offering - a pure binary case is still owed.)
+    # BOUNDARY CASE (noted by human ruling 2026-10-14, second; kept in the set):
+    # it has gone both ways - replays 3 and 6 no veto, replay 5 a veto under
+    # squeeze_or_meme_spike before the definition required the rise to still be
+    # built on the squeeze. A fail here is a signal to read, not a bug to fix.
     expect: {veto: false}
   - name: clean_leader_micron
     symbol: MU

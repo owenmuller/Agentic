@@ -52,4 +52,7 @@ def test_the_check_says_what_it_checked_in_words():
 def test_the_scheduler_sets_no_trading_variable():
     script = (ROOT / "ops" / "vps" / "schedule_check.sh").read_text()
     assert "PAPER_MODE" not in script.replace("sets no trading variable", "") and "LIVE_TRADING" not in script
-    assert "--on-calendar" in script and "America/New_York" in script and "--user" in script
+    # installed and persistent (human ruling 2026-10-14): a check survives a reboot
+    assert "OnCalendar=" in script and "America/New_York" in script and "Persistent=true" in script
+    assert ".config/systemd/user" in script and "systemctl --user enable --now" in script
+    assert "systemd-run" not in script
