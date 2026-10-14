@@ -4102,6 +4102,49 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-13/14 — MOMENTUM: sanity backtest RESULT (v1 trails SPY and SPMO); a data defect found and fixed; session engine, monthly prep and the AI veto BUILT; veto golden 6/6 (after two honest re-specifications); prep dry run end to end
+
+**1. Sanity backtest (informational, not decisive), Alpaca daily data 2016-2026, delisted names included, 0.10%/side costs, 2017-03 to 2026-10-13.** Corrected run (after the data fix in 2), in `~/research-data/momentum-v2/report.txt`:
+
+| variant | CAGR | max DD | vol | Sharpe |
+|---|---|---|---|---|
+| v1 (no veto) | 8.55% | -36.6% | 23.0% | 0.47 |
+| inverse_vol | 5.26% | -35.0% | 21.2% | 0.35 |
+| top_500 | 16.35% | -26.5% | 21.3% | 0.82 |
+| market_filter_only | 10.67% | -36.2% | 24.6% | 0.54 |
+| vol_scaling_only | 11.67% | -35.5% | 25.5% | 0.56 |
+| plain_12_1 | 11.18% | -49.0% | 29.9% | 0.50 |
+| X thread (top-500 proxy) | 3.01% | -97.0% | 80.2% | 0.44 |
+| SPY | 14.80% | -33.8% | 18.0% | 0.86 |
+| SPMO | 20.10% | -31.2% | 21.0% | 0.98 |
+| MTUM / QMOM / RSP | 16.30 / 11.83 / 11.07% | | | |
+
+- **v1 trails SPY by ~6.3 points a year and SPMO by ~11.5, with a deeper drawdown than either.** Calendar years: v1 beat SPY in 2017, 2018, 2023 and 2024 and lost in 2019, 2020, 2021, 2022, 2025 and 2026 YTD. It would fail every clause of the original Phase 2 success test (beat SPY and SPMO; max DD under 35%).
+- The 500-1,000 band is where it loses: top_500 (same rules, top 500) is 7.8 points a year better than v1 and roughly equal to SPY.
+- The window has no prolonged crash and no momentum crash (flagged in the report).
+- **For the human, not decided here:** the approved plan runs v1, unchanged, in paper from the first trading day of November. Nothing in the build blocks a different choice (top_500 is a declared shadow; v1 is frozen and only a ruling replaces it).
+
+**2. Data defect: dormant prints (found by the backtest's own X-thread line, LINE "+32,901%").** Alpaca serves flat daily bars for delisted tickers that trade OTC or not at all: LINE (Linn Energy) sat at 0.1616 from 2016-06 to 2024-07, then Lineage listed under the symbol. The 20-session gap test never saw a gap, so the new company inherited a +44,000% "move" (GPOR, CBL, WW, SN and others likewise; 982 of 6,367 segments had a single-day adjusted move over +100% or under -75%). **Fix (`feeds.drop_flat_runs`, applied in `store.build`):** a run of 10+ identical raw closes is blanked after its first day, so a long dormancy is a gap and a reused ticker splits. 156,126 closes blanked; reused-ticker segments dropped 71 -> 468. Effect on v1: 7.76% -> 8.55% CAGR (v1's holdings were real momentum names - APP, PANW, VRT, PLTR, AXON - not artifacts); the X thread's 2025 pick becomes APP (+713%, real). About 950 large single-day moves remain, almost all micro-caps outside the top-1,000 universe; no rule was added for them (that would change v1 - flagged).
+
+**3. Built (all paper-inert until a plan exists and `momentum_sleeve.entries_enabled` flips):**
+- `orchestrator/momentum_sleeve.py` (deployed 30e62e2): executes `data/momentum/plan-YYYY-MM.json` from 10:00 ET on its rebalance day; sells first, then buys in rank order; one working order; stale orders re-priced after 120 s; buys spend settled cash above every other sleeve's part of the sweep floor; kill switch or entries off stop buys, never sells; a short-funded month closes after 3 sessions (ERROR); a plan not started within 7 days is skipped. Restart: lots replay, holdings seed into `("momentum", sym)`.
+- `orchestrator/momentum_prep.py` + `python -m orchestrator momentum-prep`: builds the data (7 years, fresh dated cache), decides on `engine.live_view` (the calendar gains the rebalance day, the arrays do not: a lookahead is an IndexError; test proves the live decision equals the backtest's), vol target from v1's simulated 3-year book (no veto - flagged), the veto loop (a vetoed slot goes to the next rank; the replacement is reviewed), sentiment for every name (logged), every shadow with its own held list and book, the X-thread pick each January, SPMO. Writes detail and shadows first, the plan last. Cards: plan ready (green/yellow), prep failed (red).
+- `orchestrator/momentum_veto.py`: the prompt and the `momentum_review` tool. **Categories exactly the ruling's** (pending acquisition, single binary event, squeeze or meme spike, accounting issue, dilutive offering). A first draft had "one_off_spike / accounting_or_fraud / distress_or_delisting" - it added distress (not in the ruling) and missed binary events and dilutive offerings; corrected before any replay was counted. A held name is never vetoed (`Review.applies`); a failed or malformed review never vetoes.
+- Unit `ops/vps/agentic-momentum.{service,timer}` (NOT installed: the human's): weekdays 18:30 and 07:30 ET; the command acts only when a month turns.
+
+**4. Request path (CLAUDE.md § LLM Request-Path Changes) - FOR HUMAN REVIEW.** The reviewer runs the production client and pinned model (`claude-sonnet-4-6`, class_3 tier, report T=0) with three changes, the lab's 2026-10-10 precedent: **3 searches** (class_3 allows 1; the first replay missed a signed deal and the twelve-month story on one search), the **plain search tool** `web_search_20250305` (the dynamic-filtering tool hung the second replay for 35+ minutes), a **300 s timeout, one retry**. Production research config is untouched (test pins it). Hard cap $8 a run; about $0.13 a review.
+
+**5. Golden replay (`python -m orchestrator momentum-veto-golden`, `config/golden/momentum_veto.yaml`), run from the scratch copy with PYTHONPATH=src, module path printed.**
+- Replay 1 (one search, 3-month search window): 3/5 - missed the PTC deal, misread the CAR squeeze window.
+- Replay 2 (hung, dynamic search tool): stopped.
+- Replay 3 (plain tool, 3 searches, 12-month window): 4/5. **CAR re-specified:** its 12-1 return is -19% - it is not a momentum entrant and the April squeeze round-tripped; the case had been written expecting a veto, which was wrong on the facts. Re-specified to "no veto" with the reason in the file.
+- Replay 4 (the ruling's categories; a binary-event case added: COGT, PDUFA 2026-11-30): 5/6. The model vetoed COGT under dilutive_offering, citing the $400M ATM of 2026-08-10 - verified on EDGAR (424B5). **Case widened** to accept either real event, dated in the file. Under the final cases: **6/6**, spend $0.76.
+- No live case exists yet for squeeze_or_meme_spike, accounting_issue (beyond category definitions); added by dated edits when real examples exist.
+
+**6. Prep dry run (live round trip of the whole path; non-production, writes to scratch):** rebalance 2026-10-14, data through 2026-10-13, peak memory 493 MB, 11 minutes from cache (a fresh monthly fetch adds about an hour). 15 names at exposure 1.0 (MATX, IEX, PTEN, DAR, IBRX, TGT, PACS, GKOS, FROG, NUE, CNC, CPAY, NDSN, VSXY, AVT; ranks reach 47 because many top names fail v1's exclusions), 15 reviews, no veto, $1.91. These reviews ran the pre-correction categories; the corrected prompt's round trip is replay 4.
+
+**7. Pending:** deploy (after the close); the human installs the momentum unit; the order-path round trip in the main account (one share bought and sold through the momentum gate path) and then `entries_enabled: true` by a reviewed commit; the weekly momentum line vs SPY and SPMO with the shadow table; the monthly maintenance proposals (item c); step 2's one-shot timer.
+
 ### 2026-10-13 — MOMENTUM BUILD, PRE-REGISTERED (replaces items 8 and 9); Phase 0 data report
 
 **Pre-registration (human ruling 2026-10-13, recorded verbatim in substance before any data is bought or any return computed).**

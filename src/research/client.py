@@ -170,6 +170,19 @@ def _elide_search_results(messages: list[dict[str, Any]]) -> list[dict[str, Any]
     return out
 
 
+def sdk_client(*, timeout_seconds: float, max_retries: int = 1) -> Any:
+    """The SDK client with a per-request timeout and a bounded retry, for
+    callers whose pass must fail rather than hold (the momentum veto,
+    2026-10-13). Same key, same SDK as the default construction below."""
+    import anthropic
+
+    from execution.environment import load_environment, require_env
+
+    load_environment()
+    return anthropic.Anthropic(api_key=require_env("ANTHROPIC_API_KEY"), timeout=float(timeout_seconds),
+                               max_retries=max_retries)
+
+
 class AnthropicResearchClient:
     """Calls Claude for a structured research verdict."""
 

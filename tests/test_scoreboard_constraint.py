@@ -24,6 +24,8 @@ FENCED = (
     "orchestrator/deployment.py",  # the deployment multiplier (step 3), when it exists
     "orchestrator/vote.py",  # the self-consistency vote (ruling 2026-10-07, requirement d)
     "orchestrator/attention.py",  # the aggressive sleeve's screen (redirect 2026-10-08)
+    "orchestrator/momentum_veto.py",  # the momentum book's AI leg (ruling 2026-10-13)
+    "orchestrator/momentum_prep.py",  # v1's plan, the veto loop, the shadows
     "research/prompts.py",
     "research/exit_review.py",
     "research/triage.py",
@@ -85,7 +87,8 @@ def test_the_hurdle_reads_only_the_opportunity_set():
     assert fields == {"deployed_fraction", "positive_candidates", "open_positions", "target_positions"}
 
 
-@pytest.mark.parametrize("relative", ("research/prompts.py", "research/exit_review.py", "research/triage.py", "research/add_decision.py"))
+@pytest.mark.parametrize("relative", ("research/prompts.py", "research/exit_review.py", "research/triage.py", "research/add_decision.py",
+                                      "orchestrator/momentum_veto.py"))
 def test_prompt_builders_never_name_the_target_or_the_scoreboard(relative):
     path = SRC / relative
     if not path.exists():

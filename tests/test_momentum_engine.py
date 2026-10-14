@@ -108,3 +108,49 @@ def test_after_close_filings_count_to_the_next_session():
     assert feeds.session_of("2026-10-13T19:59:00.000Z", cal, index) == 1   # 15:59 ET -> same day
     assert feeds.session_of("2026-10-13T20:05:00.000Z", cal, index) == 2   # 16:05 ET -> next day
     assert feeds.session_of("2026-10-13T11:00:00.000Z", cal, index) == 1   # 07:00 ET pre-market -> same day
+
+
+def _truncated(store, n):
+    segs = [Segment(**{**s.__dict__, "last": min(s.last, n - 1),
+                       "events": [e for e in s.events if e < n]}) for s in store.segments if s.first < n]
+    return Store(store.calendar[:n], store.spy[:n], {k: v[:n] for k, v in store.benchmarks.items()}, segs,
+                 {s.key: store.adj[s.key][:n] for s in segs}, {s.key: store.raw[s.key][:n] for s in segs})
+
+
+def test_the_live_view_decides_exactly_as_the_full_history_would():
+    # The live prep decides on the morning of the rebalance day, with data
+    # through the prior close: same holdings, same weights as the backtest's
+    # decision on that day - and no read of the day itself is possible.
+    store = make_store(sessions=620)
+    starts = engine.month_starts(store.calendar)
+    t = starts[-2]
+    full = engine.run(store, rules.V1, starts[13], t - 1)
+    expected = engine.decide(store, t, rules.V1, [], full.book_returns, starts)
+    past = _truncated(store, t)
+    view = engine.live_view(past, store.calendar[t])
+    assert len(view.calendar) == t + 1 and len(view.spy) == t
+    live_starts = engine.month_starts(view.calendar)
+    assert live_starts[-1] == t
+    sim = engine.run(view, rules.V1, live_starts[13], t - 1)
+    assert sim.book_returns == full.book_returns
+    got = engine.decide(view, t, rules.V1, [], sim.book_returns, live_starts)
+    assert got.holdings == expected.holdings and got.exposure == expected.exposure
+    try:
+        engine.live_view(past, store.calendar[t - 1])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a decision day inside the data must be refused")
+
+
+def test_dormant_flat_prints_split_a_reused_ticker():
+    # LINE: an old company's dormant OTC prints sat flat for years, then a new
+    # company listed under the symbol. Flat runs are blanked, so the reuse is
+    # a gap and the new company starts its own series (data review 2026-10-13).
+    raw = array("f", [1.0, 0.9, 0.5] + [0.1616] * 60 + [72.5, 73.0, 71.8])
+    adj = array("f", raw)
+    blanked = feeds.drop_flat_runs(raw, adj)
+    assert blanked == 59 and raw[3] == raw[3] and math.isnan(raw[4]) and math.isnan(adj[62])
+    assert feeds.segments("LINE", adj) == [(0, 3), (63, 65)]
+    short = array("f", [5.0, 5.0, 5.0, 5.1])  # a few equal closes are trading, not dormancy
+    assert feeds.drop_flat_runs(short, array("f", short)) == 0

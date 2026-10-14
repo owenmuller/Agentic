@@ -144,7 +144,7 @@ TOPOLOGY: dict[str, Rules] = {
     # seam between the others, and it is the only importer of audit anywhere.
     "orchestrator": Rules(
         may_import=frozenset(
-            {"audit", "execution", "forward", "research", "risk_gate", "signals", "sizing"}
+            {"audit", "execution", "forward", "momentum", "research", "risk_gate", "signals", "sizing"}
         ),
         because="the loop; the single place the stages are wired together",
     ),

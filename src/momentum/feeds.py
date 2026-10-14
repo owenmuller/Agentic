@@ -232,6 +232,13 @@ class Alpaca:
             self.cache.put("alpaca_assets", cached)
         return cached
 
+    def sessions(self, start: str, end: str) -> list[str]:
+        """Trading days from ``start`` to ``end`` inclusive (the exchange
+        calendar, holidays and all). Never cached: it answers 'when'."""
+        r = self._trading.get("/v2/calendar", params={"start": start, "end": end})
+        r.raise_for_status()
+        return [row["date"] for row in r.json()]
+
     def bars(self, symbols: list[str], start: str, end: str, adjustment: str) -> dict[str, list]:
         """{symbol: [[date, close], ...]} - multi-symbol pages, a failing
         batch split in half until the bad symbol is isolated."""
@@ -296,6 +303,35 @@ def align(series: list, calendar_index: dict[str, int], length: int) -> array:
         if i is not None and close > 0:
             out[i] = close
     return out
+
+
+#: A run of this many identical raw closes is not trading (data review
+#: 2026-10-13): Alpaca serves dormant OTC prints for delisted tickers - LINE
+#: sat at 0.1616 from 2016-06 to 2024-07, then Lineage listed under the same
+#: symbol - so the gap test never saw the reuse and the new company inherited
+#: a +44,000% "move".
+FLAT_RUN = 10
+
+
+def drop_flat_runs(raw: array, adj: array, min_run: int = FLAT_RUN) -> int:
+    """Blank (NaN) every close after the first in a run of ``min_run`` or
+    more identical raw closes, in both series; returns how many were blanked.
+    A long blank becomes a gap and splits the series like any other."""
+    blanked, n, i = 0, len(raw), 0
+    while i < n:
+        if math.isnan(raw[i]):
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and not math.isnan(raw[j + 1]) and raw[j + 1] == raw[i]:
+            j += 1
+        if j - i + 1 >= min_run:
+            for k in range(i + 1, j + 1):
+                raw[k] = NAN
+                adj[k] = NAN
+                blanked += 1
+        i = j + 1
+    return blanked
 
 
 def segments(symbol: str, closes: array, gap: int = GAP_SESSIONS) -> list[tuple[int, int]]:

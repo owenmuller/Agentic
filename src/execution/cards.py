@@ -508,6 +508,37 @@ def check_card(name: str, account: str, purpose: str, ok: bool, when: str, exit_
         detail=output, detail_name=f"check-{name}.txt", channel=URGENT, sample=sample)
 
 
+def momentum_plan_card(month_name: str, rebalance_day: str, names: int, bought: Sequence[str],
+                       sold: Sequence[str], vetoed: Sequence[tuple[str, str]], exposure: float,
+                       buys_allowed: bool, problems: Sequence[str], spend: Optional[float], cap: float,
+                       detail: str, sample: bool = False) -> Card:
+    """The monthly momentum plan (ruling 2026-10-13): what v1 will do on the
+    rebalance day, what the AI vetoed, and any data problems."""
+    lines = [
+        f"Rebalance: {rebalance_day} from 10:00 ET, {count(names, 'name')} at {pct(exposure, signed=False)} invested.",
+        f"Buying: {_joined([plain(s, 12) for s in bought][:10]) or 'nothing new'}.",
+        f"Selling: {_joined([plain(s, 12) for s in sold][:10]) or 'nothing'}.",
+    ]
+    if vetoed:
+        lines.append(f"AI vetoed: {_joined([f'{plain(s, 12)} ({plain(why, 40)})' for s, why in vetoed][:4])}; the next names in v1's ranking took the slots.")
+    if not buys_allowed:
+        lines.append("SPY is below its 200-day average, so v1 buys no new names this month (its rule).")
+    if spend is not None:
+        lines.append(f"AI spend: {cents(spend)} of {usd(cap)} monthly cap.")
+    look = worth_a_look(list(problems))
+    return Card("Momentum", f"{month_name} plan ready", LOOK if look else GOOD, tuple(lines),
+                look_at=look, detail=detail, detail_name=f"momentum-plan-{rebalance_day[:7]}.txt", sample=sample)
+
+
+def momentum_prep_failed_card(when: str, what: str, detail: str = "", sample: bool = False) -> Card:
+    return Card("Momentum", "the monthly plan was not made", ACTION, (
+        f"When: {when}.",
+        f"What: {plain(what)}",
+        "Without a plan the sleeve trades nothing this month; held names stay as they are.",
+    ), what_to_do=_ask(f"The momentum prep failed at {when}: find the cause, fix it and rerun momentum-prep."),
+        detail=detail or what, detail_name="momentum-prep.txt", channel=URGENT, sample=sample)
+
+
 @dataclass(frozen=True)
 class BoardLine:
     """One account's line on the weekly scoreboard card."""

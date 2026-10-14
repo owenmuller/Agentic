@@ -1,0 +1,10 @@
+[Unit]
+Description=Agentic momentum prep (weekdays 18:30 and 07:30 ET; runs only when a month turns)
+
+[Timer]
+OnCalendar=Mon..Fri 18:30 America/New_York
+OnCalendar=Mon..Fri 07:30 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

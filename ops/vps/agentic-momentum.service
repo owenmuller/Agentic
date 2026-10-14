@@ -1,0 +1,34 @@
+[Unit]
+Description=Agentic momentum book: monthly prep (v1 plan, AI veto, shadows)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=agentic
+WorkingDirectory=/home/agentic/Agentic
+ExecStart=/home/agentic/Agentic/.venv/bin/python -m orchestrator momentum-prep
+# Momentum sleeve prep (human ruling 2026-10-13). Fires twice a weekday; the
+# command itself decides whether a month is turning and exits at once if not:
+#   18:30 ET on a month's LAST session -> plans the next month (data through
+#         today's close; about 70 minutes: bars, SEC facts, v1, reviews);
+#   07:30 ET on a month's FIRST session -> catch-up if the evening run failed.
+# An existing plan is never recomputed (rerun by hand with --force).
+#
+# Writes data/momentum/ (plan, detail, shadows) and a cache under
+# ~/agentic-cache/momentum. Places no orders: the paper session executes the
+# plan from 10:00 ET on the rebalance day. LLM spend is capped per run
+# (orchestrator.yaml momentum_prep.review_cap_usd, $8).
+#
+# Memory: the data build peaks at several hundred MB on a 1 GB droplet. The
+# cap and the OOM score make the kernel kill THIS job, never the session.
+MemoryMax=800M
+MemorySwapMax=0
+OOMScoreAdjust=500
+Nice=10
+TimeoutStartSec=3h
+#
+# Register with:
+#   sudo cp ops/vps/agentic-momentum.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now agentic-momentum.timer

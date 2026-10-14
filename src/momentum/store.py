@@ -118,8 +118,13 @@ def build(cache_dir: Path, *, start: str = "2016-01-01", end: Optional[str] = No
         if b // 100 % 10 == 0:
             log(f"bars {b + len(batch)}/{len(symbols)}")
 
+    # dormant prints are not trading: blank them so a reused ticker splits
+    blanked = sum(feeds.drop_flat_runs(raw_all[s], adj_all[s]) for s in adj_all)
+    stats["flat_closes_blanked"] = blanked
+    log(f"dormant (flat-run) closes blanked: {blanked}")
+
     # segments and identities
-    current = {k.replace("-", "."): v for k, v in sec.company_ciks().items()}
+    current ={k.replace("-", "."): v for k, v in sec.company_ciks().items()}
     raw_segments: list[tuple[str, int, int]] = []
     for sym, closes in adj_all.items():
         for first, last in feeds.segments(sym, closes):

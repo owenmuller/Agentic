@@ -9,6 +9,7 @@ is sold at its last close (no delisting return beyond it - flagged).
 """
 from __future__ import annotations
 
+import copy
 import math
 from dataclasses import dataclass, field
 from typing import Optional
@@ -92,6 +93,20 @@ def _universe(store, t: int, size: int, min_price: float) -> list:
     return [seg for _, _, seg in ranked]
 
 
+def live_view(store, decision_day: str):
+    """The store as of the morning of ``decision_day`` (the session after its
+    last one): the calendar gains that day, the price arrays do not - so a
+    decision on it reads only the prior close, and any read of the day itself
+    is an IndexError rather than a silent lookahead."""
+    if decision_day <= store.calendar[-1]:
+        raise ValueError(f"{decision_day} is not after the data's last session {store.calendar[-1]}")
+    view = copy.copy(store)
+    view.__dict__.pop("_universe_memo", None)
+    view.calendar = list(store.calendar) + [decision_day]
+    view.index = {d: i for i, d in enumerate(view.calendar)}
+    return view
+
+
 def month_end_closes(prices, starts: list[int], t: int, months: int) -> list:
     """Closes at the last ``months`` month-ends before ``t`` (oldest first)."""
     ends = [s - 1 for s in starts if s <= t][-months:]
@@ -114,7 +129,7 @@ class Decision:
 
 
 def decide(store, t: int, spec: Spec, held: list, book_returns: list, starts: list[int],
-           vetoed: Optional[dict] = None) -> Decision:
+           vetoed: Optional[dict] = None, explain: bool = False) -> Decision:
     d = t - 1
     members = universe(store, t, spec.universe, spec.min_price)
     spy_closes = month_end_closes(store.spy, starts, t, spec.regression_months + 1)
@@ -156,6 +171,8 @@ def decide(store, t: int, spec: Spec, held: list, book_returns: list, starts: li
                                                       [c for _, _, c in triples], spec)
         earn_scores[seg.key] = rules.earnings_momentum(seg.events, Returns(store.adj[seg.key]), spy_r, today=t)
 
+    zr: dict = {}
+    ze: dict = {}
     if spec.score == "plain_12_1":
         scored = {k: v for k, v in plain_scores.items() if v is not None}
         z = rules.zscores(scored)
@@ -208,7 +225,8 @@ def decide(store, t: int, spec: Spec, held: list, book_returns: list, starts: li
     final = {k: w * scale for k, w in unscaled.items()}
     return Decision(t, final, selection, scale, not blocked, unscaled,
                     dict(universe=len(members), scored=len(score), current_vol=current_vol, target_vol=target_vol,
-                         excluded={c.key: c.exclusion for c in candidates if c.exclusion}))
+                         excluded={c.key: c.exclusion for c in candidates if c.exclusion},
+                         **(dict(score=score, residual_z=zr, earnings_z=ze) if explain else {})))
 
 
 @dataclass
@@ -218,6 +236,8 @@ class Run:
     decisions: list
     turnover: float
     delisted: list
+    #: the unscaled book's daily returns (vol scaling's target history)
+    book_returns: list = field(default_factory=list)
 
 
 def run(store, spec: Spec, start: int, end: int) -> Run:
@@ -276,7 +296,7 @@ def run(store, spec: Spec, start: int, end: int) -> Run:
             cash = nav - sum(units[k] * marks[k] for k in units)
             unscaled = dict(dec.unscaled)
         out_nav.append((t, nav))
-    return Run(spec, out_nav, decisions, turnover, delisted)
+    return Run(spec, out_nav, decisions, turnover, delisted, book_returns)
 
 
 def x_thread(store, start: int, end: int, universe_size: int = 500) -> tuple[list, list]:

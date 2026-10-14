@@ -674,6 +674,37 @@ class MomentumSleeveConfig(BaseModel):
     mark_interval_seconds: int = Field(default=300, ge=30, le=3600)
 
 
+class MomentumPrepConfig(BaseModel):
+    """The momentum book's monthly prep job (human ruling 2026-10-13):
+    ``python -m orchestrator momentum-prep``, run by its own unit. It builds
+    the data, computes v1's plan, runs the AI veto of new entrants and the
+    sentiment log, computes the shadows, and writes ``data/momentum/``."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    #: Market-data cache (not production data); one dated folder per run.
+    cache_dir: str = "~/agentic-cache/momentum"
+    #: History fetched: 36-month regressions behind a 3-year simulated book
+    #: (the vol-scaling target), plus margin.
+    history_years: int = Field(default=7, ge=5, le=12)
+    #: New York time. Evening: plan the next month after the last session
+    #: of this one. Morning catch-up on the rebalance day itself, before
+    #: ``morning_before``.
+    evening_after: str = "18:15"
+    morning_before: str = "09:15"
+    #: The AI leg: at most this many reviews a run, a hard dollar cap, and a
+    #: pass starts only with ``review_reserve_usd`` of headroom.
+    max_reviews: int = Field(default=30, ge=0, le=60)
+    review_cap_usd: Decimal = Field(default=Decimal("8"), ge=0)
+    review_reserve_usd: Decimal = Field(default=Decimal("0.40"), gt=0)
+    #: Searches per review (class_3 allows 1; golden replay 2026-10-13 showed a
+    #: twelve-month news check needs more).
+    review_max_searches: int = Field(default=3, ge=1, le=5)
+    #: The plain search tool and a per-request timeout (the lab's settings).
+    review_search_tool: str = "web_search_20250305"
+    review_timeout_seconds: int = Field(default=300, ge=30, le=900)
+
+
 class OrchestratorConfig(BaseModel):
     """Loop cadence and the daily research budget."""
 
@@ -758,6 +789,7 @@ class OrchestratorConfig(BaseModel):
     #: The momentum sleeve's engine (ruling 2026-10-13). Buys also need
     #: risk_limits.yaml momentum_sleeve.entries_enabled and a nonzero weight.
     momentum_sleeve: MomentumSleeveConfig = Field(default_factory=MomentumSleeveConfig)
+    momentum_prep: MomentumPrepConfig = Field(default_factory=MomentumPrepConfig)
     #: Add decisions (ruling 2026-09-16): one judged position per symbol, adds
     #: under a combined cap. The combined cap can never exceed the hard cap, so
     #: absent-section defaults are safe.

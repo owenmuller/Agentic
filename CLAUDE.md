@@ -195,6 +195,11 @@ The MOMENTUM LIVE BUILD runs v1 as a sleeve inside the main book: no data purcha
 - **Shadows** run in software on live prices (`momentum.rules.SHADOWS`, plus the X thread and SPMO). A shadow replaces v1 only by human approval, after at least 6 months ahead of v1 net of modelled costs.
 - **Reporting:** its own attribution bucket (`strategy="momentum"`), partitioned out of every judged accounting path and every alpha line. A weekly line shows v1 vs SPY and SPMO, with the shadow table attached. First look at 6 months, real read at 12.
 - **Going live:** sanity backtest first (informational), then the veto's golden replay and the live order-path round trip. The first live rebalance is the first trading day of the month after the round trip passes.
+- **Build state (2026-10-14; SESSION_NOTES 2026-10-13/14):**
+  - Sanity backtest DONE: v1 8.55% CAGR, max DD −36.6%, against SPY 14.80% / −33.8% and SPMO 20.10% / −31.2% (2017-03 to 2026-10); top_500 16.35% / −26.5%. Informational by ruling; whether v1 still goes live is the human's call.
+  - Built: the session engine (`orchestrator/momentum_sleeve.py`, executes `data/momentum/plan-YYYY-MM.json`), the monthly prep (`python -m orchestrator momentum-prep`, unit `agentic-momentum` for the human to install), the AI veto and sentiment (`orchestrator/momentum_veto.py`, golden `config/golden/momentum_veto.yaml` 6/6).
+  - **Reviewer request path (pending human approval):** the production client and pinned model on the class_3 tier, with 3 searches (not 1), the plain search tool `web_search_20250305` and a 300 s timeout with one retry (the lab's 2026-10-10 settings); $8 hard cap per run. Production research config is unchanged.
+  - Market data: runs of 10+ identical closes are blanked as dormant prints (`feeds.drop_flat_runs`) so a reused ticker splits (the LINE defect).
 
 ## Paper Lab — separate paper accounts (PAPER PUSH, human ruling 2026-10-09 late)
 

@@ -35,12 +35,15 @@ module adds no mode logic of its own.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
 from decimal import Decimal, InvalidOperation
 import time
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import datasafety
 
@@ -1598,6 +1601,158 @@ def contracts_backtest() -> int:
 #: Emergency operator commands (ops/EMERGENCY.md): a human at a shell must be
 #: able to halt and resume production. They alone declare production writes
 #: outside a production unit (ruling 2026-10-09, item 4).
+def momentum_prep() -> int:
+    """The momentum book's monthly prep (human ruling 2026-10-13). Run by its
+    own unit; does nothing unless a month is turning (see momentum_prep.due).
+
+        python -m orchestrator momentum-prep
+        python -m orchestrator momentum-prep --rebalance-date YYYY-MM-DD [--force] [--no-llm] [--no-card]
+
+    Outside a production unit every write goes to scratch (a dry run)."""
+    import shutil
+    from datetime import date as _date
+
+    from audit.log import default_data_dir
+    from execution import cards
+    from momentum import feeds
+    from momentum.store import build
+    from orchestrator import momentum_prep as prep_module
+    from orchestrator.config import OrchestratorConfig
+    from orchestrator.momentum_sleeve import plan_path
+    from orchestrator.momentum_veto import Reviewer, review_client
+    from research.config import ResearchConfig
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    log = logging.getLogger("orchestrator.momentum_prep")
+    args = sys.argv[2:]
+    force, use_llm, send_card = "--force" in args, "--no-llm" not in args, "--no-card" not in args
+    wanted = None
+    if "--rebalance-date" in args:
+        wanted = args[args.index("--rebalance-date") + 1]
+    config = OrchestratorConfig.load().momentum_prep
+    cache_root = Path(os.path.expanduser(config.cache_dir))
+    directory = default_data_dir() / "momentum"
+    now = datetime.now(timezone.utc)
+    when = now.astimezone(_NY).strftime("%Y-%m-%d %H:%M ET")
+    alerter = Alerter() if send_card else None
+
+    def fail(what: str, detail: str = "") -> int:
+        log.error("momentum prep failed: %s", what)
+        if alerter is not None and alerter.enabled:
+            alerter.card(f"momentum-prep-{now.date()}", cards.momentum_prep_failed_card(when, what, detail))
+            alerter.close()
+        return 1
+
+    try:
+        alpaca = feeds.Alpaca(feeds.Cache(cache_root / "calendar"))
+        today = now.astimezone(_NY).date()
+        if wanted is not None:
+            sessions = alpaca.sessions((_date.fromisoformat(wanted) - timedelta(days=12)).isoformat(), wanted)
+            if not sessions or sessions[-1] != wanted or len(sessions) < 2:
+                return fail(f"{wanted} is not a trading day")
+            target = prep_module.Due(rebalance_day=wanted, data_through=sessions[-2])
+        else:
+            sessions = alpaca.sessions((today - timedelta(days=12)).isoformat(),
+                                       (today + timedelta(days=12)).isoformat())
+            target = prep_module.due(now, sessions, evening_after=config.evening_after,
+                                     morning_before=config.morning_before)
+            if target is None:
+                log.info("momentum prep: no month is turning now; nothing to do")
+                return 0
+        if plan_path(directory, target.rebalance_day[:7]).exists() and not force:
+            log.info("momentum prep: the %s plan already exists; nothing to do", target.rebalance_day[:7])
+            return 0
+        log.info("momentum prep for %s, data through %s", target.rebalance_day, target.data_through)
+
+        start = _date.fromisoformat(target.data_through).replace(day=1)
+        start = start.replace(year=start.year - config.history_years).isoformat()
+        folder = cache_root / target.data_through
+        store, stats = build(folder, start=start, end=target.data_through, log=log.info)
+        if store.calendar[-1] != target.data_through:
+            return fail(f"the market data ends {store.calendar[-1]}, not {target.data_through}; "
+                        f"rerun once the day's bars are published")
+        held = sorted(s for s, (qty, _) in AuditLog(directory.parent / "audit.jsonl")
+                      .strategy_open_positions("momentum").items() if qty > 0)
+        shadow_held, x_pick = prep_module.read_shadow_state(directory)
+        names = {a["symbol"]: a.get("name") or "" for a in feeds.Cache(folder).get("alpaca_assets") or []}
+        reviewer = None
+        if use_llm and config.max_reviews > 0:
+            client = review_client(ResearchConfig.load(), max_searches=config.review_max_searches,
+                                   search_tool=config.review_search_tool,
+                                   timeout_seconds=config.review_timeout_seconds)
+            reviewer = Reviewer(client,
+                                cap_usd=config.review_cap_usd, reserve_usd=config.review_reserve_usd,
+                                search_fee_usd=Decimal("0.01") * config.review_max_searches)
+        result = prep_module.compute(
+            store, target.rebalance_day, held,
+            review=reviewer.review if reviewer is not None else None,
+            shadow_held=shadow_held, x_pick=x_pick, names=names, max_reviews=config.max_reviews,
+        )
+        result.detail["data_stats"] = stats
+        if reviewer is not None:
+            result.detail["review_spend_usd"] = str(reviewer.spent)
+            result.detail["review_passes"] = reviewer.passes
+        path = prep_module.write(directory, result)
+        log.info("momentum plan written: %s (%d names)", path, len(result.plan["targets"]))
+        for problem in result.problems:
+            log.warning("momentum prep: %s", problem)
+        # keep this run's market data and the one before it
+        for old in sorted(p for p in cache_root.iterdir() if p.is_dir() and p.name[:2] == "20")[:-2]:
+            shutil.rmtree(old, ignore_errors=True)
+    except Exception as error:  # noqa: BLE001 - a failed prep is a red card, not a silent month
+        import traceback
+
+        return fail(f"{type(error).__name__}: {error}", traceback.format_exc())
+
+    if alerter is not None and alerter.enabled:
+        plan, detail = result.plan, result.detail
+        month_name = _date.fromisoformat(plan["rebalance_date"]).strftime("%B")
+        alerter.card(f"momentum-plan-{plan['month']}", cards.momentum_plan_card(
+            month_name, plan["rebalance_date"], len(plan["targets"]), detail["selection"]["bought"],
+            [s for s, _ in detail["selection"]["sold"]] + [s for s in plan["sold"]
+                                                            if s not in {x for x, _ in detail["selection"]["sold"]}],
+            [(s, why.split(":")[0].replace("_", " ")) for s, why in plan["vetoed"].items()],
+            float(plan["exposure"]), plan["buys_allowed"], result.problems,
+            float(reviewer.spent) if reviewer is not None else None, float(config.review_cap_usd),
+            json.dumps({"plan": plan, "detail": detail}, indent=2, default=str),
+        ))
+        alerter.close()
+    return 0
+
+
+def momentum_veto_golden() -> int:
+    """Golden replay of the momentum veto prompt through the production
+    request path (ruling 2026-10-13). Spends real API dollars; writes nothing.
+
+        python -m orchestrator momentum-veto-golden [--only NAME]"""
+    from momentum import feeds
+    from orchestrator import momentum_golden
+    from orchestrator.momentum_veto import Reviewer, review_client
+    from research.config import ResearchConfig
+
+    logging.basicConfig(level=logging.WARNING)
+    print(f"module: {momentum_golden.__file__}")
+    args = sys.argv[2:]
+    cases = momentum_golden.load_cases()
+    if "--only" in args:
+        cases = [c for c in cases if c["name"] == args[args.index("--only") + 1]]
+    alpaca = feeds.Alpaca(feeds.Cache(datasafety.scratch_data_dir() / "momentum-golden-cache"))
+    from orchestrator.config import OrchestratorConfig
+
+    prep_config = OrchestratorConfig.load().momentum_prep
+    searches = prep_config.review_max_searches
+    client = review_client(ResearchConfig.load(), max_searches=searches, search_tool=prep_config.review_search_tool,
+                           timeout_seconds=prep_config.review_timeout_seconds)
+    reviewer = Reviewer(client, cap_usd=Decimal("3"),
+                        reserve_usd=Decimal("0.40"), search_fee_usd=Decimal("0.01") * searches)
+    outcomes = momentum_golden.run(cases, reviewer.review, momentum_golden.alpaca_closes(alpaca))
+    print(momentum_golden.summary(outcomes, reviewer.spent))
+    for outcome in outcomes:
+        print(json.dumps(outcome.review.as_record()))
+    return 0 if all(o.passed for o in outcomes) else 1
+
+
+_NY = ZoneInfo("America/New_York")
 OPERATOR_COMMANDS = frozenset({"halt", "resume"})
 
 
@@ -1666,6 +1821,10 @@ def main() -> int:
         return resume()
     if command == "stress":
         return stress()
+    if command == "momentum-veto-golden":
+        return momentum_veto_golden()
+    if command == "momentum-prep":
+        return momentum_prep()
     if command == "overreaction":
         return overreaction()
     print(

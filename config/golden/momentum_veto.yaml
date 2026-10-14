@@ -1,0 +1,75 @@
+# Golden cases for the momentum book's AI leg (human ruling 2026-10-13): the
+# veto of NEW entrants and the six-month sentiment score. Each case goes
+# through the production request path (the research client's class_3 tier:
+# search, then the forced momentum_review tool) with the stock's facts
+# computed from live Alpaca bars at replay time (last close, 12-1 return,
+# largest single-day move in 63 sessions). Graded HARD on the veto alone:
+#   expect.veto true  -> the report vetoes AND names a category in `categories`
+#   expect.veto false -> the report does not veto
+# The sentiment score is recorded, never graded. Cases were chosen 2026-10-13
+# from public news; a case goes stale when its event resolves (a deal closes),
+# and is then replaced by a dated edit to this file.
+cases:
+  - name: pending_acquisition_ptc
+    symbol: PTC
+    company: PTC Inc.
+    sector: business equipment
+    rank: 6
+    new_entrant: true
+    # Schneider Electric agreed 2026-10-05 to buy PTC for $205 a share in cash;
+    # expected to close in Q3 2027. The price is pinned to the deal.
+    expect: {veto: true, categories: [pending_acquisition]}
+  - name: resolved_squeeze_avis
+    symbol: CAR
+    company: Avis Budget Group
+    sector: shops
+    rank: 9
+    new_entrant: true
+    # The April 2026 short squeeze (~$200 to a $766 intraday high, then -74% in
+    # two days) round-tripped: CAR's 12-1 return on 2026-10-13 is -19%, so the
+    # squeeze is not what any momentum in it is built on. A resolved event is
+    # not a veto. RE-SPECIFIED 2026-10-13 after the first replay: the case was
+    # first written expecting a one-off spike veto, which was wrong on the facts (CAR
+    # is not a momentum entrant at all); the replay found the squeeze and
+    # declined to veto, correctly. The squeeze_or_meme_spike, binary_event,
+    # accounting_issue and dilutive_offering categories have NO live case yet;
+    # each is added by a dated edit when a real, current example exists.
+    expect: {veto: false}
+  - name: clean_leader_micron
+    symbol: MU
+    company: Micron Technology
+    sector: business equipment
+    rank: 2
+    new_entrant: true
+    # A large run on memory demand: a strong rally is not a veto reason.
+    expect: {veto: false}
+  - name: clean_steady_walmart
+    symbol: WMT
+    company: Walmart Inc.
+    sector: shops
+    rank: 12
+    new_entrant: true
+    expect: {veto: false}
+  - name: held_name_is_never_vetoed
+    symbol: PTC
+    company: PTC Inc.
+    sector: business equipment
+    rank: 6
+    new_entrant: false
+    # Already held: the prompt says no veto applies; the model must report none.
+    expect: {veto: false}
+  - name: binary_event_cogent
+    symbol: COGT
+    company: Cogent Biosciences
+    sector: healthcare
+    rank: 11
+    new_entrant: true
+    # Added 2026-10-13: the FDA's decision on bezuclastinib (GIST) is due
+    # 2026-11-30 (PDUFA), with NonAdvSM on 2026-12-30 - the first approval
+    # decision for a company whose value rests on that one drug, inside the
+    # month a November entrant would be held.
+    # WIDENED 2026-10-14 after the replay: it vetoed under dilutive_offering,
+    # citing the $400M at-the-market programme of 2026-08-10 (SEC 424B5,
+    # verified) - a second real event the ruling also names. Either is a
+    # correct veto; the case grades the veto, not which true reason came first.
+    expect: {veto: true, categories: [binary_event, dilutive_offering]}
