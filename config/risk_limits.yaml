@@ -212,7 +212,10 @@ momentum_sleeve:
   max_daily_deployment: 1.00 # of momentum sleeve NAV, per trading day
   max_sector_exposure: 0.30 # of momentum sleeve NAV; config/sectors.yaml membership
   min_order_notional_usd: 5
-  entries_enabled: false
+  # ON (2026-10-14): order-path round trip PASSED live (momentum-roundtrip) and
+  # the veto golden 8/8 (human ruling 2026-10-14, item 4). With entries on the
+  # sweep holds the undeployed allotment in cash; the engine trades only a plan.
+  entries_enabled: true
 
 # Idle-cash yield sweep (human ruling 2026-09-02). The swept ETF is NEVER buying
 # power: the gate's cash model is unchanged and every order still reserves cash.

@@ -44,11 +44,13 @@ def test_the_shipped_allocation_is_step_one(shipped):
     caps = shipped.momentum_sleeve
     assert (caps.max_positions, caps.max_single_position, caps.max_sector_exposure, caps.max_daily_deployment) == (
         15, D("0.10"), D("0.30"), D("1.00"))
-    assert caps.entries_enabled is False  # until the round trip passes
+    assert caps.entries_enabled is True  # on since the round trip passed (2026-10-14)
 
 
 def test_entries_off_refuses_every_momentum_buy(shipped):
-    decision = gate(shipped).submit(buy("AAPL", 1, "200"))
+    off = shipped.model_copy(update={"momentum_sleeve": shipped.momentum_sleeve.model_copy(
+        update={"entries_enabled": False})})
+    decision = gate(off).submit(buy("AAPL", 1, "200"))
     assert not decision.is_approved and decision.code is RejectionCode.SLEEVE_ALLOCATION_EXCEEDED
 
 

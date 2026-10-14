@@ -187,7 +187,7 @@ The MOMENTUM LIVE BUILD runs v1 as a sleeve inside the main book: no data purcha
   - a rebalance day may deploy up to 100% of the sleeve;
   - cash-secured, and its buys may not spend today's unsettled sale proceeds (T+1);
   - the book-level 12% kill switch;
-  - `entries_enabled: false` until the order-path round trip passes.
+  - `entries_enabled` OFF until the order-path round trip passed; switched ON by commit 2026-10-14 after the live round trip (`python -m orchestrator momentum-roundtrip`) and the veto golden 8/8.
   The judged sleeve's drawdown ladder and VIX scalar do NOT apply; v1's own vol scaling does.
 - **AI legs** (logged apart so their value is measurable):
   - (a) a veto on new entrants: pending acquisition, single binary event, squeeze or meme spike, accounting issue, dilutive offering. The slot goes to the next rank, and every veto is tracked as a shadow.
@@ -201,6 +201,7 @@ The MOMENTUM LIVE BUILD runs v1 as a sleeve inside the main book: no data purcha
   - Built: the session engine (`orchestrator/momentum_sleeve.py`, executes `data/momentum/plan-YYYY-MM.json`), the monthly prep (`python -m orchestrator momentum-prep`, unit `agentic-momentum` for the human to install), the AI veto and sentiment (`orchestrator/momentum_veto.py`, golden `config/golden/momentum_veto.yaml` 6/6).
   - **Reviewer request path (APPROVED, human ruling 2026-10-14):** the production client and pinned model on the class_3 tier, with 3 searches (not 1), the plain search tool `web_search_20250305` and a 300 s timeout with one retry (the lab's 2026-10-10 settings); $8 hard cap per run. Production research config is unchanged.
   - Market data: runs of 10+ identical closes are blanked as dormant prints (`feeds.drop_flat_runs`) so a reused ticker splits (the LINE defect).
+  - Order-path round trip PASSED live 2026-10-14 12:28 ET in the main paper account (1.496 F bought at 11.96 and sold at 11.95 through the engine, the gate's momentum path and the adapter; full trail). Weekly card: `orchestrator/momentum_report.py` (the live sleeve by Modified Dietz on the invested book, shadows as software books at 10 bp a side, SPY and SPMO). Step 2: `python -m orchestrator momentum-step2-report` (reports, applies nothing), scheduled on the droplet for 2026-11-06 16:45 ET.
 
 ## Paper Lab — separate paper accounts (PAPER PUSH, human ruling 2026-10-09 late)
 
