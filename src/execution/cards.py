@@ -570,3 +570,29 @@ def scoreboard_card(as_of: str, lines: Iterable[BoardLine], sessions: int, grade
         note = f"{sessions} sessions: the verdict is due."
     return Card("Paper lab", f"weekly scoreboard for {as_of}", GOOD, tuple(rendered[:5]) + (note,),
                 detail=table, detail_name=f"scoreboard-{file_stamp or as_of}.txt", sample=sample)
+
+
+def momentum_week_card(report, sample: bool = False) -> Card:
+    """The momentum sleeve's weekly line (ruling 2026-10-13; v1.1 and SPMO as
+    the binding comparison, 2026-10-14). ``report``: momentum_report.Report."""
+    if report.started is None:
+        return Card("Momentum", "weekly report", GOOD, (
+            "The sleeve has not traded yet; its first rebalance is the first trading day of the month.",
+        ), detail=report.table(), detail_name="momentum-weekly.txt", sample=sample)
+    live_w, live_s = report.week.get("v1.1 live"), report.since.get("v1.1 live")
+    spy_w, spmo_w = report.week.get("SPY"), report.week.get("SPMO")
+    spy_s, spmo_s = report.since.get("SPY"), report.since.get("SPMO")
+    shadows = {n: v for n, v in report.since.items()
+               if n not in ("v1.1 live", "SPY", "SPMO", "v1.1 modelled (plan at closes)") and v is not None}
+    ahead = sum(1 for v in shadows.values() if live_s is not None and v > live_s)
+    lines = [
+        f"This week: {pct(live_w)} (SPY {pct(spy_w)}, SPMO {pct(spmo_w)}).",
+        f"Since start ({report.started}): {pct(live_s)} (SPY {pct(spy_s)}, SPMO {pct(spmo_s)}).",
+        f"Holding {count(report.holdings, 'name')}, {usd(report.invested)} invested.",
+        f"Shadows: {ahead} of {len(shadows)} ahead of the live sleeve since start; the table is attached.",
+    ]
+    look = None
+    if live_s is None or spmo_s is None:
+        look = "a return could not be computed (missing prices); the attachment shows which"
+    return Card("Momentum", "weekly report", LOOK if look else GOOD, tuple(lines), look_at=look,
+                detail=report.table(), detail_name="momentum-weekly.txt", sample=sample)

@@ -271,6 +271,22 @@ def _weekly_card(report: str, today):
     return cards.weekly_main_card(value, week, spy_week, report)
 
 
+def _momentum_week_card(checks):
+    """The momentum sleeve's weekly card, or None before its first plan. A
+    failure is a yellow card, never a lost main report."""
+    from momentum import feeds
+    from orchestrator import momentum_report
+
+    try:
+        alpaca = feeds.Alpaca(feeds.Cache(datasafety.scratch_data_dir() / "momentum-weekly-cache"))
+        report = momentum_report.gather(checks.audit.path.parent / "momentum", checks.audit.trails(),
+                                        checks.clock().date(), alpaca)
+    except Exception as error:  # noqa: BLE001
+        return cards.Card("Momentum", "weekly report", cards.LOOK, ("The momentum report could not be built.",),
+                          look_at=f"the momentum report failed: {type(error).__name__}", detail=str(error))
+    return cards.momentum_week_card(report) if report is not None else None
+
+
 def weekly() -> int:
     """Friday delivery (ruling 2026-09-02): the attribution + forward report,
     emailed on the DAILY tier. Falls back to stdout when alerting is not
@@ -283,6 +299,11 @@ def weekly() -> int:
         return 1
     text = _attribution_text(checks)
     alerter = Alerter()
+    momentum_card = _momentum_week_card(checks)
+    if alerter.enabled and momentum_card is not None:
+        alerter.card(f"momentum-weekly-{checks.clock().date()}", momentum_card)
+    elif momentum_card is not None:
+        print(momentum_card.detail)
     if alerter.enabled:
         sent = alerter.card(f"weekly-{checks.clock().date()}", _weekly_card(text, checks.clock().date()))
         alerter.close()
@@ -1783,6 +1804,28 @@ def momentum_roundtrip() -> int:
     return 0 if result.passed else 1
 
 
+def momentum_step2_report() -> int:
+    """Momentum step 2's report (ruling 2026-10-13): REPORTS, applies nothing.
+    Exit 0 when the execution test has finished and step 2 is ready to decide."""
+    from orchestrator import momentum_step2
+
+    logging.basicConfig(level=logging.WARNING)
+    checks = preflight()
+    sessions = None
+    try:
+        from momentum import feeds
+
+        today = checks.clock().astimezone(_NY).date()
+        alpaca = feeds.Alpaca(feeds.Cache(datasafety.scratch_data_dir() / "momentum-step2-cache"))
+        sessions = alpaca.sessions(today.isoformat(), (today + timedelta(days=45)).isoformat())
+    except Exception:  # noqa: BLE001 - without the calendar, the first weekday of next month stands
+        pass
+    result = momentum_step2.report(checks, checks.audit.path.parent / "execution_test_state.json",
+                                   checks.clock().astimezone(_NY).date(), sessions)
+    print(result.text)
+    return 0 if result.ready else 1
+
+
 _NY = ZoneInfo("America/New_York")
 OPERATOR_COMMANDS = frozenset({"halt", "resume"})
 
@@ -1852,6 +1895,8 @@ def main() -> int:
         return resume()
     if command == "stress":
         return stress()
+    if command == "momentum-step2-report":
+        return momentum_step2_report()
     if command == "momentum-roundtrip":
         return momentum_roundtrip()
     if command == "momentum-veto-golden":
