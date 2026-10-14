@@ -4102,6 +4102,44 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-14 (afternoon) — FULL SYSTEM AUDIT (human request): 7 of 13 pass; two changes made as instructed (AI-trader gross cap; lab broker 1x / no shorting)
+
+```
+FULL SYSTEM AUDIT - 2026-10-14 (13:00 ET). PASS / FAIL per line.
+
+ACCOUNTS
+1  PASS  Main: equity $99,557, cash $28,810, 35 positions, kill switch clear (2.0% below its $101,577 high), no halt; last order 12:30 ET today (the momentum round trip; the last system order was an AAPL buy, cancelled 12:23 ET).
+         Ladder: equity $97,632, cash $476, 3 positions (SPY, SSO, QLD), no kill switch by ruling (-25% alert; now 2.4% below its high), no halt; last order 10:00 ET today.
+         AI trader: equity $99,720, cash $41,497, 4 positions (SOXS, SQQQ, XLE, a BAC put), kill switch clear (1.4% below its high), no halt; last order 09:46 ET today.
+2  PASS  Ladder Oct 13: 4 of 4 orders filled. The run logged "incomplete" (leftover gaps above the $25 minimum) and the same October rebalance finished Oct 14 with 3 top-ups (~$270). Its run card reached #reports at 10:00 ET (HTTP 200). The 10:20 check ran (exit 0); that card's own delivery is not logged (see 9).
+3  PASS  AI trader, 2 sessions: 18 ideas, 7 refused (5 no usable option contract, 1 over the premium budget, 1 gate daily-deployment cap); 11 entries (8 filled, 3 option entries unfilled); 7 closed (3 stops, 3 unfilled, 1 expiry close); 4 open. Model spend $0.86 (Oct 13) and $0.49 (Oct 14, 3 of 5 scans) against the $3 cap.
+   FLAG  SOXS and SQQQ are 3x leveraged inverse ETFs (~20% of equity each). The 2026-10-09 ruling cleared leveraged ETFs for the ladder account only. Not changed: needs a ruling.
+4  DONE  Per-position caps already existed, tighter than 25%: stocks 18.75% of NAV, option premium 2.5% - kept. No explicit gross cap existed: added 100% of NAV (commit e0865ce, live from the next AI-trader session). Gross today: 58%.
+5  DONE  Ladder and AI trader set to max margin 1x and no shorting via the API; read back: max_margin_multiplier 1, no_shorting true, account shorting_enabled false. Main (read only, not asked): multiplier 1, no_shorting FALSE at the broker - recommend setting it too.
+
+SERVICES
+6  FAIL  agentic-backup.service fails every night (exit 203): its second step /usr/local/bin/agentic-push-backup was never installed. The on-box tarball step still works. Every other agentic-* unit: enabled, last result success, next run armed (paper and AI-trader show their next run after today's session ends). agentic-rh-refresh.timer is a spent one-shot from Aug 27. agentic-contracts is not installed (not needed, see 8). The momentum prep unit awaits your install.
+7  PASS  Execution test: session 3 of 20 today. Daily cards for sessions 1 and 2 reached #reports (09:59 ET Oct 13, 10:01 ET Oct 14). No fills yet (no band crossing).
+8  PASS  Contract awards are recorded by the paper session itself. Last 5 sessions: Oct 8: 12, Oct 9: 8, Oct 12: 2, Oct 13: 0, Oct 14: 7 (Oct 13's zero follows the Oct 12 federal holiday: no DoD announcements).
+9  FAIL  No per-card send log exists (the alerter keeps only last success / last failure), so this list is reconstructed from service logs:
+         #reports, delivered (HTTP 200): Oct 13 09:59 exec-test daily; 10:00 ladder run; 16:00 main day; 16:00 AI-trader day. Oct 14 10:00 ladder run; 10:01 exec-test daily. Check cards (ladder-day1 Oct 13 10:20, ai-trader-day1 Oct 13 16:05, a scheduler self-test today 12:49) ran with exit 0; delivery not logged.
+         #urgent: nothing delivered in 3 days; one card FAILED Oct 12 11:31 ET (a Quiver feed error; the old urgent webhook, before the new one was made).
+         Friday weekly: scheduled Fri Oct 16 17:00 ET; runs the weekly report, then the lab scoreboard card with its table attached.
+
+INFRASTRUCTURE
+10 FAIL  Backups: nightly 01:07 UTC tarball of data/ and data-lab/ to /var/backups/agentic (14-day retention); last success 2026-10-14 01:07. NOTHING is stored off the droplet (no ~/.backup_env, rclone not installed, push script not installed). Steps: ops/vps/RUNBOOK-reboot.md section 6.
+11 FAIL  No swap. Disk: 17 GB free of 24 (29% used). Memory during today's session: ~450 MB available of 961 MB (paper session 153 MB, peak 170; AI trader 58 MB); committed 72-80%. Runbook 2b adds 2 GB swap.
+12 FAIL  45 updates pending (security pocket: python3-jwt, python3-urllib3) and a reboot required since Oct 14 06:53 (libc6; kernel 6.8.0-147 installed, 6.8.0-124 running, 55 days up). Runbook: ops/vps/RUNBOOK-reboot.md; post-checks: ops/vps/post_reboot_check.sh (dry-run tested today: only the two expected pre-reboot FAILs).
+
+SECURITY
+13 FAIL  Every key verified 2026-10-14 17:04 UTC (read-only calls; names only): all Alpaca pairs, Anthropic, both Discord webhooks, Finnhub, Quiver, X, ntfy PASS; Gmail SMTP UNVERIFIED (outbound SMTP is blocked on the droplet).
+         Rotated since 2026-10-12: .env was last modified 2026-10-12 21:00 UTC, so nothing has changed since. The Discord webhooks were created 10-12 20:22 / 20:25 UTC. No exposed values appear in this machine's transcripts, so which keys leaked cannot be checked here; treat all as unrotated.
+         NEW: httpx logs every Discord POST with the full webhook URL (its secret) into the system journal. This audit's own log search printed most of the #reports webhook token into the chat. Rotate DISCORD_WEBHOOK_REPORTS regardless; a one-line fix (httpx logger to WARNING) awaits approval.
+         Rotation order, one step each: RUNBOOK-reboot.md section 3.
+```
+
+Disclosure: the item-9 log search printed most of the #reports webhook token into the session; the token itself is not written here. Added: ops/vps/RUNBOOK-reboot.md, post_reboot_check.sh, verify_keys.py (8cb9ecb).
+
 ### 2026-10-14 — RULINGS: v1.1 goes live (top 500); veto settings approved; squeeze/meme and accounting golden cases; the global LEARNING LOOP rule
 
 **Rulings (human, 2026-10-14):**
