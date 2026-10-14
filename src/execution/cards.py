@@ -335,6 +335,24 @@ def drawdown_card(account: str, value: float, peak: float, since_start: Optional
         channel=URGENT, sample=sample)
 
 
+def leverage_card(account: str, adjusted: float, face: float, contributors: Sequence[tuple[str, float, float]],
+                  above: float, rearm: float, sample: bool = False) -> Card:
+    """Ruling 2026-10-14 (third): leverage-adjusted gross past the alert line.
+    ``contributors``: (symbol, signed leverage factor, leverage-adjusted
+    share of the account), largest first."""
+    top = [f"{plain(symbol, 22)} {pct(share, signed=False)} ({_trim(f'{factor:g}')}x)"
+           for symbol, factor, share in contributors[:4]]
+    return Card(account, f"leverage-adjusted exposure at {pct(adjusted, signed=False)}", LOOK, (
+        f"Exposure counting each fund's leverage: {pct(adjusted, signed=False)} of the account; "
+        f"at face value {pct(face, signed=False)}.",
+        f"Largest: {_joined(top)}.",
+        "Nothing is blocked: by your ruling the 100% cap counts face value in this account.",
+        f"The next alert comes only after it falls below {pct(rearm, signed=False)} and passes "
+        f"{pct(above, signed=False)} again.",
+    ), look_at=f"the AI trader's leverage-adjusted exposure passed the {pct(above, signed=False)} alert line",
+        channel=URGENT, sample=sample)
+
+
 def guard_card(account: str, refused: bool, when: str, what: str, sample: bool = False) -> Card:
     happened = ("a write to data it does not own was blocked" if refused
                 else "the data guard failed and let a write through")

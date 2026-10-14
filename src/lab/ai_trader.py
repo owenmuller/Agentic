@@ -190,6 +190,7 @@ class AiTrader:
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
         alert: Optional[Callable[[str, str], None]] = None,
+        leverage_alert: Optional[Callable[[Decimal, Decimal, list], None]] = None,
     ) -> None:
         self.account = account
         self.config = config
@@ -199,6 +200,8 @@ class AiTrader:
         self._sleep = sleep
         self._monotonic = monotonic
         self._alert = alert
+        #: The leverage watch's card (ruling 2026-10-14, third).
+        self._leverage_alert = leverage_alert
         self.gate: Optional[RiskGate] = None
         self.notes: list[str] = []
 
@@ -291,6 +294,7 @@ class AiTrader:
         day = now.astimezone(NY).date()
         self._recover()
         self.rebuild_gate(day)
+        self._leverage_watch()
         for position in list(self.positions().values()):
             reason = self.exit_reason(position, now)
             if reason:
@@ -299,6 +303,44 @@ class AiTrader:
         if due is not None:
             self.scan(now, label=due)
         return self.notes
+
+    def _leverage_watch(self) -> None:
+        """Ruling 2026-10-14 (third): an URGENT alert when leverage-adjusted
+        gross passes ``leverage_alert_above`` of NAV, once per crossing,
+        re-armed only after it falls below ``leverage_alert_rearm_below``.
+        Information only - nothing is blocked on this figure."""
+        nav = self.gate.state.nav
+        if nav <= ZERO:
+            return
+        face, adjusted = self.gross()
+        ratio, face_ratio = adjusted / nav, face / nav
+        engine = self.account.state.engine
+        armed = engine.get("leverage_alert_armed", True)
+        if armed and ratio > self.config.leverage_alert_above:
+            contributors = self._leverage_contributors(nav)
+            engine["leverage_alert_armed"] = False
+            self.account.state.save(self.account.state_path)
+            self.account.ledger.append("leverage_alert", leverage_adjusted=str(round(ratio, 4)),
+                                       face=str(round(face_ratio, 4)),
+                                       threshold=str(self.config.leverage_alert_above))
+            self.notes.append(f"LEVERAGE ALERT: leverage-adjusted gross {ratio:.0%} of NAV (face {face_ratio:.0%})")
+            if self._leverage_alert is not None:
+                self._leverage_alert(ratio, face_ratio, contributors)
+        elif not armed and ratio < self.config.leverage_alert_rearm_below:
+            engine["leverage_alert_armed"] = True
+            self.account.state.save(self.account.state_path)
+            self.account.ledger.append("leverage_alert_rearmed", leverage_adjusted=str(round(ratio, 4)))
+
+    def _leverage_contributors(self, nav: Decimal) -> list:
+        """(symbol, leverage factor, leverage-adjusted share of NAV), largest first."""
+        recorded = {(e.get("occ") or e["symbol"]): Decimal(str(e["leverage"]))
+                    for e in self.account.ledger.events(["position_opened"]) if e.get("leverage")}
+        rows = []
+        for position in self.gate.state.positions.values():
+            symbol = position.key[1]
+            factor = recorded.get(symbol) or leverage.factor(symbol, "etf", self.config.leverage_factors)
+            rows.append((symbol, factor, position.exposure * abs(factor) / nav))
+        return sorted(rows, key=lambda row: -row[2])
 
     def _due_scan(self, now: datetime) -> Optional[str]:
         """The latest scan time that has passed today and not yet run; any

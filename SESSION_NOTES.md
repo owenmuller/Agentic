@@ -4102,6 +4102,10 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-14 (evening) — RULING: AI-trader gross cap stays on face; leverage watch at 150% / 130%
+
+The 100% gross cap stays on FACE value for the AI-trader account (confirmed). New: an URGENT card when leverage-adjusted gross passes 150% of NAV, once per crossing, re-armed below 130%; no blocking on that figure. Checked every tick after the gate is rebuilt; the armed flag lives in the account's engine state (`leverage_alert_armed`), and each crossing and re-arm is a ledger event. The card (yellow, #urgent) names the four largest leverage-adjusted contributors; its alert key is unique per crossing, so the 4-hour resend window cannot swallow a second crossing. At 138% today it is armed and silent.
+
 ### 2026-10-14 (late) — RULINGS on the audit: log redaction; leverage measured, not blocked; main account 1x / no shorting; alert ledger; Spaces prerequisites
 
 1. **Webhook logging fix (approved):** `execution/logredact.py` redacts every log record at the record factory - Discord webhook tokens, ntfy topics, token-like query values - installed when the `execution` package loads; alert failure details are redacted before the status file. Old journal lines keep the old token until it is rotated (human: not urgent).

@@ -624,3 +624,44 @@ def test_the_scoreboard_shows_leveraged_trades_apart():
                    {"event": "position_closed", "pid": pid}]
     trades = scoreboard.lab_trades(events, {}, {"SOXS": D("-3")})  # opened before tagging: the table tags it
     assert {t.symbol: t.tag for t in trades} == {"SOXS": "leveraged_etf", "GS": None}
+
+
+def test_the_leverage_watch_alerts_once_per_crossing_and_never_blocks(lab_env):
+    # Human ruling 2026-10-14 (third): urgent alert past 150% leverage-adjusted
+    # gross, once per crossing, re-armed below 130%; the cap stays on face.
+    assert (CFG.leverage_alert_above, CFG.leverage_alert_rearm_below, CFG.gross_basis) == (D("1.50"), D("1.30"), "face")
+    world = _soxs_world()
+    fired = []
+    trader = trader_for(world, lab_env, FakeLLM([SOXS_LONG]))
+    trader._leverage_alert = lambda adjusted, face, top: fired.append((adjusted, face, top))
+    trader.config = CFG.model_copy(update={"leverage_alert_above": D("0.50"), "leverage_alert_rearm_below": D("0.30")})
+    trader.tick(et(12, "09:46"))                 # buys SOXS: ~19% face, ~56% leverage-adjusted
+    assert world.held.get("SOXS")                # not blocked
+    trader.tick(et(12, "09:47"))                 # the watch sees it: one alert
+    trader.tick(et(12, "09:48"))                 # still above: no second alert
+    assert len(fired) == 1 and fired[0][2][0][0] == "SOXS" and fired[0][2][0][1] == D("-3")
+    assert abs(fired[0][0] - fired[0][1] * 3) < D("0.001")
+    assert trader.account.state.engine["leverage_alert_armed"] is False
+    # re-arming and the second crossing, driven by the gross figure itself (a
+    # real price fall would also hit the position's stop and sell it)
+    nav = trader.gate.state.nav
+    for adjusted, armed, alerts in ((D("0.40"), False, 1),   # between the lines: still disarmed
+                                    (D("0.29"), True, 1),    # below 30%: re-armed, no alert
+                                    (D("0.45"), True, 1),    # between: armed, no alert
+                                    (D("0.51"), False, 2)):  # crosses 50% again: the second alert
+        trader.gross = lambda a=adjusted: (nav * a / 3, nav * a)
+        trader._leverage_watch()
+        assert trader.account.state.engine["leverage_alert_armed"] is armed and len(fired) == alerts
+    assert [e["event"] for e in trader.account.ledger.events(["leverage_alert", "leverage_alert_rearmed"])] == [
+        "leverage_alert", "leverage_alert_rearmed", "leverage_alert"]
+
+
+def test_the_leverage_card_is_yellow_on_urgent_and_says_nothing_is_blocked():
+    from execution import cards
+
+    card = cards.leverage_card("AI trader", 1.62, 0.6, [("SOXS", -3.0, 0.61), ("SQQQ", -3.0, 0.58), ("XLE", 1.0, 0.19)],
+                               1.5, 1.3)
+    assert card.status == cards.LOOK and card.channel == cards.URGENT
+    text = " ".join(card.all_lines)
+    assert "162%" in text and "60%" in text and "SOXS 61% (-3x)" in text and "Nothing is blocked" in text
+    assert "below 130%" in text and "150%" in text

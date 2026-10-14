@@ -265,7 +265,15 @@ def run_session(name: str) -> int:
             float(snap.get("equity") or 0) / prior - 1 if prior > 0 else None, benchmark.today(),
             f'python -m lab resume {name} --ack "your name"'))
 
-    trader = AiTrader(account, config.ai_trader, llm=llm, quotes=quotes, chain=chain, alert=kill_switch)
+    def leverage_watch(adjusted, face, contributors) -> None:
+        # ruling 2026-10-14 (third): information to #urgent, never a block
+        # one key per crossing: the 4-hour resend window must not swallow a second one
+        alerter.card(f"lab-{name}-leverage-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}", cards.leverage_card(
+            label, float(adjusted), float(face), [(s, float(f), float(share)) for s, f, share in contributors],
+            float(config.ai_trader.leverage_alert_above), float(config.ai_trader.leverage_alert_rearm_below)))
+
+    trader = AiTrader(account, config.ai_trader, llm=llm, quotes=quotes, chain=chain, alert=kill_switch,
+                      leverage_alert=leverage_watch)
     holder["trader"] = trader
     try:
         clock = account.adapter.market_clock()

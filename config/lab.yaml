@@ -141,9 +141,15 @@ ai_trader:
   max_gross_fraction: 1.00
   # Leverage is ALLOWED here and MEASURED (human ruling 2026-10-14, second,
   # item 2): gross counts notional x |factor|; leveraged-ETF trades are tagged.
-  # The cap enforces on gross_basis - "face" until the human decides (today's
-  # leverage-adjusted gross already exceeds 100%: SOXS and SQQQ at 3x each).
+  # The cap enforces on gross_basis: "face", confirmed by human ruling 2026-10-14
+  # (third) for this account (on that day leverage-adjusted gross was 138%:
+  # SOXS and SQQQ at 3x each).
   gross_basis: face
+  # Leverage watch (human ruling 2026-10-14, third): an urgent alert when the
+  # leverage-adjusted gross passes 150% of equity, once per crossing, re-armed
+  # below 130%. It never blocks: the 100% cap stays on face value (same ruling).
+  leverage_alert_above: 1.50
+  leverage_alert_rearm_below: 1.30
   # Signed factors; a fund not listed is read from its name at the broker.
   leverage_factors:
     SOXS: -3

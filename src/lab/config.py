@@ -125,6 +125,12 @@ class AiTraderConfig(_Strict):
     #: "face" (notional) until the human decides; "leverage_adjusted" counts
     #: notional x |leverage factor|. Both are always measured and reported.
     gross_basis: Literal["face", "leverage_adjusted"] = "face"
+    #: Leverage watch (human ruling 2026-10-14, third): an URGENT alert when
+    #: leverage-adjusted gross passes this fraction of NAV, once per crossing,
+    #: re-armed when it falls below the second. Information only: nothing is
+    #: blocked on the leverage-adjusted figure (the cap stays on face value).
+    leverage_alert_above: Decimal = Field(default=Decimal("1.50"), gt=ZERO)
+    leverage_alert_rearm_below: Decimal = Field(default=Decimal("1.30"), gt=ZERO)
     #: Signed leverage factors by symbol (SOXS -3, SSO 2, ...). A fund not
     #: listed is read from its name at the broker; anything else is 1.
     leverage_factors: dict[str, Decimal] = Field(default_factory=dict)
@@ -142,6 +148,8 @@ class AiTraderConfig(_Strict):
 
     @model_validator(mode="after")
     def _sane(self) -> "AiTraderConfig":
+        if self.leverage_alert_rearm_below >= self.leverage_alert_above:
+            raise ValueError("leverage_alert_rearm_below must be below leverage_alert_above")
         if self.min_stop_fraction >= self.max_stop_fraction:
             raise ValueError("min_stop_fraction must be below max_stop_fraction")
         if self.pass_cost_reserve_usd > self.daily_spend_cap_usd:
