@@ -33,10 +33,14 @@ class SleeveWeights(_Strict):
     #: The aggressive sleeve (risk-on redirect, human ruling 2026-10-08).
     #: Defaults to zero so a cap table written before the redirect still parses.
     aggressive: Fraction = Decimal("0")
+    #: The momentum book (human ruling 2026-10-13). Defaults to zero so an
+    #: earlier cap table still parses.
+    momentum: Fraction = Decimal("0")
 
     @model_validator(mode="after")
     def _weights_sum_to_one(self) -> "SleeveWeights":
-        total = self.equity + self.mechanical + self.prediction + self.baseline + self.aggressive
+        total = (self.equity + self.mechanical + self.prediction + self.baseline + self.aggressive
+                 + self.momentum)
         if total != Decimal("1"):
             raise ValueError(f"sleeve weights must sum to 1, got {total}")
         return self
@@ -165,6 +169,23 @@ class AggressiveSleeveLimits(_Strict):
     max_sector_exposure: Fraction
     min_order_notional_usd: Annotated[Decimal, Field(ge=Decimal("0"))] = Decimal("5")
     #: Operational off switch: false stops new aggressive entries; exits run.
+    entries_enabled: bool = True
+
+
+class MomentumSleeveLimits(_Strict):
+    """The momentum sleeve's cap table (human ruling 2026-10-13): v1 holds
+    at most 15 names, each at most 10% of the sleeve, at most 30% of the
+    sleeve per sector, and a rebalance day may deploy up to the whole sleeve.
+    Cash-secured, no margin, long-only, the kill switch and never-negative
+    exactly as every sleeve; its buys may not spend today's unsettled sale
+    proceeds (T+1, the aggressive sleeve's rule - Constraint #6)."""
+
+    max_single_position: Fraction
+    max_positions: Annotated[int, Field(gt=0)]
+    max_daily_deployment: Fraction
+    max_sector_exposure: Fraction
+    min_order_notional_usd: Annotated[Decimal, Field(ge=Decimal("0"))] = Decimal("5")
+    #: Operational off switch: false stops new momentum buys; sells run.
     entries_enabled: bool = True
 
 
@@ -435,6 +456,9 @@ class RiskLimits(_Strict):
     #: file parses; with no block the sleeve has no caps and the gate refuses
     #: its orders.
     aggressive_sleeve: Optional[AggressiveSleeveLimits] = None
+    #: The momentum sleeve (ruling 2026-10-13). Optional so an earlier file
+    #: parses; with no block the gate refuses its orders.
+    momentum_sleeve: Optional[MomentumSleeveLimits] = None
     cash_management: CashManagementLimits
     options_selection: OptionsSelectionLimits
     execution: ExecutionLimits

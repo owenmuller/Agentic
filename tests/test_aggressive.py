@@ -93,8 +93,10 @@ def research_config():
 
 def test_the_shipped_weights_and_caps_are_as_ruled(shipped_limits, signals_config):
     sleeves = shipped_limits.portfolio.sleeves
-    assert (sleeves.equity, sleeves.aggressive, sleeves.mechanical, sleeves.baseline, sleeves.prediction) == (
-        Decimal("0.30"), Decimal("0.25"), Decimal("0.15"), Decimal("0.30"), Decimal("0.00"),
+    # judged 30 -> 15 for the momentum sleeve's first step (ruling 2026-10-13)
+    assert (sleeves.equity, sleeves.aggressive, sleeves.mechanical, sleeves.baseline, sleeves.prediction,
+            sleeves.momentum) == (
+        Decimal("0.15"), Decimal("0.25"), Decimal("0.15"), Decimal("0.30"), Decimal("0.00"), Decimal("0.15"),
     )
     caps = shipped_limits.aggressive_sleeve
     # Entries ON for the B execution test alone (ruling 2026-10-09 evening);
@@ -153,21 +155,22 @@ def test_aggressive_buys_may_not_spend_unsettled_proceeds(limits):
     """Amendment 3: a cash account settles T+1; buying with today's sale
     proceeds and selling before settlement is a good-faith violation."""
     gate = _gate(limits, cash="100000")
-    approved = gate.submit(_buy("JDG", 20, sleeve="equity"))  # judged: 2,000
+    # judged: 1,400 (the 15% judged sleeve's 10% cap is 1,500 - ruling 2026-10-13)
+    approved = gate.submit(_buy("JDG", 14, sleeve="equity"))
     gate.record_fill(approved, Decimal("100.00"))
-    sell = gate.submit(EquitySellToCloseOrder(symbol="JDG", quantity=20, execution=LimitExecution(limit_price=Decimal("100.00")), sleeve="equity"))
+    sell = gate.submit(EquitySellToCloseOrder(symbol="JDG", quantity=14, execution=LimitExecution(limit_price=Decimal("100.00")), sleeve="equity"))
     gate.record_fill(sell, Decimal("100.00"))
-    assert gate.state.cash == Decimal("100000.00") and gate.state.unsettled_proceeds == Decimal("2000.00")
-    # Park 93,000 (a sweep buy reserves it): 7,000 spendable, 5,000 of it settled.
+    assert gate.state.cash == Decimal("100000.00") and gate.state.unsettled_proceeds == Decimal("1400.00")
+    # Park 93,000 (a sweep buy reserves it): 7,000 spendable, 5,600 of it settled.
     assert gate.submit(_buy("SGOV", 930, sleeve="cash_management")).is_approved
-    assert gate.state.buying_power == Decimal("7000.00") and gate.state.settled_buying_power == Decimal("5000.00")
-    # 6,000 of aggressive buying needs more than the 5,000 settled.
+    assert gate.state.buying_power == Decimal("7000.00") and gate.state.settled_buying_power == Decimal("5600.00")
+    # 6,000 of aggressive buying needs more than the 5,600 settled.
     refused = gate.submit(_buy("AGG", 60))
     assert refused.code is RejectionCode.UNSETTLED_FUNDS
-    assert gate.submit(_buy("AGG", 50)).is_approved  # 5,000: exactly the settled cash
+    assert gate.submit(_buy("AGG", 56)).is_approved  # 5,600: exactly the settled cash
     # The judged sleeve keeps its pre-redirect behaviour (paper settles at once):
-    # the last 2,000 - unsettled proceeds - still funds a judged buy.
-    assert gate.submit(_buy("JD2", 20, sleeve="equity")).is_approved
+    # the last 1,400 - unsettled proceeds - still funds a judged buy.
+    assert gate.submit(_buy("JD2", 14, sleeve="equity")).is_approved
     # The next session the proceeds have settled.
     gate._clock.advance(days=1)  # noqa: SLF001
     gate.submit(_buy("ZZZ", 1, price="1.00", sleeve="equity"))  # any submit rolls the day

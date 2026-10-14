@@ -42,4 +42,5 @@ def pre_redirect_limits():
         payload = yaml.safe_load(handle)
     payload["portfolio"]["sleeves"]["equity"] = 0.55
     payload["portfolio"]["sleeves"]["aggressive"] = 0.0
+    payload["portfolio"]["sleeves"]["momentum"] = 0.0  # the momentum step (2026-10-13) is pinned elsewhere
     return RiskLimits.model_validate(payload)

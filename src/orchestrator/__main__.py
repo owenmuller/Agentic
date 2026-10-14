@@ -379,6 +379,7 @@ def _attribution_text(checks) -> str:
                     "cash_sweep",
                     "baseline",
                     "execution_test",
+                    "momentum",
                 ):
                     continue
                 symbol = str((trail.decision.gate.order or {}).get("symbol") or "")

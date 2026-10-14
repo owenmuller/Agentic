@@ -64,7 +64,10 @@ def paper_mode(monkeypatch):
 
 @pytest.fixture(scope="session")
 def limits():
-    return RiskLimits.load()
+    # a mechanism test: the pre-redirect weights, not the momentum step (2026-10-13)
+    from config_overrides import pre_redirect_limits
+
+    return pre_redirect_limits()
 
 
 @pytest.fixture(scope="session")

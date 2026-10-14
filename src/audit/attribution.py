@@ -1473,7 +1473,7 @@ def build_attribution(
         for t in trails
         # The aggressive sleeve (redirect 2026-10-08) is its own bucket: its
         # fixed-risk swings never read as a judged class earning.
-        if t.decision.sizing.strategy not in ("mechanical", "cash_sweep", "baseline", "aggressive", "execution_test")
+        if t.decision.sizing.strategy not in ("mechanical", "cash_sweep", "baseline", "aggressive", "execution_test", "momentum")
     ]
     buckets: dict[SignalClass, dict[str, object]] = {}
 

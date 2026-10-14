@@ -66,6 +66,10 @@ class Sleeve(StrEnum):
     #: cap table, its own daily counter, its own exit engine; cash-secured and
     #: bound by the kill switch like everything else.
     AGGRESSIVE = "aggressive"
+    #: The momentum book (human ruling 2026-10-13): a rules-only sleeve - v1's
+    #: monthly top-15 - with its own cap table and daily counter, funded from
+    #: idle cash, cash-secured and bound by the book-level kill switch.
+    MOMENTUM = "momentum"
 
 
 class AccountType(StrEnum):
@@ -189,6 +193,8 @@ class AccountState:
     mechanical_deployed_today: Decimal = ZERO
     #: Same, for the aggressive sleeve (redirect 2026-10-08).
     aggressive_deployed_today: Decimal = ZERO
+    #: Same, for the momentum sleeve (ruling 2026-10-13).
+    momentum_deployed_today: Decimal = ZERO
     #: Sale proceeds credited on ``deployment_date`` (any sleeve). A cash
     #: account settles T+1, so these may not fund an AGGRESSIVE-sleeve buy the
     #: same day (redirect 2026-10-08, amendment 3). Reset at the day roll: the
@@ -291,6 +297,7 @@ class AccountState:
             self.deployed_today = ZERO
             self.mechanical_deployed_today = ZERO
             self.aggressive_deployed_today = ZERO
+            self.momentum_deployed_today = ZERO
             self.unsettled_proceeds = ZERO
 
     @property

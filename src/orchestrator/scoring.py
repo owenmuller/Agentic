@@ -565,7 +565,7 @@ def whatif_dispatch(
         seen.add(record.decision_id)
         paid = False
         if isinstance(record, DecisionRecord):
-            if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline", "execution_test"):
+            if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline", "execution_test", "momentum"):
                 continue
             paid = True
         else:

@@ -129,7 +129,7 @@ def funnel_entries(
 
     for record in records:
         if isinstance(record, DecisionRecord):
-            if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline", "execution_test"):
+            if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline", "execution_test", "momentum"):
                 continue  # copies of judged inputs / parked cash / beta — not signals
             if record.decision_id in seen:
                 continue

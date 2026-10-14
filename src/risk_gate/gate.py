@@ -193,6 +193,7 @@ class RiskGate:
             Sleeve.PREDICTION: weights.prediction,
             Sleeve.BASELINE: weights.baseline,
             Sleeve.AGGRESSIVE: weights.aggressive,
+            Sleeve.MOMENTUM: weights.momentum,
         }[sleeve]
         return self._state.nav * weight
 
@@ -458,6 +459,45 @@ class RiskGate:
                     observed=Decimal(len(held_names) + 1),
                 )
 
+        # Momentum sleeve (human ruling 2026-10-13): its own cap table must
+        # exist and be switched on; its buys may not spend today's unsettled
+        # sale proceeds (T+1); it holds at most max_positions names.
+        momentum = limits.momentum_sleeve
+        if sleeve is Sleeve.MOMENTUM:
+            if momentum is None or not momentum.entries_enabled:
+                return Rejection(
+                    code=RejectionCode.SLEEVE_ALLOCATION_EXCEEDED,
+                    message="momentum sleeve has no cap table or its entries are switched off",
+                    limit=ZERO,
+                    observed=cost,
+                )
+            if cost > state.settled_buying_power:
+                return Rejection(
+                    code=RejectionCode.UNSETTLED_FUNDS,
+                    message=(
+                        f"order reserves {cost} but only {state.settled_buying_power} is "
+                        f"settled: {state.unsettled_proceeds} of today's sale proceeds "
+                        f"settle T+1 and may not fund a momentum-sleeve buy today"
+                    ),
+                    limit=state.settled_buying_power,
+                    observed=cost,
+                )
+            held_names = {
+                p.key
+                for p in state.positions.values()
+                if p.sleeve is Sleeve.MOMENTUM and (p.quantity > 0 or p.pending_open_units > 0)
+            }
+            if key not in held_names and len(held_names) + 1 > momentum.max_positions:
+                return Rejection(
+                    code=RejectionCode.MAX_POSITIONS_EXCEEDED,
+                    message=(
+                        f"momentum sleeve already holds {len(held_names)} positions, "
+                        f"the cap is {momentum.max_positions}"
+                    ),
+                    limit=Decimal(momentum.max_positions),
+                    observed=Decimal(len(held_names) + 1),
+                )
+
         # Max single position.
         position = state.position(key)
         current_exposure = position.exposure if position is not None else ZERO
@@ -468,6 +508,8 @@ class RiskGate:
             single_cap_fraction = limits.mechanical_sleeve.max_single_position
         elif sleeve is Sleeve.AGGRESSIVE:
             single_cap_fraction = aggressive.max_single_position  # type: ignore[union-attr]
+        elif sleeve is Sleeve.MOMENTUM:
+            single_cap_fraction = momentum.max_single_position  # type: ignore[union-attr]
         else:
             single_cap_fraction = self._prediction_cap_fraction(order)
         single_cap = sleeve_nav * single_cap_fraction
@@ -491,7 +533,7 @@ class RiskGate:
         if (
             self._adv is not None
             and not is_option(order)
-            and sleeve in (Sleeve.EQUITY, Sleeve.MECHANICAL, Sleeve.AGGRESSIVE)
+            and sleeve in (Sleeve.EQUITY, Sleeve.MECHANICAL, Sleeve.AGGRESSIVE, Sleeve.MOMENTUM)
         ):
             liquidity_rejection = self._check_liquidity(key[1], resulting)
             if liquidity_rejection is not None:
@@ -507,6 +549,8 @@ class RiskGate:
                 sector_fraction = limits.equity_sleeve.max_sector_exposure
             elif sleeve is Sleeve.AGGRESSIVE:
                 sector_fraction = aggressive.max_sector_exposure  # type: ignore[union-attr]
+            elif sleeve is Sleeve.MOMENTUM:
+                sector_fraction = momentum.max_sector_exposure  # type: ignore[union-attr]
             else:
                 sector_fraction = limits.mechanical_sleeve.max_sector_exposure
             sector = self._sectors.sector_of(key[1])
@@ -577,6 +621,19 @@ class RiskGate:
                     limit=daily_cap,
                     observed=deployed,
                 )
+        elif sleeve is Sleeve.MOMENTUM:
+            deployed = state.momentum_deployed_today + cost
+            daily_cap = sleeve_nav * momentum.max_daily_deployment  # type: ignore[union-attr]
+            if deployed > daily_cap:
+                return Rejection(
+                    code=RejectionCode.MAX_DAILY_DEPLOYMENT_EXCEEDED,
+                    message=(
+                        f"deploying {cost} would put the momentum sleeve's "
+                        f"daily total at {deployed}, above its own cap"
+                    ),
+                    limit=daily_cap,
+                    observed=deployed,
+                )
 
         # Aggregate long-option premium at risk.
         if is_option(order):
@@ -626,6 +683,7 @@ class RiskGate:
                 Sleeve.PREDICTION: limits.portfolio.sleeves.prediction,
                 Sleeve.BASELINE: limits.portfolio.sleeves.baseline,
                 Sleeve.AGGRESSIVE: limits.portfolio.sleeves.aggressive,
+                Sleeve.MOMENTUM: limits.portfolio.sleeves.momentum,
             }[sleeve]
             ceiling_fraction = target + limits.portfolio.drift_tolerance
             resulting_fraction = (state.sleeve_exposure(sleeve) + cost) / nav
@@ -665,6 +723,8 @@ class RiskGate:
             state.mechanical_deployed_today += cost
         elif sleeve is Sleeve.AGGRESSIVE:
             state.aggressive_deployed_today += cost
+        elif sleeve is Sleeve.MOMENTUM:
+            state.momentum_deployed_today += cost
         return self._approve(order, cost, now)
 
     def _prediction_cap_fraction(self, order: Order) -> Decimal:

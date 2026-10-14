@@ -202,7 +202,8 @@ class EquityBuyOrder(_OrderBase):
     #: sleeves are representable — the schema still cannot express a
     #: prediction-market or written-option order, and sleeve attribution
     #: changes caps, never capabilities.
-    sleeve: Literal["equity", "mechanical", "cash_management", "baseline", "aggressive"] = "equity"
+    sleeve: Literal["equity", "mechanical", "cash_management", "baseline", "aggressive",
+                    "momentum"] = "equity"
 
     def max_loss(self) -> Decimal:
         return self.execution.price_bound * self.quantity
@@ -226,7 +227,8 @@ class EquitySellToCloseOrder(_OrderBase):
     execution: SellExecution
     #: Must match the position being closed — the gate keys positions by
     #: (sleeve, symbol), so a judged exit can never sell mechanical shares.
-    sleeve: Literal["equity", "mechanical", "cash_management", "baseline", "aggressive"] = "equity"
+    sleeve: Literal["equity", "mechanical", "cash_management", "baseline", "aggressive",
+                    "momentum"] = "equity"
 
     def max_loss(self) -> Decimal:
         return ZERO

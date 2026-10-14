@@ -33,7 +33,7 @@ accounts:
     # exempt from the judged sleeve's alpha caps; frozen by the operator halt.
     limits_overrides:
       portfolio:
-        sleeves: {equity: 0, mechanical: 0, prediction: 0, baseline: 1, aggressive: 0}
+        sleeves: {equity: 0, mechanical: 0, prediction: 0, baseline: 1, aggressive: 0, momentum: 0}
     # Ruling 2026-10-10, item 3a: NO drawdown kill switch for the ladder - it is
     # the benchmark and keeps rebalancing through drawdowns. An urgent alert at
     # -25% from peak instead (once per peak). The operator halt still works.
@@ -58,7 +58,7 @@ accounts:
     # The 12% kill switch stays (ruling 2026-10-10, item 3a).
     limits_overrides:
       portfolio:
-        sleeves: {equity: 0.25, mechanical: 0, prediction: 0, baseline: 0, aggressive: 0.75}
+        sleeves: {equity: 0.25, mechanical: 0, prediction: 0, baseline: 0, aggressive: 0.75, momentum: 0}
       equity_sleeve:
         max_single_position: 0.10
         max_daily_deployment: 1.00

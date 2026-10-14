@@ -99,11 +99,23 @@ def liquidity_buffer(gate: RiskGate, config: CashManagementLimits) -> Decimal:
         nav = gate.sleeve_nav(Sleeve.AGGRESSIVE)
         undeployed = max(ZERO_D, nav - gate.state.sleeve_exposure(Sleeve.AGGRESSIVE))
         aggressive = min(nav * limits.aggressive_sleeve.max_daily_deployment, undeployed)
+    # The momentum sleeve (ruling 2026-10-13), the same way: its undeployed
+    # allotment stays cash for the monthly rebalance; entries off, nothing parked.
+    momentum = ZERO_D
+    if (
+        limits.momentum_sleeve is not None
+        and limits.momentum_sleeve.entries_enabled
+        and limits.portfolio.sleeves.momentum > 0
+    ):
+        nav = gate.sleeve_nav(Sleeve.MOMENTUM)
+        undeployed = max(ZERO_D, nav - gate.state.sleeve_exposure(Sleeve.MOMENTUM))
+        momentum = min(nav * limits.momentum_sleeve.max_daily_deployment, undeployed)
     return (
         gate.sleeve_nav(Sleeve.EQUITY) * limits.equity_sleeve.max_daily_deployment
         + gate.sleeve_nav(Sleeve.MECHANICAL)
         * limits.mechanical_sleeve.max_daily_deployment
         + aggressive
+        + momentum
         + gate.state.reserved_cash
         + config.buffer_margin_usd
     )

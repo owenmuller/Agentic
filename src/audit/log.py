@@ -925,7 +925,7 @@ class AuditLog:
             if record.recorded_at.date() != day:
                 continue
             if isinstance(record, DecisionRecord):
-                if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline", "execution_test"):
+                if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline", "execution_test", "momentum"):
                     # No LLM ran (defect fix 2026-09-02): a mechanical entry or
                     # a cash sweep spent no pass, and counting it here was
                     # quietly consuming the judged source cap on every restart.
@@ -953,7 +953,7 @@ class AuditLog:
             if record.recorded_at.date() != day:
                 continue
             if isinstance(record, DecisionRecord):
-                if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline", "execution_test"):
+                if record.sizing.strategy in ("mechanical", "cash_sweep", "baseline", "execution_test", "momentum"):
                     continue
             elif isinstance(record, StageRejectionRecord):
                 if record.stage in (RejectedStage.PRE_FILTER, RejectedStage.TRIAGE):
@@ -1008,7 +1008,7 @@ class AuditLog:
             # quietly shrinking the day's research budget after every restart.
             and not (
                 isinstance(record, DecisionRecord)
-                and record.sizing.strategy in ("mechanical", "cash_sweep", "baseline", "execution_test")
+                and record.sizing.strategy in ("mechanical", "cash_sweep", "baseline", "execution_test", "momentum")
             )
         )
         # Self-consistency votes (ruling 2026-10-07): every extra sample was a

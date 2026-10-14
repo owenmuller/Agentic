@@ -194,6 +194,7 @@ class Preflight:
                 f"drawdown:          {state.drawdown():.2%}",
                 f"kill switch:       {halt}",
                 f"sleeves:           equity {_sleeve_label(sleeves.equity)}, "
+                f"momentum {_sleeve_label(sleeves.momentum)}, "
                 f"aggressive {_sleeve_label(sleeves.aggressive)}, "
                 f"mechanical {_sleeve_label(sleeves.mechanical)}, "
                 f"baseline {_sleeve_label(sleeves.baseline)}, "

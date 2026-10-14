@@ -89,7 +89,10 @@ def make_report(**overrides) -> ResearchReport:
 
 @pytest.fixture(scope="session")
 def limits() -> RiskLimits:
-    return RiskLimits.load()
+    # a mechanism test: the pre-redirect weights, not the momentum step (2026-10-13)
+    from config_overrides import pre_redirect_limits
+
+    return pre_redirect_limits()
 
 
 @pytest.fixture
