@@ -4102,6 +4102,59 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-13 — MOMENTUM BUILD, PRE-REGISTERED (replaces items 8 and 9); Phase 0 data report
+
+**Pre-registration (human ruling 2026-10-13, recorded verbatim in substance before any data is bought or any return computed).**
+- **Phase 1 (the X thread):**
+  - Hold the single top prior-year S&P 500 gainer, rebalanced each January, 2012 to now and as far back as data allows.
+  - Report CAGR, max drawdown, and the share of the gain from the best 3 years.
+  - No stops, no tuning. Not a strategy candidate.
+- **Phase 2 universe and score:**
+  - Universe: top 1,000 US stocks by point-in-time market cap, price > $5, delisted names included.
+  - Score: 50% residual 12-1 month momentum (net of market and industry; industry from our own universe) and 50% earnings-announcement momentum (sum of [-1,+1]-day abnormal returns around each earnings release over the past 12 months, dates from 8-K item 2.02). Before earnings-date coverage begins: residual momentum only, flagged.
+  - Exclusions:
+    - any single-day move > 15% in the past 3 months (the Clenow gap filter);
+    - pending acquisition targets, where merger data covers the date;
+    - below the stock's own 100-day average.
+- **Phase 2 portfolio and risk:**
+  - Top 15, with a buffer (buy at rank <= 15, sell at rank > 30); sector cap 30%; monthly rebalance.
+  - Risk (A): no new buys while SPY is below its 200-day average; existing holdings run to their exits.
+  - Risk (B): vol scaling to the book's own trailing 3-year average vol, capped at 1x. No margin.
+- **Phase 2 declared variants, nothing else:**
+  - weighting {equal, inverse-volatility} x risk {A, B, A+B} x universe {top 500, top 1,000} = 12 variants.
+  - Every one is reported. The deflated Sharpe of the chosen variant counts all 12 plus Phase 1.
+- **Phase 2 test and success:**
+  - Choose on the earliest half of the survivorship-free data; judge on the latest half, untouched.
+  - Benchmarks: SPY, RSP, MTUM, SPMO, QMOM (live fund records where they exist).
+  - Success, on the judged half after costs and before tax: beats SPY and SPMO on CAGR; max drawdown under 35%; deflated Sharpe significant at 5%; positive excess in each subperiod. After-tax reported alongside.
+- **Phase 3 (only if Phase 2 passes):**
+  - Live paper, in its own paper account.
+  - The LLM adds two legs, logged separately: a veto on new entrants, and a 6-month news-sentiment tie-breaker.
+  - Neither leg is backtested (model training data contains hindsight).
+
+**Phase 0 — data (read-only probes 2026-10-13; nothing bought).**
+- **a. Current coverage:**
+  - Alpaca daily bars start 2016-01-04 for every name. There is nothing before 2016: LEH has no bars at all.
+  - Delisted names are kept back to 2016 (TWTR to 2022-10-27, XLNX, ATVI, SIVB, FRC, CELG to 2019-11-20, YHOO to 2017-06-16). The asset master lists 14,387 active and 19,170 inactive US equities.
+  - **Histories are keyed by ticker, not by company:** BBBY runs on to 2026-08-14 because Beyond Inc. took the ticker in 2025 (the same defect as the Quiver ticker breaks).
+  - Point-in-time shares before 2009: **none**. SEC XBRL share counts begin 2009-2011.
+  - Historical S&P 500 membership: **none**.
+  - So current data is NOT survivorship-free in the sense Phase 1 and Phase 2 need. Phase 1 waits for Phase 0.
+- **b. Sharadar:**
+  - **Personal-use** plans, bought direct from sharadar.com: the full-history Bundle is $69/month or $499/year. It covers prices (1998+), fundamentals with point-in-time filing dates (1998+), S&P 500 constituents (1957+), actions and delistings, 8-K events and insiders. ETF prices are a separate Prices dataset; the Prices plan includes funds.
+  - Access is the Nasdaq Data Link API or bulk download; either works from Linux.
+  - **Licence:** the Personal Use License is for "a natural person acting in an individual capacity only". Use "for an employer, client, partner, colleague, firm, fund" requires a commercial licence through Nasdaq, at a quoted price. **The human decides which applies.**
+  - Norgate (alternative): US Platinum $630/year (prices from 1990, delisted names, historical index constituents) or Diamond $787.50/year (from 1950). Its updater (NDU) is a Windows desktop app; the `norgatedata` Python package reads its local database, so it would need a Windows machine or VM. It cannot run on the droplet.
+- **c. Earnings dates (EDGAR):**
+  - The submissions API carries `items` and `acceptanceDateTime` (to the second) for every 8-K: IBM, AAPL and KO each have item 2.02 from October 2004, when item numbering began on 2004-08-23. Before that, earnings releases were item 12 (2003-03-28 to 2004-08-22) and are inconsistent earlier.
+  - The quarterly full index lists 8-Ks (22,895 in 2004Q3) but not their item numbers. Per-company submissions pages give both items and timestamps (about 3,000 companies over the history, inside SEC's 10 requests/second).
+  - **The acceptance time decides the event day:** a filing after the close belongs to the next session's [-1,+1] window.
+- **Consequences for the test, stated now (resolved later by the human, not by me):**
+  - With Sharadar full history, survivorship-free data runs 1998 to now. The halves are about 1998-2012 (choose) and 2012-2026 (judge). The earnings leg starts in 2004, so the choose half is mostly residual-momentum-only, flagged as the spec says.
+  - SPMO (live from 2015-10) and QMOM (2015-12) cover only part of the judged half; MTUM starts 2013-04.
+  - Open question for the human: compare against SPMO's live record only (the stricter, literal reading) or against its index backfill.
+- Droplet: 961 MB RAM and 18 GB free disk. Full-history Sharadar prices are tens of millions of rows; they would be stored partitioned on disk and read out-of-core, never loaded whole, under the research-job memory cap.
+
 ### 2026-10-12 (late) — every Discord message is a plain-English card (embed); six SAMPLE cards sent for review
 
 - **Built and deployed (552e841): `execution/cards.py`.** Each message is a card rendered as a Discord embed:
