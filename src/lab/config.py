@@ -116,6 +116,11 @@ class AiTraderConfig(_Strict):
     # -- the rules engine --------------------------------------------------------
     risk_fraction: Decimal = Field(gt=ZERO, le=Decimal("0.05"))
     max_positions: int = Field(gt=0)
+    #: Explicit gross cap (human ruling 2026-10-14, audit item 4): open
+    #: exposure plus the new order may not pass this fraction of NAV. Per
+    #: position the gate's caps already bind tighter than 25%: stocks
+    #: 18.75% of NAV (aggressive 0.25 x 0.75), option premium 2.5%.
+    max_gross_fraction: Decimal = Field(default=Decimal("1.00"), gt=ZERO, le=ONE)
     min_confidence: int = Field(ge=0, le=100)
     min_reward_risk: Decimal = Field(ge=ZERO)
     min_stop_fraction: Decimal = Field(gt=ZERO, lt=ONE)

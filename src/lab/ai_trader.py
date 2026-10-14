@@ -601,6 +601,18 @@ class AiTrader:
         position = Position(pid=plan["pid"], symbol=plan["symbol"], instrument=plan["instrument"],
                             horizon=plan["horizon"], stop=Decimal(plan["stop"]), target=Decimal(plan["target"]),
                             thesis=plan["thesis"], opened_at="", occ=plan.get("occ"))
+        # Explicit gross cap (human ruling 2026-10-14, audit item 4): what is
+        # open (with working reservations) plus this order, against NAV.
+        if hasattr(order, "contracts"):
+            cost = Decimal(order.contracts) * limit * Decimal(order.multiplier)
+        else:
+            cost = order.quantity * limit
+        gross = sum((p.exposure for p in self.gate.state.positions.values()), ZERO)
+        ceiling = self.gate.state.nav * self.config.max_gross_fraction
+        if gross + cost > ceiling:
+            self._reject(plan, f"gross cap: {gross:.2f} open + {cost:.2f} would pass "
+                               f"{self.config.max_gross_fraction:.0%} of NAV ({ceiling:.2f})")
+            return None
         decision = self.gate.submit(order)
         if not decision.is_approved:
             self._reject(plan, f"gate: {decision.code}: {decision.message}")

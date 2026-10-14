@@ -539,3 +539,16 @@ def test_the_report_tool_carries_no_absolute_level():
     assert "price_seen" not in item["required"]
     text = system_prompt(CFG)
     assert "PERCENTAGE DISTANCES" in text and "entry_reference" not in text
+
+
+def test_the_explicit_gross_cap_refuses_an_entry_past_it(lab_env):
+    # Human ruling 2026-10-14 (audit item 4): open exposure plus the new order
+    # may not pass max_gross_fraction of NAV (shipped 1.00).
+    assert CFG.max_gross_fraction == D("1.00")
+    world = World()
+    trader = trader_for(world, lab_env, FakeLLM([AAPL_LONG]))
+    trader.config = CFG.model_copy(update={"max_gross_fraction": D("0.05")})  # 5% of 100,000
+    trader.tick(et(12, "09:46"))
+    assert "AAPL" not in world.held or not world.held["AAPL"]
+    rejected = trader.account.ledger.events(["idea_rejected"])
+    assert rejected and "gross cap" in rejected[-1]["reason"]
