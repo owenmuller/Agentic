@@ -639,6 +639,41 @@ class ExecutionTestConfig(BaseModel):
     limit_buffer: Decimal = Field(default=Decimal("0.001"), ge=0, le=Decimal("0.01"))
 
 
+class MomentumSleeveConfig(BaseModel):
+    """The momentum sleeve's in-session engine (human ruling 2026-10-13).
+
+    v1's monthly plan (``data/momentum/plan-YYYY-MM.json``, written by the
+    prep job) is executed by rules from ``trade_after`` on its rebalance day:
+    sells first, then buys, one working order at a time, every order through
+    the gate. The cap table lives in ``risk_limits.yaml momentum_sleeve``;
+    this block holds only the engine's timing and order mechanics."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = True
+    #: New York time. The plan trades only inside this window.
+    trade_after: str = "10:00"
+    trade_before: str = "15:30"
+    #: A rebalance not finished after this many sessions closes for the month
+    #: with what it has done (funds, T+1 or the gate held the rest back) and
+    #: says so. Constraint #6: a stale plan is not chased into a later week.
+    max_rebalance_sessions: int = Field(default=3, ge=1, le=5)
+    #: A plan not started within this many calendar days of its rebalance
+    #: date (the session was down) is skipped for the month, not chased.
+    plan_valid_days: int = Field(default=7, ge=1, le=14)
+    #: A name whose holding is within this fraction of its target value is
+    #: left alone (fewer trades - my reading, flagged: the backtest trades
+    #: every name to exact weight and charges the cost).
+    drift_tolerance: Decimal = Field(default=Decimal("0.10"), ge=0, lt=1)
+    #: Marketable limits: quote x (1 + buffer) to buy; bid (or quote x
+    #: (1 - buffer)) to sell.
+    limit_buffer: Decimal = Field(default=Decimal("0.002"), ge=0, le=Decimal("0.01"))
+    #: An order still working after this long is cancelled and re-priced.
+    fill_wait_seconds: int = Field(default=120, ge=10, le=1800)
+    #: How often held names are marked to market outside a rebalance.
+    mark_interval_seconds: int = Field(default=300, ge=30, le=3600)
+
+
 class OrchestratorConfig(BaseModel):
     """Loop cadence and the daily research budget."""
 
@@ -720,6 +755,9 @@ class OrchestratorConfig(BaseModel):
     #: The aggressive sleeve (risk-on redirect, human ruling 2026-10-08).
     aggressive_sleeve: AggressiveSleeveConfig = Field(default_factory=AggressiveSleeveConfig)
     execution_test: ExecutionTestConfig = Field(default_factory=ExecutionTestConfig)
+    #: The momentum sleeve's engine (ruling 2026-10-13). Buys also need
+    #: risk_limits.yaml momentum_sleeve.entries_enabled and a nonzero weight.
+    momentum_sleeve: MomentumSleeveConfig = Field(default_factory=MomentumSleeveConfig)
     #: Add decisions (ruling 2026-09-16): one judged position per symbol, adds
     #: under a combined cap. The combined cap can never exceed the hard cap, so
     #: absent-section defaults are safe.

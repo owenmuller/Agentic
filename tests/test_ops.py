@@ -513,6 +513,6 @@ def test_health_report_shows_the_allocation_with_the_inactive_marker(
         checks, inert_engine(checks).tracked, RunLog(tmp_path / "run.log")
     )
     assert (
-        "sleeves: equity 55%, mechanical 15%, baseline 30%, prediction 0% (inactive)"
+        "sleeves: equity 55%, momentum 0% (inactive), aggressive 0% (inactive), mechanical 15%, baseline 30%, prediction 0% (inactive)"
         in report
     )

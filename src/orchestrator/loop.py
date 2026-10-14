@@ -111,6 +111,8 @@ class TickReport:
     baseline_orders: int = 0
     #: Execution-test orders placed this tick (ruling 2026-10-09 evening).
     exec_test_orders: int = 0
+    #: Momentum sleeve rebalance orders placed this tick (ruling 2026-10-13).
+    momentum_orders: int = 0
     halted: bool = False
 
     @property
@@ -145,6 +147,7 @@ class TradingLoop:
         sweeper: Optional[object] = None,
         baseline: Optional[object] = None,
         execution_test: Optional[object] = None,
+        momentum: Optional[object] = None,
         budget: ResearchBudget,
         session: SessionState,
         gate: RiskGate,
@@ -224,6 +227,9 @@ class TradingLoop:
         self._baseline = baseline
         #: The B execution test (ruling 2026-10-09 evening). None when disabled.
         self._execution_test = execution_test
+        #: The momentum sleeve (ruling 2026-10-13). None when its weight is
+        #: zero or it has no cap table.
+        self._momentum = momentum
         self._budget = budget
         self._session = session
         self._gate = gate
@@ -254,6 +260,10 @@ class TradingLoop:
     @property
     def baseline(self):
         return self._baseline
+
+    @property
+    def momentum(self):
+        return self._momentum
 
     @property
     def deferred(self) -> tuple[Signal, ...]:
@@ -409,6 +419,8 @@ class TradingLoop:
                 released += len(self._baseline.cancel_working())
             if self._execution_test is not None:
                 released += len(self._execution_test.cancel_working())
+            if self._momentum is not None:
+                released += len(self._momentum.cancel_working())
             report.settled += released
             self._session.persist(self._gate, self._clock())
             message = (
@@ -767,6 +779,11 @@ class TradingLoop:
         if self._execution_test is not None:
             report.exec_test_orders = self._execution_test.tick(now)
 
+        # The momentum sleeve (ruling 2026-10-13): v1's monthly plan, by rules,
+        # before the sweep, which then defends its reservations.
+        if self._momentum is not None:
+            report.momentum_orders = self._momentum.tick(now)
+
         # The sweep runs LAST, after every trading decision this tick has made
         # its reservations — the buffer it defends includes them, so ordering
         # it after the entries is what keeps it from racing them.
@@ -913,6 +930,8 @@ class TradingLoop:
             self._session.capture_baseline(self._baseline)
         if self._execution_test is not None:
             report.settled += len(self._execution_test.cancel_working())
+        if self._momentum is not None:
+            report.settled += len(self._momentum.cancel_working())
         # Signals still deferred at shutdown die with the process (ruling
         # 2026-10-07, 8-K funnel hole a): record them so the forward engine
         # can grade what the pool or the budget turned away today.

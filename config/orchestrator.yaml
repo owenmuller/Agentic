@@ -464,3 +464,24 @@ execution_test:
   decision_grace_minutes: 5
   min_stop_fraction: 0.001
   limit_buffer: 0.001
+
+# The momentum sleeve's in-session engine (human ruling 2026-10-13). v1's
+# monthly plan (data/momentum/plan-YYYY-MM.json, written by the prep job) is
+# executed by rules: sells first, then buys, one working order at a time,
+# every order through the gate. Caps: risk_limits.yaml momentum_sleeve (buys
+# need entries_enabled there). No LLM, no stop, no review.
+momentum_sleeve:
+  enabled: true
+  trade_after: "10:00"
+  trade_before: "15:30"
+  # Funds, T+1 or the gate can hold part of a rebalance over; after this many
+  # sessions the month closes with what it did and says what it left undone.
+  max_rebalance_sessions: 3
+  # A plan not started within this many days of its date is skipped, not chased.
+  plan_valid_days: 7
+  # A holding within 10% of its target value is left alone (fewer trades -
+  # my reading, flagged: the backtest trades every name to exact weight).
+  drift_tolerance: 0.10
+  limit_buffer: 0.002
+  fill_wait_seconds: 120
+  mark_interval_seconds: 300

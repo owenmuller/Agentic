@@ -523,7 +523,7 @@ def test_lots_and_cadence_survive_a_restart_in_their_own_sleeve(
     report = health_report(
         restarted.preflight, restarted.exits.tracked, RunLog(tmp_path / "run.log")
     )
-    assert "sleeves: equity 55%, mechanical 15%, baseline 30%, prediction 0% (inactive)" in report
+    assert "sleeves: equity 55%, momentum 0% (inactive), aggressive 0% (inactive), mechanical 15%, baseline 30%, prediction 0% (inactive)" in report
     assert "baseline (SPY): 60 units, value 30600.00 = 30.4% of NAV (target 30% +/-5%)" in report
     assert "P&L +600.00 (market beta, not alpha)" in report
     assert "weekly check 2026-W34" in report and "log agrees" in report

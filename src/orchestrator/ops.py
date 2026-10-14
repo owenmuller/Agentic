@@ -739,6 +739,8 @@ def health_report(
         f"cash {state.cash}  |  NAV {state.nav}  |  "
         f"drawdown {state.drawdown():.2%} (high-water {state.high_water_mark})",
         f"sleeves: equity {_sleeve_label(checks.gate.limits.portfolio.sleeves.equity)}, "
+        f"momentum {_sleeve_label(checks.gate.limits.portfolio.sleeves.momentum)}, "
+        f"aggressive {_sleeve_label(checks.gate.limits.portfolio.sleeves.aggressive)}, "
         f"mechanical {_sleeve_label(checks.gate.limits.portfolio.sleeves.mechanical)}, "
         f"baseline {_sleeve_label(checks.gate.limits.portfolio.sleeves.baseline)}, "
         f"prediction {_sleeve_label(checks.gate.limits.portfolio.sleeves.prediction)}",

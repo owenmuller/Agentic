@@ -323,6 +323,51 @@ class AuditLog:
         self._append(record)
         return record
 
+    def record_momentum(
+        self,
+        *,
+        detail: str,
+        gate_decision: object,
+        capital: Decimal,
+        sleeve_nav: Decimal,
+        plan_month: str,
+        decision_id: Optional[str] = None,
+    ) -> DecisionRecord:
+        """A momentum-sleeve buy (human ruling 2026-10-13): v1's monthly plan
+        executed by rules. A DecisionRecord with no research snapshot and
+        ``strategy="momentum"`` - its own bucket and its own line against SPY
+        and SPMO, partitioned out of every class and alpha line. The AI veto
+        ran in the prep job, before the plan; nothing here is judged."""
+        now = self._clock()
+        record_id = decision_id or self._id_factory()
+        snapshot = SignalSnapshot(
+            signal_id=f"momentum-{plan_month}-{record_id}",
+            source_id="momentum_sleeve",
+            signal_class=SignalClass.CLASS_3_THESIS,
+            observed_at=now,
+            content=detail,
+            raw_content=detail,
+        )
+        record = DecisionRecord(
+            decision_id=record_id,
+            recorded_at=now,
+            signal=snapshot,
+            research=None,
+            sizing=SizingSnapshot(
+                instrument="equity",
+                sleeve="momentum",
+                confidence=0,  # not applicable: v1 is rules, by ruling
+                sleeve_nav=sleeve_nav,
+                fraction_of_sleeve_nav=(capital / sleeve_nav) if sleeve_nav > 0 else Decimal("0"),
+                capital=capital,
+                rationale=f"momentum v1 rebalance {plan_month}: rules, no LLM in the path - {detail}",
+                strategy="momentum",
+            ),
+            gate=GateSnapshot.of(gate_decision),  # type: ignore[arg-type]
+        )
+        self._append(record)
+        return record
+
     def record_stage_rejection(
         self,
         decision_id: str,

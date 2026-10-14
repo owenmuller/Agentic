@@ -80,7 +80,9 @@ CENTS = Decimal("0.01")
 logger = logging.getLogger("orchestrator.sweep")
 
 
-def liquidity_buffer(gate: RiskGate, config: CashManagementLimits) -> Decimal:
+def liquidity_buffer(
+    gate: RiskGate, config: CashManagementLimits, *, include_momentum: bool = True
+) -> Decimal:
     """The cash floor the sweep defends. Deterministic, per the ruling: both
     trading sleeves' FULL daily deployment caps, working-order reservations,
     and the configured margin. Module-level so the baseline sleeve (ruling
@@ -103,7 +105,8 @@ def liquidity_buffer(gate: RiskGate, config: CashManagementLimits) -> Decimal:
     # allotment stays cash for the monthly rebalance; entries off, nothing parked.
     momentum = ZERO_D
     if (
-        limits.momentum_sleeve is not None
+        include_momentum
+        and limits.momentum_sleeve is not None
         and limits.momentum_sleeve.entries_enabled
         and limits.portfolio.sleeves.momentum > 0
     ):
@@ -119,6 +122,16 @@ def liquidity_buffer(gate: RiskGate, config: CashManagementLimits) -> Decimal:
         + gate.state.reserved_cash
         + config.buffer_margin_usd
     )
+
+
+def momentum_spendable(gate: RiskGate, config: CashManagementLimits) -> Decimal:
+    """Settled cash a momentum buy may spend (ruling 2026-10-13): the gate's
+    settled buying power (reservations and today's sale proceeds already out)
+    less every OTHER sleeve's part of the sweep's floor. The momentum sleeve's
+    own undeployed allotment is in that floor only so the sweep keeps it in
+    cash for the rebalance; it is exactly what the rebalance spends."""
+    others = liquidity_buffer(gate, config, include_momentum=False) - gate.state.reserved_cash
+    return max(ZERO_D, gate.state.settled_buying_power - others)
 
 
 ZERO_D = Decimal("0")

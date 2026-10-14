@@ -332,6 +332,8 @@ def seed_account_state(
     baseline_open: Optional[dict[str, tuple[Decimal, Decimal]]] = None,
     aggressive_open: Optional[dict[str, tuple[Decimal, Decimal]]] = None,
     aggressive_deployed_today: Decimal = ZERO,
+    momentum_open: Optional[dict[str, tuple[Decimal, Decimal]]] = None,
+    momentum_deployed_today: Decimal = ZERO,
 ) -> AccountState:
     """Assemble the state a restarted gate should wake up holding.
 
@@ -363,6 +365,8 @@ def seed_account_state(
             # The aggressive sleeve (risk-on redirect, 2026-10-08) wakes up
             # holding its own units under its own key.
             (Sleeve.AGGRESSIVE, (aggressive_open or {}).get(holding.symbol)),
+            # The momentum sleeve (ruling 2026-10-13), likewise.
+            (Sleeve.MOMENTUM, (momentum_open or {}).get(holding.symbol)),
         )
         for sleeve, claim in splits:
             if claim is None or holding.is_option or position.quantity <= 0:
@@ -395,6 +399,7 @@ def seed_account_state(
         deployed_today=deployed_today,
         mechanical_deployed_today=mechanical_deployed_today,
         aggressive_deployed_today=aggressive_deployed_today,
+        momentum_deployed_today=momentum_deployed_today,
         deployment_date=today,
     )
     state.high_water_mark = (

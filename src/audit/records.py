@@ -1016,6 +1016,10 @@ class ExitReason(StrEnum):
     #: Frozen with the buys while the kill switch is tripped — by the sleeve's
     #: own rule, not the gate's, which passes every risk-reducing close.
     BASELINE_REBALANCE = "baseline_rebalance"
+    #: The momentum sleeve's monthly rebalance (human ruling 2026-10-13): a
+    #: name that left v1's book, or a trim back to its target weight. v1's
+    #: rules are the only exit; there is no price stop and no LLM review.
+    MOMENTUM_REBALANCE = "momentum_rebalance"
     #: The B execution test (ruling 2026-10-09 evening): the noise-area
     #: trailing stop (max(UB, VWAP) long; the mirror for the SH leg), a
     #: crossing to the opposite band, and the 15:50 close-out.

@@ -231,6 +231,8 @@ class Startup:
     baseline: object = None
     #: The B execution test (ruling 2026-10-09 evening), or None.
     execution_test: object = None
+    #: The momentum sleeve's engine (ruling 2026-10-13), or None.
+    momentum: object = None
 
     @property
     def gate(self) -> RiskGate:
@@ -378,6 +380,10 @@ def preflight(
             audit.strategy_open_positions("execution_test"),
         ),
         aggressive_deployed_today=replay_deployed_today(decisions, today, Sleeve.AGGRESSIVE),
+        # The momentum sleeve (ruling 2026-10-13) wakes up holding its own,
+        # with its own daily counter.
+        momentum_open=audit.strategy_open_positions("momentum"),
+        momentum_deployed_today=replay_deployed_today(decisions, today, Sleeve.MOMENTUM),
         today=today,
         account_type=orchestrator_config.account_type,
     )
@@ -760,6 +766,38 @@ def start(
         )
         execution_test.replay()
 
+    # The momentum sleeve (human ruling 2026-10-13): v1's monthly plan from
+    # the prep job, executed by rules through the gate; lots replayed from its
+    # own trails. Buys also need momentum_sleeve.entries_enabled.
+    momentum = None
+    momentum_limits = checks.limits.momentum_sleeve
+    if (
+        checks.orchestrator_config.momentum_sleeve.enabled
+        and momentum_limits is not None
+        and checks.limits.portfolio.sleeves.momentum > 0
+    ):
+        from orchestrator.momentum_sleeve import MomentumSleeve
+        from orchestrator.sweep import momentum_spendable
+
+        data_directory = checks.audit.path.parent
+        momentum = MomentumSleeve(
+            gate=checks.gate,
+            adapter=checks.adapter,
+            audit=checks.audit,
+            prices=prices,
+            bids=getattr(prices, "bid", None),
+            limits=momentum_limits,
+            config=checks.orchestrator_config.momentum_sleeve,
+            plan_dir=data_directory / "momentum",
+            state_path=data_directory / "momentum_state.json",
+            spendable=lambda: momentum_spendable(checks.gate, checks.limits.cash_management),
+            clock=checks.clock,
+            id_factory=id_factory or (lambda: _uuid.uuid4().hex[:16]),
+            note=mechanical_sink,
+        )
+        if any(d.sizing.strategy == "momentum" for d in checks.audit.decisions()):
+            momentum.replay(checks.audit.trails())
+
     # The idle-cash yield sweeper (ruling 2026-09-02): deterministic, config-
     # switched, replayed from its own trails. Never buying power, never alpha.
     sweeper = None
@@ -794,6 +832,7 @@ def start(
         sweeper=sweeper,
         baseline=baseline,
         execution_test=execution_test,
+        momentum=momentum,
         cost_meter=cost_meter,
         error_sink=error_sink,
         source_caps={
@@ -831,6 +870,7 @@ def start(
         mechanical=mechanical,
         baseline=baseline,
         execution_test=execution_test,
+        momentum=momentum,
         preflight=checks,
     )
 
