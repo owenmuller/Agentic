@@ -1683,6 +1683,30 @@ def momentum_prep() -> int:
     try:
         alpaca = feeds.Alpaca(feeds.Cache(cache_root / "calendar"))
         today = now.astimezone(_NY).date()
+        # A shadow declared after the latest plan starts at the next session,
+        # not the next month (standing rule 2026-10-14): backfill it first,
+        # whatever else this run does. The plan is never touched.
+        latest = prep_module.latest_plan(directory) if wanted is None else None
+        missing = prep_module.missing_shadows(directory, latest["month"]) if latest else []
+        if missing:
+            near = alpaca.sessions((today - timedelta(days=12)).isoformat(), (today + timedelta(days=12)).isoformat())
+            begin = prep_module.shadow_start(latest, now, near)
+            if begin is None:
+                log.warning("momentum prep: cannot place the start of %s; not backfilled", missing)
+            else:
+                first = _date.fromisoformat(begin.data_through).replace(day=1)
+                shadow_store, _ = build(cache_root / begin.data_through,
+                                       start=first.replace(year=first.year - config.history_years).isoformat(),
+                                       end=begin.data_through, log=log.info)
+                if shadow_store.calendar[-1] != begin.data_through:
+                    log.warning("momentum prep: data ends %s, not %s; shadows %s not backfilled",
+                                shadow_store.calendar[-1], begin.data_through, missing)
+                else:
+                    added = prep_module.backfill_shadows(shadow_store, begin.rebalance_day, missing, directory,
+                                                         latest["month"])
+                    log.info("momentum prep: shadow(s) %s tracked from %s (data through %s)", added,
+                             begin.rebalance_day, begin.data_through)
+                del shadow_store
         if wanted is not None:
             sessions = alpaca.sessions((_date.fromisoformat(wanted) - timedelta(days=12)).isoformat(), wanted)
             if not sessions or sessions[-1] != wanted or len(sessions) < 2:

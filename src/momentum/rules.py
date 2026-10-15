@@ -67,6 +67,9 @@ class Spec:
     min_target_vol_days: int = 126
     cost_per_side: float = 0.0010     # 10 bp of traded notional, each side
     ai_veto: bool = True
+    #: Shadow-only (human ruling 2026-10-14): the gap filter ignores moves on
+    #: 8-K 2.02 earnings days ([-1,+1] around the filing session). False in V1 and V1.1.
+    gap_exempt_earnings: bool = False
 
 
 V1 = Spec(name="v1")
@@ -93,6 +96,9 @@ SHADOWS = {
     "market_filter_only": replace(V1_1, name="market_filter_only", vol_scaling=False, ai_veto=False),
     "vol_scaling_only": replace(V1_1, name="vol_scaling_only", market_filter=False, ai_veto=False),
     "plain_12_1": replace(V1_1, name="plain_12_1", score="plain_12_1", ai_veto=False),
+    # human ruling 2026-10-14: the gap filter exempting earnings-day moves, tracked from 2026-10-15
+    "v1_1_gap_earnings_exempt": replace(V1_1, name="v1_1_gap_earnings_exempt", gap_exempt_earnings=True,
+                                        ai_veto=False),
 }
 
 
@@ -237,12 +243,15 @@ def zscores(values: dict, clip: float = 3.0) -> dict:
 
 
 def excluded(daily_returns: Sequence[Optional[float]], closes: Sequence[float], pending_target: bool,
-             spec: Spec = V1) -> Optional[str]:
+             spec: Spec = V1, exempt: Optional[Sequence[bool]] = None) -> Optional[str]:
     """Why a name may not be BOUGHT now, or None. Inputs end at the decision
-    session."""
+    session. ``exempt`` (aligned with ``daily_returns``) marks days the gap
+    filter ignores - earnings-day moves, for a spec with gap_exempt_earnings."""
     if pending_target:
         return "pending acquisition target"
-    recent = [r for r in daily_returns[-spec.gap_lookback:] if r is not None]
+    window = list(daily_returns[-spec.gap_lookback:])
+    skip = list(exempt[-spec.gap_lookback:]) if (exempt is not None and spec.gap_exempt_earnings) else [False] * len(window)
+    recent = [r for r, s in zip(window, skip) if r is not None and not s]
     if any(abs(r) > spec.gap_limit for r in recent):
         return f"a single-day move over {spec.gap_limit:.0%} in the past {spec.gap_lookback} sessions"
     if len(closes) < spec.trend_days:

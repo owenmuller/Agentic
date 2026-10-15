@@ -154,3 +154,15 @@ def test_dormant_flat_prints_split_a_reused_ticker():
     assert feeds.segments("LINE", adj) == [(0, 3), (63, 65)]
     short = array("f", [5.0, 5.0, 5.0, 5.1])  # a few equal closes are trading, not dormancy
     assert feeds.drop_flat_runs(short, array("f", short)) == 0
+
+
+def test_the_universe_admits_only_current_10k_10q_filers_point_in_time():
+    # Human ruling 2026-10-14: filed a 10-K or 10-Q within the last 18 months
+    # (548 days), on or before the decision's data date.
+    seg = Segment(key="X@2016-01-04", symbol="X", first=0, last=10, cik=1, us_filer=True,
+                  periodic=["2023-03-01", "2024-02-20"])
+    assert engine.current_filer(seg, "2025-08-01")          # 528 days after the last 10-K
+    assert not engine.current_filer(seg, "2025-09-01")      # 559 days: lapsed (a 40-F filer now)
+    assert not engine.current_filer(seg, "2023-01-02")      # nothing filed yet at that date
+    old = Segment(key="Y@2016-01-04", symbol="Y", first=0, last=10, cik=2, us_filer=True)
+    assert old.periodic is None and engine.current_filer(old, "2025-09-01")  # a pre-rule store: the old flag

@@ -4102,6 +4102,16 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-14 (late night) — RULINGS: BNS trades; 18-month filer rule; data/ to 750; filter audit; gap-exemption shadow
+
+1. **BNS trades as planned.** The universe rule is corrected for 2026-11-02 onward: a "10-K/10-Q filer" must have filed one within 18 months (548 days), point in time (`engine.current_filer`; the SEC feed now keeps every 10-K/10-Q date, cache key v2; stores built before the rule keep the old flag). Every name in the current top 500 failing it, and the sanity backtest re-run on the corrected universe: see the next entry when the job finishes.
+2. **`chmod 750 ~/Agentic/data`** applied (was `drwx---rwx`, world-writable); every agentic unit runs as `agentic` (backup as root); health clean after.
+3. **Filter audit, the 2026-10-15 plan** (rebuilt from the prep's own cache on the deployed code):
+   - v1.1, top 50 by score: 20 below the 100-day average; 12 gap filter (>15% day in 63 sessions) - **6 of them only on earnings days ([-1,+1] of an 8-K 2.02), 6 not**; 3 pending acquisition targets; **15 not excluded = the 15 names bought** (ranks reach 50).
+   - Universe: of the top 50 by score over v1's top 1,000, **26 sit outside v1.1's top 500** (SYRE, MATX, PTEN, VIAV, DOCN, FORM, TXG, DAR, IMVT, IBRX, GKOS, IOVA, PACS, AAOI, DNTH, COMP, FROG, YOU, WFRD, SKY, KLIC, SLAB, VSXY, AVT, TKR, IRDM).
+   - Filer rule as built: 89 non-10-K/10-Q filers among the ~560 largest by market cap were already excluded before scoring (TSM, HSBC, ASML, NVS, RY, SAP, TD, ...; also exchange-traded notes such as GLDI/SLVO/USOI).
+4. **New shadow `v1_1_gap_earnings_exempt`:** v1.1 with the gap filter ignoring moves within [-1,+1] of an 8-K 2.02 session (`Spec.gap_exempt_earnings`, false in V1 and V1.1). Tracked from 2026-10-15: the 07:30 ET prep run backfills any shadow missing from the latest plan's month on the plan's own date and data (or, mid-month, from the next session - the standing rule), dated `started`, and the reports honour that date. **Known one-month confound:** the backfill builds on the corrected filer rule, so for October it differs from the live v1.1 in two rules (the gap exemption and any name the 18-month rule removes); from Nov 2 both use the corrected rule.
+
 ### 2026-10-14 (night) — RULING: @citrini RETIRED
 
 **@citrini retired (human ruling 2026-10-14): 2 rows from 2026-09-30 to 2026-10-14, 0 tradeable (both prefiltered `no_instrument`); retired on low volume and the measured failure of public-information sources.** Removed from the X feed (its `signals.yaml` block replaced by a dated note; its fetcher route and seen-set entry removed from the session wiring; its dispatch prior removed), so its trial is stopped and its X read quota freed; the class-2 feed bill falls from $35 to $30 a month. Its two historical rows stay in the audit log and the forward engine. The class-2 trade-caller machinery it used is still live code; its tests run on a test-only copy (`config_overrides.RETIRED_CLASS2_CALLER`).

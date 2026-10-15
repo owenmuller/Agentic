@@ -48,6 +48,8 @@ EXCHANGES = {"NYSE", "NASDAQ", "AMEX", "ARCA", "BATS"}
 _NOT_COMMON = re.compile(r"\b(warrants?|units?|rights?|preferred|depositary shares?|etf|etn|fund|notes?|"
                          r"debentures?|trust units|%)\b", re.I)
 MERGER_FORMS = {"DEFM14A", "PREM14A", "DEFM14C", "PREM14C", "SC 14D9", "SC TO-T", "SC 13E3"}
+#: The periodic reports that make a company a current US filer (2026-10-14).
+PERIODIC_FORMS = {"10-K", "10-Q", "10-K/A", "10-KT", "10-Q/A"}
 
 
 # -- caching -----------------------------------------------------------------------
@@ -136,7 +138,9 @@ class Sec:
         return {k: v for k, v in cached.items() if k in wanted and v > 0}
 
     def filings(self, cik: int, since: str = "2015-01-01") -> Optional[dict]:
-        key = f"sec_filings_{cik}"
+        # v2 (2026-10-14): also keeps the dates of every 10-K/10-Q, for the
+        # 18-month current-filer rule; v1 entries (no dates) are refetched
+        key = f"sec_filings_v2_{cik}"
         cached = self.cache.get(key)
         if cached is not None:
             return cached
@@ -151,7 +155,7 @@ class Sec:
             r2 = self._get(f"https://data.sec.gov/submissions/{extra['name']}")
             if r2 is not None:
                 pages.append(r2.json())
-        earnings, mergers, deal_8ks, forms = [], [], [], set()
+        earnings, mergers, deal_8ks, forms, periodic = [], [], [], set(), []
         for page in pages:
             n = len(page.get("form", []))
             for i in range(n):
@@ -160,6 +164,8 @@ class Sec:
                 if filed < since:
                     continue
                 forms.add(form)
+                if form in PERIODIC_FORMS:
+                    periodic.append(filed)
                 items = (page.get("items") or [""] * n)[i] or ""
                 accepted = (page.get("acceptanceDateTime") or [""] * n)[i] or ""
                 if form == "8-K" and "2.02" in items:
@@ -172,7 +178,7 @@ class Sec:
         summary = dict(
             cik=cik, name=data.get("name"), sic=int(sic) if str(sic or "").isdigit() else None,
             us_filer=bool(forms & {"10-K", "10-Q", "10-K/A", "10-KT"}), earnings=sorted(earnings),
-            mergers=sorted(mergers, key=lambda x: x[1]), deal_8ks=sorted(deal_8ks),
+            mergers=sorted(mergers, key=lambda x: x[1]), deal_8ks=sorted(deal_8ks), periodic=sorted(set(periodic)),
             tickers=data.get("tickers") or [],
         )
         self.cache.put(key, summary)
@@ -294,6 +300,9 @@ class Segment:
     events: list = field(default_factory=list)      # session indexes of 2.02 releases
     pending: list = field(default_factory=list)     # [start, end] session index ranges
     shares: list = field(default_factory=list)      # [[end_idx, filed_idx, n], ...]
+    #: ISO dates of every 10-K/10-Q filed (2026-10-14); None on stores built
+    #: before the 18-month current-filer rule, which fall back to us_filer
+    periodic: Optional[list] = None
 
 
 def align(series: list, calendar_index: dict[str, int], length: int) -> array:

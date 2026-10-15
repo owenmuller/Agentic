@@ -179,6 +179,7 @@ def build(cache_dir: Path, *, start: str = "2016-01-01", end: Optional[str] = No
         f = facts.get(seg.cik) or {}
         seg.sector = ff12(f.get("sic"))
         seg.us_filer = bool(f.get("us_filer"))
+        seg.periodic = list(f.get("periodic") or [])  # the 18-month current-filer rule (2026-10-14)
         seg.events = sorted({i for i in (feeds.session_of(a, calendar, index) for a in f.get("earnings", []))
                              if i is not None and seg.first <= i <= seg.last})
         seg.pending = _pending_ranges(f, calendar, seg)

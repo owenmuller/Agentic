@@ -5,6 +5,8 @@ name is never vetoed, a failed review never vetoes); the shadows; the files.
 """
 from __future__ import annotations
 
+import json
+
 from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -349,3 +351,37 @@ def test_the_aggressive_reserve_is_one_position_while_only_the_execution_test_tr
     assert full - capped == sleeve - sleeve * Decimal("0.25")
     # the whole momentum sleeve is fundable from settled cash (step 2: 30% of NAV)
     assert momentum_spendable(gate, limits.cash_management) >= Decimal("100000") * limits.portfolio.sleeves.momentum
+
+
+def test_a_shadow_declared_after_the_plan_is_backfilled_from_its_start(world, tmp_path):
+    from datetime import datetime as _dt, timezone as _tz
+
+    _, past, day = world
+    prep.write(tmp_path, prep.compute(past, day, []))
+    # simulate a shadow declared after the plan: drop it from the month file
+    shadow_file = tmp_path / f"shadows-{day[:7]}.json"
+    payload = json.loads(shadow_file.read_text())
+    del payload["books"]["v1_1_gap_earnings_exempt"]
+    shadow_file.write_text(json.dumps(payload))
+    assert prep.missing_shadows(tmp_path, day[:7]) == ["v1_1_gap_earnings_exempt"]
+    plan = prep.latest_plan(tmp_path)
+    before_open = _dt.fromisoformat(day + "T08:00:00-04:00").astimezone(_tz.utc)
+    begin = prep.shadow_start(plan, before_open, [past.calendar[-1], day])
+    assert begin == prep.Due(day, past.calendar[-1])          # the plan's own date and data
+    added = prep.backfill_shadows(past, begin.rebalance_day, ["v1_1_gap_earnings_exempt"], tmp_path, day[:7])
+    assert added == ["v1_1_gap_earnings_exempt"]
+    book = json.loads(shadow_file.read_text())["books"]["v1_1_gap_earnings_exempt"]
+    assert book["started"] == day and sum(book["weights"].values()) <= 1 + 1e-9
+    assert prep.missing_shadows(tmp_path, day[:7]) == []
+    assert "v1_1_gap_earnings_exempt" in json.loads((tmp_path / "shadows.json").read_text())["held"]
+
+
+def test_a_shadow_declared_mid_month_starts_at_the_next_session():
+    from datetime import datetime as _dt, timezone as _tz
+
+    plan = {"rebalance_date": "2026-10-15", "data_through": "2026-10-14"}
+    sessions = ["2026-10-19", "2026-10-20", "2026-10-21"]
+    evening = _dt(2026, 10, 20, 22, 0, tzinfo=_tz.utc)    # 18:00 ET, after the close
+    assert prep.shadow_start(plan, evening, sessions) == prep.Due("2026-10-21", "2026-10-20")
+    morning = _dt(2026, 10, 20, 12, 0, tzinfo=_tz.utc)    # 08:00 ET
+    assert prep.shadow_start(plan, morning, sessions) == prep.Due("2026-10-20", "2026-10-19")

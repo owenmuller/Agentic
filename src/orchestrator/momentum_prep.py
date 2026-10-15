@@ -343,3 +343,74 @@ def read_shadow_state(directory: Path) -> tuple[dict[str, list[str]], Optional[s
     except (OSError, ValueError):
         return {}, None
     return dict(raw.get("held") or {}), raw.get("x_thread_pick")
+
+
+def missing_shadows(directory: Path, month: str) -> list[str]:
+    """Declared shadows the month's shadow file does not carry yet (a shadow
+    declared after the month's plan was made, 2026-10-14)."""
+    try:
+        books = json.loads((directory / f"shadows-{month}.json").read_text(encoding="utf-8")).get("books", {})
+    except (OSError, ValueError):
+        return []
+    return [name for name in SHADOWS if name not in books]
+
+
+def backfill_shadows(store, start_day: str, names: list[str], directory: Path, month: str) -> list[str]:
+    """Compute the missing shadows as of ``start_day`` (the session they start
+    on, from the prior close; held list empty - a new shadow starts flat) and
+    add them to ``month``'s shadow file, dated, and to the rolling state.
+    The plan itself is never touched (standing rule 2026-10-14: a new shadow
+    is tracked from the next session, not the next month)."""
+    view = engine.live_view(store, start_day)
+    t = len(view.calendar) - 1
+    d = t - 1
+    starts = engine.month_starts(view.calendar)
+    path = directory / f"shadows-{month}.json"
+    shadows = json.loads(path.read_text(encoding="utf-8"))
+    state_path = directory / "shadows.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {"month": month, "held": {}}
+    added = []
+    for name in names:
+        spec = SHADOWS[name]
+        book = engine.run(view, spec, max(1, d - spec.target_vol_days - 30), d).book_returns if spec.vol_scaling else []
+        dec = engine.decide(view, t, spec, [], book, starts)
+        shadows["books"][name] = {
+            "weights": {view.by_key[k].symbol: float(_weight(w, spec.position_cap)) for k, w in dec.holdings.items()},
+            "exposure": dec.exposure,
+            "buys_allowed": dec.buys_allowed,
+            "started": start_day,
+        }
+        state.setdefault("held", {})[name] = sorted(shadows["books"][name]["weights"])
+        added.append(name)
+    write_json(path, shadows)
+    write_json(state_path, state)
+    return added
+
+
+def latest_plan(directory: Path) -> Optional[dict]:
+    plans = sorted(directory.glob("plan-*.json"))
+    if not plans:
+        return None
+    try:
+        return json.loads(plans[-1].read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def shadow_start(plan: dict, now: datetime, sessions: list[str], close_after: str = "16:30") -> Optional[Due]:
+    """When a shadow declared after ``plan`` starts: on the plan's own date
+    and data while that date has not passed; otherwise at the next session,
+    from the last completed close (standing rule 2026-10-14)."""
+    local = now.astimezone(NY)
+    today = local.date().isoformat()
+    if plan["rebalance_date"] >= today:
+        return Due(rebalance_day=plan["rebalance_date"], data_through=plan["data_through"])
+    closed = local.time() >= _hhmm(close_after)
+    done = [s for s in sessions if s < today or (s == today and closed)]
+    ahead = [s for s in sessions if s > today or (s == today and not closed)]
+    if not done or not ahead:
+        return None
+    return Due(rebalance_day=ahead[0], data_through=done[-1])

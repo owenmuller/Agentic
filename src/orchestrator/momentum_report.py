@@ -219,7 +219,8 @@ def build(directory: Path, fills: list[Fill], prices: dict[str, dict[str, float]
     paths = {"v1.1 modelled (plan at closes)": book_path(modelled, prices, days)}
     months = load_months(directory)
     for name in sorted({n for m in months for n in m.get("books", {})}):
-        schedule = [(m["rebalance_date"], m["books"][name].get("weights", {})) for m in months if name in m["books"]]
+        schedule = [(m["books"][name].get("started", m["rebalance_date"]), m["books"][name].get("weights", {}))
+                    for m in months if name in m["books"]]
         paths[name] = book_path(schedule, prices, days)
     for bench in ("SPY", "SPMO"):
         series = prices.get(bench, {})

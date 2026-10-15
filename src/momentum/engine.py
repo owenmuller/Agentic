@@ -9,9 +9,11 @@ is sold at its last close (no delisting return beyond it - flagged).
 """
 from __future__ import annotations
 
+import bisect
 import copy
 import math
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Optional
 
 from momentum import rules
@@ -60,6 +62,25 @@ def shares_at(seg, t: int, raw, adj) -> Optional[float]:
     return value * (ra / aa) / (rb / ab)
 
 
+#: The current-filer rule (human ruling 2026-10-14): a company is in the
+#: universe only if it filed a 10-K or 10-Q within the last 18 months, point
+#: in time (filed on or before the decision's data date). Before it, "US
+#: filer" meant any 10-K/10-Q since 2015, and a company that later became a
+#: 40-F/6-K foreign filer (BNS, in the 2026-10-15 plan) still passed.
+FILER_WINDOW_DAYS = 548
+
+
+def current_filer(seg, day: str) -> bool:
+    periodic = getattr(seg, "periodic", None)
+    if periodic is None:
+        return bool(seg.us_filer)  # a store built before the rule
+    i = bisect.bisect_right(periodic, day)
+    if i == 0:
+        return False
+    earliest = (date.fromisoformat(day) - timedelta(days=FILER_WINDOW_DAYS)).isoformat()
+    return periodic[i - 1] >= earliest
+
+
 def universe(store, t: int, size: int, min_price: float) -> list:
     """The top ``size`` US companies by market cap at the close before ``t``
     (SEC shares x close), price above ``min_price``; one line per company
@@ -76,7 +97,7 @@ def _universe(store, t: int, size: int, min_price: float) -> list:
     d = t - 1
     best: dict[int, tuple] = {}
     for seg in store.segments:
-        if not seg.us_filer or not (seg.first <= d <= seg.last):
+        if not (seg.first <= d <= seg.last) or not current_filer(seg, store.calendar[d]):
             continue
         raw, adj = store.raw[seg.key], store.adj[seg.key]
         price = raw[d]
@@ -191,13 +212,20 @@ def decide(store, t: int, spec: Spec, held: list, book_returns: list, starts: li
         adj = store.adj[seg.key]
         lo = max(0, d - 130)
         closes = [adj[i] for i in range(lo, d + 1) if ok(adj[i])]
-        rets = [Returns(adj)[i] for i in range(max(1, d - spec.gap_lookback + 1), d + 1)]
+        gap_days = range(max(1, d - spec.gap_lookback + 1), d + 1)
+        rets = [Returns(adj)[i] for i in gap_days]
+        exempt = None
+        if spec.gap_exempt_earnings:
+            # [-1,+1] around each 8-K 2.02 session (after-close filings already
+            # count to the next session in seg.events)
+            window = {e + k for e in seg.events for k in (-1, 0, 1)}
+            exempt = [i in window for i in gap_days]
         pending = any(a <= d <= b for a, b in seg.pending)
         vol = rules.realized_vol([Returns(adj)[i] for i in range(max(1, d - spec.vol_days + 1), d + 1)],
                                  spec.vol_days)
         vols[seg.key] = vol
         candidates.append(Candidate(seg.key, score[seg.key], seg.sector, vol,
-                                    rules.excluded(rets, closes, pending, spec)))
+                                    rules.excluded(rets, closes, pending, spec, exempt)))
 
     spy_hist = [store.spy[i] for i in range(max(0, d - 260), d + 1) if ok(store.spy[i])]
     blocked = spec.market_filter and rules.market_filter_blocks(spy_hist)
