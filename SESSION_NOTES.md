@@ -4102,6 +4102,28 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-14 (late night) — corrected-universe sanity backtest; shadow v1_1_no_trend_filter added
+
+**Sanity backtest on the 18-month current-filer universe** (`~/research-data/momentum-v3/report.txt`; 2017-03 to 2026-10-14; one session longer than the earlier run; the declared shadows now on the top 500):
+
+| variant | CAGR | max DD | Sharpe |
+|---|---|---|---|
+| v1.1 (live spec) | 15.81% | -29.4% | 0.79 |
+| (before the fix: top_500, to 10-13) | 16.35% | -26.5% | 0.82 |
+| v1 (top 1,000) | 8.14% | -36.4% | 0.46 |
+| market_filter_only | 18.60% | -30.4% | 0.86 |
+| vol_scaling_only | 18.04% | -35.3% | 0.83 |
+| plain_12_1 | 15.98% | -36.6% | 0.67 |
+| v1_1_gap_earnings_exempt | 11.82% | -30.0% | 0.63 |
+| inverse_vol | 11.62% | -28.5% | 0.66 |
+| SPY / SPMO | 14.67% / 19.84% | -33.8% / -31.2% | 0.85 / 0.97 |
+
+- The correction costs v1.1 about half a point a year and three points of drawdown; it still trails SPMO by ~4 points a year and roughly matches SPY with a shallower drawdown.
+- Each risk overlay ALONE beats the two together (market filter only 18.6%, vol scaling only 18.0%, both 15.8%). In-sample and informational only: the shadows exist to measure this live.
+- The gap exemption cut CAGR by ~4 points in-sample (11.8% vs 15.8%).
+- `v1_1_no_trend_filter` (v1.1 without the below-100-day-average exclusion; human ruling 2026-10-14) was declared after this run started: not in the table; tracked live from 2026-10-15 with the gap-exemption shadow; the daily momentum card now lists every shadow's since-start return.
+- **The failing-names list** came back empty on this store because BNS has NO shares figure in it (never ranked): a data gap - current filers with no shares figure are silently absent from the universe (SHOP, a 10-K filer since 2024, is one). Re-run on the plan's own data (the prep cache, dated SEC feed): next entry.
+
 ### 2026-10-14 (late night) — RULINGS: BNS trades; 18-month filer rule; data/ to 750; filter audit; gap-exemption shadow
 
 1. **BNS trades as planned.** The universe rule is corrected for 2026-11-02 onward: a "10-K/10-Q filer" must have filed one within 18 months (548 days), point in time (`engine.current_filer`; the SEC feed now keeps every 10-K/10-Q date, cache key v2; stores built before the rule keep the old flag). Every name in the current top 500 failing it, and the sanity backtest re-run on the corrected universe: see the next entry when the job finishes.
