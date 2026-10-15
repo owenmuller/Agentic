@@ -177,6 +177,21 @@ def test_a_cache_folder_serves_one_window(tmp_path, monkeypatch):
         build_at(tmp_path, monkeypatch, "f", "2016-01-01", LIVE_END)
 
 
+def test_stock_bars_ending_before_the_calendar_are_refused(tmp_path, monkeypatch):
+    # SPY is fetched fresh, the stock bars come from a cache filled for an
+    # earlier end: every stock would be blank on the last session.
+    class Stale(FakeAlpaca):
+        def bars(self, symbols, start, end, adjustment):
+            got = super().bars(symbols, start, end, adjustment)
+            return got if symbols == ["SPY"] else {s: rows[:-1] for s, rows in got.items()}
+
+    monkeypatch.setattr(feeds, "Alpaca", Stale)
+    monkeypatch.setattr(feeds, "Sec", FakeSec)
+    with pytest.raises(ValueError, match="stock bars end 2019-06-27"):
+        build(tmp_path / "s", start="2017-01-01", end=LIVE_END, log=lambda m: None, benchmarks=(),
+              universe_version=1)
+
+
 class _Response:
     def __init__(self, status: int, payload=None) -> None:
         self.status_code = status

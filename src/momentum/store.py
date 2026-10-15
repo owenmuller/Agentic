@@ -148,6 +148,14 @@ def build(cache_dir: Path, *, start: str = "2016-01-01", end: Optional[str] = No
         if b // 100 % 10 == 0:
             log(f"bars {b + len(batch)}/{len(symbols)}")
 
+    # SPY is fetched fresh and the stock bars come from the cache: a folder
+    # filled for an earlier end leaves every stock blank at the calendar's end
+    # (2026-10-15: the shared research cache ended 10-13 under a 10-14 run)
+    if adj_all and not any(a[n - 1] == a[n - 1] for a in adj_all.values()):
+        last_bar = max((next((i for i in range(n - 1, -1, -1) if a[i] == a[i]), -1) for a in adj_all.values()))
+        raise ValueError(f"{cache_dir}: the stock bars end {calendar[last_bar] if last_bar >= 0 else 'nowhere'}, "
+                         f"the calendar {calendar[-1]}; use a fresh folder")
+
     # dormant prints are not trading: blank them so a reused ticker splits
     blanked = sum(feeds.drop_flat_runs(raw_all[s], adj_all[s]) for s in adj_all)
     stats["flat_closes_blanked"] = blanked

@@ -4134,6 +4134,31 @@ Version 1 is the October universe exactly (static US-filer flag, latest SEC coun
 - Top 500: 77 enter, 77 leave. BNS and CZR leave on the filer rule; the rest fall below the higher cutoff.
 - v1.1's top 15 would share 12 names with the plan: WCC, BNS and IFF out; HPE, AMGN and RGLD in. None of the 77 entrants ranks in the top 15.
 
+**A further difference found while re-running the backtest: stale stock bars.**
+- The shared research cache (`~/research-data/momentum/cache`; v2, v3 and the first v4 runs all symlink to it) was first filled on 2026-10-13. Its stock bars end 10-13.
+- The v3 run (2026-10-15 02:23 UTC) and the first v4 run asked for data through 10-14. SPY is fetched fresh, so the calendar ran to 10-14, while every stock came from the cached batches and was blank on 10-14.
+- For v3 that is one missing session in 9.6 years (negligible). For the first v4 run it switched the fallback off entirely: no company traded on the last session, so 0 were asked of Finnhub. That run is void.
+- The window stamp only protects folders written from now on, so the builder now also refuses a folder whose stock bars all end before the calendar (tested). The backtest was re-run on a fresh folder (`~/research-data/momentum-v4b`), seeded with the live plan's own SEC and Finnhub data, with bars refetched.
+
+**Sanity backtest re-run (informational; 2017-03-01 to 2026-10-14; the same fresh data under both universes):**
+
+| variant | version 1 (as traded in October) | version 2 (from Nov 2) |
+|---|---|---|
+| v1.1 (live spec) | 16.11% CAGR / -26.49% max DD | **14.29% / -33.21%** |
+| v1 top 1,000 (shadow) | 7.99% / -36.63% | 8.34% / -39.52% |
+| inverse_vol | 12.09% / -26.52% | 11.57% / -30.12% |
+| market_filter_only | 18.89% / -29.35% | 17.09% / -33.44% |
+| vol_scaling_only | 17.67% / -35.41% | 16.28% / -36.13% |
+| plain_12_1 | 14.74% / -39.42% | 16.99% / -42.10% |
+| v1_1_gap_earnings_exempt | 12.06% / -27.98% | 11.00% / -35.97% |
+| v1_1_no_trend_filter | 16.16% / -31.18% | 16.51% / -35.24% |
+| SPY / SPMO | 14.67% / 19.84% | same |
+
+- Version 2 output: `~/research-data/momentum-v4b`. Version 1 output: `-v4b-v1`.
+- **Read:** on the corrected universe, v1.1 is 0.4 points below SPY in-sample and 5.6 below SPMO, with a deeper drawdown than under version 1. The fallback's survivorship (it rescues only today's survivors) would, if anything, flatter version 2; it still came out lower.
+- **H1 holds on version 2:** each overlay alone (17.09%, 16.28%) beats both together (14.29%).
+- In-sample only. Nothing here changes v1.1; SPMO stays the binding comparison at 12 months live.
+
 **Differences that remain by nature (reported, not fixable in code):**
 - Any two fetches on different days differ: asset list 7,212 vs 7,210, about 40 ticker-map changes, 7 companies with new share filings between the caches.
 - Finnhub has today's cap only. A backtest's fallback rescues only companies trading today (survivorship), and assumes today's share count, split-adjusted, for the whole history (buybacks and issuance not modelled).
