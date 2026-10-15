@@ -109,7 +109,9 @@ def live_return(fills: list[Fill], prices: dict[str, dict[str, float]], start: s
     if v1 is None:
         return None
     span = (date.fromisoformat(end) - date.fromisoformat(start)).days or 1
-    flows = [((date.fromisoformat(end) - date.fromisoformat(f.day)).days / span, f.value)
+    # a flow ON start counts at full weight - also in a one-day window, where
+    # the day-count weight would be 0 and the first day's return n/a (2026-10-15)
+    flows = [(1.0 if f.day == start else (date.fromisoformat(end) - date.fromisoformat(f.day)).days / span, f.value)
              for f in fills if start <= f.day <= end]
     return dietz(v0, v1, flows)
 

@@ -147,3 +147,14 @@ def test_the_daily_line_is_recorded_once_per_day_and_replaced_on_a_rerun(tmp_pat
     lines = [json.loads(x) for x in (tmp_path / "daily.jsonl").read_text().splitlines()]
     assert [x["day"] for x in lines] == ["2026-10-15", "2026-10-16"] and lines[0]["since"]["v1.1 live"] == 0.02
     assert recorded(tmp_path, "2026-10-16") and not recorded(tmp_path, "2026-10-19")
+
+
+def test_the_first_days_return_counts_its_own_fills(tmp_path):
+    # 2026-10-15: on the first trade day the one-day window gave its fills
+    # zero weight - no base, "n/a" for today and since start
+    prices = {"A": {"2026-10-14": 10.0, "2026-10-15": 11.0}}
+    fills = [mr.Fill("2026-10-15", "A", 100.0, 1050.0)]  # bought intraday at 10.50
+    assert mr.live_return(fills, prices, "2026-10-15", "2026-10-15") == pytest.approx(1100 / 1050 - 1)
+    # a later day's window still weights by time remaining
+    later = {"A": {"2026-10-14": 10.0, "2026-10-15": 11.0, "2026-10-16": 12.0}}
+    assert mr.live_return(fills, later, "2026-10-16", "2026-10-16") == pytest.approx(12 / 11 - 1)
