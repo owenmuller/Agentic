@@ -344,8 +344,7 @@ def test_the_router_dispatches_each_class_to_its_fetcher(signals_config):
         "quiver:congressional_disclosures",
         "form4:form4_insiders",
         "form13d:form_13d",
-        "x:citrini",
-        "edgar:form_13f",
+        "edgar:form_13f",  # x:citrini retired 2026-10-14: no longer polled
     ]
 
 

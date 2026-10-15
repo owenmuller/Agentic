@@ -69,3 +69,26 @@ def pre_measurement_only_signals_config() -> SignalsConfig:
     signals (adds, exits, convergence, context, the scan loop) keep research on
     here. The shipped caps are pinned in test_hardening and test_form8k."""
     return signals_config_with_caps(congressional_disclosures=1, form4_insiders=2, form_8k=6)
+
+
+#: The retired citrini source (human ruling 2026-10-14), verbatim minus comments:
+#: the class-2 trade-caller machinery it exercised is still live code, so its
+#: tests keep running on this test-only copy.
+RETIRED_CLASS2_CALLER = {
+    "id": "citrini", "require_instrument": True, "research_tier": "class_1", "daily_research_cap": 3,
+    "platforms": ["x"], "monthly_cost": 5, "start_date": "2026-09-30", "daily_read_warning": 200,
+    "handle": "@citrini", "treatment": "thesis_input_only", "copy_trade": False,
+    "classification": {
+        "required_before_research_pass": True, "labels": ["forward_call", "retrospective", "other"],
+        "default_when_ambiguous": "forward_call", "when_in_doubt": "research_behind_the_pnl_guard",
+        "ambiguity_markers": ["past_tense", "missing_entry_price", "missing_timeframe", "celebrating_an_exit"],
+    },
+}
+
+
+def signals_config_with_class2_caller() -> SignalsConfig:
+    """The shipped signals.yaml plus the retired class-2 caller (test-only)."""
+    with open(default_signals_path(), "r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle)
+    payload["classes"]["class_2"]["sources"].append(dict(RETIRED_CLASS2_CALLER))
+    return SignalsConfig.model_validate(payload)

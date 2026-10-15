@@ -145,12 +145,8 @@ def test_a_caller_rewired_after_the_ruling_was_requested_is_not_graded(signals_c
     assert graded == ["nolimitgains", "unusual_whales", "optionshawk", "legacy"]
     assert untried == ["citrini"]
 
-    # The shipped config carries the reset: citrini starts 2026-09-30 at @citrini.
-    citrini = next(
-        s for klass in signals_config.classes.values() for s in klass.sources if s.id == "citrini"
-    )
-    assert citrini.handle == "@citrini"
-    assert citrini.start_date == date(2026, 9, 30)
+    # citrini was RETIRED 2026-10-14 (human ruling): gone from the shipped feed.
+    assert not any(s.id == "citrini" for klass in signals_config.classes.values() for s in klass.sources)
     live = [
         (s.id, s.start_date)
         for klass in signals_config.classes.values()
@@ -158,7 +154,7 @@ def test_a_caller_rewired_after_the_ruling_was_requested_is_not_graded(signals_c
         if tuple(s.platforms) == ("x",) and s.type != "mirror"
     ]
     graded, untried = split_callers_by_trial(live)
-    assert "citrini" in untried and "citrini" not in graded
+    assert "citrini" not in untried and "citrini" not in graded
     assert {"nolimitgains", "unusual_whales", "optionshawk"} <= set(graded)
 
 

@@ -503,6 +503,8 @@ def test_citrini_classifies_at_class_2_cadence(signals_config):
     """The class-2 scanner routes classification-flagged sources through the
     trade-call path: retrospectives to the credibility log, forward calls
     enqueued as class-2 signals with the scanner's own ticker extraction."""
+    # retired 2026-10-14; the class-2 caller machinery is still live (test-only copy)
+    signals_config = __import__("config_overrides").signals_config_with_class2_caller()
     from fixture_posts import PURE_RETROSPECTIVE
     from signals.records import SignalQueue
     from signals.scanners import Class2CongressionalScanner, RawItem
@@ -538,6 +540,7 @@ def test_citrini_classifies_at_class_2_cadence(signals_config):
 def test_citrini_trades_end_to_end_at_class_2(tmp_path, signals_config):
     """Loop-level: a citrini forward call flows scanner -> classification ->
     research (priced_in mandatory at class 2) -> order, on the real config."""
+    signals_config = __import__("config_overrides").signals_config_with_class2_caller()  # retired 2026-10-14
     from research.config import ResearchConfig
     from risk_gate import RiskLimits
 
@@ -596,13 +599,9 @@ def test_a_class_2_trade_call_prompt_speaks_call_language_not_disclosure():
 
 
 def test_round_two_sources_ship_with_their_ruled_governance(signals_config):
-    citrini = signals_config.source("class_2", "citrini")
-    assert citrini.require_instrument is True
-    assert citrini.research_tier == "class_1"  # prose caller: Opus verification
-    assert citrini.daily_research_cap == 3
-    assert citrini.copy_trade is False
-    assert citrini.treatment == "thesis_input_only"
-    assert citrini.probation is False
+    # citrini (wired 2026-08-25) was RETIRED 2026-10-14 (human ruling): 2 rows
+    # from 2026-09-30, none tradeable; off the X feed, its quota freed.
+    assert not any(s.id == "citrini" for klass in signals_config.classes.values() for s in klass.sources)
 
     hawk = signals_config.source("class_1", "optionshawk")
     assert hawk.probation is True  # the first probation source

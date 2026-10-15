@@ -26,8 +26,6 @@ sources:
     # RULED (risk-on redirect, 2026-10-08): a confirmed event. Not pooled -
     # dispatched at once in the morning; grounded by the forward engine later.
     fallback: 0.5
-  citrini:
-    fallback: 0.0
   congressional_disclosures:
     fallback: 0.0
     slices:

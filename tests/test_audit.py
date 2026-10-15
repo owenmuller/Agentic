@@ -882,8 +882,8 @@ def test_the_config_supplies_the_costs_the_report_consumes():
     from signals import SignalsConfig
 
     costs = SignalsConfig.load().monthly_feed_costs()  # the standing rate
-    # Quiver $30 + citrini X reads $5 (breadth round 2, 2026-08-25).
-    assert costs["class_2"] == Decimal("35")
+    # Quiver $30 (citrini's $5 of X reads ended with its retirement, 2026-10-14).
+    assert costs["class_2"] == Decimal("30")
     # X pay-per-use budgets: nolimitgains $10 + unusual_whales $25 +
     # optionshawk $10 (2026-08-25).
     assert costs["class_1"] == Decimal("45")
