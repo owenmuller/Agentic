@@ -4126,7 +4126,32 @@ Then a golden replay on production files, and switch-on.
   - **Needs the timer reinstalled by the human:** `sudo cp ~/Agentic/ops/vps/agentic-momentum.timer /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart agentic-momentum.timer`.
 - The user prompt now reads: the search instruction, then "After your own searches, consult the research brief below if it helps", then the brief. The system section says "Search first ... consult the brief second".
 
-**START DATE of the A/B: 2026-10-16** (the first AI-trader session after switch-on; confirmed by the switch-on commit below). AI trader results before 2026-10-16 had no brief. Every pass from then on carries `brief_arm`, so results split before and after, and by arm.
+**START DATE of the A/B: 2026-10-16** (the first AI-trader session after switch-on; CONFIRMED: `brief_mode: ab` committed and deployed the evening of 2026-10-15, before the 09:20 ET unit start).
+
+**Golden replay on production files (2026-10-15 evening, deployed code, `python -m lab golden ai-trader --with-brief`):**
+- **Result: 5/5 PASS, $0.824 total.**
+- **The brief:** 12,585 chars, about 4,840 tokens (sha 4049f01f5d53878e). The API's own count of the earlier 13,557-char draft was 5,155 tokens.
+  - Section (c) was empty: the 10-15 daily line was never written (below). The 07:30 ET catch-up writes it before the first scan.
+- **Cost:**
+  - Idea-generating passes: $0.22-0.24 and 63-68K input tokens, against $0.16-0.17 and about 44K without the brief (production, 10-13 to 10-15).
+  - Under the A/B, half the passes carry it: about +$0.15 a day. The $3 cap and the $0.60 reserve are untouched.
+- **Behaviour (for the A/B to measure):**
+  - With "in v1.1's book" removed, the model still drew on the top names whose flags are clean (IEX M2, CPAY M17, TRGP M43). By construction those are largely v1.1's own picks.
+  - It cited "v1.1 may buy: yes" as a reason. The A/B's "mostly shortlist names" flag measures this.
+  - Dropping the "v1.1 may buy" summary (leaving the individual flags) is one lever; human's call.
+
+**Found and fixed the same evening (the daily line and card): Alpaca's free SIP feed refuses (403) a bar request ending within the last 15 minutes.**
+- **The failure:**
+  - The momentum report asked for bars "through 23:59 UTC today". At the 16:00 ET close every batch was refused, and the report returned None silently, so **the 2026-10-15 daily momentum card was never sent**. At the 18:30 ET prep no daily line was written.
+  - The month-end 18:30 ET plan build asks the same way and would have failed on 2026-10-30.
+- **Fixed:**
+  - `feeds.Alpaca.bars` caps the end at 16 minutes ago.
+  - An empty report with a plan in place raises, so a yellow card is sent instead of silence.
+  - A morning prep run records a missed daily line.
+  - Two return bugs in the first-day windows:
+    - a fill on a one-day window's first day had zero weight, so the first day read n/a;
+    - a week window opening before inception had no base, so it read n/a.
+- The 10-15 daily card was rebuilt on the fixed, deployed code and sent at 19:37 ET (alert ledger: delivered). Live v1.1 +0.22% today and since start; SPY +0.28%; SPMO -0.69%. The software books show -0.10%, their day-one entry cost. AI trader results before 2026-10-16 had no brief. Every pass from then on carries `brief_arm`, so results split before and after, and by arm.
 
 ### 2026-10-15 — RULING: the AI TRADER BRIEFING (built; ships switched off until its golden replay)
 

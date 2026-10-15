@@ -20,7 +20,8 @@ from lab.config import LabConfig
 from lab.llm import PassResult
 
 D = Decimal
-CFG = LabConfig.load().ai_trader
+# the rules engine under test; the research brief A/B has its own tests (and pins its mode)
+CFG = LabConfig.load().ai_trader.model_copy(update={"brief_mode": "off"})
 
 
 def et(day: int, hhmm: str, month: int = 10) -> datetime:

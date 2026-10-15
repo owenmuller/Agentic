@@ -193,9 +193,9 @@ ai_trader:
   # The research brief (human rulings 2026-10-15; lab/brief.py): optional
   # reference data. off | ab | always. "ab" (ruled: an A/B, not a switch):
   # each pass draws its arm at random, half with the brief, the arm logged;
-  # the Friday scoreboard reports the arms. OFF until the golden replay
-  # (python -m lab golden ai-trader --with-brief) passes on production files.
-  brief_mode: "off"
+  # the Friday scoreboard reports the arms. ON from 2026-10-16 (A/B start)
+  # after the golden replay on production files passed 5/5 on 2026-10-15.
+  brief_mode: "ab"
   brief_ab_share: 0.5
   brief_evidence_path: config/evidence_library.yaml
   min_confidence: 50           # my reading (Constraint #6): no token positions on weak ideas

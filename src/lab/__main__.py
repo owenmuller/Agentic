@@ -369,8 +369,8 @@ def golden(name: str, with_brief: bool = False) -> int:
     renderer = brief_renderer(ai) if ai.brief_mode != "off" else None
     if renderer is not None:
         sample = renderer()
-        print(f"research brief: {sample.chars} chars, ~{sample.tokens_estimate} tokens (chars/4), sha {sample.sha}, "
-              f"sections {sample.sections}")
+        print(f"research brief: {sample.chars} chars, ~{sample.tokens_estimate} tokens (~2.6 chars a token), "
+              f"sha {sample.sha}, sections {sample.sections}")
     today = datetime.now(timezone.utc).astimezone(NY).date()
     results = golden_replay.run(ai, LabLLM(ai), today, brief=renderer)
     print(golden_replay.render(results, golden_replay.next_session(today)))

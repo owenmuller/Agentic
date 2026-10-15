@@ -161,3 +161,9 @@ def test_the_core_prompt_stays_fenced_with_the_brief_appended(tmp_path):
     for word in ("P&L", "NAV", "equity", "profit", "return", "drawdown", "performance", "behind"):
         assert word.lower() not in core.lower(), word
     assert fenced.rstrip().endswith(brief.END)
+
+
+def test_the_shipped_brief_is_the_ruled_ab():
+    # human ruling 2026-10-15 (second): an A/B, half the passes, from 2026-10-16
+    shipped = LabConfig.load().ai_trader
+    assert shipped.brief_mode == "ab" and shipped.brief_ab_share == 0.5
