@@ -115,7 +115,7 @@ def source(signals_config):
 def test_the_source_is_configured_as_ruled(source):
     assert tuple(source.items_whitelist) == ("5.02", "4.02", "2.05", "1.01", "1.05")
     assert tuple(source.bearish_items) == ("4.02", "1.05")
-    assert source.daily_research_cap == 6
+    assert source.daily_research_cap == 0  # measurement-only (human ruling 2026-10-14); was 6
     assert source.prefilter is not None and source.prefilter.max_report_age_days == 3
 
 

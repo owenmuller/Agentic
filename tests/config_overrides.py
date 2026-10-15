@@ -60,3 +60,12 @@ def step_one_limits():
     payload["portfolio"]["sleeves"].update(
         {"equity": 0.15, "momentum": 0.15, "aggressive": 0.25, "mechanical": 0.15, "baseline": 0.30, "prediction": 0.0})
     return RiskLimits.model_validate(payload)
+
+
+def pre_measurement_only_signals_config() -> SignalsConfig:
+    """Caps as they were before 2026-10-14 (congressional 1, Form 4 2, 8-K 6).
+    The human ruling of 2026-10-14 made those three sources measurement-only
+    (cap 0); tests that exercise the JUDGED research machinery on their
+    signals (adds, exits, convergence, context, the scan loop) keep research on
+    here. The shipped caps are pinned in test_hardening and test_form8k."""
+    return signals_config_with_caps(congressional_disclosures=1, form4_insiders=2, form_8k=6)

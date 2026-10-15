@@ -4102,6 +4102,13 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-14 (night, later still) — RULINGS on the date-gated list: three sources measurement-only now; reviews kept as sample floors
+
+- **a/b APPLIED:** Form 4, congressional (all bands) and 8-K -> research cap 0 = MEASUREMENT-ONLY. Code: a cap of 0 releases the filing from the dispatch pool at once and records it as `stage_rejection measurement_only` (forward-graded like every funnel row; the Form 4 report counts it as "capped, never researched"); no triage, no pass, no add decision. The mechanical arm sees every signal before dispatch, so the congressional control arm keeps copying; held judged positions keep their exits and reviews. Contract awards keep research (cap 6, probation sizing). **Saving: ~$2.60 a trading day** over the prior 11 trading days (8-K $1.26, Form 4 $1.26, congressional $0.07; ~$55 a month). Mechanism tests that need judged research on those sources use `config_overrides.pre_measurement_only_signals_config()`; the shipped zeros are pinned.
+- **c kept** (short-dated options: 2026-10-30 or 10 resolved contracts). **d, e, f, i kept** as sample-size floors. **g VOID** (met; CLAUDE.md Build Order 7). **h @citrini:** a summary was given for a ruling (below).
+- **Judged sleeve:** not reallocated; the Friday weekly card now shows its deployed vs allocation and the idle cash.
+- **@citrini (for the human's ruling):** a thematic thesis caller on X (~291K followers), wired 2026-08-25 at Class 2 cadence with Opus verification, cap 3; the handle was wrong until 2026-09-30 (no trial before). Cost: $5 a month of the X feed and its read quota; no research spend yet. Since 2026-09-30: two rows (Oct 6 and 7), both prefiltered `no_instrument`; nothing researched, no forward-graded result.
+
 ### 2026-10-14 (night) — LEARNING LOOP build started (global rule; no waiting for Nov 2)
 
 **Design (one shared layer, `src/learning/`, pure; the orchestrator - the only audit importer - hands it resolved cases):**

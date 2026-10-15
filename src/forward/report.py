@@ -518,7 +518,7 @@ def render_forward_report(
             for e in form4
             if e.code not in ("no_cluster", "bearish_measurement") and e not in c_suite
         ]
-        capped_codes = ("source_cap", "class_cap", "aged_out_capped", "same_name_today")
+        capped_codes = ("source_cap", "class_cap", "aged_out_capped", "same_name_today", "measurement_only")
         lines.extend(
             [
                 "",

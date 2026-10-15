@@ -58,7 +58,10 @@ def limits():
 def signals_config():
     from signals.config import SignalsConfig
 
-    return SignalsConfig.load()
+    from config_overrides import signals_config_with_caps
+
+    # congressional research on at one pass (mechanics); shipped cap 0 since 2026-10-14
+    return signals_config_with_caps(congressional_disclosures=1)
 
 
 @pytest.fixture(scope="session")

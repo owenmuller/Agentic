@@ -284,7 +284,7 @@ def test_the_mechanical_record_is_never_stamped(tmp_path):
     started = build(
         tmp_path,
         RiskLimits.load(),
-        SignalsConfig.load(),
+        __import__("config_overrides").pre_measurement_only_signals_config(),
         ResearchConfig.load(),
         llm=RoutingLLM(
             **{
@@ -321,7 +321,7 @@ def test_a_traded_decision_is_stamped(tmp_path):
     started = build(
         tmp_path,
         RiskLimits.load(),
-        SignalsConfig.load(),
+        __import__("config_overrides").pre_measurement_only_signals_config(),
         ResearchConfig.load(),
         llm=RoutingLLM(
             **{
@@ -367,7 +367,7 @@ def test_the_loop_writes_the_iv_watch_file(tmp_path):
     from test_exits import enter_position
 
     started, _, _ = enter_position(
-        tmp_path, RiskLimits.load(), SignalsConfig.load(), ResearchConfig.load()
+        tmp_path, RiskLimits.load(), __import__("config_overrides").pre_measurement_only_signals_config(), ResearchConfig.load()
     )
     payload = json.loads((tmp_path / "iv_watch.json").read_text(encoding="utf-8"))
     assert "NUE" in payload["symbols"]  # held first, funnel names behind

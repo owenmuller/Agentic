@@ -134,9 +134,9 @@ def limits():
 
 @pytest.fixture(scope="session")
 def signals_config():
-    from signals.config import SignalsConfig
+    from config_overrides import pre_measurement_only_signals_config
 
-    return SignalsConfig.load()
+    return pre_measurement_only_signals_config()  # judged research on (shipped: measurement-only, 2026-10-14)
 
 
 @pytest.fixture(scope="session")

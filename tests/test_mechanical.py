@@ -42,7 +42,12 @@ ZERO = Decimal("0")
 
 @pytest.fixture(scope="module")
 def signals_config() -> SignalsConfig:
-    return SignalsConfig.load()
+    # congressional research ON at one pass a day: the judged arm must research
+    # disclosures for the two-arm comparison to be tested. Shipped since
+    # 2026-10-14 the source is measurement-only (cap 0); pinned in test_hardening.
+    from config_overrides import signals_config_with_caps
+
+    return signals_config_with_caps(congressional_disclosures=1)
 
 
 def quiet_llm():

@@ -342,7 +342,9 @@ class TradingLoop:
         taken: dict[str, int] = {}
         for signal in pooled:
             cap = self._source_caps.get(signal.source_id)
-            if cap is None:
+            if cap is None or cap == 0:
+                # cap 0 = measurement-only (ruling 2026-10-14): released at once to
+                # be RECORDED (not researched) below, never held in the pool all day
                 released.append(signal)
                 continue
             if signal.source_id not in allowance:
@@ -656,6 +658,18 @@ class TradingLoop:
                 report.prefiltered += 1
                 continue
             cap = self._source_caps.get(signal.source_id)
+            if cap == 0:
+                # Measurement-only source (human ruling 2026-10-14: Form 4,
+                # congressional and 8-K research off): every filing still gets a
+                # funnel row the forward engine grades; no pass is spent.
+                self._pipeline.record_prefiltered(
+                    signal,
+                    f"{signal.source_id} is measurement-only (research cap 0, ruling 2026-10-14); "
+                    f"recorded and forward-graded, not researched",
+                    code="measurement_only",
+                )
+                report.prefiltered += 1
+                continue
             if cap is not None:
                 if self._source_passes.get(signal.source_id, 0) >= cap:
                     self._pipeline.record_prefiltered(

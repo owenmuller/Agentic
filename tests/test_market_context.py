@@ -357,7 +357,7 @@ def test_class_2_signals_carry_market_context_end_to_end(tmp_path):
         clock=FakeClock(),
         data_dir=tmp_path,
         limits=RiskLimits.load(),
-        signals_config=SignalsConfig.load(),
+        signals_config=__import__("config_overrides").pre_measurement_only_signals_config(),
         research_config=ResearchConfig.load(),
         orchestrator_config=orchestrator_config(),
         market_context=MarketContextBuilder(

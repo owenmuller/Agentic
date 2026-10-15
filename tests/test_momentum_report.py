@@ -109,3 +109,14 @@ def test_the_daily_card_reports_today_week_to_date_and_since_start(tmp_path):
     lines = card.all_lines
     assert lines[0].startswith("Today: +6.7%") and lines[1].startswith("Week to date:") and "Since start" in lines[2]
     assert "SPMO" in lines[0] and "today" in report.table() and "week to date" in report.table()
+
+
+def test_the_weekly_card_reports_the_judged_sleeves_idle_cash():
+    # human ruling 2026-10-14: research off for three sources; report the idle
+    # judged cash weekly, no reallocation until after momentum's first month
+    card = cards.weekly_main_card(99500.0, 0.004, 0.006, "report", judged=(14925.0, 3899.0))
+    line = next(l for l in card.all_lines if l.startswith("Judged sleeve"))
+    assert "$3,899 deployed of $14,925" in line and "$11,026 idle (73.9%)" in line
+    assert "Form 4, congressional and 8-K" in line
+    plain = cards.weekly_main_card(99500.0, 0.004, 0.006, "report")
+    assert not any(l.startswith("Judged sleeve") for l in plain.all_lines)

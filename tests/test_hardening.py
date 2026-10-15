@@ -430,9 +430,9 @@ def test_unusual_whales_ships_with_the_governance_it_was_ruled_in_with(
     assert source.copy_trade is False
     assert source.treatment == "thesis_input_only"
     congressional = signals_config.source("class_2", "congressional_disclosures")
-    # 5 -> 1 (REWORK ruling 2026-10-06): the disclosure source measured negative
-    # across thousands of rows; one pass a day keeps the measurement alive.
-    assert congressional.daily_research_cap == 1
+    # 5 -> 1 (REWORK ruling 2026-10-06), then MEASUREMENT-ONLY at cap 0 (human
+    # ruling 2026-10-14): every disclosure recorded and graded; the control arm copies.
+    assert congressional.daily_research_cap == 0
     assert congressional.watchlist == ()
 
 

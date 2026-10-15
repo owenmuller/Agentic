@@ -38,6 +38,8 @@ Claude Code reads this file every session. These rules govern all code written i
 
 ## Signal Sources & Latency Classes
 
+**MEASUREMENT-ONLY SOURCES (human ruling 2026-10-14, applied at once, superseding the 10-15 / 10-27 review dates): Form 4 insiders, congressional disclosures (all bands) and Form 8-K have research cap 0.** Every filing is still recorded and forward-graded (`stage_rejection` code `measurement_only`, never held in the dispatch pool); no LLM pass is spent on them; the congressional mechanical control arm keeps copying; existing judged positions run to their exits. Government contract awards keep their research passes (measurement-only sizing until the 2b unlock). Saving measured over the prior 11 trading days: about $2.60 a trading day (8-K $1.26, Form 4 $1.26, congressional $0.07). The judged sleeve (15%) is not reallocated; the Friday weekly reports its idle cash until a ruling after momentum's first month.
+
 Three classes. Scan cadence is matched to signal decay speed so options and buy/sell decisions are never delayed by slow polling.
 
 ### Class 1 — Real-time, event-driven (poll every 60–120 seconds during market hours)
@@ -152,7 +154,7 @@ Two permitted strategies:
 4. `src/research/` — LLM scoring layer (safe to iterate; risk gate downstream doesn't care how confident the LLM feels)
 5. `src/sizing/` — confidence table implementation
 6. Kalshi module — only after the equity leg proves itself in paper
-7. **Paper trade the full pipeline 2–4 weeks minimum before any live-mode discussion**
+7. ~~**Paper trade the full pipeline 2–4 weeks minimum before any live-mode discussion**~~ — VOID (met: paper since 2026-08-18; human ruling 2026-10-14). Live mode still needs Constraint #4's two human-set variables.
 
 ## Risk-On Redirect (human ruling 2026-10-08; supersedes the maintenance-mode and search-closed rulings)
 

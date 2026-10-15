@@ -404,3 +404,37 @@ def test_within_a_window_the_higher_prior_wins_the_slot():
     # Inside the same window nothing pooled is released.
     released, held = loop._release_pooled([low], NOW + timedelta(minutes=5))
     assert released == [] and held == [low]
+
+
+def test_a_measurement_only_source_is_recorded_never_researched_and_never_held(tmp_path, signals_config):
+    # Human ruling 2026-10-14: Form 4, congressional (all bands) and 8-K research
+    # off - cap 0. Every filing still gets a funnel row the forward engine grades
+    # (code measurement_only); nothing waits in the pool; no pass is spent.
+    from research.config import ResearchConfig
+    from risk_gate import RiskLimits
+    from signals.config import SignalsConfig
+
+    shipped = SignalsConfig.load()
+    for source_id, klass in (("congressional_disclosures", "class_2"), ("form4_insiders", "class_2"),
+                             ("form_8k", "class_1")):
+        assert shipped.source(klass, source_id).daily_research_cap == 0
+    clock = FakeClock(datetime(2026, 8, 17, 14, 0, tzinfo=timezone.utc))
+    disclosures = [
+        f"Congressional trading disclosure (STOCK Act filing)\nrepresentative: Nancy Pelosi (Representatives)\n"
+        f"ticker: NUE\ntransaction: Purchase\namount range: $500,001 - $1,000,000\n"
+        f"transaction date: 2026-08-0{i}\nreport date: 2026-08-16\ndisclosure lag: 1{i} days\n"
+        for i in range(1, 4)
+    ]
+    llm = FakeLLM()
+    started = build(
+        tmp_path, RiskLimits.load(), shipped, ResearchConfig.load(), llm=llm, broker=FakeBroker(), clock=clock,
+        fetcher=feed(congressional_disclosures=disclosures), prices=prices_of(NUE="140.00"), config=_config(),
+    )
+    report = started.loop.tick()
+    assert not [r for r in report.processed if _src(r) == "congressional_disclosures"]
+    assert started.loop.deferred == () or len(started.loop.deferred) == 0
+    codes = [r.code for r in started.audit.stage_rejections() if r.code == "measurement_only"]
+    assert len(codes) == 3
+    assert not llm.calls  # no research pass, not even triage
+    # the mechanical control arm still saw (and may copy) every disclosure
+    assert report.mechanical_entries is not None

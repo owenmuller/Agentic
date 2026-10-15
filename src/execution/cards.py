@@ -439,12 +439,17 @@ def close_card(value: float, today: Optional[float], spy_today: Optional[float],
 
 
 def weekly_main_card(value: Optional[float], week: Optional[float], spy_week: Optional[float], report: str,
-                     sample: bool = False) -> Card:
-    return Card("Main book", "weekly report", GOOD, (
-        f"Account value: {usd(value)}.",
-        f"This week: {with_spy(week, spy_week)}.",
-        "The full attribution and forward-return report is attached.",
-    ), detail=report, detail_name="weekly-report.txt", sample=sample)
+                     sample: bool = False, judged: Optional[tuple[float, float]] = None) -> Card:
+    lines = [f"Account value: {usd(value)}.", f"This week: {with_spy(week, spy_week)}."]
+    if judged is not None:
+        allocation, deployed = judged
+        idle = max(0.0, allocation - deployed)
+        lines.append(f"Judged sleeve: {usd(deployed)} deployed of {usd(allocation)}; {usd(idle)} idle "
+                     f"({pct(idle / allocation, signed=False) if allocation else 'n/a'}). Research is off for "
+                     f"Form 4, congressional and 8-K since Oct 14.")
+    lines.append("The full attribution and forward-return report is attached.")
+    return Card("Main book", "weekly report", GOOD, tuple(lines), detail=report, detail_name="weekly-report.txt",
+                sample=sample)
 
 
 def ladder_card(month: str, complete: bool, bought: dict[str, float], sold: dict[str, float], value: float,

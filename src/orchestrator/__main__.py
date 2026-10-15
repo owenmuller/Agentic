@@ -253,9 +253,11 @@ def _exec_test_card(text: str):
     )
 
 
-def _weekly_card(report: str, today):
+def _weekly_card(report: str, today, gate=None):
     """The Friday report as a card: account value and the week beside SPY's,
-    the full attribution report attached (ruling 2026-10-12)."""
+    the full attribution report attached (ruling 2026-10-12); the judged
+    sleeve's idle cash (human ruling 2026-10-14: research is off for Form 4,
+    congressional and 8-K, so it mostly sits idle until a reallocation ruling)."""
     value = week = spy_week = None
     start = today - timedelta(days=7)
     try:
@@ -268,7 +270,14 @@ def _weekly_card(report: str, today):
         spy_week = BenchmarkMoves().between(start, today)
     except Exception:  # noqa: BLE001 - a missing number is "n/a", never a lost report
         pass
-    return cards.weekly_main_card(value, week, spy_week, report)
+    judged = None
+    if gate is not None:
+        from risk_gate.state import Sleeve
+
+        allocation = float(gate.sleeve_nav(Sleeve.EQUITY))
+        deployed = float(gate.state.sleeve_exposure(Sleeve.EQUITY))
+        judged = (allocation, deployed)
+    return cards.weekly_main_card(value, week, spy_week, report, judged=judged)
 
 
 def _momentum_card(checks, daily: bool = False):
@@ -308,7 +317,7 @@ def weekly() -> int:
     elif momentum_card is not None:
         print(momentum_card.detail)
     if alerter.enabled:
-        sent = alerter.card(f"weekly-{checks.clock().date()}", _weekly_card(text, checks.clock().date()))
+        sent = alerter.card(f"weekly-{checks.clock().date()}", _weekly_card(text, checks.clock().date(), checks.gate))
         alerter.close()
         print("weekly report emailed" if sent else "weekly report NOT sent "
               "(rate-limited or queue refused); printing instead")
