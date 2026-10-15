@@ -144,7 +144,7 @@ TOPOLOGY: dict[str, Rules] = {
     # seam between the others, and it is the only importer of audit anywhere.
     "orchestrator": Rules(
         may_import=frozenset(
-            {"audit", "execution", "forward", "momentum", "research", "risk_gate", "signals", "sizing"}
+            {"audit", "execution", "forward", "learning", "momentum", "research", "risk_gate", "signals", "sizing"}
         ),
         because="the loop; the single place the stages are wired together",
     ),
@@ -163,6 +163,12 @@ TOPOLOGY: dict[str, Rules] = {
     # rules and engine are pure; its feeds read Alpaca bars and SEC filings,
     # so it may reach the network - but it imports nothing of the trading
     # machinery: it proposes target weights, the orchestrator and the gate act.
+    # THE LEARNING LOOP (global rule, human ruling 2026-10-14): pure - the
+    # orchestrator, the only importer of the audit log, hands it resolved cases.
+    "learning": Rules(
+        may_import=frozenset(),
+        because="journal, vocabulary and pattern mining over resolved cases; reads nothing on its own",
+    ),
     "momentum": Rules(
         may_import=frozenset({"execution.environment", "execution.market_data"}),
         may_reach_network=True,

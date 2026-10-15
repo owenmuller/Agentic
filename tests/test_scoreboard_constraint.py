@@ -26,6 +26,9 @@ FENCED = (
     "orchestrator/attention.py",  # the aggressive sleeve's screen (redirect 2026-10-08)
     "orchestrator/momentum_veto.py",  # the momentum book's AI leg (ruling 2026-10-13)
     "orchestrator/momentum_prep.py",  # v1's plan, the veto loop, the shadows
+    "learning/mining.py",  # the learning loop: lessons from aggregated outcomes only (ruling 2026-10-14, item 6)
+    "learning/journal.py",
+    "learning/vocabulary.py",
     "research/prompts.py",
     "research/exit_review.py",
     "research/triage.py",
