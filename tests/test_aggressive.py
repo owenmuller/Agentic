@@ -61,8 +61,11 @@ def shipped_limits():
 def off_limits(shipped_limits):
     """The sleeve with its entries switched OFF (the ruling-1 switch), whatever
     the shipped value is today."""
-    caps = shipped_limits.aggressive_sleeve.model_copy(update={"entries_enabled": False})
-    return shipped_limits.model_copy(update={"aggressive_sleeve": caps})
+    from config_overrides import step_one_limits
+
+    base = step_one_limits()  # mechanics sized on the 25% sleeve (step 2 pinned above)
+    caps = base.aggressive_sleeve.model_copy(update={"entries_enabled": False})
+    return base.model_copy(update={"aggressive_sleeve": caps})
 
 
 @pytest.fixture(scope="session")
@@ -70,8 +73,11 @@ def limits(shipped_limits):
     """The shipped caps with the sleeve's entries switched back ON: these tests
     exercise the sleeve's machinery. The shipped switch - OFF by human ruling
     2026-10-09 - is pinned in its own tests below."""
-    caps = shipped_limits.aggressive_sleeve.model_copy(update={"entries_enabled": True})
-    return shipped_limits.model_copy(update={"aggressive_sleeve": caps})
+    from config_overrides import step_one_limits
+
+    base = step_one_limits()  # mechanics sized on the 25% sleeve (step 2 pinned above)
+    caps = base.aggressive_sleeve.model_copy(update={"entries_enabled": True})
+    return base.model_copy(update={"aggressive_sleeve": caps})
 
 
 @pytest.fixture(scope="session")
@@ -93,10 +99,11 @@ def research_config():
 
 def test_the_shipped_weights_and_caps_are_as_ruled(shipped_limits, signals_config):
     sleeves = shipped_limits.portfolio.sleeves
-    # judged 30 -> 15 for the momentum sleeve's first step (ruling 2026-10-13)
+    # judged 30 -> 15 for the momentum sleeve (ruling 2026-10-13); step 2 applied
+    # 2026-10-14 under the no-waiting rule: aggressive 25 -> 10, momentum 15 -> 30
     assert (sleeves.equity, sleeves.aggressive, sleeves.mechanical, sleeves.baseline, sleeves.prediction,
             sleeves.momentum) == (
-        Decimal("0.15"), Decimal("0.25"), Decimal("0.15"), Decimal("0.30"), Decimal("0.00"), Decimal("0.15"),
+        Decimal("0.15"), Decimal("0.10"), Decimal("0.15"), Decimal("0.30"), Decimal("0.00"), Decimal("0.30"),
     )
     caps = shipped_limits.aggressive_sleeve
     # Entries ON for the B execution test alone (ruling 2026-10-09 evening);

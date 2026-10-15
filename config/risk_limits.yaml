@@ -51,8 +51,8 @@ portfolio:
   # and applied by a reviewed commit. Dated so attribution partitions.
   sleeves:
     equity: 0.15 # the JUDGED sleeve: equities & long options (0.30 -> 0.15, 2026-10-13)
-    momentum: 0.15 # v1 momentum book, rules only (ruling 2026-10-13; 0.30 after step 2)
-    aggressive: 0.25 # LLM-judged, fixed risk budget per trade (redirect 2026-10-08)
+    momentum: 0.30 # momentum book (v1.1), rules only (0.15 ruling 2026-10-13; step 2 -> 0.30 applied 2026-10-14)
+    aggressive: 0.10 # fixed risk per trade; only the execution test trades (0.25 redirect 2026-10-08; -> 0.10 step 2, 2026-10-14)
     mechanical: 0.15 # deterministic disclosure follower — no LLM in the path (was 0.25)
     baseline: 0.30 # market beta in SPY, weekly rebalance — no LLM, no thesis
     prediction: 0.00 # event contracts — INACTIVE, no venue (design target: 0.10)

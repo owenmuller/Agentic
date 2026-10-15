@@ -24,8 +24,11 @@ def shipped():
 
 @pytest.fixture(scope="module")
 def live(shipped):
-    caps = shipped.momentum_sleeve.model_copy(update={"entries_enabled": True})
-    return shipped.model_copy(update={"momentum_sleeve": caps})
+    from config_overrides import step_one_limits
+
+    base = step_one_limits()  # mechanics sized on the 15% sleeve; step 2 is pinned above
+    caps = base.momentum_sleeve.model_copy(update={"entries_enabled": True})
+    return base.model_copy(update={"momentum_sleeve": caps})
 
 
 def gate(limits, cash=D("100000")):
@@ -37,10 +40,10 @@ def buy(symbol, qty, price, sleeve="momentum"):
                           sleeve=sleeve)
 
 
-def test_the_shipped_allocation_is_step_one(shipped):
+def test_the_shipped_allocation_is_step_two(shipped):
     w = shipped.portfolio.sleeves
     assert (w.equity, w.momentum, w.aggressive, w.mechanical, w.baseline) == (
-        D("0.15"), D("0.15"), D("0.25"), D("0.15"), D("0.30"))
+        D("0.15"), D("0.30"), D("0.10"), D("0.15"), D("0.30"))  # step 2 applied 2026-10-14
     caps = shipped.momentum_sleeve
     assert (caps.max_positions, caps.max_single_position, caps.max_sector_exposure, caps.max_daily_deployment) == (
         15, D("0.10"), D("0.30"), D("1.00"))

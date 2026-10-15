@@ -47,9 +47,11 @@ def paper_mode(monkeypatch):
 
 @pytest.fixture(scope="module")
 def limits():
-    shipped = RiskLimits.load()
-    caps = shipped.momentum_sleeve.model_copy(update={"entries_enabled": True})
-    return shipped.model_copy(update={"momentum_sleeve": caps})
+    from config_overrides import step_one_limits
+
+    base = step_one_limits()  # the engine mechanics are sized on a 15% sleeve (step 2: test_momentum_gate)
+    caps = base.momentum_sleeve.model_copy(update={"entries_enabled": True})
+    return base.model_copy(update={"momentum_sleeve": caps})
 
 
 def write_plan(directory, month="2026-11", day="2026-11-02", targets=None, **extra):

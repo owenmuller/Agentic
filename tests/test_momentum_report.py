@@ -78,13 +78,20 @@ def test_step2_reports_and_applies_nothing(tmp_path):
     state = tmp_path / "execution_test_state.json"
     state.write_text(json.dumps({"sessions": [f"d{i}" for i in range(12)]}))
     early = momentum_step2.report(checks, state, date(2026, 10, 28))
-    assert not early.ready and "12 of 20" in early.text and "NOT READY" in early.text
+    assert not early.ready and "12 of 20" in early.text and "still running" in early.text
     state.write_text(json.dumps({"sessions": [f"d{i}" for i in range(20)]}))
     done = momentum_step2.report(checks, state, date(2026, 11, 6), ["2026-11-06", "2026-12-01"])
-    assert done.ready and "READY to decide" in done.text
-    assert "allocation $25,000 -> $10,000" in done.text and "allocation $15,000 -> $30,000" in done.text
-    assert "2026-12-01" in done.text and "nothing has been changed" in done.text
-    assert limits.portfolio.sleeves.momentum == Decimal("0.15")  # untouched
+    assert done.ready and "COMPLETE" in done.text and "APPLIED 2026-10-14" in done.text
+    assert "aggressive 10%: allocation $10,000" in done.text and "momentum   30%: allocation $30,000" in done.text
+    assert "2026-12-01" in done.text and "Nothing changes" in done.text
+    # before step 2 the same module proposed the change (the step-one weights)
+    from config_overrides import step_one_limits
+
+    old = SimpleNamespace(gate=RiskGate(step_one_limits(), AccountState(cash=Decimal("100000"),
+                                                                         high_water_mark=Decimal("100000"))),
+                          audit=checks.audit, orchestrator_config=checks.orchestrator_config)
+    proposal = momentum_step2.report(old, state, date(2026, 11, 6), ["2026-11-06", "2026-12-01"])
+    assert "allocation $25,000 -> $10,000" in proposal.text and "nothing has been changed" in proposal.text
 
 
 def test_the_daily_card_reports_today_week_to_date_and_since_start(tmp_path):

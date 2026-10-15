@@ -344,6 +344,8 @@ def test_the_aggressive_reserve_is_one_position_while_only_the_execution_test_tr
     capped = liquidity_buffer(gate, limits.cash_management, include_momentum=False)
     uncapped_config = limits.cash_management.model_copy(update={"aggressive_reserve_positions": None})
     full = liquidity_buffer(gate, uncapped_config, include_momentum=False)
-    # aggressive sleeve 25,000: one slot is 25% of it (6,250) instead of its 100% daily cap
-    assert full - capped == Decimal("25000") - Decimal("6250")
-    assert momentum_spendable(gate, limits.cash_management) >= Decimal("15000")  # the sleeve is fundable
+    # one slot is 25% of the aggressive sleeve instead of its 100% daily cap
+    sleeve = Decimal("100000") * limits.portfolio.sleeves.aggressive
+    assert full - capped == sleeve - sleeve * Decimal("0.25")
+    # the whole momentum sleeve is fundable from settled cash (step 2: 30% of NAV)
+    assert momentum_spendable(gate, limits.cash_management) >= Decimal("100000") * limits.portfolio.sleeves.momentum

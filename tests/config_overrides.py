@@ -44,3 +44,19 @@ def pre_redirect_limits():
     payload["portfolio"]["sleeves"]["aggressive"] = 0.0
     payload["portfolio"]["sleeves"]["momentum"] = 0.0  # the momentum step (2026-10-13) is pinned elsewhere
     return RiskLimits.model_validate(payload)
+
+
+def step_one_limits():
+    """The shipped risk_limits.yaml with the momentum step-1 weights (2026-10-13
+    to 2026-10-14): judged 15, momentum 15, aggressive 25, mechanical 15,
+    baseline 30. Mechanism tests sized on a 15% momentum / 25% aggressive
+    sleeve keep testing the mechanism; the shipped step-2 weights (momentum
+    30, aggressive 10; applied 2026-10-14) are pinned in test_aggressive.py and
+    test_momentum_gate.py."""
+    from risk_gate.limits import RiskLimits, default_limits_path
+
+    with open(default_limits_path(), "r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle)
+    payload["portfolio"]["sleeves"].update(
+        {"equity": 0.15, "momentum": 0.15, "aggressive": 0.25, "mechanical": 0.15, "baseline": 0.30, "prediction": 0.0})
+    return RiskLimits.model_validate(payload)

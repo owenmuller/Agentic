@@ -1,9 +1,11 @@
 """Momentum step 2 (human ruling 2026-10-13): after execution-test session 20
 (~2026-11-06), +15% of NAV to the momentum sleeve from the aggressive sleeve
-(aggressive 25 -> 10, momentum 15 -> 30). This module REPORTS; it applies
-nothing. The change is a reviewed commit after the human confirms, and the
-added capital goes in at the next scheduled monthly rebalance (Constraint #6:
-no extra mid-month trade).
+(aggressive 25 -> 10, momentum 15 -> 30). APPLIED 2026-10-14 by human ruling
+under the standing no-waiting rule (the added capital goes in at the next
+session; what settled cash cannot fund that day, the session after). Since
+then this module only REPORTS: the execution test's completion and each
+sleeve's allocation against its holdings. Before step 2 it proposed the
+change and applied nothing; it never applies anything.
 
     python -m orchestrator momentum-step2-report
 
@@ -62,6 +64,25 @@ def report(checks, exec_state_path: Path, today: date, sessions: Optional[list[s
 
     def money(x: Decimal) -> str:
         return f"${x:,.0f}"
+
+    if weights.aggressive == TARGET["aggressive"] and weights.momentum == TARGET["momentum"]:
+        # Applied 2026-10-14 under the no-waiting rule: this run only reports.
+        lines = [
+            f"MOMENTUM STEP 2 - APPLIED 2026-10-14 (human ruling, standing no-waiting rule); report only ({today}).",
+            "",
+            f"Execution test: {run if run is not None else 'unknown'} of {max_sessions} sessions run; open "
+            f"execution-test positions: {', '.join(open_exec) or 'none'} -> "
+            + ("COMPLETE." if ready else "still running."),
+            "",
+            f"Book NAV {money(nav)}.",
+            f"  aggressive {weights.aggressive:.0%}: allocation {money(nav * weights.aggressive)}; held {money(aggressive_held)}"
+            + (f" - ABOVE its ceiling {money(new_aggressive_ceiling)}: new opens refused until exits bring it under"
+               if aggressive_held > new_aggressive_ceiling else f" (ceiling {money(new_aggressive_ceiling)})"),
+            f"  momentum   {weights.momentum:.0%}: allocation {money(nav * weights.momentum)}; held {money(momentum_held)}",
+            "",
+            f"Nothing changes. The next momentum rebalance is {rebalance}.",
+        ]
+        return Step2(ready, "\n".join(lines))
 
     lines = [
         f"MOMENTUM STEP 2 - REPORT ONLY ({today}); nothing has been changed.",

@@ -4102,6 +4102,12 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-14 (night, later) — RULINGS: step 2 applied now; learning loop started now; date-gated items listed; Form 4 / congressional status
+
+- **Step 2 APPLIED** (no-waiting rule): `risk_limits.yaml` sleeves aggressive 0.25 -> 0.10, momentum 0.15 -> 0.30, from idle cash, nothing sold. The 2026-10-15 off-cycle plan needs no rebuild (its weights are fractions of the sleeve; the engine sizes at trade time). The execution test continues at the smaller sleeve. What settled cash cannot fund on 10-15 goes in at the next session (the rebalance carries over, up to 3 sessions). The 2026-11-06 timer now reports only (`momentum_step2` applied mode). Mechanism tests sized on 15/25 moved to `config_overrides.step_one_limits()`; the shipped 30/10 weights are pinned in test_aggressive and test_momentum_gate.
+- **Learning loop:** build started 2026-10-14 (see its own entry as it lands).
+- **Form 4 / congressional (human question):** the "move Form 4 research to measurement-only on 10-15, hold congressional at cap 1 until the 10-27 verdict" text was a PROPOSAL for the 10-15 review and was never applied; the 10-08 redirect changed neither. Shipped today: congressional cap 1 (5 -> 1, REWORK 2026-10-06), Form 4 cap 2 (5 -> 2, same ruling), both still researched and measured.
+
 ### 2026-10-14 (night) — RULINGS: v1.1 starts OFF-CYCLE on 2026-10-15; STANDING RULE "live at the next session"; funding, golden 9/9, daily reporting
 
 **Rulings (human):** build an initial off-cycle v1.1 plan from data through 2026-10-14 and trade it at the 2026-10-15 session at the approved 15% size, veto and sentiment running as normal; the monthly schedule is unchanged (2026-11-02 the first regular rebalance, applying the buffer rule to the holdings then held). STANDING RULE (CLAUDE.md § Go Live at the Next Session): an approved strategy goes live at the next session once its checks pass; cadence controls re-ranking, not the start; performance and every shadow are reported daily, week-to-date and since-start vs SPY and SPMO.
