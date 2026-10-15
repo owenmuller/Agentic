@@ -4102,6 +4102,32 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-15 (evening) — RULING: the brief runs as an A/B; no control holdings; weekly shortlist; search first
+
+**Ruled before switch-on:**
+1. **A/B, not a switch.** Half of the AI trader's scans get the brief at random, half do not; the arm is logged per scan. The weekly report by arm covers ideas proposed, ideas taken, the share of ideas from outside the brief, and forward results of entries. It flags notably fewer ideas or mostly shortlist names in the brief arm.
+2. **No control holdings.** The "in v1.1's book" tag and any mention of the control's holdings are removed; the AI sees scores and flags only.
+3. **Shortlist refresh:** weekly (Saturday) plus each monthly plan.
+4. **Order:** the brief comes after the AI's own search instructions.
+5. **Start date** recorded here.
+
+Then a golden replay on production files, and switch-on.
+
+**Built:**
+- `brief_mode: off | ab | always` with `brief_ab_share` 0.5; the arm is drawn per pass.
+  - Control-arm passes send a prompt and tool byte-identical to the brief-less ones (tested against an "off" pass).
+  - The brief is rendered in both arms, so `ideas_on_shortlist` is logged for every idea in either arm.
+  - `brief_arm` is logged on the `llm_pass` and on `position_opened`.
+- Friday scoreboard section "RESEARCH BRIEF A/B", by arm since the start: passes, ideas (and per pass), taken, share off the shortlist, closed entries (wins, mean return on cost), and the brief arm's `brief_use` counts.
+  - Flags (thresholds mine, stated on the card): the brief arm under 75% of the control's ideas a pass, at 10+ passes each; over 50% shortlist names, at 10+ ideas.
+- The shortlist file no longer carries plan membership at all; the renderer never shows holdings (tested).
+- Saturday 08:00 ET refresh: `momentum-prep` on a Saturday builds fresh data through the week's last session, in a `weekly-` cache folder of its own (newest kept).
+  - A plan-time backfill never overwrites a newer file: it compares data dates.
+  - **Needs the timer reinstalled by the human:** `sudo cp ~/Agentic/ops/vps/agentic-momentum.timer /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl restart agentic-momentum.timer`.
+- The user prompt now reads: the search instruction, then "After your own searches, consult the research brief below if it helps", then the brief. The system section says "Search first ... consult the brief second".
+
+**START DATE of the A/B: 2026-10-16** (the first AI-trader session after switch-on; confirmed by the switch-on commit below). AI trader results before 2026-10-16 had no brief. Every pass from then on carries `brief_arm`, so results split before and after, and by arm.
+
 ### 2026-10-15 — RULING: the AI TRADER BRIEFING (built; ships switched off until its golden replay)
 
 **Ruled:** the AI trader stays the decision-maker; a research brief is ONE extra resource rendered before each scan:

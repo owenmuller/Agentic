@@ -1,9 +1,11 @@
 [Unit]
-Description=Agentic momentum prep (weekdays 18:30 and 07:30 ET; runs only when a month turns)
+Description=Agentic momentum prep (weekdays 18:30 and 07:30 ET: the monthly plan when a month turns, the daily scoreboard line; Saturday 08:00 ET: the weekly shortlist)
 
 [Timer]
 OnCalendar=Mon..Fri 18:30 America/New_York
 OnCalendar=Mon..Fri 07:30 America/New_York
+# the AI trader brief's weekly shortlist refresh (human ruling 2026-10-15, second)
+OnCalendar=Sat 08:00 America/New_York
 Persistent=true
 
 [Install]

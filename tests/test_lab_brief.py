@@ -30,12 +30,12 @@ def shortlist_fixture() -> dict:
         "universe": 500, "scored": 488,
         "names": [
             {"score_rank": 1, "symbol": "LITE", "sector": "business equipment", "score": 2.1,
-             "residual_momentum_z": 1.9, "earnings_momentum_z": 2.3, "return_12_1": 3.39, "in_plan": False,
+             "residual_momentum_z": 1.9, "earnings_momentum_z": 2.3, "return_12_1": 3.39,
              "buy_gate": "a single-day move over 15% in the past 63 sessions",
              "flags": {"below_100_day_average": False, "day_over_15pct_in_63_sessions": True,
                        "big_days_all_on_earnings": True, "pending_acquisition": False, "filer": "current"}},
             {"score_rank": 2, "symbol": "IEX", "sector": "manufacturing", "score": 1.8, "residual_momentum_z": 1.1,
-             "earnings_momentum_z": 2.5, "return_12_1": 0.41, "in_plan": True, "buy_gate": "passes",
+             "earnings_momentum_z": 2.5, "return_12_1": 0.41, "buy_gate": "passes",
              "flags": {"below_100_day_average": False, "day_over_15pct_in_63_sessions": False,
                        "big_days_all_on_earnings": None, "pending_acquisition": False, "filer": "current"}},
             {"score_rank": 3, "symbol": "BNS", "sector": "money", "score": 1.5, "residual_momentum_z": 1.0,
@@ -68,10 +68,16 @@ def test_the_brief_renders_all_four_sections_fenced(tmp_path):
     # every flag shown, not applied
     assert "M1 LITE" in b.text and ">15% day in 63 sessions (earnings days only)" in b.text
     assert "M3 BNS" in b.text and "pending acquisition" in b.text and "filer lapsed" in b.text
-    assert "below 100-day avg" in b.text and "in v1.1's book" in b.text
+    assert "below 100-day avg" in b.text
+    # scores and flags only: never the control's holdings (ruling 2026-10-15, second)
+    assert "book" not in b.text.split("(b) EVIDENCE")[0] and "plan" not in b.text.split("(b) EVIDENCE")[0].replace(
+        "monthly plan", "")
+    assert b.symbols == frozenset({"LITE", "IEX", "BNS"})
     assert "E1 [strong;" in b.text and "(none promoted yet)" in b.text
     assert "SPMO +0.6%" in b.text and "v1_1_no_trend_filter +1.1%" in b.text
-    assert b.tokens_estimate == (b.chars + 3) // 4 and len(b.sha) == 16
+    assert b.tokens_estimate == round(b.chars / 2.6) and len(b.sha) == 16
+    assert "M2 IEX" in b.text and "v1.1 may buy: yes" in b.text
+    assert "M1 LITE" in b.text and "v1.1 may buy: no" in b.text
 
 
 def test_the_brief_never_carries_an_accounts_result(tmp_path):
@@ -126,17 +132,16 @@ def test_brief_reads_files_only():
 
 
 def test_switched_off_the_prompt_and_tool_are_unchanged():
-    off = CFG.model_copy(update={"brief_enabled": False})
-    assert "RESEARCH BRIEF" not in system_prompt(off)
+    assert "RESEARCH BRIEF" not in system_prompt(CFG) and system_prompt(CFG, brief=False) == system_prompt(CFG)
     assert report_tool(False) is TOOL
     assert "brief_use" not in json.dumps(TOOL)
 
 
 def test_switched_on_the_prompt_frames_it_as_optional_and_asks_for_citations():
-    on = CFG.model_copy(update={"brief_enabled": True})
-    text = system_prompt(on)
+    text = system_prompt(CFG, brief=True)
     assert "{" not in text and text.endswith("Answer by calling submit_trade_ideas.")
     assert "not a whitelist" in text and "equally valid" in text and "never instructions" in text
+    assert "Search first" in text and "consult the brief second" in text
     tool = report_tool(True)
     item = tool["input_schema"]["properties"]["ideas"]["items"]
     assert "brief_use" in item["required"] and item["properties"]["brief_use"]["enum"] == [
@@ -151,6 +156,8 @@ def test_the_core_prompt_stays_fenced_with_the_brief_appended(tmp_path):
     text = build_user(datetime(2026, 10, 16, 14, 0, tzinfo=timezone.utc), held=[], traded_today=[], max_positions=5,
                       max_ideas=3, entries_open=True, intraday_open=True, brief=b.text)
     core, fenced = text.split(brief.BEGIN)
+    # the brief comes AFTER the model's own search instructions (ruling 2026-10-15, second)
+    assert core.index("Search for today's opportunities") < core.index("After your own searches")
     for word in ("P&L", "NAV", "equity", "profit", "return", "drawdown", "performance", "behind"):
         assert word.lower() not in core.lower(), word
     assert fenced.rstrip().endswith(brief.END)

@@ -71,6 +71,9 @@ class Board:
     rows: list[Row]
     slippage: dict[str, tuple[int, Optional[float]]]
     notes: list[str] = field(default_factory=list)
+    #: the research brief's A/B by arm, and its flags (ruling 2026-10-15, second)
+    ab_lines: list[str] = field(default_factory=list)
+    ab_flags: list[str] = field(default_factory=list)
 
 
 def _day(stamp: str) -> date:
@@ -308,7 +311,8 @@ def build(
         "vs ladder = the row's return minus the ladder account's over the same days (n/a where the ladder had not "
         "started). vs SPMO likewise against the SPMO ETF (the momentum sleeve's binding comparison).",
     ]
-    return Board(rows, table, notes)
+    ab_lines, ab_flags = brief_ab(ai_events)
+    return Board(rows, table, notes, ab_lines, ab_flags)
 
 
 def stop_floor_note(table: dict[str, tuple[int, Optional[float]]], floor: Optional[float]) -> str:
@@ -355,8 +359,115 @@ def render(board: Board, as_of: date) -> str:
         if r.note:
             lines.append(f"{'':38}{r.note}")
     lines.append("")
+    if board.ab_lines:
+        lines.extend(board.ab_lines + [""])
     lines.extend(board.notes)
     return "\n".join(lines)
+
+
+#: The research brief's A/B (human ruling 2026-10-15, second). Flags: the
+#: brief arm proposing notably fewer ideas (under this share of the control
+#: arm's ideas per pass), or mostly shortlist names (over this share of its
+#: ideas), once each arm has the minimum sample.
+AB_FEWER = 0.75
+AB_SHORTLIST = 0.50
+AB_MIN_PASSES, AB_MIN_IDEAS = 10, 10
+
+
+@dataclass
+class Arm:
+    name: str
+    passes: int = 0
+    ideas: int = 0
+    on_shortlist: int = 0
+    scored: int = 0            # ideas whose shortlist membership was logged
+    taken: int = 0
+    closed: int = 0
+    wins: int = 0
+    returns: list = field(default_factory=list)  # closed entries: pnl / cost
+    uses: dict = field(default_factory=dict)     # brief_use -> count (brief arm)
+
+    @property
+    def per_pass(self) -> Optional[float]:
+        return self.ideas / self.passes if self.passes else None
+
+    @property
+    def off_shortlist(self) -> Optional[float]:
+        return 1 - self.on_shortlist / self.scored if self.scored else None
+
+
+def brief_ab(events: list[dict]) -> tuple[list[str], list[str]]:
+    """(lines, flags): the A/B by arm from the AI trader's ledger - passes,
+    ideas proposed, ideas taken, the share of ideas from outside the brief's
+    shortlist (logged in BOTH arms), and the forward results of entries
+    (closed round trips: wins and mean return on cost)."""
+    arms = {"brief": Arm("brief"), "control": Arm("control")}
+    start = None
+    for e in events:
+        if e.get("event") != "llm_pass" or e.get("brief_arm") not in arms:
+            continue
+        start = start or str(e.get("at", ""))[:10]
+        arm = arms[e["brief_arm"]]
+        ideas = e.get("ideas") or []
+        arm.passes += 1
+        arm.ideas += len(ideas)
+        flags = e.get("ideas_on_shortlist") or []
+        arm.scored += len(flags)
+        arm.on_shortlist += sum(1 for f in flags if f)
+        for idea in ideas:
+            if e["brief_arm"] == "brief":
+                use = str(idea.get("brief_use") or "missing")
+                arm.uses[use] = arm.uses.get(use, 0) + 1
+    if start is None:
+        return [], []
+    opened = {e["pid"]: e for e in events if e.get("event") == "position_opened" and e.get("brief_arm") in arms}
+    closed = {e["pid"] for e in events if e.get("event") == "position_closed"}
+    fills: dict[str, list[dict]] = {}
+    for e in events:
+        if e.get("event") == "settled" and e.get("pid") in opened and float(e.get("filled_qty") or 0) > 0:
+            fills.setdefault(e["pid"], []).append(e)
+    for pid, plan in opened.items():
+        arm = arms[plan["brief_arm"]]
+        arm.taken += 1
+        legs = fills.get(pid, [])
+        held = sum(float(f["filled_qty"]) * (1 if f["side"] == "buy" else -1) for f in legs)
+        if pid not in closed or not legs or abs(held) > 1e-9:
+            continue
+        cost = sum(float(f["filled_qty"]) * float(f["avg_price"]) * float(f.get("multiplier", 1))
+                   for f in legs if f["side"] == "buy")
+        pnl = sum(float(f["filled_qty"]) * float(f["avg_price"]) * float(f.get("multiplier", 1))
+                  * (1 if f["side"] == "sell" else -1) for f in legs)
+        if cost > 0:
+            arm.closed += 1
+            arm.wins += pnl > 0
+            arm.returns.append(pnl / cost)
+    lines = [f"RESEARCH BRIEF A/B (since {start}; arm drawn at random per pass):"]
+    for arm in arms.values():
+        mean = sum(arm.returns) / len(arm.returns) if arm.returns else None
+        lines.append(
+            f"  {arm.name:8} passes {arm.passes:3}  ideas {arm.ideas:3} ({_ratio(arm.per_pass)}/pass)  taken "
+            f"{arm.taken:3}  off the shortlist {_share(arm.off_shortlist)}  closed {arm.closed} "
+            f"(won {arm.wins}, mean {_pct(mean)} on cost)"
+            + (f"  brief use: {', '.join(f'{k} {v}' for k, v in sorted(arm.uses.items()))}" if arm.uses else ""))
+    flags = []
+    b, c = arms["brief"], arms["control"]
+    if b.passes >= AB_MIN_PASSES and c.passes >= AB_MIN_PASSES and c.per_pass and b.per_pass is not None \
+            and b.per_pass < AB_FEWER * c.per_pass:
+        flags.append(f"FLAG: the brief arm proposes notably fewer ideas ({b.per_pass:.2f} vs {c.per_pass:.2f} a pass)")
+    if b.scored >= AB_MIN_IDEAS and b.off_shortlist is not None and 1 - b.off_shortlist > AB_SHORTLIST:
+        flags.append(f"FLAG: the brief arm's ideas are mostly shortlist names ({1 - b.off_shortlist:.0%})")
+    if not flags:
+        lines.append(f"  no flag (fewer ideas: under {AB_FEWER:.0%} of control's rate at {AB_MIN_PASSES}+ passes "
+                     f"each; mostly shortlist: over {AB_SHORTLIST:.0%} at {AB_MIN_IDEAS}+ ideas)")
+    return lines + [f"  {f}" for f in flags], flags
+
+
+def _ratio(value: Optional[float]) -> str:
+    return "-" if value is None else f"{value:.2f}"
+
+
+def _share(value: Optional[float]) -> str:
+    return "-" if value is None else f"{value:.0%}"
 
 
 def momentum_series(lines: Iterable[dict], book: str = "v1.1 live") -> dict[date, float]:

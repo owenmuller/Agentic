@@ -304,9 +304,12 @@ def _momentum_brief_files(directory: Path, cache_root: Path, config, latest: Opt
     """The momentum side of the AI trader's brief (human ruling 2026-10-15),
     written by the prep unit and read by the lab as data:
 
-    * ``shortlist.json`` for the latest plan when it has none yet - built from
-      that plan's own market data and universe version, so it ranks exactly
-      as the plan did;
+    * ``shortlist.json``, weekly and with each monthly plan (ruling 2026-10-15,
+      second): a SATURDAY run rebuilds it from fresh market data through the
+      week's last session, on the universe of the next session's rebalance
+      version; any other run writes it for the latest plan when the file on
+      disk is older than that plan's data (built from the plan's own market
+      data, so it ranks exactly as the plan did);
     * one ``daily.jsonl`` line per session (the evening run): every book's
       today / week / since-start return - the same numbers as the daily card.
 
@@ -317,7 +320,10 @@ def _momentum_brief_files(directory: Path, cache_root: Path, config, latest: Opt
     from orchestrator import momentum_prep as prep_module
     from orchestrator import momentum_report
 
-    if latest and not prep_module.shortlist_current(directory, latest["rebalance_date"]):
+    local = now.astimezone(_NY)
+    if local.weekday() == 5:
+        _weekly_shortlist(directory, cache_root, config, local.date(), alpaca, build, log)
+    elif latest and not prep_module.shortlist_covers(directory, latest["data_through"]):
         folder = cache_root / latest["data_through"]
         try:
             if not folder.is_dir():
@@ -330,13 +336,11 @@ def _momentum_brief_files(directory: Path, cache_root: Path, config, latest: Opt
                                  universe_version=config.universe_version(latest["rebalance_date"]))
                 names = {a["symbol"]: a.get("name") or "" for a in feeds.Cache(folder).get("alpaca_assets") or []}
                 prep_module.write_json(directory / prep_module.SHORTLIST_FILE, prep_module.shortlist(
-                    store, latest["rebalance_date"], plan_symbols={t["symbol"] for t in latest["targets"]},
-                    names=names))
+                    store, latest["rebalance_date"], names=names))
                 log.info("momentum prep: shortlist written for the %s plan", latest["month"])
                 del store
         except Exception as error:  # noqa: BLE001
             log.warning("momentum prep: shortlist not written (%s: %s)", type(error).__name__, error)
-    local = now.astimezone(_NY)
     if latest is None or local.time() < dtime(16, 30):
         return
     try:
@@ -350,6 +354,45 @@ def _momentum_brief_files(directory: Path, cache_root: Path, config, latest: Opt
             log.info("momentum prep: daily scoreboard line recorded for %s", today)
     except Exception as error:  # noqa: BLE001
         log.warning("momentum prep: daily scoreboard line not recorded (%s: %s)", type(error).__name__, error)
+
+
+def _weekly_shortlist(directory: Path, cache_root: Path, config, today, alpaca, build, log) -> None:
+    """The Saturday refresh of the AI trader's momentum shortlist: fresh bars
+    and SEC facts through the week's last session, in their own cache folder
+    (the newest weekly folder is kept). A failure is logged; the old file stays."""
+    import shutil
+    from datetime import date as _date
+
+    from momentum import feeds
+    from orchestrator import momentum_prep as prep_module
+
+    try:
+        past = alpaca.sessions((today - timedelta(days=12)).isoformat(), today.isoformat())
+        ahead = alpaca.sessions((today + timedelta(days=1)).isoformat(), (today + timedelta(days=14)).isoformat())
+        if not past or not ahead:
+            log.warning("momentum prep: no sessions around %s; weekly shortlist not built", today)
+            return
+        data_through, next_day = past[-1], ahead[0]
+        if prep_module.shortlist_covers(directory, data_through):
+            log.info("momentum prep: the shortlist already covers %s", data_through)
+            return
+        folder = cache_root / f"weekly-{data_through}"
+        first = _date.fromisoformat(data_through).replace(day=1)
+        store, _ = build(folder, start=first.replace(year=first.year - config.history_years).isoformat(),
+                         end=data_through, log=log.info, universe_version=config.universe_version(next_day))
+        if store.calendar[-1] != data_through:
+            log.warning("momentum prep: data ends %s, not %s; weekly shortlist not built", store.calendar[-1],
+                        data_through)
+            return
+        names = {a["symbol"]: a.get("name") or "" for a in feeds.Cache(folder).get("alpaca_assets") or []}
+        prep_module.write_json(directory / prep_module.SHORTLIST_FILE,
+                               prep_module.shortlist(store, next_day, names=names))
+        log.info("momentum prep: weekly shortlist written (data through %s)", data_through)
+        del store
+        for old in sorted(p for p in cache_root.iterdir() if p.is_dir() and p.name.startswith("weekly-"))[:-1]:
+            shutil.rmtree(old, ignore_errors=True)
+    except Exception as error:  # noqa: BLE001 - reference data, never a failed prep
+        log.warning("momentum prep: weekly shortlist not built (%s: %s)", type(error).__name__, error)
 
 
 def weekly() -> int:
@@ -1829,7 +1872,7 @@ def momentum_prep() -> int:
         log.info("momentum plan written: %s (%d names)", path, len(result.plan["targets"]))
         try:  # the AI trader's brief (ruling 2026-10-15): reference data, never a reason to fail the plan
             prep_module.write_json(directory / prep_module.SHORTLIST_FILE, prep_module.shortlist(
-                store, target.rebalance_day, plan_symbols={t["symbol"] for t in result.plan["targets"]}, names=names))
+                store, target.rebalance_day, names=names))
         except Exception as error:  # noqa: BLE001
             log.warning("momentum prep: shortlist not written (%s: %s)", type(error).__name__, error)
         for problem in result.problems:

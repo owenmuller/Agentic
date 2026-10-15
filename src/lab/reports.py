@@ -148,6 +148,11 @@ def scoreboard_report(board: Any, as_of: date, table: str, grade_at: int, verdic
         lines.append(cards.BoardLine(
             "Momentum sleeve (control)", momentum.ret, _spy(momentum), since(momentum),
             f"SPMO {cards.pct(_spmo(momentum))} over the same days" if _spmo(momentum) is not None else ""))
+    if getattr(board, "ab_lines", None):
+        # the research brief's A/B (ruling 2026-10-15, second): flags up front, the arms in the table
+        flags = [f.replace("FLAG: ", "") for f in board.ab_flags]
+        lines.append(cards.BoardLine("Research brief A/B", None, None, None,
+                                     ("FLAG: " + "; ".join(flags)) if flags else "no flag; by-arm numbers in the table"))
     test = rows.get("B EXECUTION TEST (not a strategy)")
     if test is not None and test.sessions:
         lines.append(cards.BoardLine(

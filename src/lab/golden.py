@@ -126,7 +126,7 @@ def run_case(case: dict, config: AiTraderConfig, llm: Any, day: date, brief: Any
                             f"({idea.get('stop_pct')!r} / {idea.get('target_pct')!r})")
         # with the brief on (ruling 2026-10-15) the prompt makes these rules:
         # every idea says how it used the brief, and a use names its items
-        if config.brief_enabled:
+        if outcome.brief_arm == "brief":
             use = idea.get("brief_use")
             if use not in ("none", "draws_on", "contradicts"):
                 failures.append(f"{symbol}: brief_use missing or invalid ({use!r})")

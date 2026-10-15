@@ -364,8 +364,9 @@ def golden(name: str, with_brief: bool = False) -> int:
     if config.ai_trader is None:
         print("no ai_trader config", file=sys.stderr)
         return 3
-    ai = config.ai_trader.model_copy(update={"brief_enabled": True}) if with_brief else config.ai_trader
-    renderer = brief_renderer(ai) if ai.brief_enabled else None
+    # the replay grades the brief arm: every case sends it
+    ai = config.ai_trader.model_copy(update={"brief_mode": "always"}) if with_brief else config.ai_trader
+    renderer = brief_renderer(ai) if ai.brief_mode != "off" else None
     if renderer is not None:
         sample = renderer()
         print(f"research brief: {sample.chars} chars, ~{sample.tokens_estimate} tokens (chars/4), sha {sample.sha}, "

@@ -396,15 +396,16 @@ SHORTLIST_SIZE = 50
 SHORTLIST_FILE = "shortlist.json"
 
 
-def shortlist(store, rebalance_day: str, *, plan_symbols: Optional[set] = None, spec: Spec = LIVE,
-              size: int = SHORTLIST_SIZE, names: Optional[dict[str, str]] = None) -> dict:
+def shortlist(store, rebalance_day: str, *, spec: Spec = LIVE, size: int = SHORTLIST_SIZE,
+              names: Optional[dict[str, str]] = None) -> dict:
     """The top ``size`` of v1.1's universe by score on ``rebalance_day``
     (data through the prior close), with the score's two legs and every
     buy-gate flag computed on its own - not only the first that excludes:
     below the 100-day average; a >15% day in 63 sessions and whether every
     such day sat within [-1,+1] of an 8-K 2.02 filing; a pending acquisition;
-    the 18-month filer status. Reference data for the AI trader: it changes
-    nothing in v1.1."""
+    the 18-month filer status. Scores and flags ONLY: never which names the
+    sleeve holds or plans to (ruling 2026-10-15, second). Reference data for
+    the AI trader: it changes nothing in v1.1."""
     view = engine.live_view(store, rebalance_day)
     t = len(view.calendar) - 1
     d = t - 1
@@ -434,7 +435,6 @@ def shortlist(store, rebalance_day: str, *, plan_symbols: Optional[set] = None, 
             residual_momentum_z=_round(dec.details["residual_z"].get(key)),
             earnings_momentum_z=_round(dec.details["earnings_z"].get(key)),
             return_12_1=_round(r12),
-            in_plan=seg.symbol in (plan_symbols or set()),
             buy_gate=excluded.get(key) or "passes",
             flags=dict(
                 below_100_day_average=(len(closes) >= spec.trend_days
@@ -455,11 +455,14 @@ def _round(x: Optional[float]) -> Optional[float]:
     return None if x is None else round(float(x), 3)
 
 
-def shortlist_current(directory: Path, rebalance_day: str) -> bool:
+def shortlist_covers(directory: Path, data_through: str) -> bool:
+    """Whether the shortlist on disk is built on data through ``data_through``
+    or later (a weekly refresh must not be overwritten by an older plan's)."""
     try:
-        return json.loads((directory / SHORTLIST_FILE).read_text(encoding="utf-8")).get("rebalance_date") == rebalance_day
+        on_disk = json.loads((directory / SHORTLIST_FILE).read_text(encoding="utf-8")).get("data_through") or ""
     except (OSError, ValueError):
         return False
+    return on_disk >= data_through
 
 
 def latest_plan(directory: Path) -> Optional[dict]:

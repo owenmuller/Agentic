@@ -396,7 +396,7 @@ def test_the_shortlist_shows_every_flag_and_ranks_by_score():
         seg.periodic = ["2015-06-30"]
     day = store.calendar[engine.month_starts(store.calendar)[-1]]
     past = _truncated(store, store.index[day])
-    data = prep.shortlist(past, day, plan_symbols={"S05"}, size=20)
+    data = prep.shortlist(past, day, size=20)
     rows = data["names"]
     assert len(rows) == 20 and [r["score_rank"] for r in rows] == list(range(1, 21))
     assert [r["score"] for r in rows] == sorted((r["score"] for r in rows), reverse=True)
@@ -404,8 +404,17 @@ def test_the_shortlist_shows_every_flag_and_ranks_by_score():
     for r in rows:
         assert set(r["flags"]) == {"below_100_day_average", "day_over_15pct_in_63_sessions",
                                    "big_days_all_on_earnings", "pending_acquisition", "filer"}
-        assert r["in_plan"] == (r["symbol"] == "S05")
+        assert "in_plan" not in r  # scores and flags only: never the control's holdings (ruling 2026-10-15)
         flagged = int(r["symbol"][1:]) % 2 == 0
         assert r["flags"]["pending_acquisition"] is flagged
         assert (r["buy_gate"] == "pending acquisition target") is flagged
         assert r["flags"]["filer"].startswith("lapsed") is flagged  # shown; version 1 still ranks it
+
+
+def test_an_older_shortlist_never_overwrites_a_newer_one(tmp_path):
+    # weekly (Saturday) and with each plan: the plan-time backfill writes only
+    # when the file on disk is built on older data (ruling 2026-10-15, second)
+    assert not prep.shortlist_covers(tmp_path, "2026-10-14")
+    prep.write_json(tmp_path / prep.SHORTLIST_FILE, {"data_through": "2026-10-16", "names": []})
+    assert prep.shortlist_covers(tmp_path, "2026-10-14") and prep.shortlist_covers(tmp_path, "2026-10-16")
+    assert not prep.shortlist_covers(tmp_path, "2026-10-30")

@@ -122,3 +122,38 @@ def test_the_momentum_control_and_spmo_sit_beside_the_ai_trader():
     assert rows["AI TRADER"].vs_spmo == pytest.approx(0.01 - (103 / 101 - 1))
     assert rows["SPMO"].ret == pytest.approx(103 / 101 - 1)
     assert "vs SPMO" in sb.render(board, date(2026, 10, 16))
+
+
+def _pass(day, arm, symbols, on, uses=None):
+    ideas = [dict({"symbol": s}, **({"brief_use": u} if u else {}))
+             for s, u in zip(symbols, uses or [None] * len(symbols))]
+    return {"event": "llm_pass", "at": f"2026-10-{day}T14:00:00+00:00", "brief_arm": arm, "ideas": ideas,
+            "ideas_on_shortlist": on}
+
+
+def test_the_brief_ab_reports_by_arm_and_flags():
+    # ruling 2026-10-15, second: ideas proposed, taken, share outside the
+    # brief, forward results of entries - and the two flags
+    events = []
+    for i in range(10):
+        events.append(_pass(16, "brief", ["A"], [True], ["draws_on"]))
+        events.append(_pass(16, "control", ["X", "Y"], [False, True]))
+    events += [dict(opened("b1", "A"), brief_arm="brief"), settled("b1", "buy", 10, 100),
+               settled("b1", "sell", 10, 110), closed("b1"),
+               dict(opened("c1", "X"), brief_arm="control"), settled("c1", "buy", 5, 100),
+               settled("c1", "sell", 5, 95), closed("c1"), dict(opened("c2", "Y"), brief_arm="control")]
+    lines, flags = sb.brief_ab(events)
+    text = "\n".join(lines)
+    assert "since 2026-10-16" in text
+    assert "brief    passes  10  ideas  10 (1.00/pass)  taken   1  off the shortlist 0%  closed 1 (won 1, mean +10.00%" in text
+    assert "control  passes  10  ideas  20 (2.00/pass)  taken   2  off the shortlist 50%  closed 1 (won 0, mean -5.00%" in text
+    assert "brief use: draws_on 10" in text
+    assert any("notably fewer ideas (1.00 vs 2.00" in f for f in flags)
+    assert any("mostly shortlist names (100%)" in f for f in flags)
+    assert sb.brief_ab([_pass(16, None, ["A"], None)]) == ([], [])  # no A/B yet: no section
+
+
+def test_no_flag_below_the_minimum_sample():
+    events = [_pass(16, "brief", ["A"], [True]), _pass(16, "control", ["X", "Y"], [False, False])]
+    lines, flags = sb.brief_ab(events)
+    assert flags == [] and any("no flag" in line for line in lines)

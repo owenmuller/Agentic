@@ -7,8 +7,10 @@ starting point or a limit on what it can trade."
 Rendered before every scan as a fenced block of reference data:
 
   (a) MOMENTUM SHORTLIST  the top 50 by v1.1's score, with the score's legs
-      and every buy-gate flag shown rather than excluded. The momentum prep
-      writes it (``data/momentum/shortlist.json``) with each plan.
+      and every buy-gate flag shown rather than excluded - scores and flags
+      only, never the control's holdings (ruling 2026-10-15, second). The
+      momentum prep writes it (``data/momentum/shortlist.json``) weekly
+      (Saturday) and with each plan.
   (b) EVIDENCE LIBRARY    measured findings, ``config/evidence_library.yaml``.
   (c) SHADOW SCOREBOARD   since-start returns of the momentum books: v1.1 as
       its MODELLED software book (the plan at closes), every shadow, SPMO.
@@ -47,10 +49,15 @@ class Brief:
     sha: str
     chars: int
     sections: dict = field(default_factory=dict)  # section -> "ok" / why it is missing
+    #: the shortlist's symbols: each idea is logged on or off it, in BOTH arms of the A/B
+    symbols: frozenset = frozenset()
 
     @property
     def tokens_estimate(self) -> int:
-        return (self.chars + 3) // 4
+        """~2.6 characters a token: the API's own count of the first full
+        brief was 5,155 tokens for 13,557 characters (figures tokenize
+        densely; chars/4 understated it by a third)."""
+        return round(self.chars / 2.6)
 
 
 def _read_json(path: Path):
@@ -70,12 +77,16 @@ def shortlist_section(data: Optional[dict]) -> tuple[list[str], str]:
     lines = [
         f"v1.1 score (50% residual 12-1 momentum, 50% earnings reactions; z-scores), top {len(data['names'])} of "
         f"{data.get('scored')} scored in the largest {data.get('universe')} US companies; data through "
-        f"{data.get('data_through')}, refreshed with each monthly plan. 'gate' is whether v1.1 itself may buy it; "
-        f"flags are shown, not applied. M-ids for citing.",
+        f"{data.get('data_through')}, refreshed weekly and with each monthly plan. "
+        f"'v1.1 may buy' is v1.1's own buy gate; "
+        f"the flags after it are shown, not applied. M-ids for citing.",
     ]
     for row in data["names"]:
         flags = row.get("flags") or {}
+        gate = row.get("buy_gate") or "passes"
         notes = []
+        if gate == "less than 100 sessions of history":
+            notes.append("under 100 sessions of history")
         if flags.get("below_100_day_average"):
             notes.append("below 100-day avg")
         if flags.get("day_over_15pct_in_63_sessions"):
@@ -85,12 +96,10 @@ def shortlist_section(data: Optional[dict]) -> tuple[list[str], str]:
             notes.append("pending acquisition")
         if flags.get("filer") and flags["filer"] != "current":
             notes.append(f"filer {flags['filer']}")
-        if row.get("in_plan"):
-            notes.append("in v1.1's book")
         lines.append(
             f"M{row['score_rank']} {row['symbol']} ({row.get('sector') or '-'}): score {row.get('score')}, "
             f"residual {row.get('residual_momentum_z')}, earnings {row.get('earnings_momentum_z')}, "
-            f"12-1 {_pct(row.get('return_12_1'))}; gate: {row.get('buy_gate')}"
+            f"12-1 {_pct(row.get('return_12_1'))}; v1.1 may buy: {'yes' if gate == 'passes' else 'no'}"
             + (f"; {'; '.join(notes)}" if notes else "")
         )
     return lines, "ok"
@@ -142,11 +151,16 @@ def playbook_section(path: Path) -> tuple[list[str], str]:
     return [f"{l['id']} {l['lesson']} (evidence: {l.get('evidence', 'n/a')})" for l in lessons], "ok"
 
 
+def shortlist_symbols(data: Optional[dict]) -> frozenset:
+    return frozenset(str(r.get("symbol", "")).upper() for r in (data or {}).get("names") or [])
+
+
 def render(main_data: Optional[Path], evidence_path: Path) -> Brief:
     """The brief from whatever files exist; a missing source says so in its
     section, never fails a scan."""
     momentum = main_data / "momentum" if main_data else None
-    a, sa = shortlist_section(_read_json(momentum / "shortlist.json") if momentum else None)
+    listed = _read_json(momentum / "shortlist.json") if momentum else None
+    a, sa = shortlist_section(listed)
     b, sb = evidence_section(evidence_path)
     c, sc = scoreboard_section(momentum / "daily.jsonl") if momentum else (["(not available)"], "missing: no data")
     d, sd = (playbook_section(main_data / "learning" / "playbook.json") if main_data
@@ -159,4 +173,4 @@ def render(main_data: Optional[Path], evidence_path: Path) -> Brief:
             END]
     text = "\n".join(body)
     return Brief(text, hashlib.sha256(text.encode("utf-8")).hexdigest()[:16], len(text),
-                 {"shortlist": sa, "evidence": sb, "scoreboard": sc, "playbook": sd})
+                 {"shortlist": sa, "evidence": sb, "scoreboard": sc, "playbook": sd}, shortlist_symbols(listed))

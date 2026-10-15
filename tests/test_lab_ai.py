@@ -677,40 +677,68 @@ class ToolLLM(FakeLLM):
         return super().scan(system=system, user=user, tool=tool)
 
 
-def test_with_the_brief_on_a_scan_sends_it_logs_it_and_the_position_carries_its_use(lab_env):
+def _brief_trader(lab_env, ideas, mode, coin=lambda: 0.0):
     from lab.brief import BEGIN, END, Brief
 
     world = World()
-    idea = dict(AAPL_LONG, brief_use="draws_on", brief_items="E11: published edges decay; this is not one")
-    llm = ToolLLM([idea])
+    llm = ToolLLM(ideas)
     trader = trader_for(world, lab_env, llm)
-    trader.config = CFG.model_copy(update={"brief_enabled": True})
-    text = f"{BEGIN}\n(b) EVIDENCE LIBRARY\nE11 ...\n{END}"
-    trader._brief = lambda: Brief(text, "sha0123456789abc", len(text), {"evidence": "ok"})
+    trader.config = CFG.model_copy(update={"brief_mode": mode})
+    text = f"{BEGIN}\n(a) MOMENTUM SHORTLIST\nM1 AAPL ...\n{END}"
+    trader._brief = lambda: Brief(text, "sha0123456789abc", len(text), {"shortlist": "ok"}, frozenset({"AAPL"}))
+    trader._coin = coin
+    return trader, llm
+
+
+def test_the_brief_arm_sends_it_logs_it_and_the_position_carries_arm_and_use(lab_env):
+    from lab.brief import END
+
+    idea = dict(AAPL_LONG, brief_use="draws_on", brief_items="M1: top of the shortlist, and the news agrees")
+    trader, llm = _brief_trader(lab_env, [idea], "ab", coin=lambda: 0.2)  # < 0.5: the brief arm
     trader.tick(et(12, "09:46"))
     assert llm.calls[0].rstrip().endswith(END) and "RESEARCH BRIEF" in llm.systems[0]
     assert "brief_use" in llm.tools[0]["input_schema"]["properties"]["ideas"]["items"]["required"]
     passes = trader.account.ledger.events(["llm_pass"])
-    assert passes[0]["brief"]["sha"] == "sha0123456789abc" and passes[0]["ideas"][0]["brief_use"] == "draws_on"
+    assert passes[0]["brief_arm"] == "brief" and passes[0]["brief"]["sent"] is True
+    assert passes[0]["brief"]["sha"] == "sha0123456789abc" and passes[0]["ideas_on_shortlist"] == [True]
     opened = trader.account.ledger.events(["position_opened"])
-    assert opened[0]["brief_use"] == "draws_on" and opened[0]["brief_items"].startswith("E11")
+    assert opened[0]["brief_arm"] == "brief" and opened[0]["brief_use"] == "draws_on"
 
 
-def test_with_the_brief_off_nothing_changes(lab_env):
+def test_the_control_arm_is_byte_identical_to_no_brief_but_still_logs_the_shortlist(lab_env):
+    trader, llm = _brief_trader(lab_env, [AAPL_LONG], "ab", coin=lambda: 0.8)  # >= 0.5: control
+    trader.tick(et(12, "09:46"))
+    off, off_llm = _brief_trader(lab_env / "off", [AAPL_LONG], "off")
+    off.tick(et(12, "09:46"))
+    assert llm.tools[0] is TOOL and llm.systems[0] == off_llm.systems[0] and llm.calls[0] == off_llm.calls[0]
+    passes = trader.account.ledger.events(["llm_pass"])
+    assert passes[0]["brief_arm"] == "control" and passes[0]["brief"]["sent"] is False
+    assert passes[0]["ideas_on_shortlist"] == [True]  # measured in both arms
+    assert trader.account.ledger.events(["position_opened"])[0]["brief_arm"] == "control"
+    assert off.account.ledger.events(["llm_pass"])[0]["brief_arm"] is None
+
+
+def test_the_arm_is_drawn_per_pass_at_the_configured_share(lab_env):
+    draws = iter([0.1, 0.9, 0.49, 0.5])
+    trader, _ = _brief_trader(lab_env, [], "ab", coin=lambda: next(draws))
+    assert [trader.brief_arm() for _ in range(4)] == ["brief", "control", "brief", "control"]
+    trader.config = trader.config.model_copy(update={"brief_mode": "always"})
+    assert trader.brief_arm() == "brief"
+
+
+def test_with_the_brief_off_nothing_is_rendered(lab_env):
     world = World()
     llm = ToolLLM([AAPL_LONG])
     trader = trader_for(world, lab_env, llm)
     trader._brief = lambda: (_ for _ in ()).throw(AssertionError("rendered while off"))
     trader.tick(et(12, "09:46"))
     assert llm.tools[0] is TOOL and "RESEARCH BRIEF" not in llm.systems[0] and "RESEARCH BRIEF" not in llm.calls[0]
-    assert trader.account.ledger.events(["llm_pass"])[0]["brief"] is None
+    event = trader.account.ledger.events(["llm_pass"])[0]
+    assert event["brief"] is None and event["brief_arm"] is None
 
 
 def test_a_failed_brief_never_stops_a_scan(lab_env):
-    world = World()
-    llm = ToolLLM([AAPL_LONG])
-    trader = trader_for(world, lab_env, llm)
-    trader.config = CFG.model_copy(update={"brief_enabled": True})
+    trader, llm = _brief_trader(lab_env, [AAPL_LONG], "always")
     trader._brief = lambda: (_ for _ in ()).throw(OSError("disk"))
     notes = trader.tick(et(12, "09:46"))
     assert "(unavailable this scan)" in llm.calls[0] and any("opened AAPL" in n for n in notes)
@@ -722,11 +750,8 @@ def test_a_failed_brief_never_stops_a_scan(lab_env):
     (dict(AAPL_LONG, brief_use="draws_on", brief_items="the shortlist"), False),
     (dict(AAPL_LONG), False),
 ])
-def test_golden_grades_the_brief_fields_when_it_is_on(idea, passed):
-    class Once(FakeLLM):
-        pass
-
-    on = CFG.model_copy(update={"brief_enabled": True})
-    result = golden_replay.run_case({"name": "x", "time": "10:00", "held": [], "expect": {}}, on, Once([idea]),
+def test_golden_grades_the_brief_fields_when_it_is_sent(idea, passed):
+    always = CFG.model_copy(update={"brief_mode": "always"})
+    result = golden_replay.run_case({"name": "x", "time": "10:00", "held": [], "expect": {}}, always, FakeLLM([idea]),
                                     date(2026, 10, 16), brief=None)
     assert result.passed is passed, result.failures

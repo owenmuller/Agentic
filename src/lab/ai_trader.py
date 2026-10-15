@@ -47,6 +47,7 @@ the $3 cap; the actual figure is in the ledger and in ``lab status``.
 from __future__ import annotations
 
 import logging
+import random
 import re
 import time
 import uuid
@@ -172,6 +173,8 @@ class ScanOutcome:
     ran: bool
     cost_usd: Decimal = ZERO
     input_tokens: int = 0
+    #: the research brief's A/B arm of this pass: None (off), "brief", "control"
+    brief_arm: Optional[str] = None
     ideas: list[dict] = field(default_factory=list)
     opened: list[str] = field(default_factory=list)
     rejected: list[tuple[str, str]] = field(default_factory=list)
@@ -194,11 +197,14 @@ class AiTrader:
         alert: Optional[Callable[[str, str], None]] = None,
         leverage_alert: Optional[Callable[[Decimal, Decimal, list], None]] = None,
         brief: Optional[Callable[[], Brief]] = None,
+        coin: Callable[[], float] = random.random,
     ) -> None:
         self.account = account
         #: The research brief's renderer (ruling 2026-10-15); used only while
-        #: ``config.brief_enabled``.
+        #: ``config.brief_mode`` is not "off"; ``coin`` draws the A/B arm.
         self._brief = brief
+        self._coin = coin
+        self._arm: Optional[str] = None
         self.config = config
         self.llm = llm
         self._quotes = quotes
@@ -466,17 +472,24 @@ class AiTrader:
                 self.account.ledger.append("spend_cap", spent=spent, cap=cfg.daily_spend_cap_usd, scan=label)
                 self.notes.append(note)
                 return ScanOutcome(False, note=note)
-        brief = self.current_brief()
+        # the research brief's A/B (ruling 2026-10-15, second): the arm is drawn
+        # per pass; the brief is rendered in BOTH arms (each idea is logged on or
+        # off its shortlist) and SENT only in the brief arm
+        rendered = self.current_brief()
+        arm = self._arm = self.brief_arm()
+        brief = rendered if arm == "brief" else None
         user = self.user_prompt(now, held, brief=brief)
         try:
-            result = self.llm.scan(system=system_prompt(cfg), user=user, tool=report_tool(brief is not None))
+            result = self.llm.scan(system=system_prompt(cfg, brief=brief is not None), user=user,
+                                   tool=report_tool(brief is not None))
         except Exception as error:  # noqa: BLE001 - a failed pass is a fault, never a trade
             self._fault(f"scan {label}: the model pass failed ({type(error).__name__}: {str(error)[:200]}); "
                         f"nothing traded")
             return ScanOutcome(False, note="pass failed")
         structured = result.structured or {}
         ideas = list(structured.get("ideas") or [])[: cfg.max_ideas_per_scan]
-        outcome = ScanOutcome(True, cost_usd=result.cost_usd, ideas=ideas, input_tokens=result.input_tokens or 0)
+        outcome = ScanOutcome(True, cost_usd=result.cost_usd, ideas=ideas, input_tokens=result.input_tokens or 0,
+                              brief_arm=arm)
         if not dry_run:
             self.account.ledger.append(
                 "llm_pass", scan=label, model=result.model, cost_usd=result.cost_usd,
@@ -487,8 +500,11 @@ class AiTrader:
                 ideas=ideas,
                 # which brief this pass saw (ruling 2026-10-15): the learning
                 # loop measures whether it helps
-                brief=(dict(sha=brief.sha, chars=brief.chars, tokens_estimate=brief.tokens_estimate,
-                            sections=brief.sections) if brief is not None else None),
+                brief_arm=arm,
+                brief=(dict(sha=rendered.sha, chars=rendered.chars, tokens_estimate=rendered.tokens_estimate,
+                            sections=rendered.sections, sent=brief is not None) if rendered is not None else None),
+                ideas_on_shortlist=([str(i.get("symbol", "")).upper().strip() in rendered.symbols for i in ideas]
+                                    if rendered is not None else None),
             )
         if result.structured is None:
             self._fault(f"scan {label}: the model returned no report ({result.stop_reason}); nothing traded")
@@ -526,11 +542,22 @@ class AiTrader:
         )
         return outcome
 
+    def brief_arm(self) -> Optional[str]:
+        """This pass's arm: None while the brief is off; "brief" or "control"
+        under the A/B (drawn at random, ``brief_ab_share`` to the brief arm);
+        always "brief" under "always"."""
+        mode = self.config.brief_mode
+        if mode == "off":
+            return None
+        if mode == "always":
+            return "brief"
+        return "brief" if self._coin() < self.config.brief_ab_share else "control"
+
     def current_brief(self) -> Optional[Brief]:
         """The research brief for this scan, or None while it is switched off.
-        A renderer failure still sends a (empty) fenced brief, so the prompt
-        keeps the shape the system prompt describes; the fault is logged."""
-        if not self.config.brief_enabled:
+        A renderer failure still gives a (empty) fenced brief, so a brief-arm
+        prompt keeps the shape the system prompt describes; the fault is logged."""
+        if self.config.brief_mode == "off":
             return None
         try:
             if self._brief is None:
@@ -642,6 +669,8 @@ class AiTrader:
                     thesis=str(idea.get("thesis", ""))[:1000], source=str(idea.get("source", ""))[:1000],
                     catalyst=str(idea.get("catalyst", ""))[:500], invalidation=str(idea.get("invalidation", ""))[:500],
                     confidence=int(idea["confidence"]), scan=label, risk_budget=budget, nav=nav)
+        if self._arm is not None:  # the A/B arm rides on the position (ruling 2026-10-15)
+            plan.update(brief_arm=self._arm)
         if "brief_use" in idea:  # the brief's use rides on the position (ruling 2026-10-15)
             plan.update(brief_use=str(idea.get("brief_use"))[:20], brief_items=str(idea.get("brief_items") or "")[:500])
         # Leverage is allowed and MEASURED (ruling 2026-10-14, second): the
