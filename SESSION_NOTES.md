@@ -4102,6 +4102,47 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-15 (00:00 ET) — RULINGS: market-cap fallback; one builder for the live plan and the backtest (universe version 2 from 2026-11-02)
+
+**Ruled:** a fallback for market cap where SEC shares are missing (Finnhub, already verified live), for the live plan and the backtest; the same universe builder and data path for both, with a test; both from the Nov 2 rebalance; the 2026-10-15 plan trades as built.
+
+**Root cause of the gap.** The SEC's XBRL API serves only non-dimensional facts. Companies that report their share count by class (META, V, MA, BRK, CMCSA, ...) have no total in it. Some single-class issuers (ABT) tag none at all. A company whose last untagged count is years old (CMCSA: 2009) was ranked on it or dropped, depending on where the window started.
+- **Size of it:** 88 companies with no SEC figure ranked above the old 500th cap ($13.42B) on Finnhub's cap. Adding them lifts the cutoff to $17.65B. Net: **77 of today's top 500 were missing**. 81 of the version-2 top 500 rank on the fallback.
+- **Probe of an SEC-only fallback:** weighted-average basic shares (non-dimensional) exist for only 32 of 66 large missing names. Not a usable fallback on its own.
+
+**BNS, corrected.** BNS's SEC share counts are identical in the backtest cache and the plan's cache. The pre-rule backtest (momentum-v2) held BNS in Mar, Apr and Aug 2026. The corrected backtest (v3) excluded it because it applied the new 18-month filer rule. Tonight's plan was computed before that rule was deployed. The difference was rule timing, not data. No poisoned cache entry was found: 927 CIKs are empty in both caches, none in only one. The code could still have poisoned a cache that way; it is fixed below.
+
+**Built: universe version 2** (`momentum.store.build(universe_version=2)`, `engine.cap_shares`):
+- the 18-month current-filer rule;
+- an SEC share count only while its period ended within 18 months;
+- otherwise Finnhub's cap at the window's last close, as implied shares carried back through splits only (a day-over-day raw/adjusted jump beyond 1.15x);
+- otherwise unranked.
+
+Version 1 is the October universe exactly (static US-filer flag, latest SEC count however old, no Finnhub). The prep picks the version by rebalance day: `orchestrator.yaml momentum_prep.universe_v2_from: 2026-11-02`. The October shadow backfill (07:30 ET 2026-10-15) ranks on version 1, the universe its plan traded on. Before this commit, the deployed code would have applied the filer rule to the backfill, so the two new shadows would have differed from v1.1 by BNS as well as by their own rule.
+
+**Same builder, same data path:**
+- One builder for the live plan, the shadows and `ops/experiments/momentum_sanity.py` (now version 2 by default).
+- A decision late enough for its lookbacks no longer depends on where the window starts.
+- A failed SEC fetch (after retries) is never cached as "no shares", and a partial filings history is never cached. Failures get one retry pass, are counted in the stats and appear as plan problems.
+- A cache folder serves one window: the bar caches are keyed by batch, so reusing a folder for another window used to truncate history silently. It now raises.
+- `tests/test_momentum_store.py` checks that a 2.5-year live window and a 4-year backtest window rank the same companies at the same caps on the same date. It also covers the split carry, version 1, the window guard and failure caching.
+
+**Replay on real data (scratch copy of the prep cache):** version 1 on the new code reproduces the 2026-10-15 plan exactly: 15 targets with the same weights and ranks, and all 8 shadow books identical.
+
+**Version 2 preview on the same data (not traded):**
+- Finnhub: 719 current filers had no current SEC count; caps found for 688; 0 fetch failures.
+- Top 500: 77 enter, 77 leave. BNS and CZR leave on the filer rule; the rest fall below the higher cutoff.
+- v1.1's top 15 would share 12 names with the plan: WCC, BNS and IFF out; HPE, AMGN and RGLD in. None of the 77 entrants ranks in the top 15.
+
+**Differences that remain by nature (reported, not fixable in code):**
+- Any two fetches on different days differ: asset list 7,212 vs 7,210, about 40 ticker-map changes, 7 companies with new share filings between the caches.
+- Finnhub has today's cap only. A backtest's fallback rescues only companies trading today (survivorship), and assumes today's share count, split-adjusted, for the whole history (buybacks and issuance not modelled).
+- Finnhub may report a class-only cap for some multi-class tickers; not verified name by name.
+
+### 2026-10-14 — LEARNING-LOOP HYPOTHESIS H1 (human ruling: record it, no change to v1.1)
+
+**H1: v1.1's two risk overlays cost more together than either alone.** In-sample (corrected-universe sanity backtest, 2017-03 to 2026-10-14): market filter only 18.60% CAGR / -30.4% max DD; vol scaling only 18.04% / -35.3%; both (v1.1) 15.81% / -29.4%. Concrete rule changes it implies: drop vol scaling (= `market_filter_only`), or drop the market filter (= `vol_scaling_only`). **Both are already declared shadows on the top 500, tracked live from 2026-10-15**; the loop's evidence gate applies unchanged: a lesson only from data collected AFTER this date, at n >= 20 resolved cases (monthly rebalances make that slow - roughly 20 months of decisions), and only with human approval. In-sample results do not count toward it. v1.1 is unchanged.
+
 ### 2026-10-14 (late night) — corrected-universe sanity backtest; shadow v1_1_no_trend_filter added
 
 **Sanity backtest on the 18-month current-filer universe** (`~/research-data/momentum-v3/report.txt`; 2017-03 to 2026-10-14; one session longer than the earlier run; the declared shadows now on the top 500):

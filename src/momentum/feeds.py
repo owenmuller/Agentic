@@ -13,6 +13,14 @@ SEC (User-Agent per SEC policy; at most ~8 requests a second)
   ``shares(cik)``        shares outstanding as filed: (period end, filed, n),
                          share classes summed per filing
 
+Finnhub (``FINNHUB_API_KEY``)
+  ``market_cap(symbol)`` today's market cap: the universe's fallback where
+                         the SEC has no current share count (ruling 2026-10-14)
+
+A fetch that FAILS (network, 403/429/5xx after the retries) is never cached;
+only a definitive answer is (a 200, or a 404 = the SEC has no such fact).
+Before 2026-10-14 a failed share fetch was cached as "no shares" for good.
+
 TICKER REUSE (the BBBY problem): a symbol's daily series is split into
 segments at any gap of more than ``GAP_SESSIONS`` sessions; each segment is
 its own company. The segment still trading today is the company the symbol
@@ -82,6 +90,8 @@ class Sec:
         self._client = httpx.Client(timeout=60, headers={"User-Agent": SEC_UA, "Accept-Encoding": "gzip"})
         self._interval = min_interval
         self._last = 0.0
+        #: URLs whose fetch failed after every retry (never cached; counted)
+        self.failures: list[str] = []
 
     def _get(self, url: str):
         for attempt in range(5):
@@ -99,6 +109,7 @@ class Sec:
             if r.status_code == 404:
                 return None
             time.sleep(5 * (attempt + 1))  # 403/429/5xx: back off
+        self.failures.append(url)
         return None
 
     def company_ciks(self) -> dict[str, int]:
@@ -144,6 +155,7 @@ class Sec:
         cached = self.cache.get(key)
         if cached is not None:
             return cached
+        failed = len(self.failures)
         r = self._get(f"https://data.sec.gov/submissions/CIK{cik:010d}.json")
         if r is None:
             return None
@@ -155,6 +167,8 @@ class Sec:
             r2 = self._get(f"https://data.sec.gov/submissions/{extra['name']}")
             if r2 is not None:
                 pages.append(r2.json())
+        if len(self.failures) > failed:
+            return None  # a page failed: a partial history is not cached
         earnings, mergers, deal_8ks, forms, periodic = [], [], [], set(), []
         for page in pages:
             n = len(page.get("form", []))
@@ -190,6 +204,7 @@ class Sec:
         if cached is not None:
             return cached
         rows: list = []
+        failed = len(self.failures)
         for taxonomy, concept in (("dei", "EntityCommonStockSharesOutstanding"),
                                   ("us-gaap", "CommonStockSharesOutstanding")):
             r = self._get(f"https://data.sec.gov/api/xbrl/companyconcept/CIK{cik:010d}/{taxonomy}/{concept}.json")
@@ -203,8 +218,61 @@ class Sec:
                           key=lambda x: (x[1], x[0]))
             if rows:
                 break
+        if not rows and len(self.failures) > failed:
+            return []  # a failure, not "no shares": never cached
         self.cache.put(key, rows)
         return rows
+
+
+class Finnhub:
+    """Today's market cap from Finnhub profile2 (USD millions on the wire):
+    the universe's fallback where the SEC has no current share count (human
+    ruling 2026-10-14; universe version 2, from the 2026-11-02 rebalance).
+    Free tier: 60 calls a minute. Cached per build folder as
+    ``{"cap": dollars or None, "fetched": ...}``; None = no profile."""
+
+    URL = "https://finnhub.io/api/v1/stock/profile2"
+
+    def __init__(self, cache: Cache, api_key: Optional[str] = None, min_interval: float = 1.05) -> None:
+        load_environment()
+        self._key = api_key or os.environ.get("FINNHUB_API_KEY", "")
+        if not self._key:
+            raise RuntimeError("FINNHUB_API_KEY is not set: the market-cap fallback cannot run")
+        self.cache = cache
+        self._client = httpx.Client(timeout=20)
+        self._interval = min_interval
+        self._last = 0.0
+        #: symbols whose fetch failed after every retry (never cached)
+        self.failures: list[str] = []
+
+    def market_cap(self, symbol: str) -> Optional[float]:
+        key = f"finnhub_cap_{symbol}"
+        cached = self.cache.get(key)
+        if cached is not None:
+            return cached.get("cap")
+        for attempt in range(4):
+            wait = self._interval - (time.monotonic() - self._last)
+            if wait > 0:
+                time.sleep(wait)
+            self._last = time.monotonic()
+            try:  # the token rides in the query: never log the request or its error
+                r = self._client.get(self.URL, params={"symbol": symbol.replace(".", "-"), "token": self._key})
+            except httpx.HTTPError:
+                time.sleep(2 * (attempt + 1))
+                continue
+            if r.status_code == 200:
+                try:
+                    raw = (r.json() or {}).get("marketCapitalization")
+                except ValueError:
+                    raw = None
+                value = float(raw) * 1e6 if raw else None
+                self.cache.put(key, {"cap": value, "fetched": datetime.now(timezone.utc).isoformat()})
+                return value
+            if r.status_code in (401, 403):
+                raise RuntimeError(f"Finnhub refused the key (HTTP {r.status_code})")
+            time.sleep(30 if r.status_code == 429 else 5 * (attempt + 1))
+        self.failures.append(symbol)
+        return None
 
 
 def normalize_name(name: str) -> str:
@@ -303,6 +371,10 @@ class Segment:
     #: ISO dates of every 10-K/10-Q filed (2026-10-14); None on stores built
     #: before the 18-month current-filer rule, which fall back to us_filer
     periodic: Optional[list] = None
+    #: universe version 2 (from 2026-11-02): [ref index, shares implied by
+    #: Finnhub's cap at ref, [[k, split jump], ...]] where the SEC has no
+    #: current share count; None otherwise
+    fallback: Optional[list] = None
 
 
 def align(series: list, calendar_index: dict[str, int], length: int) -> array:

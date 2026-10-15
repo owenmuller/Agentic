@@ -7,13 +7,14 @@ from __future__ import annotations
 import json
 import math
 import os
+import time
 from array import array
 from dataclasses import asdict
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable, Optional
 
-from momentum import feeds
+from momentum import engine, feeds
 from momentum.feeds import Cache, Segment
 from momentum.rules import ff12
 
@@ -23,7 +24,10 @@ MIN_SEGMENT = 30
 
 class Store:
     def __init__(self, calendar: list[str], spy: array, benchmarks: dict, segments: list[Segment],
-                 adj: dict, raw: dict) -> None:
+                 adj: dict, raw: dict, universe_version: int = 1) -> None:
+        #: 1 = the universe as traded through October 2026; 2 = from the
+        #: 2026-11-02 rebalance (see ``build``)
+        self.universe_version = universe_version
         self.calendar = calendar
         self.index = {d: i for i, d in enumerate(calendar)}
         self.spy = spy
@@ -39,7 +43,7 @@ class Store:
         root.mkdir(parents=True, exist_ok=True)
         keys = [s.key for s in self.segments]
         meta = dict(calendar=self.calendar, keys=keys, segments=[asdict(s) for s in self.segments],
-                    benchmarks=list(self.benchmarks))
+                    benchmarks=list(self.benchmarks), universe_version=self.universe_version)
         with open(root / "adj.bin", "wb") as fh:
             self.spy.tofile(fh)
             for name in self.benchmarks:
@@ -70,18 +74,44 @@ class Store:
             adj = {k: read(fh) for k in meta["keys"]}
         with open(root / "raw.bin", "rb") as fh:
             raw = {k: read(fh) for k in meta["keys"]}
-        return cls(meta["calendar"], spy, benchmarks, segments, adj, raw)
+        return cls(meta["calendar"], spy, benchmarks, segments, adj, raw, meta.get("universe_version", 1))
 
 
 def build(cache_dir: Path, *, start: str = "2016-01-01", end: Optional[str] = None,
-          log: Callable[[str], None] = print, benchmarks: tuple = ("SPMO", "RSP", "MTUM", "QMOM")) -> tuple:
-    """Fetch everything and return (Store, stats). Each stage caches."""
+          log: Callable[[str], None] = print, benchmarks: tuple = ("SPMO", "RSP", "MTUM", "QMOM"),
+          universe_version: int = 2) -> tuple:
+    """Fetch everything and return (Store, stats). Each stage caches.
+
+    THE ONE BUILDER for the live plan, the shadows and the sanity backtest
+    (human ruling 2026-10-14): same fetches, same facts, same universe rules;
+    only the window differs, and a decision at a date late enough for its
+    lookbacks does not depend on where the window starts.
+
+    ``universe_version`` 1 is the universe as traded through October 2026
+    (any 10-K/10-Q since 2015 makes a US filer; the latest SEC share count,
+    however old). 2 applies from the 2026-11-02 rebalance (rulings
+    2026-10-14): the 18-month current-filer rule, SEC share counts only while
+    current (period end within 18 months), and Finnhub's market cap as the
+    fallback for a company trading at the window's end with no current SEC
+    count. Finnhub has today's cap only, so a backtest rescues only today's
+    survivors (counted in the stats)."""
+    if universe_version not in (1, 2):
+        raise ValueError(f"universe_version {universe_version} is not 1 or 2")
     cache = Cache(cache_dir)
+    end = end or (date.today() - timedelta(days=1)).isoformat()
+    # the bar caches are keyed by batch, not by window: a folder serves one window
+    window = {"start": start, "end": end}
+    seen = cache.get("build_window")
+    if seen is None:
+        cache.put("build_window", window)
+    elif seen != window:
+        raise ValueError(f"{cache_dir} holds data for {seen['start']}..{seen['end']}, not {start}..{end}; "
+                         f"use a fresh folder")
     alpaca = feeds.Alpaca(cache)
     sec = feeds.Sec(cache)
-    end = end or (date.today() - timedelta(days=1)).isoformat()
+    finnhub = feeds.Finnhub(cache) if universe_version >= 2 else None
     bar_end = end + "T23:59:00Z"
-    stats: dict = {}
+    stats: dict = {"universe_version": universe_version}
 
     spy_rows = alpaca.bars(["SPY"], start + "T00:00:00Z", bar_end, "all")["SPY"]
     calendar = [d for d, _ in spy_rows]
@@ -165,6 +195,19 @@ def build(cache_dir: Path, *, start: str = "2016-01-01", end: Optional[str] = No
         shares[cik] = sec.shares(cik)
         if i % 250 == 0:
             log(f"SEC {i}/{len(ciks)}")
+    if sec.failures:
+        # one more pass after a pause; a failure is never cached as an answer
+        log(f"SEC: {len(sec.failures)} fetches failed; retrying those companies once")
+        time.sleep(30)
+        sec.failures.clear()
+        for cik in ciks:
+            if not facts[cik]:
+                facts[cik] = sec.filings(cik) or {}
+            if not shares[cik]:
+                shares[cik] = sec.shares(cik)
+    stats["sec_failures"] = len(sec.failures)
+    if sec.failures:
+        log(f"SEC: {len(sec.failures)} fetches still failing; those companies lack facts this build")
 
     adj: dict[str, array] = {}
     raw: dict[str, array] = {}
@@ -179,7 +222,9 @@ def build(cache_dir: Path, *, start: str = "2016-01-01", end: Optional[str] = No
         f = facts.get(seg.cik) or {}
         seg.sector = ff12(f.get("sic"))
         seg.us_filer = bool(f.get("us_filer"))
-        seg.periodic = list(f.get("periodic") or [])  # the 18-month current-filer rule (2026-10-14)
+        # the 18-month current-filer rule (2026-10-14) is universe version 2;
+        # None keeps version 1's flag (any 10-K/10-Q since 2015)
+        seg.periodic = list(f.get("periodic") or []) if universe_version >= 2 else None
         seg.events = sorted({i for i in (feeds.session_of(a, calendar, index) for a in f.get("earnings", []))
                              if i is not None and seg.first <= i <= seg.last})
         seg.pending = _pending_ranges(f, calendar, seg)
@@ -195,13 +240,42 @@ def build(cache_dir: Path, *, start: str = "2016-01-01", end: Optional[str] = No
         count[seg.symbol] -= 1
         if count[seg.symbol] == 0:
             del adj_all[seg.symbol], raw_all[seg.symbol]
+    store = Store(calendar, spy, bench, segs, adj, raw, universe_version)
+    if finnhub is not None:
+        _fallback_caps(store, finnhub, stats, log)
     stats["us_filers"] = sum(1 for s in segs if s.us_filer)
     stats["with_shares"] = sum(1 for s in segs if s.shares)
     stats["with_earnings"] = sum(1 for s in segs if s.events)
     stats["with_pending"] = sum(1 for s in segs if s.pending)
     log(f"facts: US filers {stats['us_filers']}, with shares {stats['with_shares']}, "
         f"with 2.02 releases {stats['with_earnings']}, with a pending-deal window {stats['with_pending']}")
-    return Store(calendar, spy, bench, segs, adj, raw), stats
+    return store, stats
+
+
+def _fallback_caps(store: Store, finnhub, stats: dict, log: Callable[[str], None]) -> None:
+    """Universe version 2: every company trading at the window's last session
+    that files currently but has no current SEC share count gets Finnhub's
+    cap there, as implied shares carried back through splits."""
+    ref = len(store.calendar) - 1
+    day = store.calendar[ref]
+    wanted = [seg for seg in store.segments
+              if seg.last == ref and engine.current_filer(seg, day)
+              and engine.ok(store.raw[seg.key][ref])
+              and engine.cap_shares(store, seg, ref, store.raw[seg.key], store.adj[seg.key]) is None]
+    log(f"market-cap fallback: {len(wanted)} current filers trading at {day} have no current SEC share count")
+    found = 0
+    for i, seg in enumerate(wanted):
+        cap = finnhub.market_cap(seg.symbol)
+        if cap:
+            raw, adj = store.raw[seg.key], store.adj[seg.key]
+            seg.fallback = [ref, cap / raw[ref], engine.split_jumps(raw, adj, seg.first, ref)]
+            found += 1
+        if i % 100 == 99:
+            log(f"Finnhub {i + 1}/{len(wanted)}")
+    stats["fallback_wanted"] = len(wanted)
+    stats["fallback_found"] = found
+    stats["fallback_failures"] = len(finnhub.failures)
+    log(f"market-cap fallback: Finnhub cap for {found} of {len(wanted)} ({len(finnhub.failures)} fetches failed)")
 
 
 def _pending_ranges(facts: dict, calendar: list[str], seg: Segment) -> list:

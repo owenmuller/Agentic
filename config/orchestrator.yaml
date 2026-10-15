@@ -495,3 +495,8 @@ momentum_prep:
   # while the day has not passed and its plan does not exist yet; the monthly
   # schedule (first plan 2026-10-30 18:30 ET for 2026-11-02) is untouched.
   off_cycle_rebalance_date: 2026-10-15
+  # Universe version 2 (rulings 2026-10-14): the 18-month current-filer rule,
+  # SEC share counts only while current, and Finnhub's market cap where the
+  # SEC has none. Plans and shadows for rebalances from this day; October
+  # keeps the universe it traded on.
+  universe_v2_from: 2026-11-02

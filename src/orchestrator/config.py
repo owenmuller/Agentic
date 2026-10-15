@@ -708,6 +708,14 @@ class MomentumPrepConfig(BaseModel):
     #: session from the prior close - only while the day has not passed and
     #: its plan does not exist yet - then the monthly schedule carries on.
     off_cycle_rebalance_date: Optional[date] = None
+    #: Universe version 2 (rulings 2026-10-14: the 18-month current-filer
+    #: rule, current SEC share counts only, the Finnhub market-cap fallback)
+    #: applies to plans and shadows for rebalances on or after this day;
+    #: earlier months keep the universe they traded on (version 1).
+    universe_v2_from: date = date(2026, 11, 2)
+
+    def universe_version(self, rebalance_day: str) -> int:
+        return 2 if rebalance_day >= self.universe_v2_from.isoformat() else 1
 
 
 class OrchestratorConfig(BaseModel):

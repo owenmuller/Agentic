@@ -2,7 +2,7 @@
 informational, NOT decisive. v1 and every declared shadow on Alpaca daily
 data 2016-2026, delisted names included, reused tickers split by company.
 
-    python ops/experiments/momentum_sanity.py OUT_DIR [--rebuild]
+    python ops/experiments/momentum_sanity.py OUT_DIR [--rebuild] [--universe-version 1|2]
 
 Writes OUT_DIR/report.txt (and report.json). Every stage caches under
 OUT_DIR/cache, so a restart resumes where it stopped. A research process:
@@ -85,7 +85,10 @@ def main() -> int:
         coverage = json.loads((out / "coverage.json").read_text())
         log("store loaded")
     else:
-        store, coverage = build(out / "cache", log=log)
+        # the live plan's own builder and universe rules (version 2 from the
+        # 2026-11-02 rebalance; --universe-version 1 = as traded in October)
+        version = int(sys.argv[sys.argv.index("--universe-version") + 1]) if "--universe-version" in sys.argv else 2
+        store, coverage = build(out / "cache", log=log, universe_version=version)
         store.save(store_dir)
         (out / "coverage.json").write_text(json.dumps(coverage, indent=2))
         log("store saved")

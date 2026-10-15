@@ -1695,9 +1695,11 @@ def momentum_prep() -> int:
                 log.warning("momentum prep: cannot place the start of %s; not backfilled", missing)
             else:
                 first = _date.fromisoformat(begin.data_through).replace(day=1)
+                # the shadows rank on the universe their plan traded on
                 shadow_store, _ = build(cache_root / begin.data_through,
                                        start=first.replace(year=first.year - config.history_years).isoformat(),
-                                       end=begin.data_through, log=log.info)
+                                       end=begin.data_through, log=log.info,
+                                       universe_version=config.universe_version(latest["rebalance_date"]))
                 if shadow_store.calendar[-1] != begin.data_through:
                     log.warning("momentum prep: data ends %s, not %s; shadows %s not backfilled",
                                 shadow_store.calendar[-1], begin.data_through, missing)
@@ -1738,7 +1740,8 @@ def momentum_prep() -> int:
         start = _date.fromisoformat(target.data_through).replace(day=1)
         start = start.replace(year=start.year - config.history_years).isoformat()
         folder = cache_root / target.data_through
-        store, stats = build(folder, start=start, end=target.data_through, log=log.info)
+        store, stats = build(folder, start=start, end=target.data_through, log=log.info,
+                             universe_version=config.universe_version(target.rebalance_day))
         if store.calendar[-1] != target.data_through:
             return fail(f"the market data ends {store.calendar[-1]}, not {target.data_through}; "
                         f"rerun once the day's bars are published")
@@ -1760,6 +1763,10 @@ def momentum_prep() -> int:
             shadow_held=shadow_held, x_pick=x_pick, names=names, max_reviews=config.max_reviews,
         )
         result.detail["data_stats"] = stats
+        for what, label in (("sec_failures", "SEC fetches"), ("fallback_failures", "Finnhub market-cap fetches")):
+            if stats.get(what):
+                result.problems.append(f"{stats[what]} {label} failed after retries; those companies may be "
+                                       f"missing from the universe this month")
         if reviewer is not None:
             result.detail["review_spend_usd"] = str(reviewer.spent)
             result.detail["review_passes"] = reviewer.passes

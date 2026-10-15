@@ -43,15 +43,20 @@ class Returns:
         return b / a - 1 if ok(a) and ok(b) else None
 
 
-def shares_at(seg, t: int, raw, adj) -> Optional[float]:
-    """Shares outstanding known at session ``t`` (point in time), carried to
-    ``t`` through any split since the reported period end."""
+def _latest_share_row(seg, t: int) -> Optional[tuple]:
     latest = None
     for end_i, filed_i, value in seg.shares:
         if filed_i <= t:
             latest = (end_i, value)
         else:
             break
+    return latest
+
+
+def shares_at(seg, t: int, raw, adj) -> Optional[float]:
+    """Shares outstanding known at session ``t`` (point in time), carried to
+    ``t`` through any split since the reported period end."""
+    latest = _latest_share_row(seg, t)
     if latest is None:
         return None
     end_i, value = latest
@@ -60,6 +65,57 @@ def shares_at(seg, t: int, raw, adj) -> Optional[float]:
     if not (ok(ra) and ok(aa) and ok(rb) and ok(ab)):
         return value
     return value * (ra / aa) / (rb / ab)
+
+
+def cap_shares(store, seg, t: int, raw, adj) -> Optional[float]:
+    """The share count the universe ranks on at session ``t``.
+
+    Version 1 (as traded through October 2026): the latest SEC figure, however
+    old. Version 2 (human ruling 2026-10-14, from the 2026-11-02 rebalance):
+    the SEC figure only while its period ended within the filer window (18
+    months); otherwise the Finnhub fallback - today's cap over today's close,
+    carried back through splits only - else unranked. One rule for the live
+    plan and the backtest, and independent of where the store's history
+    starts."""
+    if getattr(store, "universe_version", 1) < 2:
+        return shares_at(seg, t, raw, adj)
+    latest = _latest_share_row(seg, t)
+    if latest is not None and store.calendar[latest[0]] >= _days_before(store.calendar[t], FILER_WINDOW_DAYS):
+        return shares_at(seg, t, raw, adj)
+    if seg.fallback:
+        ref, implied, splits = seg.fallback
+        factor = 1.0
+        for k, jump in splits:
+            if t < k <= ref:
+                factor *= jump
+        return implied * factor
+    return None
+
+
+#: A day-over-day change of raw/adjusted beyond this factor is a split (or a
+#: reverse split); dividends move it by a few percent at most.
+SPLIT_JUMP = 1.15
+
+
+def split_jumps(raw, adj, first: int, last: int) -> list:
+    """[[k, q_k / q_prev], ...] for every split between ``first`` and
+    ``last``, q = raw / adjusted. Shares at t = shares at ref x the product of
+    the jumps in (t, ref]."""
+    out, prev = [], None
+    for k in range(first, last + 1):
+        if not (ok(raw[k]) and ok(adj[k])):
+            continue
+        q = raw[k] / adj[k]
+        if prev is not None:
+            jump = q / prev
+            if jump > SPLIT_JUMP or jump < 1 / SPLIT_JUMP:
+                out.append([k, jump])
+        prev = q
+    return out
+
+
+def _days_before(day: str, days: int) -> str:
+    return (date.fromisoformat(day) - timedelta(days=days)).isoformat()
 
 
 #: The current-filer rule (human ruling 2026-10-14): a company is in the
@@ -77,13 +133,12 @@ def current_filer(seg, day: str) -> bool:
     i = bisect.bisect_right(periodic, day)
     if i == 0:
         return False
-    earliest = (date.fromisoformat(day) - timedelta(days=FILER_WINDOW_DAYS)).isoformat()
-    return periodic[i - 1] >= earliest
+    return periodic[i - 1] >= _days_before(day, FILER_WINDOW_DAYS)
 
 
 def universe(store, t: int, size: int, min_price: float) -> list:
     """The top ``size`` US companies by market cap at the close before ``t``
-    (SEC shares x close), price above ``min_price``; one line per company
+    (``cap_shares`` x close), price above ``min_price``; one line per company
     (the lower-priced share class). Memoized per store: every variant asks
     for the same sessions."""
     memo = store.__dict__.setdefault("_universe_memo", {})
@@ -103,7 +158,7 @@ def _universe(store, t: int, size: int, min_price: float) -> list:
         price = raw[d]
         if not ok(price) or price <= min_price:
             continue
-        shares = shares_at(seg, d, raw, adj)
+        shares = cap_shares(store, seg, d, raw, adj)
         if not shares:
             continue
         cap = shares * price
