@@ -310,8 +310,10 @@ def _momentum_brief_files(directory: Path, cache_root: Path, config, latest: Opt
       version; any other run writes it for the latest plan when the file on
       disk is older than that plan's data (built from the plan's own market
       data, so it ranks exactly as the plan did);
-    * one ``daily.jsonl`` line per session (the evening run): every book's
-      today / week / since-start return - the same numbers as the daily card.
+    * one ``daily.jsonl`` line per session: every book's today / week /
+      since-start return - the same numbers as the daily card. The evening
+      run records the day; a morning run records the previous session if its
+      line is missing (a catch-up, so the first scan still sees it).
 
     Reference data only: a failure here is logged, never a failed prep."""
     from datetime import date as _date, time as dtime
@@ -341,17 +343,24 @@ def _momentum_brief_files(directory: Path, cache_root: Path, config, latest: Opt
                 del store
         except Exception as error:  # noqa: BLE001
             log.warning("momentum prep: shortlist not written (%s: %s)", type(error).__name__, error)
-    if latest is None or local.time() < dtime(16, 30):
+    if latest is None:
         return
     try:
         today = local.date()
-        if alpaca.sessions(today.isoformat(), today.isoformat()) != [today.isoformat()]:
+        sessions = alpaca.sessions((today - timedelta(days=12)).isoformat(), today.isoformat())
+        if local.time() >= dtime(16, 30):
+            day = today.isoformat() if sessions and sessions[-1] == today.isoformat() else None
+        else:  # the morning catch-up: the last completed session
+            done = [s for s in sessions if s < today.isoformat()]
+            day = done[-1] if done else None
+        if day is None or day < latest["rebalance_date"] or momentum_report.recorded(directory, day):
             return
         bars = feeds.Alpaca(feeds.Cache(datasafety.scratch_data_dir() / "momentum-weekly-cache"))
-        report = momentum_report.gather(directory, AuditLog(directory.parent / "audit.jsonl").trails(), today, bars)
+        report = momentum_report.gather(directory, AuditLog(directory.parent / "audit.jsonl").trails(),
+                                        _date.fromisoformat(day), bars)
         if report is not None:
-            momentum_report.record(directory, report, today.isoformat())
-            log.info("momentum prep: daily scoreboard line recorded for %s", today)
+            momentum_report.record(directory, report, day)
+            log.info("momentum prep: daily scoreboard line recorded for %s", day)
     except Exception as error:  # noqa: BLE001
         log.warning("momentum prep: daily scoreboard line not recorded (%s: %s)", type(error).__name__, error)
 

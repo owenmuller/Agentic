@@ -133,3 +133,17 @@ def test_the_daily_card_lists_every_shadows_since_start_return(tmp_path):
     shadow_line = next(l for l in lines if l.startswith("Shadows since start"))
     assert shadow_line.index("gap earnings exempt +3%") < shadow_line.index("no trend filter -1%")
     assert "modelled" not in shadow_line and len(lines) <= 6
+
+
+def test_the_daily_line_is_recorded_once_per_day_and_replaced_on_a_rerun(tmp_path):
+    # data/momentum/daily.jsonl (ruling 2026-10-15): the brief's scoreboard
+    # and the lab scoreboard's momentum row read it
+    from orchestrator.momentum_report import Report, record, recorded
+
+    assert not recorded(tmp_path, "2026-10-15")
+    record(tmp_path, Report(started="2026-10-15", since={"v1.1 live": 0.01, "SPMO": 0.02}), "2026-10-15")
+    record(tmp_path, Report(started="2026-10-15", since={"v1.1 live": 0.03}), "2026-10-16")
+    record(tmp_path, Report(started="2026-10-15", since={"v1.1 live": 0.02, "SPMO": 0.02}), "2026-10-15")
+    lines = [json.loads(x) for x in (tmp_path / "daily.jsonl").read_text().splitlines()]
+    assert [x["day"] for x in lines] == ["2026-10-15", "2026-10-16"] and lines[0]["since"]["v1.1 live"] == 0.02
+    assert recorded(tmp_path, "2026-10-16") and not recorded(tmp_path, "2026-10-19")

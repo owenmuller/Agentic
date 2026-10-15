@@ -249,6 +249,20 @@ def build(directory: Path, fills: list[Fill], prices: dict[str, dict[str, float]
 DAILY_FILE = "daily.jsonl"
 
 
+def recorded(directory: Path, day: str) -> bool:
+    """Whether ``daily.jsonl`` already has the line for ``day``."""
+    path = directory / DAILY_FILE
+    if not path.exists():
+        return False
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        try:
+            if json.loads(raw).get("day") == day:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def record(directory: Path, report: Report, day: str) -> None:
     """One line per session in ``daily.jsonl`` (rewritten whole; a rerun
     replaces the day's line): every book's today / week / since-start return.
@@ -296,6 +310,8 @@ def gather(directory: Path, trails, today: date, alpaca) -> Optional[Report]:
     prices = {s: {d: float(c) for d, c in series} for s, series in rows.items()}
     days = sorted(prices.get("SPY", {}))
     if not days:
-        return None
+        # a plan exists, so empty closes are a data failure, never "nothing to
+        # report": the card says so (2026-10-15: refused requests went silent)
+        raise RuntimeError("the market data returned no SPY closes; the momentum report cannot be built")
     week_start = (today - timedelta(days=today.weekday())).isoformat()  # week to date: from the close before Monday
     return build(directory, fills, prices, days, week_start, today.isoformat())

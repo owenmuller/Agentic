@@ -39,7 +39,7 @@ import re
 import time
 from array import array
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 from zoneinfo import ZoneInfo
@@ -315,7 +315,15 @@ class Alpaca:
 
     def bars(self, symbols: list[str], start: str, end: str, adjustment: str) -> dict[str, list]:
         """{symbol: [[date, close], ...]} - multi-symbol pages, a failing
-        batch split in half until the bad symbol is isolated."""
+        batch split in half until the bad symbol is isolated.
+
+        The free SIP feed refuses (HTTP 403) any request whose end lies
+        within the last 15 minutes, so ``end`` is capped at 16 minutes ago.
+        Before 2026-10-15 an evening "through 23:59 UTC today" asked for the
+        future: every batch was refused and the session's daily momentum card
+        and line came back empty (the 18:30 ET month-end build would have too)."""
+        latest = (datetime.now(timezone.utc) - timedelta(minutes=16)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        end = min(end, latest)
         out: dict[str, list] = {}
         self._fetch(symbols, start, end, adjustment, out)
         return out

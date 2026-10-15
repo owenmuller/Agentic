@@ -221,3 +221,25 @@ def test_a_failed_share_fetch_is_never_cached_as_no_shares(tmp_path, monkeypatch
     sec._client = _Client([404, 404])          # the SEC has no such fact: a definitive answer
     assert sec.shares(42) == []
     assert sec.cache.get("sec_shares_42") == []
+
+
+def test_bar_requests_never_ask_for_the_last_fifteen_minutes(monkeypatch):
+    # The free SIP feed refuses (403) an end inside the last 15 minutes: an
+    # evening "through 23:59 UTC today" emptied the daily momentum card on
+    # 2026-10-15. The end is capped at 16 minutes ago.
+    from datetime import datetime, timedelta, timezone
+
+    seen = []
+
+    class Data:
+        def get(self, path, params):
+            seen.append(params["end"])
+            return _Response(200, {"bars": {}, "next_page_token": None})
+
+    alpaca = feeds.Alpaca.__new__(feeds.Alpaca)
+    alpaca._data = Data()
+    alpaca.bars(["SPY"], "2026-10-01T00:00:00Z", "2099-01-01T23:59:00Z", "all")
+    cap = datetime.strptime(seen[0], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    assert timedelta(minutes=15) < datetime.now(timezone.utc) - cap < timedelta(minutes=18)
+    alpaca.bars(["SPY"], "2026-10-01T00:00:00Z", "2026-10-02T23:59:00Z", "all")
+    assert seen[1] == "2026-10-02T23:59:00Z"  # a past end is left alone
