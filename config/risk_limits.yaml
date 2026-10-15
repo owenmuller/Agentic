@@ -231,6 +231,13 @@ cash_management:
   symbol: SGOV
   buffer_margin_usd: 2500
   min_order_notional_usd: 500
+  # Funding (2026-10-14): the aggressive sleeve's part of the floor is one
+  # single-position slot (25% of its NAV), not its whole daily cap: with the
+  # attention source off only the execution test trades there, one position at
+  # a time. Without this the floor held back ~$25K and left the momentum sleeve
+  # $342 of settled cash for its first rebalance. Set it to 5 (the sleeve's
+  # max_positions) or remove it if the attention source returns.
+  aggressive_reserve_positions: 1
 
 # Baseline market-beta sleeve (AGGRESSION RULING 2026-09-18, lever 4; kill-switch
 # semantics revised the same day; weight 30% by the 2026-09-21 shipping ruling).

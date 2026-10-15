@@ -529,23 +529,36 @@ def check_card(name: str, account: str, purpose: str, ok: bool, when: str, exit_
 def momentum_plan_card(month_name: str, rebalance_day: str, names: int, bought: Sequence[str],
                        sold: Sequence[str], vetoed: Sequence[tuple[str, str]], exposure: float,
                        buys_allowed: bool, problems: Sequence[str], spend: Optional[float], cap: float,
-                       detail: str, sample: bool = False) -> Card:
-    """The monthly momentum plan (ruling 2026-10-13): what v1 will do on the
-    rebalance day, what the AI vetoed, and any data problems."""
+                       detail: str, sample: bool = False, scores: Optional[dict] = None,
+                       sleeve_value: Optional[float] = None, sleeve_weight: Optional[float] = None,
+                       off_cycle: bool = False) -> Card:
+    """The momentum plan (ruling 2026-10-13; scores, vetoes with reasons and
+    the sleeve's size from 2026-10-14): what the live spec will do on the
+    rebalance day, what the AI vetoed and why, and any data problems."""
+    size = ""
+    if sleeve_value is not None:
+        size = f"; sleeve {usd(sleeve_value)}" + (f" ({pct(sleeve_weight, signed=False)} of the book)"
+                                                  if sleeve_weight is not None else "")
+    scored = [f"{plain(s, 12)} {scores[s]:+.2f}" if scores and scores.get(s) is not None else plain(s, 12)
+              for s in bought]
     lines = [
-        f"Rebalance: {rebalance_day} from 10:00 ET, {count(names, 'name')} at {pct(exposure, signed=False)} invested.",
-        f"Buying: {_joined([plain(s, 12) for s in bought][:10]) or 'nothing new'}.",
+        f"Trades: {rebalance_day} from 10:00 ET, {count(names, 'name')} at {pct(exposure, signed=False)} invested{size}.",
+        f"Buying (score): {_joined(scored[:15]) or 'nothing new'}.",
         f"Selling: {_joined([plain(s, 12) for s in sold][:10]) or 'nothing'}.",
     ]
     if vetoed:
-        lines.append(f"AI vetoed: {_joined([f'{plain(s, 12)} ({plain(why, 40)})' for s, why in vetoed][:4])}; the next names in v1's ranking took the slots.")
+        lines.append(f"AI vetoed: {_joined([f'{plain(s, 12)} ({plain(why, 60)})' for s, why in vetoed][:4])}; "
+                     f"the next names in the ranking took the slots.")
+    else:
+        lines.append("AI vetoed: nothing; every new name was reviewed.")
     if not buys_allowed:
-        lines.append("SPY is below its 200-day average, so v1 buys no new names this month (its rule).")
+        lines.append("SPY is below its 200-day average, so no new names this time (the rule).")
     if spend is not None:
-        lines.append(f"AI spend: {cents(spend)} of {usd(cap)} monthly cap.")
+        lines.append(f"AI spend: {cents(spend)} of {usd(cap)} cap.")
     look = worth_a_look(list(problems))
-    return Card("Momentum", f"{month_name} plan ready", LOOK if look else GOOD, tuple(lines),
-                look_at=look, detail=detail, detail_name=f"momentum-plan-{rebalance_day[:7]}.txt", sample=sample)
+    happened = "first plan ready (off-cycle start)" if off_cycle else f"{month_name} plan ready"
+    return Card("Momentum", happened, LOOK if look else GOOD, tuple(lines[:6]),
+                look_at=look, detail=detail, detail_name=f"momentum-plan-{rebalance_day}.txt", sample=sample)
 
 
 def momentum_prep_failed_card(when: str, what: str, detail: str = "", sample: bool = False) -> Card:
@@ -604,7 +617,7 @@ def momentum_week_card(report, sample: bool = False) -> Card:
                if n not in ("v1.1 live", "SPY", "SPMO", "v1.1 modelled (plan at closes)") and v is not None}
     ahead = sum(1 for v in shadows.values() if live_s is not None and v > live_s)
     lines = [
-        f"This week: {pct(live_w)} (SPY {pct(spy_w)}, SPMO {pct(spmo_w)}).",
+        f"Week to date: {pct(live_w)} (SPY {pct(spy_w)}, SPMO {pct(spmo_w)}).",
         f"Since start ({report.started}): {pct(live_s)} (SPY {pct(spy_s)}, SPMO {pct(spmo_s)}).",
         f"Holding {count(report.holdings, 'name')}, {usd(report.invested)} invested.",
         f"Shadows: {ahead} of {len(shadows)} ahead of the live sleeve since start; the table is attached.",
@@ -614,3 +627,32 @@ def momentum_week_card(report, sample: bool = False) -> Card:
         look = "a return could not be computed (missing prices); the attachment shows which"
     return Card("Momentum", "weekly report", LOOK if look else GOOD, tuple(lines), look_at=look,
                 detail=report.table(), detail_name="momentum-weekly.txt", sample=sample)
+
+
+def momentum_daily_card(report, sample: bool = False) -> Card:
+    """The momentum sleeve's daily line (standing rule 2026-10-14): today,
+    week to date and since start, beside SPY and SPMO; every shadow in the
+    attached table. ``report``: momentum_report.Report."""
+    if report.started is None:
+        return Card("Momentum", "daily report", GOOD, ("The sleeve has not traded yet.",),
+                    detail=report.table(), detail_name="momentum-daily.txt", sample=sample)
+
+    def trio(window: dict) -> str:
+        return f"{pct(window.get('v1.1 live'))} (SPY {pct(window.get('SPY'))}, SPMO {pct(window.get('SPMO'))})"
+
+    shadows = {n: v for n, v in report.since.items()
+               if n not in ("v1.1 live", "SPY", "SPMO", "v1.1 modelled (plan at closes)") and v is not None}
+    live_s = report.since.get("v1.1 live")
+    ahead = sum(1 for v in shadows.values() if live_s is not None and v > live_s)
+    lines = (
+        f"Today: {trio(report.day)}.",
+        f"Week to date: {trio(report.week)}.",
+        f"Since start ({report.started}): {trio(report.since)}.",
+        f"Holding {count(report.holdings, 'name')}, {usd(report.invested)} invested.",
+        f"Shadows: {ahead} of {len(shadows)} ahead of the live sleeve since start; the table is attached.",
+    )
+    look = None
+    if report.day.get("v1.1 live") is None or report.day.get("SPMO") is None:
+        look = "a return could not be computed (missing prices); the attachment shows which"
+    return Card("Momentum", "daily report", LOOK if look else GOOD, lines, look_at=look,
+                detail=report.table(), detail_name="momentum-daily.txt", sample=sample)

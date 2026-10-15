@@ -231,6 +231,11 @@ The MOMENTUM LIVE BUILD runs v1 as a sleeve inside the main book: no data purcha
 - **Alerts (human ruling 2026-10-14):** every card attempt (delivered, failed with its reason, or refused) is a line in an `alerts_ledger.jsonl` beside each process's alert status file (checks and one-off scripts: the scratch ledger); `python -m orchestrator alerts [--days N]` merges them. Log records are redacted at the record factory (`execution/logredact.py`): webhook tokens, ntfy topics and token-like query values never reach a log line.
 - **Live checks of uncommitted code** (golden replays, dry runs, round trips) run either with `PYTHONPATH=src` from the copy or after deploying. They print the imported module path. On the droplet, `python -m` from a scratch copy imports the INSTALLED `~/Agentic/src`; three golden replays on 2026-10-10/12 ran the deployed code instead of the change under test.
 
+## Go Live at the Next Session (STANDING RULE, human ruling 2026-10-14)
+
+- **Any approved strategy goes live at the next trading session once its checks pass. Never wait for a calendar boundary.** Rebalance cadence controls how often holdings are re-ranked, not when a strategy starts. (First applied: the momentum sleeve's v1.1 started with an off-cycle plan for 2026-10-15 instead of waiting for 2026-11-02; Nov 2 stays its first regular rebalance, applying the buffer rule to the holdings it then has.)
+- **Performance and every shadow are tracked daily from inception**, reported as **daily, week-to-date and since-start** against SPY and SPMO (and any other named benchmark). For the momentum sleeve: the session's end-of-day card (`orchestrator/momentum_report.py`; today and week-to-date from the prior close, since-start from the first trade) and the Friday weekly.
+
 ## Learning Loop — every strategy learns from its own record (GLOBAL RULE, human ruling 2026-10-14)
 
 Every sleeve and every lab account learns through ONE shared, structured loop, gated by evidence. Build order: after the momentum sleeve's first live rebalance (2026-11-02) unless there is a reason to interleave. Golden replay (and the live round trip) for the journal and hypothesis prompts.

@@ -85,3 +85,20 @@ def test_step2_reports_and_applies_nothing(tmp_path):
     assert "allocation $25,000 -> $10,000" in done.text and "allocation $15,000 -> $30,000" in done.text
     assert "2026-12-01" in done.text and "nothing has been changed" in done.text
     assert limits.portfolio.sleeves.momentum == Decimal("0.15")  # untouched
+
+
+def test_the_daily_card_reports_today_week_to_date_and_since_start(tmp_path):
+    prices = {"A": {d: 10.0 + i for i, d in enumerate(DAYS)}, "SPY": {d: 500.0 + i for i, d in enumerate(DAYS)},
+              "SPMO": {d: 100.0 for d in DAYS}}
+    (tmp_path / "plan-2026-11.json").write_text(json.dumps({
+        "rebalance_date": "2026-11-02", "targets": [{"symbol": "A", "weight": "1.0"}]}))
+    fills = [mr.Fill("2026-11-02", "A", 100.0, 1100.0)]
+    report = mr.build(tmp_path, fills, prices, DAYS, "2026-11-09", "2026-11-09")
+    assert report.day["v1.1 live"] == pytest.approx(16 / 15 - 1)      # 15 -> 16 on the last day
+    assert report.day["SPY"] == pytest.approx(506 / 505 - 1)
+    assert report.since["v1.1 live"] == pytest.approx(16 / 11 - 1)
+    card = cards.momentum_daily_card(report)
+    assert card.title == "Momentum: daily report, nothing to do"
+    lines = card.all_lines
+    assert lines[0].startswith("Today: +6.7%") and lines[1].startswith("Week to date:") and "Since start" in lines[2]
+    assert "SPMO" in lines[0] and "today" in report.table() and "week to date" in report.table()

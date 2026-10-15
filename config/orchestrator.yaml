@@ -485,3 +485,13 @@ momentum_sleeve:
   limit_buffer: 0.002
   fill_wait_seconds: 120
   mark_interval_seconds: 300
+
+# The momentum book's monthly prep (human ruling 2026-10-13; python -m
+# orchestrator momentum-prep, unit agentic-momentum). Defaults live in
+# orchestrator/config.py MomentumPrepConfig; set here only what differs.
+momentum_prep:
+  # ONE-TIME off-cycle start (human ruling 2026-10-14): v1.1 goes live at the
+  # next session from the prior close, not at the next month. Honoured only
+  # while the day has not passed and its plan does not exist yet; the monthly
+  # schedule (first plan 2026-10-30 18:30 ET for 2026-11-02) is untouched.
+  off_cycle_rebalance_date: 2026-10-15

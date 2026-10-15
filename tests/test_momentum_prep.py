@@ -240,7 +240,7 @@ def test_the_plan_card_is_green_when_clean_and_yellow_naming_a_problem():
     assert clean_card.status == cards.GOOD
     assert clean_card.title == "Momentum: November plan ready, nothing to do"
     text = " ".join(clean_card.all_lines)
-    assert "15 names at 87% invested" in text and "$1.85 of $8 monthly cap" in text and "ABC" in text
+    assert "15 names at 87% invested" in text and "$1.85 of $8 cap" in text and "ABC" in text
     problem = cards.momentum_plan_card("November", "2026-11-02", 15, [], [], [], 1.0, False,
                                        ["bought without a veto review (the AI leg is off): AAPL"], None, 8.0, "{}")
     assert problem.status == cards.LOOK and problem.look_at
@@ -284,3 +284,66 @@ def test_the_review_client_is_production_with_the_labs_search_settings(monkeypat
     assert config.web_search.tool_type == "web_search_20250305"
     assert base.tier_for("class_3").max_searches == 1  # production's own config untouched
     assert client._client.timeout == 300 and client._client.max_retries == 1
+
+
+def test_the_off_cycle_plan_card_shows_scores_vetoes_and_the_sleeve_size():
+    from execution import cards
+
+    card = cards.momentum_plan_card(
+        "October", "2026-10-15", 15, ["MATX", "IEX"], [], [("ABC", "pending acquisition: deal signed 2026-10-05")],
+        1.0, True, [], 1.91, 8.0, "table", scores={"MATX": 2.13, "IEX": 1.874}, sleeve_value=14893.0,
+        sleeve_weight=0.15, off_cycle=True)
+    assert card.title == "Momentum: first plan ready (off-cycle start), nothing to do"
+    text = " ".join(card.all_lines)
+    assert "sleeve $14,893 (15% of the book)" in text and "MATX +2.13" in text and "IEX +1.87" in text
+    assert "ABC (pending acquisition: deal signed 2026-10-05)" in text
+    clean = cards.momentum_plan_card("October", "2026-10-15", 15, ["MATX"], [], [], 1.0, True, [], None, 8.0, "t")
+    assert any("AI vetoed: nothing" in line for line in clean.all_lines)
+
+
+def test_the_fills_report_compares_each_name_with_its_target(tmp_path):
+    import json as _json
+    from datetime import date as _date, datetime as _dt, timezone as _tz
+
+    from audit.log import AuditLog
+    from orchestrator import momentum_fills
+    from risk_gate import RiskGate
+    from risk_gate.schema import EquityBuyOrder, LimitExecution
+    from risk_gate.state import AccountState
+
+    limits = RiskLimits.load()
+    limits = limits.model_copy(update={"momentum_sleeve": limits.momentum_sleeve.model_copy(
+        update={"entries_enabled": True})})
+    clock = lambda: _dt(2026, 10, 15, 15, 0, tzinfo=_tz.utc)  # noqa: E731
+    gate = RiskGate(limits, AccountState(cash=Decimal("100000"), high_water_mark=Decimal("100000")), clock)
+    audit = AuditLog(tmp_path / "audit.jsonl", clock=clock)
+    (tmp_path / "momentum").mkdir()
+    (tmp_path / "momentum" / "plan-2026-10.json").write_text(_json.dumps({
+        "rebalance_date": "2026-10-15", "spec": "v1.1", "data_through": "2026-10-14",
+        "targets": [{"symbol": "AAPL", "weight": "0.1"}, {"symbol": "MSFT", "weight": "0.1"}]}))
+    order = EquityBuyOrder(symbol="AAPL", quantity=Decimal(7), execution=LimitExecution(limit_price=Decimal("200")),
+                           sleeve="momentum")
+    approved = gate.submit(order)
+    record = audit.record_momentum(detail="AAPL", gate_decision=approved, capital=Decimal("1400"),
+                                   sleeve_nav=Decimal("15000"), plan_month="2026-10", decision_id="d1")
+    audit.record_fill(record.decision_id, "o1", Decimal(7), Decimal("200"), filled_value=Decimal("1400"), side="buy")
+    complete, text = momentum_fills.report(audit, tmp_path / "momentum", _date(2026, 10, 15))
+    assert not complete                              # MSFT never traded
+    assert "AAPL" in text and "93%" in text and "INCOMPLETE" in text
+    assert "1400.00 filled of 3000.00 planned (47%)" in text
+
+
+def test_the_aggressive_reserve_is_one_position_while_only_the_execution_test_trades():
+    from orchestrator.sweep import liquidity_buffer, momentum_spendable
+    from risk_gate import RiskGate
+    from risk_gate.state import AccountState
+
+    limits = RiskLimits.load()
+    assert limits.cash_management.aggressive_reserve_positions == 1
+    gate = RiskGate(limits, AccountState(cash=Decimal("100000"), high_water_mark=Decimal("100000")))
+    capped = liquidity_buffer(gate, limits.cash_management, include_momentum=False)
+    uncapped_config = limits.cash_management.model_copy(update={"aggressive_reserve_positions": None})
+    full = liquidity_buffer(gate, uncapped_config, include_momentum=False)
+    # aggressive sleeve 25,000: one slot is 25% of it (6,250) instead of its 100% daily cap
+    assert full - capped == Decimal("25000") - Decimal("6250")
+    assert momentum_spendable(gate, limits.cash_management) >= Decimal("15000")  # the sleeve is fundable

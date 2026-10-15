@@ -208,6 +208,12 @@ class CashManagementLimits(_Strict):
     buffer_margin_usd: Annotated[Decimal, Field(ge=Decimal("0"))]
     #: Smallest sweep or unsweep order, so the sweeper never churns dust.
     min_order_notional_usd: Annotated[Decimal, Field(gt=Decimal("0"))]
+    #: Funding (2026-10-14): the aggressive sleeve's part of the floor is at most
+    #: this many single-position slots (sleeve NAV x max_single_position). None
+    #: = its full daily cap. With the attention source off only the execution
+    #: test trades there, one position at a time, so 1; set it back to the
+    #: sleeve's max_positions (or unset it) if the attention source returns.
+    aggressive_reserve_positions: Optional[Annotated[int, Field(gt=0)]] = None
 
 
 class BaselineSleeveLimits(_Strict):

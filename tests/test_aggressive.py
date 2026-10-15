@@ -466,7 +466,11 @@ def test_switched_off_the_sleeve_parks_no_cash_for_itself(off_limits, limits):
 
     on = liquidity_buffer(_gate(limits, cash="100000"), limits.cash_management)
     off = liquidity_buffer(_gate(off_limits, cash="100000"), off_limits.cash_management)
-    assert on - off == Decimal("100000") * Decimal("0.25")  # the sleeve's full daily cap, no longer parked
+    # one single-position slot (25% of the 25,000 sleeve) since the 2026-10-14
+    # funding change; the full daily cap when the reserve is unset
+    assert on - off == Decimal("100000") * Decimal("0.25") * Decimal("0.25")
+    unset = limits.cash_management.model_copy(update={"aggressive_reserve_positions": None})
+    assert liquidity_buffer(_gate(limits, cash="100000"), unset) - off == Decimal("100000") * Decimal("0.25")
 
 
 def test_no_target_no_trade(tmp_path, limits, signals_config, research_config):

@@ -271,7 +271,7 @@ def _weekly_card(report: str, today):
     return cards.weekly_main_card(value, week, spy_week, report)
 
 
-def _momentum_week_card(checks):
+def _momentum_card(checks, daily: bool = False):
     """The momentum sleeve's weekly card, or None before its first plan. A
     failure is a yellow card, never a lost main report."""
     from momentum import feeds
@@ -282,9 +282,12 @@ def _momentum_week_card(checks):
         report = momentum_report.gather(checks.audit.path.parent / "momentum", checks.audit.trails(),
                                         checks.clock().date(), alpaca)
     except Exception as error:  # noqa: BLE001
-        return cards.Card("Momentum", "weekly report", cards.LOOK, ("The momentum report could not be built.",),
+        return cards.Card("Momentum", "daily report" if daily else "weekly report", cards.LOOK,
+                          ("The momentum report could not be built.",),
                           look_at=f"the momentum report failed: {type(error).__name__}", detail=str(error))
-    return cards.momentum_week_card(report) if report is not None else None
+    if report is None:
+        return None
+    return cards.momentum_daily_card(report) if daily else cards.momentum_week_card(report)
 
 
 def weekly() -> int:
@@ -299,7 +302,7 @@ def weekly() -> int:
         return 1
     text = _attribution_text(checks)
     alerter = Alerter()
-    momentum_card = _momentum_week_card(checks)
+    momentum_card = _momentum_card(checks)
     if alerter.enabled and momentum_card is not None:
         alerter.card(f"momentum-weekly-{checks.clock().date()}", momentum_card)
     elif momentum_card is not None:
@@ -1211,6 +1214,10 @@ def run() -> int:
                 "Research spend is an estimate from token prices; the provider's bill is the truth.",
                 f"Positions held ({len(held)}):", *[f"  {h}" for h in held]]),
         ))
+        # the momentum sleeve's daily line (standing rule 2026-10-14), once it has a plan
+        momentum_card = _momentum_card(checks, daily=True)
+        if momentum_card is not None:
+            alerter.card(f"momentum-daily-{now.date()}", momentum_card)
         return 0
     except KeyboardInterrupt:
         run_log.note("STOPPED", "interrupted by operator")
@@ -1676,6 +1683,16 @@ def momentum_prep() -> int:
             if not sessions or sessions[-1] != wanted or len(sessions) < 2:
                 return fail(f"{wanted} is not a trading day")
             target = prep_module.Due(rebalance_day=wanted, data_through=sessions[-2])
+        elif (config.off_cycle_rebalance_date is not None and today <= config.off_cycle_rebalance_date
+              and not plan_path(directory, config.off_cycle_rebalance_date.isoformat()[:7]).exists()):
+            # the one-time off-cycle plan (ruling 2026-10-14): this session,
+            # from the prior close; the monthly schedule is untouched
+            off = config.off_cycle_rebalance_date
+            sessions = alpaca.sessions((off - timedelta(days=12)).isoformat(), off.isoformat())
+            if not sessions or sessions[-1] != off.isoformat() or len(sessions) < 2:
+                return fail(f"off-cycle date {off} is not a trading day")
+            target = prep_module.Due(rebalance_day=off.isoformat(), data_through=sessions[-2])
+            log.info("momentum prep: OFF-CYCLE plan for %s (one-time, ruling 2026-10-14)", off)
         else:
             sessions = alpaca.sessions((today - timedelta(days=12)).isoformat(),
                                        (today + timedelta(days=12)).isoformat())
@@ -1732,17 +1749,73 @@ def momentum_prep() -> int:
     if alerter is not None and alerter.enabled:
         plan, detail = result.plan, result.detail
         month_name = _date.fromisoformat(plan["rebalance_date"]).strftime("%B")
-        alerter.card(f"momentum-plan-{plan['month']}", cards.momentum_plan_card(
+        # the sleeve's size, for the card: book equity x the momentum weight
+        sleeve_value = sleeve_weight = None
+        try:
+            sleeve_weight = float(RiskLimits.load().portfolio.sleeves.momentum)
+            with AlpacaAdapter() as main_account:
+                sleeve_value = float(main_account.account_snapshot().get("equity") or 0) * sleeve_weight or None
+        except Exception:  # noqa: BLE001 - a missing figure is "n/a" on the card, never a lost card
+            pass
+        scores = {row["symbol"]: row.get("score") for row in detail.get("ranking", [])}
+        alerter.card(f"momentum-plan-{plan['rebalance_date']}", cards.momentum_plan_card(
             month_name, plan["rebalance_date"], len(plan["targets"]), detail["selection"]["bought"],
             [s for s, _ in detail["selection"]["sold"]] + [s for s in plan["sold"]
                                                             if s not in {x for x, _ in detail["selection"]["sold"]}],
-            [(s, why.split(":")[0].replace("_", " ")) for s, why in plan["vetoed"].items()],
+            [(s, why.replace("_", " ")) for s, why in plan["vetoed"].items()],
             float(plan["exposure"]), plan["buys_allowed"], result.problems,
             float(reviewer.spent) if reviewer is not None else None, float(config.review_cap_usd),
-            json.dumps({"plan": plan, "detail": detail}, indent=2, default=str),
+            _plan_attachment(plan, detail),
+            scores=scores, sleeve_value=sleeve_value, sleeve_weight=sleeve_weight,
+            off_cycle=config.off_cycle_rebalance_date is not None
+            and plan["rebalance_date"] == config.off_cycle_rebalance_date.isoformat(),
         ))
         alerter.close()
     return 0
+
+
+def _plan_attachment(plan: dict, detail: dict) -> str:
+    """The plan card's attachment: a readable table first, the raw JSON after."""
+    scores = {row["symbol"]: row for row in detail.get("ranking", [])}
+    lines = [f"MOMENTUM PLAN {plan['rebalance_date']} (spec {plan['spec']}, data through {plan['data_through']})",
+             f"exposure {plan['exposure']}  buys allowed {plan['buys_allowed']}", "",
+             f"{'rank':>4}  {'symbol':8} {'weight':>8} {'score':>7} {'residual z':>10} {'earnings z':>10}  sector"]
+    for target in plan["targets"]:
+        row = scores.get(target["symbol"], {})
+        fmt = lambda x: "-" if x is None else f"{x:+.2f}"  # noqa: E731
+        lines.append(f"{target.get('rank') or '-':>4}  {target['symbol']:8} {float(target['weight']):>8.2%} "
+                     f"{fmt(row.get('score')):>7} {fmt(row.get('residual_z')):>10} {fmt(row.get('earnings_z')):>10}  "
+                     f"{target.get('sector', '')}")
+    lines += ["", "Vetoes:"] + [f"  {s}: {why}" for s, why in plan["vetoed"].items()] + (
+        [] if plan["vetoed"] else ["  none"])
+    lines += ["", "Reviews (sentiment logged only):"]
+    for review in detail.get("reviews", []):
+        lines.append(f"  {review['symbol']:8} {'NEW ' if review['new_entrant'] else 'held'} veto={review['applies']} "
+                     f"{review['category']:22} sentiment {review['sentiment_6m']}  {review.get('fault') or ''}")
+    lines += ["", "Skipped by v1's rules (top of the ranking):"] + [
+        f"  {s}: {why}" for s, why in detail["selection"]["skipped"][:20]]
+    lines += ["", "Problems:"] + [f"  {p}" for p in detail.get("problems", [])] + (
+        [] if detail.get("problems") else ["  none"])
+    return "\n".join(lines) + "\n\nRAW\n" + json.dumps({"plan": plan, "detail": detail}, indent=2, default=str)
+
+
+def momentum_fills() -> int:
+    """Fills vs plan for a momentum rebalance day (ruling 2026-10-14).
+    Read-only. Exit 1 while any plan name is under 90% filled.
+
+        python -m orchestrator momentum-fills [--date YYYY-MM-DD]"""
+    from datetime import date as _date
+
+    from orchestrator import momentum_fills as fills_module
+
+    logging.basicConfig(level=logging.WARNING)
+    args = sys.argv[2:]
+    day = (_date.fromisoformat(args[args.index("--date") + 1]) if "--date" in args
+           else datetime.now(timezone.utc).astimezone(_NY).date())
+    audit = AuditLog(default_data_dir() / "audit.jsonl")
+    complete, text = fills_module.report(audit, default_data_dir() / "momentum", day)
+    print(text)
+    return 0 if complete else 1
 
 
 def momentum_veto_golden() -> int:
@@ -1934,6 +2007,8 @@ def main() -> int:
         return resume()
     if command == "stress":
         return stress()
+    if command == "momentum-fills":
+        return momentum_fills()
     if command == "alerts":
         return alerts_ledger()
     if command == "momentum-step2-report":

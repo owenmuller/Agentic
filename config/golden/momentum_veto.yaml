@@ -105,3 +105,17 @@ cases:
     # 2024-10-30 citing concerns about governance and transparency; the 10-K
     # was already late; a short seller's report (2024-08-27) was unresolved.
     expect: {veto: true, categories: [accounting_issue]}
+  - name: binary_event_summit
+    symbol: SMMT
+    company: Summit Therapeutics
+    sector: health
+    rank: 8
+    new_entrant: true
+    # Added 2026-10-14 (human ruling: a binary-event case before the off-cycle
+    # plan's veto runs). The FDA's decision on ivonescimab (EGFRm NSCLC) is due
+    # 2026-11-14 (PDUFA) - inside the month an Oct 15 entrant is held, for a
+    # company whose value rests on that drug. Like COGT, it ALSO carries a live
+    # dilution: a $500M offering (2026-06-09) and a $380M at-the-market
+    # programme (2026-07-23). A binary-only current case was not found; either
+    # true reason is a correct veto.
+    expect: {veto: true, categories: [binary_event, dilutive_offering]}

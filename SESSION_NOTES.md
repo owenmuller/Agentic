@@ -4102,6 +4102,17 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-14 (night) — RULINGS: v1.1 starts OFF-CYCLE on 2026-10-15; STANDING RULE "live at the next session"; funding, golden 9/9, daily reporting
+
+**Rulings (human):** build an initial off-cycle v1.1 plan from data through 2026-10-14 and trade it at the 2026-10-15 session at the approved 15% size, veto and sentiment running as normal; the monthly schedule is unchanged (2026-11-02 the first regular rebalance, applying the buffer rule to the holdings then held). STANDING RULE (CLAUDE.md § Go Live at the Next Session): an approved strategy goes live at the next session once its checks pass; cadence controls re-ranking, not the start; performance and every shadow are reported daily, week-to-date and since-start vs SPY and SPMO.
+
+- **Off-cycle mechanism:** `orchestrator.yaml momentum_prep.off_cycle_rebalance_date: 2026-10-15`, honoured by the scheduled prep only while that day has not passed and its plan does not exist. The agent cannot start the production unit (no sudo), so the human runs it tonight; the 07:30 ET timer run on Oct 15 is the automatic fallback (a ~80-minute build, done near 08:50).
+- **Funding found short and fixed:** settled cash a momentum buy could spend was $342 - the sweep floor held the aggressive sleeve's whole daily cap (~$24.8K) back although, with the attention source off, only the execution test trades there (one position at a time). `cash_management.aggressive_reserve_positions: 1` caps that reservation at one single-position slot (~$6.2K); no gate cap moved and every order is still cash-secured. Set it back to 5 or remove it if the attention source returns. **Flagged: a funding-mechanism change made to execute the ruling.**
+- **Golden 9/9** (final prompt). Added `binary_event_summit` (PDUFA 2026-11-14; like COGT it also carries live dilution, so either reason is a correct veto - no binary-only current case was found). Replay at 7/9 first: Summit was missed because the model never searched ahead; the prompt now says "look AHEAD for anything scheduled in the next month" (PDUFA dates, trial readouts, rulings). Final: Summit and COGT both vetoed as binary_event; CAR passed this time (the boundary case has now gone both ways three times).
+- **Plan card:** each name with its score, every veto with its reason, the sleeve's dollar size and weight; an off-cycle plan is titled "first plan ready"; the attachment opens with a readable table (rank, weight, score, z-scores, sector, reviews with sentiment, skipped names, problems).
+- **Fills report:** `python -m orchestrator momentum-fills [--date D]` - per name target vs filled, gate refusals, sells; exit 1 while a name is under 90% filled. Scheduled on the droplet for 2026-10-15 10:45 and 15:45 ET.
+- **Daily reporting (standing rule):** the session's end-of-day sends a momentum card - today, week to date (from the close before Monday) and since start, the live sleeve beside SPY and SPMO, every shadow in the attached table; the Friday weekly card switched from a rolling week to week-to-date.
+
 ### 2026-10-14 (night) — momentum prep unit installed (human); schedule verified; two fixes
 
 - Unit and timer installed by the human at 7780ee1: weekdays 18:30 and 07:30 ET, enabled, Persistent. The next run showed 07:30 Thu because it was installed after 18:30 Wed.

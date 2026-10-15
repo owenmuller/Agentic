@@ -101,6 +101,11 @@ def liquidity_buffer(
         nav = gate.sleeve_nav(Sleeve.AGGRESSIVE)
         undeployed = max(ZERO_D, nav - gate.state.sleeve_exposure(Sleeve.AGGRESSIVE))
         aggressive = min(nav * limits.aggressive_sleeve.max_daily_deployment, undeployed)
+        if config.aggressive_reserve_positions is not None:
+            # funding (2026-10-14): only as many single-position slots as
+            # can actually trade there (the execution test: one at a time)
+            slots = nav * limits.aggressive_sleeve.max_single_position * config.aggressive_reserve_positions
+            aggressive = min(aggressive, slots)
     # The momentum sleeve (ruling 2026-10-13), the same way: its undeployed
     # allotment stays cash for the monthly rebalance; entries off, nothing parked.
     momentum = ZERO_D

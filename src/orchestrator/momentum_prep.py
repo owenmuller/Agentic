@@ -239,7 +239,8 @@ def compute(
 
     details = dec.details
     ranking = []
-    for key in sorted(ranks, key=lambda k: ranks[k])[:40]:
+    shown = set(sorted(ranks, key=lambda k: ranks[k])[:40]) | set(dec.holdings) | set(held_keys)
+    for key in sorted((k for k in shown if k in ranks), key=lambda k: ranks[k]):
         ranking.append({
             "rank": ranks[key], "symbol": symbol(key), "score": details.get("score", {}).get(key),
             "residual_z": details.get("residual_z", {}).get(key), "earnings_z": details.get("earnings_z", {}).get(key),

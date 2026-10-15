@@ -160,7 +160,8 @@ def book_path(months: list[tuple[str, dict[str, float]]], prices: dict[str, dict
 @dataclass
 class Report:
     started: Optional[str]
-    week: dict = field(default_factory=dict)      # name -> return
+    day: dict = field(default_factory=dict)       # name -> return today (from the prior close)
+    week: dict = field(default_factory=dict)      # name -> return week to date
     since: dict = field(default_factory=dict)
     holdings: int = 0
     invested: Optional[float] = None
@@ -169,10 +170,10 @@ class Report:
     def table(self) -> str:
         names = sorted(self.since, key=lambda n: -(self.since[n] if self.since[n] is not None else -9e9))
         lines = [f"MOMENTUM SLEEVE - live v1.1 vs shadows and benchmarks (since {self.started})",
-                 f"{'book':28s} {'week':>8s} {'since start':>12s}"]
+                 f"{'book':32s} {'today':>8s} {'week to date':>13s} {'since start':>12s}"]
         for name in names:
-            w, s = self.week.get(name), self.since.get(name)
-            lines.append(f"{name:28s} {_fmt(w):>8s} {_fmt(s):>12s}")
+            d, w, s = self.day.get(name), self.week.get(name), self.since.get(name)
+            lines.append(f"{name:32s} {_fmt(d):>8s} {_fmt(w):>13s} {_fmt(s):>12s}")
         lines += ["", "Notes:"] + [f"- {n}" for n in self.notes]
         return "\n".join(lines)
 
@@ -210,6 +211,7 @@ def build(directory: Path, fills: list[Fill], prices: dict[str, dict[str, float]
     if started is None:
         report.notes.append("the sleeve has not traded yet")
         return report
+    report.day["v1.1 live"] = live_return(fills, prices, today, today)
     report.week["v1.1 live"] = live_return(fills, prices, week_start, today)
     anchor = started
     report.since["v1.1 live"] = live_return(fills, prices, anchor, today)
@@ -223,6 +225,7 @@ def build(directory: Path, fills: list[Fill], prices: dict[str, dict[str, float]
         series = prices.get(bench, {})
         paths[bench] = {d: series[d] for d in days if d in series}
     for name, path in paths.items():
+        report.day[name] = window(path, today, today)
         report.week[name] = window(path, week_start, today)
         report.since[name] = window(path, anchor, today)
     value = book_value(fills, prices, today)
@@ -234,6 +237,7 @@ def build(directory: Path, fills: list[Fill], prices: dict[str, dict[str, float]
     report.notes += [
         "live: Modified Dietz on the invested book, real fill prices; cash held back by vol scaling is not in it",
         f"shadows and 'modelled': rebalanced at the rebalance day's close, {COST_PER_SIDE:.2%} per side of turnover",
+        "windows: today and week to date run from the prior close; since start from the first trade (standing rule 2026-10-14)",
         "first look at 6 months, real read at 12; SPMO is the binding comparison (ruling 2026-10-14)",
     ]
     return report
@@ -261,5 +265,5 @@ def gather(directory: Path, trails, today: date, alpaca) -> Optional[Report]:
     days = sorted(prices.get("SPY", {}))
     if not days:
         return None
-    week_start = (today - timedelta(days=6)).isoformat()  # from the close a week ago
+    week_start = (today - timedelta(days=today.weekday())).isoformat()  # week to date: from the close before Monday
     return build(directory, fills, prices, days, week_start, today.isoformat())

@@ -703,6 +703,11 @@ class MomentumPrepConfig(BaseModel):
     #: The plain search tool and a per-request timeout (the lab's settings).
     review_search_tool: str = "web_search_20250305"
     review_timeout_seconds: int = Field(default=300, ge=30, le=900)
+    #: A one-time OFF-CYCLE plan (human ruling 2026-10-14: v1.1 goes live at
+    #: the next session, not the next month): the prep builds a plan for this
+    #: session from the prior close - only while the day has not passed and
+    #: its plan does not exist yet - then the monthly schedule carries on.
+    off_cycle_rebalance_date: Optional[date] = None
 
 
 class OrchestratorConfig(BaseModel):
