@@ -166,9 +166,12 @@ def test_version_1_is_the_universe_as_traded_in_october(tmp_path, monkeypatch):
     calls: list = []
     store, stats = build_at(tmp_path, monkeypatch, "v1", "2016-01-01", BACKTEST_END, version=1, calls=calls)
     assert calls == [] and "fallback_found" not in stats
-    assert all(seg.periodic is None and seg.fallback is None for seg in store.segments)
+    assert all(seg.fallback is None for seg in store.segments)
+    e = next(s for s in store.segments if s.symbol == "E")
+    assert not engine.current_filer(e, store.calendar[-1])  # its dates are kept (the brief shows them)...
     t = len(store.calendar) - 1
-    assert [s for s, _ in ranked(store, t)] == ["A", "E", "B"]  # E still a "US filer"; B on its 2016 count
+    # ...but version 1 ranks on the old flag: E still a "US filer"; B on its 2016 count
+    assert [s for s, _ in ranked(store, t)] == ["A", "E", "B"]
 
 
 def test_a_cache_folder_serves_one_window(tmp_path, monkeypatch):

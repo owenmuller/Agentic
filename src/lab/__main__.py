@@ -7,8 +7,10 @@
                                nothing and writes only scratch.
   run <account>                the AI trader's session (its own unit only): wait
                                for the open, tick until the close.
-  golden <account>             the AI trader's golden replay: production prompt
-                               and request path, no broker (costs ~$1).
+  golden <account> [--with-brief]
+                               the AI trader's golden replay: production prompt
+                               and request path, no broker (costs ~$1);
+                               --with-brief switches the research brief on.
   roundtrip <account>          the AI trader's order path, live, minimum size, in
                                session: one SPY share and one SPY call, bought and
                                sold through the gate; writes only scratch.
@@ -230,6 +232,17 @@ def _ai_parts(account: LabAccount, config: LabConfig):
     return quotes, chain, LabLLM(config.ai_trader)
 
 
+def brief_renderer(ai_config):
+    """The research brief (ruling 2026-10-15): the main book's momentum files
+    (read only) and the committed evidence library, re-read at every scan."""
+    from pathlib import Path
+
+    from lab import brief
+
+    evidence = Path(__file__).resolve().parents[2] / ai_config.brief_evidence_path
+    return lambda: brief.render(datasafety.production_data_dir(), evidence)
+
+
 def run_session(name: str) -> int:
     """The AI trader's session: wait for the open, tick until the close."""
     import time as _time
@@ -273,7 +286,7 @@ def run_session(name: str) -> int:
             float(config.ai_trader.leverage_alert_above), float(config.ai_trader.leverage_alert_rearm_below)))
 
     trader = AiTrader(account, config.ai_trader, llm=llm, quotes=quotes, chain=chain, alert=kill_switch,
-                      leverage_alert=leverage_watch)
+                      leverage_alert=leverage_watch, brief=brief_renderer(config.ai_trader))
     holder["trader"] = trader
     try:
         clock = account.adapter.market_clock()
@@ -338,9 +351,11 @@ def _ai_snapshot(account: LabAccount, trader) -> None:
     )
 
 
-def golden(name: str) -> int:
+def golden(name: str, with_brief: bool = False) -> int:
     """The AI trader's golden replay: production prompt, production request
-    path, no broker. Also the live search->report round trip."""
+    path, no broker. Also the live search->report round trip. ``--with-brief``
+    runs it with the research brief switched on (its pre-ship replay, ruling
+    2026-10-15), whatever lab.yaml says."""
     from lab import golden as golden_replay
     from lab.ai_trader import NY
     from lab.llm import LabLLM
@@ -349,8 +364,14 @@ def golden(name: str) -> int:
     if config.ai_trader is None:
         print("no ai_trader config", file=sys.stderr)
         return 3
+    ai = config.ai_trader.model_copy(update={"brief_enabled": True}) if with_brief else config.ai_trader
+    renderer = brief_renderer(ai) if ai.brief_enabled else None
+    if renderer is not None:
+        sample = renderer()
+        print(f"research brief: {sample.chars} chars, ~{sample.tokens_estimate} tokens (chars/4), sha {sample.sha}, "
+              f"sections {sample.sections}")
     today = datetime.now(timezone.utc).astimezone(NY).date()
-    results = golden_replay.run(config.ai_trader, LabLLM(config.ai_trader), today)
+    results = golden_replay.run(ai, LabLLM(ai), today, brief=renderer)
     print(golden_replay.render(results, golden_replay.next_session(today)))
     return 0 if all(r.passed for r in results) else 1
 
@@ -460,6 +481,18 @@ def scoreboard(email: bool) -> int:
             "SPY", datetime.combine(start - timedelta(days=14), datetime.min.time(), timezone.utc),
             datetime.now(timezone.utc)):
         spy[date_from(str(bar["t"])[:10])] = float(bar["c"])
+    # the control beside the AI trader (ruling 2026-10-15, item 4): the main
+    # book's momentum sleeve (its daily line) and SPMO
+    momentum = board_mod.momentum_series(
+        board_mod.read_jsonl(main_data / "momentum" / "daily.jsonl") if main_data else [])
+    spmo: dict = {}
+    try:
+        for bar in AlpacaDailyBars(unserved=UnservedSymbols()).bars(
+                "SPMO", datetime.combine(start - timedelta(days=14), datetime.min.time(), timezone.utc),
+                datetime.now(timezone.utc)):
+            spmo[date_from(str(bar["t"])[:10])] = float(bar["c"])
+    except Exception as error:  # noqa: BLE001 - the SPMO column is optional on the board
+        print(f"(SPMO closes unavailable: {error})", file=sys.stderr)
     main_equity: dict = {}
     try:
         with AlpacaAdapter() as main:
@@ -475,6 +508,7 @@ def scoreboard(email: bool) -> int:
         rung_labels={rung.name: rung.label for rung in config.ladder.rungs},
         stop_floor=float(config.ai_trader.min_stop_fraction) if config.ai_trader else None,
         leverage_table=dict(config.ai_trader.leverage_factors) if config.ai_trader else None,
+        momentum=momentum, spmo=dict(sorted(spmo.items())),
     )
     text = board_mod.render(board, today)
     print(text)
@@ -513,6 +547,8 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("run", "golden", "roundtrip"):
         p = sub.add_parser(name)
         p.add_argument("account")
+        if name == "golden":
+            p.add_argument("--with-brief", action="store_true")
     args = parser.parse_args(argv)
     command = args.command
     if command in OPERATOR_COMMANDS:
@@ -530,7 +566,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "scoreboard":
         return scoreboard(args.email)
     if args.command == "golden":
-        return golden(args.account)
+        return golden(args.account, args.with_brief)
     if args.command == "roundtrip":
         return roundtrip(args.account)
     return resume(args.account, args.ack)

@@ -140,7 +140,14 @@ def scoreboard_report(board: Any, as_of: date, table: str, grade_at: int, verdic
             extra = f"{ai.trades} trades, {round((ai.win_rate or 0) * ai.trades)} won"
         if ai.ret_adj is not None:
             extra += (", " if extra else "") + f"{cards.pct(ai.ret_adj)} after measured fill costs"
+        if _spmo(ai) is not None:
+            extra += (", " if extra else "") + f"SPMO {cards.pct(_spmo(ai))} over the same days"
         lines.append(cards.BoardLine("AI trader", ai.ret, _spy(ai), since(ai), extra))
+    momentum = rows.get("MOMENTUM SLEEVE (main book; control)")
+    if momentum is not None and momentum.ret is not None:
+        lines.append(cards.BoardLine(
+            "Momentum sleeve (control)", momentum.ret, _spy(momentum), since(momentum),
+            f"SPMO {cards.pct(_spmo(momentum))} over the same days" if _spmo(momentum) is not None else ""))
     test = rows.get("B EXECUTION TEST (not a strategy)")
     if test is not None and test.sessions:
         lines.append(cards.BoardLine(
@@ -154,6 +161,13 @@ def scoreboard_report(board: Any, as_of: date, table: str, grade_at: int, verdic
                    or [0])
     return cards.scoreboard_card(f"{as_of:%b} {as_of.day}", lines, sessions, grade_at, verdict_at, table,
                                  file_stamp=as_of.isoformat())
+
+
+def _spmo(row: Any) -> Optional[float]:
+    """SPMO over the row's own window (ruling 2026-10-15, item 4)."""
+    if row.ret is None or getattr(row, "vs_spmo", None) is None:
+        return None
+    return row.ret - row.vs_spmo
 
 
 def _spy(row: Any) -> Optional[float]:

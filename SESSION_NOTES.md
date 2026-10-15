@@ -4102,6 +4102,31 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-15 — RULING: the AI TRADER BRIEFING (built; ships switched off until its golden replay)
+
+**Ruled:** the AI trader stays the decision-maker; a research brief is ONE extra resource rendered before each scan:
+- (a) the momentum shortlist, top 50 by v1.1 score, every flag shown;
+- (b) an evidence library;
+- (c) the live shadow scoreboard;
+- (d) promoted playbook lessons.
+
+The model may use, weigh or ignore any of it, and says when an idea draws on or contradicts an item, logged. The rules are unchanged, and Constraint #6 holds. The momentum sleeve stays as the control on the scoreboard beside the AI trader and SPMO. Golden replay with the brief, a cost check against $3/day, and the brief's token size are required before it ships.
+
+**Built:**
+- `lab/brief.py`: the renderer. It reads files only and imports nothing first-party (tested).
+- `config/evidence_library.yaml`: 20 findings, about 800 words, each with strength, n and date. Seeded from these notes by a read-only extraction; key numbers re-checked against the lines.
+- `momentum_prep.shortlist`: written as `data/momentum/shortlist.json`, with each plan and back-filled for the current plan.
+- `momentum_report.record`: writes `data/momentum/daily.jsonl`, one line per session from the prep unit's evening run.
+- `brief_use` / `brief_items` on the report tool. Logged on the `llm_pass` event (with the brief's sha, size and sections) and on `position_opened`.
+- `--with-brief` on `python -m lab golden ai-trader`. When the brief is on, the replay also hard-grades that every idea gives a valid `brief_use` and that any use names items by id.
+- Lab scoreboard: a MOMENTUM SLEEVE (control) row, an SPMO row and a vs-SPMO column. The #reports card gains the momentum line and SPMO over the AI trader's days.
+
+**Two readings, surfaced (Constraint #6 and § Standards):**
+- **The scoreboard shows modelled returns only.** The brief shows the momentum books as software books on market prices: v1.1 modelled (the plan at closes), the shadows and SPMO. The sleeve's realized "v1.1 live" line is dropped, so no account's realized result reaches a prompt. The AI trader's own figures were never an input.
+- **The shortlist refreshes monthly.** "Refreshed with each prep run" is read as each plan build. The prep's twice-daily runs do no data build in between, and a daily rebuild would cost about 45 minutes of fetching a day.
+
+**Switch:** `lab.yaml ai_trader.brief_enabled: false` at this commit. Off, the prompt and tool are byte-identical to before (tested). It is switched on by a reviewed commit after the golden replay.
+
 ### 2026-10-15 (00:00 ET) — RULINGS: market-cap fallback; one builder for the live plan and the backtest (universe version 2 from 2026-11-02)
 
 **Ruled:** a fallback for market cap where SEC shares are missing (Finnhub, already verified live), for the live plan and the backtest; the same universe builder and data path for both, with a test; both from the Nov 2 rebalance; the 2026-10-15 plan trades as built.

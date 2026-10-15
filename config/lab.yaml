@@ -190,6 +190,12 @@ ai_trader:
     BOIL: 2
     UVXY: 1.5
     SVXY: -0.5
+  # The research brief (human ruling 2026-10-15; lab/brief.py): optional
+  # reference data appended to every scan. OFF until its golden replay
+  # (python -m lab golden ai-trader --with-brief) passes; off, the prompt and
+  # the report tool are byte-identical to the brief-less ones.
+  brief_enabled: false
+  brief_evidence_path: config/evidence_library.yaml
   min_confidence: 50           # my reading (Constraint #6): no token positions on weak ideas
   min_reward_risk: 1.0         # target distance >= stop distance; my reading, flagged
   # Human ruling 2026-10-10 (second): 1% (was 0.3%) UNTIL the execution test

@@ -59,7 +59,8 @@ from zoneinfo import ZoneInfo
 from execution import BrokerError
 from execution.base import OrderStatus
 from lab.account import LabAccount
-from lab.ai_prompts import HORIZONS, INSTRUMENTS, TOOL, HeldView, build_user, system_prompt
+from lab.ai_prompts import HORIZONS, INSTRUMENTS, HeldView, build_user, report_tool, system_prompt
+from lab.brief import BEGIN as BRIEF_BEGIN, END as BRIEF_END, Brief
 from lab import leverage
 from lab.config import AiTraderConfig
 from risk_gate.gate import ApprovedOrder, RiskGate
@@ -170,6 +171,7 @@ class _Working:
 class ScanOutcome:
     ran: bool
     cost_usd: Decimal = ZERO
+    input_tokens: int = 0
     ideas: list[dict] = field(default_factory=list)
     opened: list[str] = field(default_factory=list)
     rejected: list[tuple[str, str]] = field(default_factory=list)
@@ -191,8 +193,12 @@ class AiTrader:
         monotonic: Callable[[], float] = time.monotonic,
         alert: Optional[Callable[[str, str], None]] = None,
         leverage_alert: Optional[Callable[[Decimal, Decimal, list], None]] = None,
+        brief: Optional[Callable[[], Brief]] = None,
     ) -> None:
         self.account = account
+        #: The research brief's renderer (ruling 2026-10-15); used only while
+        #: ``config.brief_enabled``.
+        self._brief = brief
         self.config = config
         self.llm = llm
         self._quotes = quotes
@@ -460,16 +466,17 @@ class AiTrader:
                 self.account.ledger.append("spend_cap", spent=spent, cap=cfg.daily_spend_cap_usd, scan=label)
                 self.notes.append(note)
                 return ScanOutcome(False, note=note)
-        user = self.user_prompt(now, held)
+        brief = self.current_brief()
+        user = self.user_prompt(now, held, brief=brief)
         try:
-            result = self.llm.scan(system=system_prompt(cfg), user=user, tool=TOOL)
+            result = self.llm.scan(system=system_prompt(cfg), user=user, tool=report_tool(brief is not None))
         except Exception as error:  # noqa: BLE001 - a failed pass is a fault, never a trade
             self._fault(f"scan {label}: the model pass failed ({type(error).__name__}: {str(error)[:200]}); "
                         f"nothing traded")
             return ScanOutcome(False, note="pass failed")
         structured = result.structured or {}
         ideas = list(structured.get("ideas") or [])[: cfg.max_ideas_per_scan]
-        outcome = ScanOutcome(True, cost_usd=result.cost_usd, ideas=ideas)
+        outcome = ScanOutcome(True, cost_usd=result.cost_usd, ideas=ideas, input_tokens=result.input_tokens or 0)
         if not dry_run:
             self.account.ledger.append(
                 "llm_pass", scan=label, model=result.model, cost_usd=result.cost_usd,
@@ -478,6 +485,10 @@ class AiTrader:
                 transcript_hash=result.transcript_hash, reported=result.structured is not None,
                 market_view=structured.get("market_view"), no_trade_reason=structured.get("no_trade_reason"),
                 ideas=ideas,
+                # which brief this pass saw (ruling 2026-10-15): the learning
+                # loop measures whether it helps
+                brief=(dict(sha=brief.sha, chars=brief.chars, tokens_estimate=brief.tokens_estimate,
+                            sections=brief.sections) if brief is not None else None),
             )
         if result.structured is None:
             self._fault(f"scan {label}: the model returned no report ({result.stop_reason}); nothing traded")
@@ -515,7 +526,22 @@ class AiTrader:
         )
         return outcome
 
-    def user_prompt(self, now: datetime, held: list[Position]) -> str:
+    def current_brief(self) -> Optional[Brief]:
+        """The research brief for this scan, or None while it is switched off.
+        A renderer failure still sends a (empty) fenced brief, so the prompt
+        keeps the shape the system prompt describes; the fault is logged."""
+        if not self.config.brief_enabled:
+            return None
+        try:
+            if self._brief is None:
+                raise RuntimeError("no brief renderer wired")
+            return self._brief()
+        except Exception as error:  # noqa: BLE001 - reference data never stops a scan
+            logger.warning("research brief unavailable: %s: %s", type(error).__name__, error)
+            text = f"{BRIEF_BEGIN}\n(unavailable this scan)\n{BRIEF_END}"
+            return Brief(text, "unavailable", len(text), {"all": f"missing: {type(error).__name__}"})
+
+    def user_prompt(self, now: datetime, held: list[Position], brief: Optional[Brief] = None) -> str:
         cfg = self.config
         day = now.astimezone(NY).date()
         views = [HeldView(p.symbol, p.instrument + (f" {p.occ}" if p.occ else ""), p.horizon,
@@ -526,6 +552,7 @@ class AiTrader:
             max_ideas=cfg.max_ideas_per_scan,
             entries_open=local < at(day, cfg.no_entries_after),
             intraday_open=local < at(day, cfg.no_intraday_entries_after),
+            brief=brief.text if brief is not None else None,
         )
 
     # -- validation --------------------------------------------------------
@@ -615,6 +642,8 @@ class AiTrader:
                     thesis=str(idea.get("thesis", ""))[:1000], source=str(idea.get("source", ""))[:1000],
                     catalyst=str(idea.get("catalyst", ""))[:500], invalidation=str(idea.get("invalidation", ""))[:500],
                     confidence=int(idea["confidence"]), scan=label, risk_budget=budget, nav=nav)
+        if "brief_use" in idea:  # the brief's use rides on the position (ruling 2026-10-15)
+            plan.update(brief_use=str(idea.get("brief_use"))[:20], brief_items=str(idea.get("brief_items") or "")[:500])
         # Leverage is allowed and MEASURED (ruling 2026-10-14, second): the
         # factor and its tag ride on the plan, so the gross figures, the
         # scoreboard and the journal can tell a 3x fund from a stock pick.

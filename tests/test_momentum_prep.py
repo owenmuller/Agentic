@@ -385,3 +385,27 @@ def test_a_shadow_declared_mid_month_starts_at_the_next_session():
     assert prep.shadow_start(plan, evening, sessions) == prep.Due("2026-10-21", "2026-10-20")
     morning = _dt(2026, 10, 20, 12, 0, tzinfo=_tz.utc)    # 08:00 ET
     assert prep.shadow_start(plan, morning, sessions) == prep.Due("2026-10-20", "2026-10-19")
+
+
+def test_the_shortlist_shows_every_flag_and_ranks_by_score():
+    # The AI trader's brief (ruling 2026-10-15): the top names by v1.1's
+    # score, each with its legs and every buy-gate flag, not only the first.
+    store = make_store(n_stocks=60, sessions=620)
+    for seg in store.segments[::2]:  # every other name: a pending deal, and a filer whose last 10-K was in 2015
+        seg.pending = [[0, len(store.calendar) - 1]]
+        seg.periodic = ["2015-06-30"]
+    day = store.calendar[engine.month_starts(store.calendar)[-1]]
+    past = _truncated(store, store.index[day])
+    data = prep.shortlist(past, day, plan_symbols={"S05"}, size=20)
+    rows = data["names"]
+    assert len(rows) == 20 and [r["score_rank"] for r in rows] == list(range(1, 21))
+    assert [r["score"] for r in rows] == sorted((r["score"] for r in rows), reverse=True)
+    assert data["data_through"] == store.calendar[store.index[day] - 1] and data["universe_version"] == 1
+    for r in rows:
+        assert set(r["flags"]) == {"below_100_day_average", "day_over_15pct_in_63_sessions",
+                                   "big_days_all_on_earnings", "pending_acquisition", "filer"}
+        assert r["in_plan"] == (r["symbol"] == "S05")
+        flagged = int(r["symbol"][1:]) % 2 == 0
+        assert r["flags"]["pending_acquisition"] is flagged
+        assert (r["buy_gate"] == "pending acquisition target") is flagged
+        assert r["flags"]["filer"].startswith("lapsed") is flagged  # shown; version 1 still ranks it

@@ -134,6 +134,12 @@ class AiTraderConfig(_Strict):
     #: Signed leverage factors by symbol (SOXS -3, SSO 2, ...). A fund not
     #: listed is read from its name at the broker; anything else is 1.
     leverage_factors: dict[str, Decimal] = Field(default_factory=dict)
+    #: The research brief (human ruling 2026-10-15): optional reference data
+    #: rendered into every scan's prompt (``lab.brief``). Off, the prompt and
+    #: the report tool are byte-identical to the brief-less ones; it is
+    #: switched on by a reviewed commit after its golden replay.
+    brief_enabled: bool = False
+    brief_evidence_path: str = "config/evidence_library.yaml"
     min_confidence: int = Field(ge=0, le=100)
     min_reward_risk: Decimal = Field(ge=ZERO)
     min_stop_fraction: Decimal = Field(gt=ZERO, lt=ONE)

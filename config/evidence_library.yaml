@@ -1,0 +1,112 @@
+# EVIDENCE LIBRARY - the AI trader's brief, section (b) (human ruling 2026-10-15).
+#
+# Measured findings from this project's own tests (SESSION_NOTES.md), one or
+# two plain sentences each. Rendered into the AI trader's prompt as REFERENCE
+# DATA it may use, weigh or ignore. Rules for editing (tests/test_lab_brief.py):
+#   - strength is strong / moderate / weak; n is the sample size as measured;
+#   - under 1,500 words in all; summarise, never paste tables;
+#   - NO figure about any account of this system: no P&L, no account value,
+#     no return target (CLAUDE.md Constraint #6 and the scoreboard rule);
+#   - "excess" means over SPY, in percentage points, unless a line says otherwise.
+# A finding is added or revised by a commit, like any config.
+findings:
+  - id: E1
+    finding: "Company news: the move happens in the print or the overnight gap (mean gap +2.0%, 64% in the news direction). From the next open, five-day drift is negative (-0.20 points, CI -0.38 to -0.01), and it turned more negative in 2025-26. Chasing a headline after the open has had no edge."
+    strength: strong
+    n: "19,653 news events, 2015-2026"
+    date: 2026-10-08
+  - id: E2
+    finding: "8-K material agreements (1.01) and other events (8.01): after the filing, five-day drift is downward (8.01 -0.69, CI -1.07 to -0.21), concentrated in small caps; large caps are near flat."
+    strength: strong
+    n: "33,256 filings, 2024-2026"
+    date: 2026-10-08
+  - id: E3
+    finding: "Congressional purchase disclosures: small trades (up to $15K) trail SPY by 0.8 points over five days, and the freshest disclosures (7 days or less) are the worst (-1.5). Large bands ($100K+) look positive only on about 35 cases each, driven by a few names."
+    strength: moderate
+    n: "1,541 small-band; about 35 per large band"
+    date: 2026-09-18
+  - id: E4
+    finding: "A replication of the popular congressional long-short strategy (2016-2026) showed no alpha against QQQ (-0.9%/yr, CI -13.7 to +11.9), and its short leg lost 15.9%/yr."
+    strength: strong
+    n: "40 quarterly start dates, 2016-2026"
+    date: 2026-10-09
+  - id: E5
+    finding: "Insider purchases (Form 4): every live reading so far is negative. Single purchases trail SPY by 1.7 points over five days; clusters of insiders did no better, often worse."
+    strength: weak
+    n: "136 singles, 24 clusters"
+    date: 2026-09-28
+  - id: E6
+    finding: "Defense contract awards: a NEW award to a single company worth at least 1% of its market cap was followed by +0.65 points over five days (CI +0.15 to +1.20, 53% hit). It is gone by 20 days; smaller awards and modifications showed nothing."
+    strength: moderate
+    n: "170 awards on 46 tickers, 2019-2026"
+    date: 2026-10-06
+  - id: E7
+    finding: "FDA decision dates (PDUFA): the run-up into the date is a lottery (mean +2.6% but median -3.5%). An approval gaps up about 4%; a rejection gaps down about 27%; after the decision, five-day drift is -1.25."
+    strength: moderate
+    n: "454 decisions, 162 tickers, 2019-2026"
+    date: 2026-10-07
+  - id: E8
+    finding: "Breakouts after an event (close above the 5-day high on twice normal volume) trailed SPY by 2.4 points (CI -3.4 to -1.4); names already 40% ahead of SPY at the breakout trailed by 12.4. More volume made it worse."
+    strength: strong
+    n: "6,361 breakouts, 2016-2026"
+    date: 2026-10-08
+  - id: E9
+    finding: "Sharp one-day drops (6% or more on volume) for company-specific reasons did not revert: they kept drifting down (-1.0 at five days, -2.6 at 60 days). Apparent rebounds came from market-wide crashes, not single-name drops."
+    strength: moderate
+    n: "415 company-specific drops"
+    date: 2026-09-03
+  - id: E10
+    finding: "Merger arbitrage beat cash (+3.4%/yr on capital) but trailed SPY by 10.2 points a year; deals priced at spreads over 20% that broke lost about 25% on average."
+    strength: strong
+    n: "772 deals, 2016-2026"
+    date: 2026-10-08
+  - id: E11
+    finding: "Published intraday strategies decay after publication: SPY noise-area momentum reproduced its paper in-sample (+17.8%/yr) but earned +1.9%/yr after publication (its long-only form -2.2%/yr while SPY made +19.6%); the stocks-in-play opening-range breakout lost its edge likewise. Judge any published edge on its post-publication record."
+    strength: strong
+    n: "daily SPY 2016-2026; two strategies"
+    date: 2026-10-09
+  - id: E12
+    finding: "Four intraday rules (gap-follow, gap-fade, the 15-minute opening-range breakout, and buying the top 10:00 gainers) lost money net of costs in every year 2019-2026; even before costs the best (gap-follow) made +8.9%/yr while SPY made +17.3%/yr."
+    strength: strong
+    n: "2019-2026, four strategies"
+    date: 2026-10-08
+  - id: E13
+    finding: "Stop orders slip: at the trigger, the median fill is 0.10% worse than the stop (mean 0.27%, 1 in 10 worse than 0.75%). Entries and closing fills slip far less (about 0.00-0.02%). A stop under about 1% from entry loses a large share of its risk to slippage."
+    strength: strong
+    n: "1,487 stops, 1,651 entries, 166 closes (SIP trades and quotes)"
+    date: 2026-10-08
+  - id: E14
+    finding: "Option spreads are wide: a median 9.9% of mid across whole chains after the close, and about 18% of mid in session for the strike and expiry buckets traded (Apple 9%); the free quote feed is indicative, not the true best bid and offer. One live 1-day SPY call cost 0.9% over mid to buy. A long option needs a move well beyond its spread to pay."
+    strength: moderate
+    n: "chain snapshots; 1 live round trip"
+    date: 2026-10-08
+  - id: E15
+    finding: "Writing options (covered calls, put-writing, the wheel) on real chains 2024-2026 trailed SPY (covered calls 14.7%/yr vs SPY 20.3%). Models priced the premium about a third richer than real quotes."
+    strength: moderate
+    n: "957 contract comparisons; 2024-02 to 2026-10"
+    date: 2026-10-08
+  - id: E16
+    finding: "Leverage decays with volatility: daily-rebalanced 2x SPY made 14.2%/yr since 1993 against 10.8% at 1x, but with an 88% drawdown; on QQQ, 2x earned LESS than 1.5x (10.5% vs 11.7%) with a 99% drawdown. A 1x-3x trend-switching rule made 9.4%/yr against SPY 10.9%, about 3%/yr lost to switching costs."
+    strength: strong
+    n: "SPY 1993-2026, QQQ 1999-2026"
+    date: 2026-10-09
+  - id: E17
+    finding: "Momentum among the largest 500 US companies (residual 12-1 plus earnings reactions, top 15, monthly) made about 14-16%/yr in a 2017-2026 backtest, close to SPY (14.7%) and well below the SPMO ETF (19.8%). Broad momentum over 1,000 names made only about 8-9%/yr. In-sample only."
+    strength: weak
+    n: "2017-03 to 2026-10, one backtest window"
+    date: 2026-10-15
+  - id: E18
+    finding: "In the same momentum backtest, each risk overlay alone (a market trend filter, or volatility scaling) beat both together by 2-3 points a year. In-sample only; both versions are being tracked live from 2026-10-15."
+    strength: weak
+    n: "one window, three universes agree"
+    date: 2026-10-15
+  - id: E19
+    finding: "Research-model verdicts are noisy: the same case re-run five times flipped direction in 7 of 29 cases, and one case's confidence ranged 20-82. The variance comes from what the searches return, not from sampling temperature. Treat a single confident read with care; independent confirmation matters."
+    strength: moderate
+    n: "145 runs of 29 cases"
+    date: 2026-10-06
+  - id: E20
+    finding: "Signals from posts (Trump posts, X trade-callers) and activist 13D filings have produced too few gradable trades to measure. No finding either way."
+    strength: weak
+    n: "0 graded trades"
+    date: 2026-10-07

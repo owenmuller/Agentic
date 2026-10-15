@@ -665,3 +665,68 @@ def test_the_leverage_card_is_yellow_on_urgent_and_says_nothing_is_blocked():
     text = " ".join(card.all_lines)
     assert "162%" in text and "60%" in text and "SOXS 61% (-3x)" in text and "Nothing is blocked" in text
     assert "below 130%" in text and "150%" in text
+
+
+# ----------------------------------------------------- the research brief (2026-10-15)
+
+
+class ToolLLM(FakeLLM):
+    def scan(self, *, system, user, tool):
+        self.systems = getattr(self, "systems", []) + [system]
+        self.tools = getattr(self, "tools", []) + [tool]
+        return super().scan(system=system, user=user, tool=tool)
+
+
+def test_with_the_brief_on_a_scan_sends_it_logs_it_and_the_position_carries_its_use(lab_env):
+    from lab.brief import BEGIN, END, Brief
+
+    world = World()
+    idea = dict(AAPL_LONG, brief_use="draws_on", brief_items="E11: published edges decay; this is not one")
+    llm = ToolLLM([idea])
+    trader = trader_for(world, lab_env, llm)
+    trader.config = CFG.model_copy(update={"brief_enabled": True})
+    text = f"{BEGIN}\n(b) EVIDENCE LIBRARY\nE11 ...\n{END}"
+    trader._brief = lambda: Brief(text, "sha0123456789abc", len(text), {"evidence": "ok"})
+    trader.tick(et(12, "09:46"))
+    assert llm.calls[0].rstrip().endswith(END) and "RESEARCH BRIEF" in llm.systems[0]
+    assert "brief_use" in llm.tools[0]["input_schema"]["properties"]["ideas"]["items"]["required"]
+    passes = trader.account.ledger.events(["llm_pass"])
+    assert passes[0]["brief"]["sha"] == "sha0123456789abc" and passes[0]["ideas"][0]["brief_use"] == "draws_on"
+    opened = trader.account.ledger.events(["position_opened"])
+    assert opened[0]["brief_use"] == "draws_on" and opened[0]["brief_items"].startswith("E11")
+
+
+def test_with_the_brief_off_nothing_changes(lab_env):
+    world = World()
+    llm = ToolLLM([AAPL_LONG])
+    trader = trader_for(world, lab_env, llm)
+    trader._brief = lambda: (_ for _ in ()).throw(AssertionError("rendered while off"))
+    trader.tick(et(12, "09:46"))
+    assert llm.tools[0] is TOOL and "RESEARCH BRIEF" not in llm.systems[0] and "RESEARCH BRIEF" not in llm.calls[0]
+    assert trader.account.ledger.events(["llm_pass"])[0]["brief"] is None
+
+
+def test_a_failed_brief_never_stops_a_scan(lab_env):
+    world = World()
+    llm = ToolLLM([AAPL_LONG])
+    trader = trader_for(world, lab_env, llm)
+    trader.config = CFG.model_copy(update={"brief_enabled": True})
+    trader._brief = lambda: (_ for _ in ()).throw(OSError("disk"))
+    notes = trader.tick(et(12, "09:46"))
+    assert "(unavailable this scan)" in llm.calls[0] and any("opened AAPL" in n for n in notes)
+
+
+@pytest.mark.parametrize("idea, passed", [
+    (dict(AAPL_LONG, brief_use="none"), True),
+    (dict(AAPL_LONG, brief_use="contradicts", brief_items="E8 says breakouts fail; this is a catalyst"), True),
+    (dict(AAPL_LONG, brief_use="draws_on", brief_items="the shortlist"), False),
+    (dict(AAPL_LONG), False),
+])
+def test_golden_grades_the_brief_fields_when_it_is_on(idea, passed):
+    class Once(FakeLLM):
+        pass
+
+    on = CFG.model_copy(update={"brief_enabled": True})
+    result = golden_replay.run_case({"name": "x", "time": "10:00", "held": [], "expect": {}}, on, Once([idea]),
+                                    date(2026, 10, 16), brief=None)
+    assert result.passed is passed, result.failures

@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Optional
 from zoneinfo import ZoneInfo
@@ -53,6 +53,8 @@ class Row:
     ret_adj: Optional[float] = None
     vs_spy: Optional[float] = None
     vs_ladder: Optional[float] = None
+    #: the row's return minus SPMO's over the same days (ruling 2026-10-15)
+    vs_spmo: Optional[float] = None
     max_dd: Optional[float] = None
     trades: Optional[int] = None
     win_rate: Optional[float] = None
@@ -192,7 +194,8 @@ def _trade_stats(row: Row, trades: list[Trade]) -> None:
     row.avg_loss = sum(losses) / len(losses) if losses else None
 
 
-def _versus(row: Row, series: dict[date, float], spy: dict[date, float], ladder: dict[date, float]) -> None:
+def _versus(row: Row, series: dict[date, float], spy: dict[date, float], ladder: dict[date, float],
+            spmo: Optional[dict[date, float]] = None) -> None:
     if not series:
         return
     days = list(series)
@@ -204,6 +207,8 @@ def _versus(row: Row, series: dict[date, float], spy: dict[date, float], ladder:
         ladder_ret = window_return(ladder, days[0], days[-1])
         row.vs_spy = None if spy_ret is None else row.ret - spy_ret
         row.vs_ladder = None if ladder_ret is None else row.ret - ladder_ret
+        spmo_ret = window_return(spmo, days[0], days[-1]) if spmo else None
+        row.vs_spmo = None if spmo_ret is None else row.ret - spmo_ret
 
 
 def build(
@@ -216,22 +221,24 @@ def build(
     rung_labels: dict[str, str],
     stop_floor: Optional[float] = None,
     leverage_table: Optional[dict] = None,
+    momentum: Optional[dict[date, float]] = None,
+    spmo: Optional[dict[date, float]] = None,
 ) -> Board:
     table = slippage_table(exec_lines)
     ladder = daily_last(ladder_events, "equity")
     rows: list[Row] = []
 
     row = Row("LEVERAGE LADDER (benchmark)", note="buy-and-hold, not intraday: raw is its line")
-    _versus(row, ladder, spy, ladder)
+    _versus(row, ladder, spy, ladder, spmo)
     rows.append(row)
     for rung, label in rung_labels.items():
         row = Row(f"  rung {label}")
-        _versus(row, daily_last(ladder_events, f"rungs.{rung}"), spy, ladder)
+        _versus(row, daily_last(ladder_events, f"rungs.{rung}"), spy, ladder, spmo)
         rows.append(row)
 
     ai = daily_last(ai_events, "equity")
     row = Row("AI TRADER")
-    _versus(row, ai, spy, ladder)
+    _versus(row, ai, spy, ladder, spmo)
     trades = lab_trades(ai_events, table, leverage_table)
     _trade_stats(row, trades)
     if row.ret is not None:
@@ -250,6 +257,22 @@ def build(
         sub.note = "closed-trade statistics only" + (f"; net ${sum(t.pnl for t in subset):+,.0f}" if subset else "")
         rows.append(sub)
 
+    # The control beside the AI trader (ruling 2026-10-15, item 4): the main
+    # book's mechanical momentum sleeve (v1.1, its realized fills) and SPMO.
+    row = Row("MOMENTUM SLEEVE (main book; control)", note="v1.1 live, Modified Dietz on the invested book")
+    _versus(row, momentum or {}, spy, ladder, spmo)
+    rows.append(row)
+    row = Row("SPMO", note="over the AI trader's days")
+    if ai and spmo:
+        start, end = list(ai)[0], list(ai)[-1]
+        sliced = {d: v for d, v in spmo.items() if start <= d <= end}
+        row.start, row.sessions = (min(sliced), len(sliced)) if sliced else (None, 0)
+        row.ret = window_return(spmo, start, end)
+        row.max_dd = max_drawdown(sliced) if sliced else None
+        spy_ret = window_return(spy, start, end)
+        row.vs_spy = None if row.ret is None or spy_ret is None else row.ret - spy_ret
+    rows.append(row)
+
     row = Row("B EXECUTION TEST (not a strategy)")
     if exec_lines:
         days = sorted(_parse(line["day"]) for line in exec_lines)
@@ -262,7 +285,7 @@ def build(
     rows.append(row)
 
     row = Row("MAIN BOOK (account)", note="trades and attribution: see the weekly report")
-    _versus(row, main_equity, spy, ladder)
+    _versus(row, main_equity, spy, ladder, spmo)
     rows.append(row)
 
     row = Row("SPY")
@@ -283,7 +306,7 @@ def build(
         ) + f"; a rate is used from n >= {MIN_FILLS}. Measured on SPY/SH: option fills charged at the same bp "
             "understate their spreads.",
         "vs ladder = the row's return minus the ladder account's over the same days (n/a where the ladder had not "
-        "started).",
+        "started). vs SPMO likewise against the SPMO ETF (the momentum sleeve's binding comparison).",
     ]
     return Board(rows, table, notes)
 
@@ -318,13 +341,14 @@ def _usd(value: Optional[float]) -> str:
 
 def render(board: Board, as_of: date) -> str:
     header = (f"{'sleeve':36} {'start':>10} {'sess':>4} {'return':>8} {'adj':>8} {'vs SPY':>8} {'vs ladder':>9} "
+              f"{'vs SPMO':>8} "
               f"{'max DD':>8} {'trades':>6} {'win':>5} {'avg win':>8} {'avg loss':>8}")
     lines = [f"PAPER LAB SCOREBOARD - as of {as_of} (raw paper P&L; adj = after measured slippage)", header,
              "-" * len(header)]
     for r in board.rows:
         lines.append(
             f"{r.name[:36]:36} {str(r.start or '-'):>10} {r.sessions:>4} {_pct(r.ret):>8} {_pct(r.ret_adj):>8} "
-            f"{_pct(r.vs_spy):>8} {_pct(r.vs_ladder):>9} {_pct(r.max_dd):>8} "
+            f"{_pct(r.vs_spy):>8} {_pct(r.vs_ladder):>9} {_pct(r.vs_spmo):>8} {_pct(r.max_dd):>8} "
             f"{('-' if r.trades is None else r.trades):>6} "
             f"{('-' if r.win_rate is None else f'{r.win_rate:.0%}'):>5} {_usd(r.avg_win):>8} {_usd(r.avg_loss):>8}"
         )
@@ -333,6 +357,24 @@ def render(board: Board, as_of: date) -> str:
     lines.append("")
     lines.extend(board.notes)
     return "\n".join(lines)
+
+
+def momentum_series(lines: Iterable[dict], book: str = "v1.1 live") -> dict[date, float]:
+    """The momentum sleeve as a value index from the main book's
+    ``data/momentum/daily.jsonl`` (one line per session: each book's
+    since-start return): 1.0 at the close before its first trade, then
+    1 + since-start at each session."""
+    out: dict[date, float] = {}
+    started = None
+    for line in lines:
+        value = (line.get("since") or {}).get(book)
+        if value is None or not line.get("day"):
+            continue
+        started = started or line.get("started")
+        out[_parse(line["day"])] = 1.0 + float(value)
+    if out and started:
+        out[_parse(started) - timedelta(days=1)] = 1.0  # the close before the first trade (on-or-before lookups)
+    return dict(sorted(out.items()))
 
 
 def read_jsonl(path: Path) -> list[dict]:

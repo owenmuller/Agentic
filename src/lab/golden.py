@@ -19,6 +19,7 @@ price_seen, and the pass cost.
 """
 from __future__ import annotations
 
+import re
 import tempfile
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -43,6 +44,7 @@ class CaseResult:
     rejected: list[tuple[str, str]] = field(default_factory=list)
     cost_usd: Decimal = Decimal("0")
     reported: bool = True
+    input_tokens: int = 0
 
 
 class _GoldenAccount:
@@ -73,7 +75,11 @@ def load_cases(path: Optional[Path] = None) -> list[dict]:
         return list(yaml.safe_load(handle)["cases"])
 
 
-def run_case(case: dict, config: AiTraderConfig, llm: Any, day: date) -> CaseResult:
+#: A brief citation names items by id (ruling 2026-10-15).
+_BRIEF_ID = re.compile(r"\b(M\d+|E\d+|S|P\d+)\b")
+
+
+def run_case(case: dict, config: AiTraderConfig, llm: Any, day: date, brief: Any = None) -> CaseResult:
     now = at(day, case["time"])
     with tempfile.TemporaryDirectory(prefix="lab-golden-") as tmp:
         clock_value = [at(day, "09:31")]
@@ -90,11 +96,12 @@ def run_case(case: dict, config: AiTraderConfig, llm: Any, day: date) -> CaseRes
                                   stop="1", target="2", thesis="")
             account.ledger.append("settled", order_id=f"t{i}a", pid=pid, side="buy", filled_qty="1", avg_price="1")
             account.ledger.append("settled", order_id=f"t{i}b", pid=pid, side="sell", filled_qty="1", avg_price="1")
-        trader = AiTrader(account, config, llm=llm, quotes=lambda s: None, chain=None)  # type: ignore[arg-type]
+        trader = AiTrader(account, config, llm=llm, quotes=lambda s: None, chain=None,  # type: ignore[arg-type]
+                          brief=brief)
         outcome = trader.scan(now, label=f"golden:{case['name']}", dry_run=True)
     expect = case.get("expect") or {}
     result = CaseResult(case["name"], True, ideas=outcome.ideas, accepted=outcome.opened,
-                        rejected=outcome.rejected, cost_usd=outcome.cost_usd)
+                        rejected=outcome.rejected, cost_usd=outcome.cost_usd, input_tokens=outcome.input_tokens)
     failures = result.failures
     if trader.notes and any("returned no report" in n for n in trader.notes):
         result.reported = False
@@ -117,13 +124,21 @@ def run_case(case: dict, config: AiTraderConfig, llm: Any, day: date) -> CaseRes
         if not valid:
             failures.append(f"{symbol}: stop_pct/target_pct are not positive percentage distances "
                             f"({idea.get('stop_pct')!r} / {idea.get('target_pct')!r})")
+        # with the brief on (ruling 2026-10-15) the prompt makes these rules:
+        # every idea says how it used the brief, and a use names its items
+        if config.brief_enabled:
+            use = idea.get("brief_use")
+            if use not in ("none", "draws_on", "contradicts"):
+                failures.append(f"{symbol}: brief_use missing or invalid ({use!r})")
+            elif use != "none" and not _BRIEF_ID.search(str(idea.get("brief_items") or "")):
+                failures.append(f"{symbol}: brief_use {use} names no brief item by id")
     result.passed = not failures
     return result
 
 
-def run(config: AiTraderConfig, llm: Any, today: date) -> list[CaseResult]:
+def run(config: AiTraderConfig, llm: Any, today: date, brief: Any = None) -> list[CaseResult]:
     day = next_session(today)
-    return [run_case(case, config, llm, day) for case in load_cases()]
+    return [run_case(case, config, llm, day, brief) for case in load_cases()]
 
 
 def render(results: list[CaseResult], day: date) -> str:
@@ -131,7 +146,7 @@ def render(results: list[CaseResult], day: date) -> str:
     total = sum((r.cost_usd for r in results), Decimal("0"))
     for r in results:
         lines.append(f"  {'PASS' if r.passed else 'FAIL'}  {r.name}: {len(r.ideas)} idea(s), engine accepted "
-                     f"{r.accepted or 'none'}, cost {r.cost_usd:.3f}")
+                     f"{r.accepted or 'none'}, cost {r.cost_usd:.3f}, input tokens {r.input_tokens}")
         for failure in r.failures:
             lines.append(f"        FAIL: {failure}")
         for symbol, reason in r.rejected:
@@ -140,6 +155,8 @@ def render(results: list[CaseResult], day: date) -> str:
             lines.append(f"        idea {idea.get('symbol')} {idea.get('instrument')} {idea.get('horizon')} "
                          f"stop {idea.get('stop_pct')}% target {idea.get('target_pct')}% seen {idea.get('price_seen')} "
                          f"conf {idea.get('confidence')}: {str(idea.get('thesis', ''))[:140]}")
+            if "brief_use" in idea:
+                lines.append(f"          brief: {idea.get('brief_use')} {str(idea.get('brief_items') or '')[:160]}")
     passed = sum(1 for r in results if r.passed)
     lines.append(f"  {passed}/{len(results)} cases passed; total cost {total:.3f} USD")
     return "\n".join(lines)

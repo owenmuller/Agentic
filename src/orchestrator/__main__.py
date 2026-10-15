@@ -299,6 +299,59 @@ def _momentum_card(checks, daily: bool = False):
     return cards.momentum_daily_card(report) if daily else cards.momentum_week_card(report)
 
 
+def _momentum_brief_files(directory: Path, cache_root: Path, config, latest: Optional[dict], now: datetime,
+                          alpaca, build, log) -> None:
+    """The momentum side of the AI trader's brief (human ruling 2026-10-15),
+    written by the prep unit and read by the lab as data:
+
+    * ``shortlist.json`` for the latest plan when it has none yet - built from
+      that plan's own market data and universe version, so it ranks exactly
+      as the plan did;
+    * one ``daily.jsonl`` line per session (the evening run): every book's
+      today / week / since-start return - the same numbers as the daily card.
+
+    Reference data only: a failure here is logged, never a failed prep."""
+    from datetime import date as _date, time as dtime
+
+    from momentum import feeds
+    from orchestrator import momentum_prep as prep_module
+    from orchestrator import momentum_report
+
+    if latest and not prep_module.shortlist_current(directory, latest["rebalance_date"]):
+        folder = cache_root / latest["data_through"]
+        try:
+            if not folder.is_dir():
+                log.warning("momentum prep: no market data for the %s plan (%s); shortlist not written",
+                            latest["month"], folder)
+            else:
+                first = _date.fromisoformat(latest["data_through"]).replace(day=1)
+                store, _ = build(folder, start=first.replace(year=first.year - config.history_years).isoformat(),
+                                 end=latest["data_through"], log=log.info,
+                                 universe_version=config.universe_version(latest["rebalance_date"]))
+                names = {a["symbol"]: a.get("name") or "" for a in feeds.Cache(folder).get("alpaca_assets") or []}
+                prep_module.write_json(directory / prep_module.SHORTLIST_FILE, prep_module.shortlist(
+                    store, latest["rebalance_date"], plan_symbols={t["symbol"] for t in latest["targets"]},
+                    names=names))
+                log.info("momentum prep: shortlist written for the %s plan", latest["month"])
+                del store
+        except Exception as error:  # noqa: BLE001
+            log.warning("momentum prep: shortlist not written (%s: %s)", type(error).__name__, error)
+    local = now.astimezone(_NY)
+    if latest is None or local.time() < dtime(16, 30):
+        return
+    try:
+        today = local.date()
+        if alpaca.sessions(today.isoformat(), today.isoformat()) != [today.isoformat()]:
+            return
+        bars = feeds.Alpaca(feeds.Cache(datasafety.scratch_data_dir() / "momentum-weekly-cache"))
+        report = momentum_report.gather(directory, AuditLog(directory.parent / "audit.jsonl").trails(), today, bars)
+        if report is not None:
+            momentum_report.record(directory, report, today.isoformat())
+            log.info("momentum prep: daily scoreboard line recorded for %s", today)
+    except Exception as error:  # noqa: BLE001
+        log.warning("momentum prep: daily scoreboard line not recorded (%s: %s)", type(error).__name__, error)
+
+
 def weekly() -> int:
     """Friday delivery (ruling 2026-09-02): the attribution + forward report,
     emailed on the DAILY tier. Falls back to stdout when alerting is not
@@ -1709,6 +1762,8 @@ def momentum_prep() -> int:
                     log.info("momentum prep: shadow(s) %s tracked from %s (data through %s)", added,
                              begin.rebalance_day, begin.data_through)
                 del shadow_store
+        if wanted is None:
+            _momentum_brief_files(directory, cache_root, config, latest, now, alpaca, build, log)
         if wanted is not None:
             sessions = alpaca.sessions((_date.fromisoformat(wanted) - timedelta(days=12)).isoformat(), wanted)
             if not sessions or sessions[-1] != wanted or len(sessions) < 2:
@@ -1772,6 +1827,11 @@ def momentum_prep() -> int:
             result.detail["review_passes"] = reviewer.passes
         path = prep_module.write(directory, result)
         log.info("momentum plan written: %s (%d names)", path, len(result.plan["targets"]))
+        try:  # the AI trader's brief (ruling 2026-10-15): reference data, never a reason to fail the plan
+            prep_module.write_json(directory / prep_module.SHORTLIST_FILE, prep_module.shortlist(
+                store, target.rebalance_day, plan_symbols={t["symbol"] for t in result.plan["targets"]}, names=names))
+        except Exception as error:  # noqa: BLE001
+            log.warning("momentum prep: shortlist not written (%s: %s)", type(error).__name__, error)
         for problem in result.problems:
             log.warning("momentum prep: %s", problem)
         # keep this run's market data and the one before it

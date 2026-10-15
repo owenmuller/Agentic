@@ -230,9 +230,10 @@ def build(cache_dir: Path, *, start: str = "2016-01-01", end: Optional[str] = No
         f = facts.get(seg.cik) or {}
         seg.sector = ff12(f.get("sic"))
         seg.us_filer = bool(f.get("us_filer"))
-        # the 18-month current-filer rule (2026-10-14) is universe version 2;
-        # None keeps version 1's flag (any 10-K/10-Q since 2015)
-        seg.periodic = list(f.get("periodic") or []) if universe_version >= 2 else None
+        # the 10-K/10-Q dates, always kept (the AI trader's brief shows filer
+        # status on every store); the 18-month rule itself ranks only in
+        # universe version 2 (``engine._universe``)
+        seg.periodic = list(f.get("periodic") or [])
         seg.events = sorted({i for i in (feeds.session_of(a, calendar, index) for a in f.get("earnings", []))
                              if i is not None and seg.first <= i <= seg.last})
         seg.pending = _pending_ranges(f, calendar, seg)

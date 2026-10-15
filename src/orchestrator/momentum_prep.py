@@ -390,6 +390,78 @@ def backfill_shadows(store, start_day: str, names: list[str], directory: Path, m
     return added
 
 
+#: The AI trader's brief (human ruling 2026-10-15): the top names by v1.1's
+#: score, every flag SHOWN rather than excluded.
+SHORTLIST_SIZE = 50
+SHORTLIST_FILE = "shortlist.json"
+
+
+def shortlist(store, rebalance_day: str, *, plan_symbols: Optional[set] = None, spec: Spec = LIVE,
+              size: int = SHORTLIST_SIZE, names: Optional[dict[str, str]] = None) -> dict:
+    """The top ``size`` of v1.1's universe by score on ``rebalance_day``
+    (data through the prior close), with the score's two legs and every
+    buy-gate flag computed on its own - not only the first that excludes:
+    below the 100-day average; a >15% day in 63 sessions and whether every
+    such day sat within [-1,+1] of an 8-K 2.02 filing; a pending acquisition;
+    the 18-month filer status. Reference data for the AI trader: it changes
+    nothing in v1.1."""
+    view = engine.live_view(store, rebalance_day)
+    t = len(view.calendar) - 1
+    d = t - 1
+    starts = engine.month_starts(view.calendar)
+    dec = engine.decide(view, t, spec, [], [], starts, explain=True)
+    score = dec.details["score"]
+    excluded = dec.details["excluded"]
+    rows = []
+    for position, key in enumerate(sorted(score, key=lambda k: -score[k])[:size], start=1):
+        seg = view.by_key[key]
+        adj, raw = view.adj[key], view.raw[key]
+        returns = engine.Returns(adj)
+        days = range(max(1, d - spec.gap_lookback + 1), d + 1)
+        big = [i for i in days if returns[i] is not None and abs(returns[i]) > spec.gap_limit]
+        window = {e + k for e in seg.events for k in (-1, 0, 1)}
+        closes = [adj[i] for i in range(max(0, d - spec.trend_days + 1), d + 1) if engine.ok(adj[i])]
+        month_closes = engine.month_end_closes(adj, starts, t, 13)
+        r12 = (rules.plain_momentum(month_closes)
+               if len(month_closes) == 13 and all(engine.ok(c) for c in month_closes) else None)
+        periodic = seg.periodic or []
+        rows.append(dict(
+            score_rank=position,
+            symbol=seg.symbol,
+            name=(names or {}).get(seg.symbol),
+            sector=SECTOR_NAMES.get(seg.sector, ""),
+            score=round(score[key], 3),
+            residual_momentum_z=_round(dec.details["residual_z"].get(key)),
+            earnings_momentum_z=_round(dec.details["earnings_z"].get(key)),
+            return_12_1=_round(r12),
+            in_plan=seg.symbol in (plan_symbols or set()),
+            buy_gate=excluded.get(key) or "passes",
+            flags=dict(
+                below_100_day_average=(len(closes) >= spec.trend_days
+                                       and closes[-1] < sum(closes[-spec.trend_days:]) / spec.trend_days),
+                day_over_15pct_in_63_sessions=bool(big),
+                big_days_all_on_earnings=(all(i in window for i in big) if big else None),
+                pending_acquisition=any(a <= d <= b for a, b in seg.pending),
+                filer=("current" if engine.current_filer(seg, view.calendar[d])
+                       else f"lapsed (last 10-K/10-Q {periodic[-1]})" if periodic else "no 10-K/10-Q on record"),
+            ),
+        ))
+    return dict(spec=spec.name, rebalance_date=rebalance_day, data_through=view.calendar[d],
+                universe_version=getattr(store, "universe_version", 1), universe=dec.details["universe"],
+                scored=len(score), names=rows)
+
+
+def _round(x: Optional[float]) -> Optional[float]:
+    return None if x is None else round(float(x), 3)
+
+
+def shortlist_current(directory: Path, rebalance_day: str) -> bool:
+    try:
+        return json.loads((directory / SHORTLIST_FILE).read_text(encoding="utf-8")).get("rebalance_date") == rebalance_day
+    except (OSError, ValueError):
+        return False
+
+
 def latest_plan(directory: Path) -> Optional[dict]:
     plans = sorted(directory.glob("plan-*.json"))
     if not plans:

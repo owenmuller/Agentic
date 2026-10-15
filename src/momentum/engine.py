@@ -151,8 +151,12 @@ def universe(store, t: int, size: int, min_price: float) -> list:
 def _universe(store, t: int, size: int, min_price: float) -> list:
     d = t - 1
     best: dict[int, tuple] = {}
+    v2 = getattr(store, "universe_version", 1) >= 2
     for seg in store.segments:
-        if not (seg.first <= d <= seg.last) or not current_filer(seg, store.calendar[d]):
+        if not (seg.first <= d <= seg.last):
+            continue
+        # version 1 (October 2026): any 10-K/10-Q since 2015; version 2: the 18-month rule
+        if not (current_filer(seg, store.calendar[d]) if v2 else seg.us_filer):
             continue
         raw, adj = store.raw[seg.key], store.adj[seg.key]
         price = raw[d]

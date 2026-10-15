@@ -100,3 +100,25 @@ def test_the_stop_floor_is_proposed_only_after_ten_measured_stops():
     board = sb.build(ladder_events=[], ai_events=[], exec_lines=EXEC, spy={}, main_equity={}, rung_labels={},
                      stop_floor=0.01)
     assert any("PROPOSAL" in note for note in board.notes)
+
+
+def test_the_momentum_control_and_spmo_sit_beside_the_ai_trader():
+    # ruling 2026-10-15, item 4: AI trader vs the mechanical momentum sleeve vs SPMO
+    ai = [snap(13, 100000), snap(14, 101000)]
+    spy = {date(2026, 10, 12): 600.0, date(2026, 10, 13): 606.0, date(2026, 10, 14): 612.0}
+    spmo = {date(2026, 10, 12): 100.0, date(2026, 10, 13): 101.0, date(2026, 10, 14): 103.0}
+    momentum = sb.momentum_series([
+        {"day": "2026-10-13", "started": "2026-10-13", "since": {"v1.1 live": 0.01, "SPMO": 0.0}},
+        {"day": "2026-10-14", "started": "2026-10-13", "since": {"v1.1 live": 0.025, "SPMO": 0.02}},
+    ])
+    assert momentum == {date(2026, 10, 12): 1.0, date(2026, 10, 13): 1.01, date(2026, 10, 14): 1.025}
+    board = sb.build(ladder_events=[], ai_events=ai, exec_lines=[], spy=spy, main_equity={}, rung_labels={},
+                     momentum=momentum, spmo=spmo)
+    rows = {r.name.strip(): r for r in board.rows}
+    names = [r.name for r in board.rows]
+    assert names.index("AI TRADER") < names.index("MOMENTUM SLEEVE (main book; control)") < names.index("SPMO")
+    mom = rows["MOMENTUM SLEEVE (main book; control)"]
+    assert mom.ret == pytest.approx(0.025) and mom.vs_spmo == pytest.approx(0.025 - 0.03)
+    assert rows["AI TRADER"].vs_spmo == pytest.approx(0.01 - (103 / 101 - 1))
+    assert rows["SPMO"].ret == pytest.approx(103 / 101 - 1)
+    assert "vs SPMO" in sb.render(board, date(2026, 10, 16))

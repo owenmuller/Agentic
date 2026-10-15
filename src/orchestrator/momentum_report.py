@@ -12,7 +12,9 @@ comparison - with every shadow in an attached table.
                 spec's 10 bp per side of turnover. "v1.1 modelled" is the live
                 plan run the same way, so live minus modelled is the fill gap.
   benchmarks    SPY and SPMO closes over the same days.
-Reporting only: nothing here feeds a threshold, a prompt or a size.
+Reporting only: nothing here feeds a threshold or a size. The modelled books'
+since-start returns (never "v1.1 live") are rendered as reference data in the
+AI trader's brief (human ruling 2026-10-15).
 """
 
 from __future__ import annotations
@@ -242,6 +244,35 @@ def build(directory: Path, fills: list[Fill], prices: dict[str, dict[str, float]
         "first look at 6 months, real read at 12; SPMO is the binding comparison (ruling 2026-10-14)",
     ]
     return report
+
+
+DAILY_FILE = "daily.jsonl"
+
+
+def record(directory: Path, report: Report, day: str) -> None:
+    """One line per session in ``daily.jsonl`` (rewritten whole; a rerun
+    replaces the day's line): every book's today / week / since-start return.
+    Read by the lab - the AI trader's brief (modelled books only; "v1.1 live"
+    is this account's realized result and never reaches a prompt) and the
+    lab scoreboard (AI trader vs the momentum sleeve vs SPMO)."""
+    import os
+
+    path = directory / DAILY_FILE
+    lines = []
+    if path.exists():
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            try:
+                entry = json.loads(raw)
+            except ValueError:
+                continue
+            if entry.get("day") != day:
+                lines.append(entry)
+    lines.append({"day": day, "started": report.started, "today": report.day, "week": report.week,
+                  "since": report.since})
+    lines.sort(key=lambda e: e.get("day", ""))
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text("".join(json.dumps(e) + "\n" for e in lines), encoding="utf-8")
+    os.replace(temporary, path)
 
 
 def gather(directory: Path, trails, today: date, alpaca) -> Optional[Report]:
