@@ -108,6 +108,12 @@ def live_return(fills: list[Fill], prices: dict[str, dict[str, float]], start: s
     v1 = book_value(fills, prices, end)
     if v1 is None:
         return None
+    if v0 == 0.0:
+        # nothing held before the window: it runs from the first flow in it
+        # (a week-to-date window that opens before inception, 2026-10-15)
+        inside = [f.day for f in fills if start <= f.day <= end]
+        if inside:
+            start = min(inside)
     span = (date.fromisoformat(end) - date.fromisoformat(start)).days or 1
     # a flow ON start counts at full weight - also in a one-day window, where
     # the day-count weight would be 0 and the first day's return n/a (2026-10-15)

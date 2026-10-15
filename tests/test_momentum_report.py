@@ -158,3 +158,5 @@ def test_the_first_days_return_counts_its_own_fills(tmp_path):
     # a later day's window still weights by time remaining
     later = {"A": {"2026-10-14": 10.0, "2026-10-15": 11.0, "2026-10-16": 12.0}}
     assert mr.live_return(fills, later, "2026-10-16", "2026-10-16") == pytest.approx(12 / 11 - 1)
+    # a week-to-date window that opens before inception runs from inception
+    assert mr.live_return(fills, prices, "2026-10-12", "2026-10-15") == pytest.approx(1100 / 1050 - 1)
