@@ -655,9 +655,17 @@ def momentum_daily_card(report, sample: bool = False) -> Card:
         f"Since start ({report.started}): {trio(report.since)}.",
         f"Holding {count(report.holdings, 'name')}, {usd(report.invested)} invested.",
         f"Shadows: {ahead} of {len(shadows)} ahead of the live sleeve since start; the table is attached.",
+        "Shadows since start: " + (_joined([f"{_short(n)} {pct(v)}" for n, v in
+                                            sorted(shadows.items(), key=lambda kv: -kv[1])]) or "none yet") + ".",
     )
     look = None
     if report.day.get("v1.1 live") is None or report.day.get("SPMO") is None:
         look = "a return could not be computed (missing prices); the attachment shows which"
     return Card("Momentum", "daily report", LOOK if look else GOOD, lines, look_at=look,
                 detail=report.table(), detail_name="momentum-daily.txt", sample=sample)
+
+
+def _short(shadow: str) -> str:
+    """A shadow's name for a card line: v1_1_gap_earnings_exempt -> gap earnings exempt."""
+    name = shadow[5:] if shadow.startswith("v1_1_") else shadow
+    return name.replace("_", " ")

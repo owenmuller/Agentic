@@ -70,6 +70,9 @@ class Spec:
     #: Shadow-only (human ruling 2026-10-14): the gap filter ignores moves on
     #: 8-K 2.02 earnings days ([-1,+1] around the filing session). False in V1 and V1.1.
     gap_exempt_earnings: bool = False
+    #: Shadow-only (human ruling 2026-10-14): False drops the below-100-day-
+    #: average exclusion (only that; the 100-session history check stays). True in V1 and V1.1.
+    trend_filter: bool = True
 
 
 V1 = Spec(name="v1")
@@ -99,6 +102,8 @@ SHADOWS = {
     # human ruling 2026-10-14: the gap filter exempting earnings-day moves, tracked from 2026-10-15
     "v1_1_gap_earnings_exempt": replace(V1_1, name="v1_1_gap_earnings_exempt", gap_exempt_earnings=True,
                                         ai_veto=False),
+    # human ruling 2026-10-14: no below-100-day-average exclusion, tracked from 2026-10-15
+    "v1_1_no_trend_filter": replace(V1_1, name="v1_1_no_trend_filter", trend_filter=False, ai_veto=False),
 }
 
 
@@ -256,7 +261,7 @@ def excluded(daily_returns: Sequence[Optional[float]], closes: Sequence[float], 
         return f"a single-day move over {spec.gap_limit:.0%} in the past {spec.gap_lookback} sessions"
     if len(closes) < spec.trend_days:
         return "less than 100 sessions of history"
-    if closes[-1] < mean(closes[-spec.trend_days:]):
+    if spec.trend_filter and closes[-1] < mean(closes[-spec.trend_days:]):
         return "below its 100-day average"
     return None
 

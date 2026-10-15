@@ -120,3 +120,16 @@ def test_the_weekly_card_reports_the_judged_sleeves_idle_cash():
     assert "Form 4, congressional and 8-K" in line
     plain = cards.weekly_main_card(99500.0, 0.004, 0.006, "report")
     assert not any(l.startswith("Judged sleeve") for l in plain.all_lines)
+
+
+def test_the_daily_card_lists_every_shadows_since_start_return(tmp_path):
+    report = mr.Report(started="2026-10-15", day={"v1.1 live": 0.01, "SPY": 0.0, "SPMO": 0.0},
+                       week={"v1.1 live": 0.01, "SPY": 0.0, "SPMO": 0.0},
+                       since={"v1.1 live": 0.02, "SPY": 0.01, "SPMO": 0.015,
+                              "v1.1 modelled (plan at closes)": 0.021,
+                              "v1_1_gap_earnings_exempt": 0.03, "v1_1_no_trend_filter": -0.01, "spmo": 0.015},
+                       holdings=15, invested=29000.0)
+    lines = cards.momentum_daily_card(report).all_lines
+    shadow_line = next(l for l in lines if l.startswith("Shadows since start"))
+    assert shadow_line.index("gap earnings exempt +3%") < shadow_line.index("no trend filter -1%")
+    assert "modelled" not in shadow_line and len(lines) <= 6

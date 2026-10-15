@@ -16,7 +16,8 @@ def test_v1_is_frozen_and_the_shadows_are_declared():
         V1.holdings = 20  # type: ignore[misc]
     assert (V1.universe, V1.holdings, V1.sell_rank, V1.sector_cap, V1.position_cap) == (1000, 15, 30, 0.30, 0.10)
     assert V1.weighting == "equal" and V1.market_filter and V1.vol_scaling and V1.ai_veto
-    assert set(rules.SHADOWS) == {"v1_1_no_veto", "v1_top_1000", "v1_1_gap_earnings_exempt", "inverse_vol", "market_filter_only",
+    assert set(rules.SHADOWS) == {"v1_1_no_veto", "v1_top_1000", "v1_1_gap_earnings_exempt", "v1_1_no_trend_filter",
+                                  "inverse_vol", "market_filter_only",
                                   "vol_scaling_only", "plain_12_1"}
     assert not any(s.ai_veto for s in rules.SHADOWS.values())
     # v1.1 (human ruling 2026-10-14): v1 on the top 500, the live spec; v1 itself is a shadow
@@ -154,6 +155,8 @@ def test_each_declared_shadow_is_one_rule_away_from_the_live_spec():
     assert differences(rules.SHADOWS["vol_scaling_only"]) == {"market_filter"}
     assert differences(rules.SHADOWS["plain_12_1"]) == {"score"}
     assert differences(rules.SHADOWS["v1_1_gap_earnings_exempt"]) == {"gap_exempt_earnings"}
+    assert differences(rules.SHADOWS["v1_1_no_trend_filter"]) == {"trend_filter"}
+    assert rules.LIVE.trend_filter and rules.V1.trend_filter
     assert not rules.LIVE.gap_exempt_earnings and not rules.V1.gap_exempt_earnings  # v1.1 stays frozen
 
 
@@ -166,3 +169,15 @@ def test_the_gap_filter_can_exempt_earnings_day_moves_for_a_shadow():
     assert rules.excluded(returns, closes, False, shadow, on_earnings) is None                  # shadow: exempt
     off_earnings = [False] * 63
     assert "single-day move" in rules.excluded(returns, closes, False, shadow, off_earnings)    # not an earnings day
+
+
+def test_the_no_trend_filter_shadow_skips_only_the_100_day_average():
+    falling = [100.0 - i * 0.1 for i in range(120)]           # below its 100-day average
+    flat = [0.0] * 63
+    shadow = rules.SHADOWS["v1_1_no_trend_filter"]
+    assert rules.excluded(flat, falling, False, rules.LIVE) == "below its 100-day average"
+    assert rules.excluded(flat, falling, False, shadow) is None
+    # the other exclusions are untouched
+    assert rules.excluded(flat, falling[:50], False, shadow) == "less than 100 sessions of history"
+    assert rules.excluded(flat, falling, True, shadow) == "pending acquisition target"
+    assert "single-day move" in rules.excluded(flat[:-1] + [0.2], falling, False, shadow)
