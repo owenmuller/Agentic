@@ -304,6 +304,47 @@ def _momentum_card(checks, daily: bool = False):
     return cards.momentum_daily_card(report) if daily else cards.momentum_week_card(report)
 
 
+def session_observer(alerter: Alerter):
+    """The main session's run-log observer, as a function of its alerter (module
+    level so a SAMPLE card can be driven through exactly this code)."""
+
+    def observe(event: str, detail: str) -> None:
+        """Run-log events that must reach a phone (errors, cost tripwires,
+        billing anomalies, a mechanical breaker trip, an operator halt) and
+        the execution test's daily report - each as a plain-English card
+        (ruling 2026-10-12)."""
+        when = _now_et()
+        if event == "ERROR" and detail.startswith("DATASAFETY "):
+            kind, _, message = detail[len("DATASAFETY "):].partition(": ")
+            alerter.card(f"guard:{detail[:40]}", cards.guard_card("Main book", "REFUSED" in kind, when, message))
+        elif event == "ERROR":
+            alerter.card(f"ERROR:{detail[:40]}", cards.error_card("Main book", when, detail))
+        elif event == "DATA":
+            # an expected fetch empty or failed (global rule 2026-10-15): yellow
+            urgent = detail.startswith("URGENT ")
+            source, _, what = detail.removeprefix("URGENT ").partition(": ")
+            alerter.card(f"DATA:{detail[:60]}", cards.data_card("Main book", when, source, what, urgent=urgent))
+        elif event == "COST":
+            alerter.card(f"COST:{detail[:40]}", cards.cost_card("Main book", when, detail))
+        elif event == "READS":
+            alerter.card(f"READS:{detail[:40]}", cards.billing_card("Main book", when, detail))
+        elif event == "MECH" and "BREAKER" in detail.upper():
+            alerter.card("mech_breaker", cards.breaker_card(detail))
+        elif event == "HALT":
+            alerter.card("operator_halt_loop", cards.halt_card("Main book", detail))
+        elif "EXEC-TEST daily " in detail:
+            card = _exec_test_card(detail.split("EXEC-TEST daily ", 1)[1])
+            if card is not None:
+                alerter.card(f"exec-test-{card.lines[0]}", card)
+    return observe
+
+
+def session_data_sink(run_log):
+    """The session's datahealth sink: a run-log DATA line, carded by the observer."""
+    return lambda source, message, urgent: run_log.note(
+        "DATA", f"{'URGENT ' if urgent else ''}{source}: {message}")
+
+
 def _momentum_brief_files(directory: Path, cache_root: Path, config, latest: Optional[dict], now: datetime,
                           alpaca, build, log) -> None:
     """The momentum side of the AI trader's brief (human ruling 2026-10-15),
@@ -1013,38 +1054,9 @@ def run() -> int:
     # Delivery outcomes go to a status file health reads (ruling 2026-09-28).
     alerter = Alerter(status_path=data_dir / "alerts_status.json")
 
-    def observe(event: str, detail: str) -> None:
-        """Run-log events that must reach a phone (errors, cost tripwires,
-        billing anomalies, a mechanical breaker trip, an operator halt) and
-        the execution test's daily report - each as a plain-English card
-        (ruling 2026-10-12)."""
-        when = _now_et()
-        if event == "ERROR" and detail.startswith("DATASAFETY "):
-            kind, _, message = detail[len("DATASAFETY "):].partition(": ")
-            alerter.card(f"guard:{detail[:40]}", cards.guard_card("Main book", "REFUSED" in kind, when, message))
-        elif event == "ERROR":
-            alerter.card(f"ERROR:{detail[:40]}", cards.error_card("Main book", when, detail))
-        elif event == "DATA":
-            # an expected fetch empty or failed (global rule 2026-10-15): yellow
-            urgent = detail.startswith("URGENT ")
-            source, _, what = detail.removeprefix("URGENT ").partition(": ")
-            alerter.card(f"DATA:{detail[:60]}", cards.data_card("Main book", when, source, what, urgent=urgent))
-        elif event == "COST":
-            alerter.card(f"COST:{detail[:40]}", cards.cost_card("Main book", when, detail))
-        elif event == "READS":
-            alerter.card(f"READS:{detail[:40]}", cards.billing_card("Main book", when, detail))
-        elif event == "MECH" and "BREAKER" in detail.upper():
-            alerter.card("mech_breaker", cards.breaker_card(detail))
-        elif event == "HALT":
-            alerter.card("operator_halt_loop", cards.halt_card("Main book", detail))
-        elif "EXEC-TEST daily " in detail:
-            card = _exec_test_card(detail.split("EXEC-TEST daily ", 1)[1])
-            if card is not None:
-                alerter.card(f"exec-test-{card.lines[0]}", card)
-
+    observe = session_observer(alerter)
     run_log = RunLog(data_dir / "run.log", observer=observe)
-    datahealth.set_sink(lambda source, message, urgent: run_log.note(
-        "DATA", f"{'URGENT ' if urgent else ''}{source}: {message}"))
+    datahealth.set_sink(session_data_sink(run_log))
     # The data guard's production events (a refused write, or a guard error
     # that failed open) ride the run log's ERROR line, so both reach the same
     # urgent alert and the same health view (ruling 2026-10-10, item 4).

@@ -83,7 +83,7 @@ def test_every_production_entry_point_installs_a_sink():
         text = (ROOT / "src" / module / "__main__.py").read_text(encoding="utf-8")
         assert "datahealth.set_sink(" in text, module
     session = (ROOT / "src" / "orchestrator" / "__main__.py").read_text(encoding="utf-8")
-    assert 'run_log.note(\n        "DATA"' in session.replace("\r\n", "\n") and 'event == "DATA"' in session
+    assert "datahealth.set_sink(session_data_sink(run_log))" in session and 'event == "DATA"' in session
     units = "\n".join(p.read_text(encoding="utf-8") for p in (ROOT / "ops" / "vps").glob("*.service"))
     for line in units.splitlines():
         if line.startswith("ExecStart=") and " -m " in line:
@@ -176,3 +176,23 @@ def test_a_missing_atr_is_never_cached_for_the_day():
     atr = AtrSource(Bars(), clock=lambda: datetime(2026, 10, 15, 15, 0, tzinfo=timezone.utc))
     assert atr("XYZ") is None and atr("XYZ") is None
     assert calls == ["XYZ", "XYZ"]  # asked again: an outage must not last the day
+
+
+def test_the_session_path_turns_a_report_into_a_yellow_card(tmp_path):
+    # datahealth -> session_data_sink -> run-log DATA line -> session_observer -> card
+    from orchestrator.__main__ import session_data_sink, session_observer
+    from orchestrator.ops import RunLog
+
+    sent = []
+
+    class FakeAlerter:
+        def card(self, key, card):
+            sent.append((key, card))
+
+    run_log = RunLog(tmp_path / "run.log", observer=session_observer(FakeAlerter()))
+    datahealth.set_sink(session_data_sink(run_log))
+    datahealth.report("Alpaca daily bars", "no SPY bars for 2026-10-01..2026-10-14")
+    datahealth.report("Alpaca quotes", "held position unpriced", urgent=True)
+    assert [c.status for _, c in sent] == [cards.LOOK, cards.LOOK]
+    assert sent[0][1].channel == cards.DAILY and sent[1][1].channel == cards.URGENT
+    assert "Alpaca daily bars" in sent[0][1].title and "DATA" in (tmp_path / "run.log").read_text()
