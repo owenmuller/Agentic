@@ -77,15 +77,14 @@ def shortlist_section(data: Optional[dict]) -> tuple[list[str], str]:
     lines = [
         f"v1.1 score (50% residual 12-1 momentum, 50% earnings reactions; z-scores), top {len(data['names'])} of "
         f"{data.get('scored')} scored in the largest {data.get('universe')} US companies; data through "
-        f"{data.get('data_through')}, refreshed weekly and with each monthly plan. "
-        f"'v1.1 may buy' is v1.1's own buy gate; "
-        f"the flags after it are shown, not applied. M-ids for citing.",
+        f"{data.get('data_through')}, refreshed weekly and with each monthly plan. Flags are shown, not "
+        f"applied. M-ids for citing.",
     ]
     for row in data["names"]:
         flags = row.get("flags") or {}
-        gate = row.get("buy_gate") or "passes"
+        # the individual flags only - never v1.1's own buy decision (ruling 2026-10-15, third)
         notes = []
-        if gate == "less than 100 sessions of history":
+        if row.get("buy_gate") == "less than 100 sessions of history":
             notes.append("under 100 sessions of history")
         if flags.get("below_100_day_average"):
             notes.append("below 100-day avg")
@@ -99,7 +98,7 @@ def shortlist_section(data: Optional[dict]) -> tuple[list[str], str]:
         lines.append(
             f"M{row['score_rank']} {row['symbol']} ({row.get('sector') or '-'}): score {row.get('score')}, "
             f"residual {row.get('residual_momentum_z')}, earnings {row.get('earnings_momentum_z')}, "
-            f"12-1 {_pct(row.get('return_12_1'))}; v1.1 may buy: {'yes' if gate == 'passes' else 'no'}"
+            f"12-1 {_pct(row.get('return_12_1'))}"
             + (f"; {'; '.join(notes)}" if notes else "")
         )
     return lines, "ok"

@@ -76,8 +76,9 @@ def test_the_brief_renders_all_four_sections_fenced(tmp_path):
     assert "E1 [strong;" in b.text and "(none promoted yet)" in b.text
     assert "SPMO +0.6%" in b.text and "v1_1_no_trend_filter +1.1%" in b.text
     assert b.tokens_estimate == round(b.chars / 2.6) and len(b.sha) == 16
-    assert "M2 IEX" in b.text and "v1.1 may buy: yes" in b.text
-    assert "M1 LITE" in b.text and "v1.1 may buy: no" in b.text
+    assert "M2 IEX" in b.text and "M1 LITE" in b.text
+    # the individual flags only, never v1.1's own buy decision (ruling 2026-10-15, third)
+    assert "may buy" not in b.text and "gate" not in b.text.split("(b) EVIDENCE")[0]
 
 
 def test_the_brief_never_carries_an_accounts_result(tmp_path):
