@@ -60,9 +60,11 @@ from typing import Any, Callable, Optional, Sequence
 
 import httpx
 
+import datahealth
+
 from signals.config import SourceConfig
 from signals.classification import is_us_listed_symbol
-from signals.edgar import ARCHIVES_URL, FTS_URL, EdgarFetcherBase
+from signals.edgar import ARCHIVES_URL, FTS_URL, EdgarError, EdgarFetcherBase, FetchFailed, has_past_weekday
 from signals.scanners import RawItem
 
 SUBMISSIONS_URL = "https://data.sec.gov/submissions"
@@ -376,6 +378,9 @@ class Form4InsiderFetcher(EdgarFetcherBase):
                 "form4 poll: %s",
                 " ".join(f"{key}={count}" for key, count in sorted(tally.items())),
             )
+        if tally["fetch_failed"]:
+            datahealth.report("form4_insiders", f"{tally['fetch_failed']} Form 4 document(s) could not be fetched "
+                                                f"this poll; they are retried at the next listing")
         return items
 
     # -- listing -------------------------------------------------------------------
@@ -401,14 +406,14 @@ class Form4InsiderFetcher(EdgarFetcherBase):
                 },
             )
             if response.status_code != 200:
-                logger.warning(
-                    "form4 FTS listing returned HTTP %d; polling what is "
-                    "already backlogged",
-                    response.status_code,
-                )
-                return
+                # a refused listing is a failure, never "no new filings" (rule 2026-10-15)
+                raise EdgarError(f"form4 EDGAR listing returned HTTP {response.status_code}")
             hits = response.json().get("hits", {}).get("hits", [])
             if not hits:
+                if offset == 0 and has_past_weekday(start, today):
+                    # hundreds of Form 4s are filed every business day
+                    datahealth.report("form4_insiders", f"the EDGAR Form 4 listing for {start}..{today} returned "
+                                                        f"no filings at all")
                 return
             for hit in hits:
                 source_data = hit.get("_source", {})
@@ -446,8 +451,14 @@ class Form4InsiderFetcher(EdgarFetcherBase):
         today: date,
         tally: Counter,
     ) -> Optional[RawItem]:
+        try:
+            xml_text = self._fetch_document(accession, cik, user_agent)
+        except FetchFailed:
+            # NOT marked seen: the next listing re-queues it (2026-10-15: a
+            # failed fetch used to drop the filing for good)
+            tally["fetch_failed"] += 1
+            return None
         self._seen[accession] = file_date or today.isoformat()
-        xml_text = self._fetch_document(accession, cik, user_agent)
         if xml_text is None:
             tally["unparseable"] += 1
             return None
@@ -635,7 +646,7 @@ class Form4InsiderFetcher(EdgarFetcherBase):
         base = f"{ARCHIVES_URL}/{int(cik)}/{accession.replace('-', '')}"
         response = self._get(f"{base}/{accession}.txt", user_agent)
         if response.status_code != 200:
-            return None
+            raise FetchFailed(f"HTTP {response.status_code}")
         text = response.text
         start = text.find("<ownershipDocument")
         end = text.find("</ownershipDocument>")
@@ -656,6 +667,13 @@ class Form4InsiderFetcher(EdgarFetcherBase):
         cached = self._routine.get(owner_cik)
         if cached is None:
             cached = self._fetch_filing_months(owner_cik, user_agent)
+            if cached.get("failed"):
+                # never saved: a failure is not a history (2026-10-15: it was
+                # cached as "no months" for good). This decision defaults
+                # opportunistic, as the ruling says for an unknown history.
+                datahealth.report("form4_insiders", f"insider {owner_cik}'s filing history could not be fetched; "
+                                                    f"treated as opportunistic this time, retried next time")
+                return False
             self._routine[owner_cik] = cached
         months = set(cached.get("months", ()))
         if not months:
@@ -676,7 +694,7 @@ class Form4InsiderFetcher(EdgarFetcherBase):
                 owner_cik,
                 error,
             )
-            return {"months": [], "fetched": self._clock().date().isoformat()}
+            return {"months": [], "failed": True}
         recent = payload.get("filings", {}).get("recent", {})
         forms = recent.get("form", [])
         dates = recent.get("filingDate", [])

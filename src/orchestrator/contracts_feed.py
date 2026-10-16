@@ -23,6 +23,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Optional
+from zoneinfo import ZoneInfo
+
+import datahealth
 
 from audit import AuditLog
 from audit.records import RejectedStage
@@ -100,10 +103,14 @@ def build_awards_fetcher(
             names = load_edgar_names(sec._client, USER_AGENT)  # noqa: SLF001 - one shared client
         except Exception as error:  # noqa: BLE001 - the map still works without the fallback
             logger.warning("EDGAR company_tickers.json unavailable (%s); exact-name fallback off", error)
+            datahealth.report("gov_contract_awards", f"EDGAR company_tickers.json unavailable ({error}); "
+                                                     f"the exact-name fallback is off for this process")
     contractors = ContractorMap.load(edgar_names=names)
     finnhub = FinnhubProfile() if os.environ.get("FINNHUB_API_KEY") else None
     if finnhub is None:
         logger.warning("FINNHUB_API_KEY unset: award / market cap will be unknown and every resolved award is a measure-tier row")
+        datahealth.report("gov_contract_awards", "FINNHUB_API_KEY is unset: every award's market cap is unknown, "
+                                                 "so every resolved award is a measure-tier row")
     # company_tickers maps NAME -> (ticker, cik); invert for ticker -> cik.
     by_ticker = {t: c for (t, c) in (names or {}).values()} if names else {}
     sizer = AwardeeSizer(finnhub, sec, ciks=lambda ticker: by_ticker.get(ticker.upper()), clock=clock)
@@ -161,12 +168,16 @@ def run_evening(
     now = clock()
     rules = RatioRules.from_source(stack.source)
     refs = [r for r in stack.dod.list_digests() if now - r.published_at <= timedelta(hours=30)]
+    if not refs and now.astimezone(ZoneInfo("America/New_York")).weekday() < 5:
+        # the DoD posts a digest every business day by about 17:00 ET
+        datahealth.report("gov_contract_awards", "no DoD contracts digest in the last 30 hours on a weekday evening")
     items: list[RawItem] = []
     for ref in refs:
         try:
             items.extend(stack.dod.items_for(ref, rules))
-        except Exception as error:  # noqa: BLE001 - one unreadable digest is a log line
+        except Exception as error:  # noqa: BLE001 - one unreadable digest is a card, not a lost evening
             logger.warning("evening digest %s unreadable: %s", ref.title, error)
+            datahealth.report("gov_contract_awards", f"evening digest {ref.title} unreadable: {error}")
     research = [i for i in items if i.fields.get("size_tier") == TIER_RESEARCH]
     others = [i for i in items if i.fields.get("size_tier") != TIER_RESEARCH]
     stashed = stack.dod.stash_pending(research) if research else 0

@@ -4102,6 +4102,78 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-15 (night) — RULINGS: flags-only brief; Saturday timer verified; GLOBAL RULE "no silent data gaps" and the fetch-path audit
+
+**1. Brief:**
+- The "v1.1 may buy" summary is dropped; the shortlist shows the individual flags only.
+- Golden replay on production files (deployed 10b4cf9): **5/5 PASS, $0.765**. The brief is 11,618 chars, about 4,470 tokens.
+- Behaviour changed: the model proposed from its own searches (WMT on an upgrade, XLV, XRT, SOXS), used `brief_use: none`, and once cited the brief as a CONTRADICTION ("SOXS contradicts M3 STX, M6 DELL..."). None of the earlier copying of v1.1's names.
+
+**2. Timer:** the installed `agentic-momentum.timer` lists `OnCalendar=Sat 08:00 America/New_York`, next elapse Sat 2026-10-17 12:00 UTC; it is active.
+
+**3. GLOBAL RULE (CLAUDE.md "No Silent Data Gaps"):** an expected fetch or report that comes back empty, or fails, raises a yellow card.
+- **Mechanism:** a new `datahealth` package (stdlib leaf).
+  - The main session's sink writes a run-log `DATA` line, and the observer turns it into a yellow card.
+  - Every other CLI (orchestrator commands, lab, earnings) gets `execution.alerts.data_sink`, which builds its alerter after the environment loads.
+  - At most 3 cards per source per 30 minutes, with the remainder counted.
+  - Every production unit's entry point installs a sink (tested).
+- **The audit** (three read-only sweeps: Alpaca and options; SEC and Finnhub; everything else) found about 40 fetch paths, 25 of them silent or log-only where data is expected.
+
+**Fixed:**
+- **Signals:**
+  - **Scanner:** one failing source no longer blinds its whole class. Each failure still reaches the loop's error card. A bug in the first cut (stale failures re-reported on a skipped poll) was caught by the suite.
+  - **Form 4:**
+    - a refused listing raises (it used to log and read "0 new");
+    - a refused document stays UNSEEN and is retried (it used to be dropped for good);
+    - an insider-history failure is never saved (it was cached as "no history" for good);
+    - an empty weekday listing is reported.
+  - **8-K:** a refused or non-JSON page raises (it used to keep the hits read silently); an empty weekday listing and document-fetch failures are reported.
+  - **13D:** a refused listing raises; every page is read (it was capped at the first 100 hits); an empty weekday listing and fact-fetch failures are reported.
+  - **Quiver:** an empty feed, or one where every row is malformed, raises.
+  - **X:** a 200 that carries only errors raises. The startup mirror-silence check now sends a card as well as its run-log line.
+- **Contract awards:**
+  - **DoD digest:** RSS and proxy failures are reported. A digest that parses to zero awards is not marked read; it is reported and retried.
+  - **FPDS:** failures and non-feed bodies are reported.
+  - **Evening run:** a crash, or no digest on a weekday, is reported.
+  - **SEC companyfacts:** only 200 and 404 are cached; other failures are reported.
+  - **Finnhub profile (contracts):** one retry; failures are never cached and are reported (an unknown cap still sizes as the measure tier). The ticker map refuses empty. A missing key and an unavailable ticker map are reported.
+- **Market data:**
+  - **Alpaca quotes:** 15 minutes with no usable quote in market hours is reported, once per outage per symbol.
+  - **Daily bars:** outages (network, 403, 5xx) are reported; an empty past window for a benchmark (SPY, QQQ, SPMO, IWM, RSP) is reported; batch failures are reported.
+  - **Benchmark moves:** failures and empty results are reported (they were swallowed with no log line).
+  - **Options:** a chain outage is reported, and an empty chain now means "lists nothing" (the two used to be indistinguishable). Snapshot and option-quote failures are reported.
+  - **ATR and ADV:** a None is never cached for the day.
+  - **Asset name:** a failure is reported, so a 3x fund read as 1x is visible.
+  - **Bug:** `BrokerError` was never imported in the adapter; an HTTP error there was a NameError.
+  - **VIX:** a failed fetch retries in 30 minutes (one blip used to lock out the day) and is reported; a close more than 4 days old is reported.
+- **Momentum feeds:**
+  - **Bars:** each symbol refused alone is named (403/5xx/network are failures; 400/404/422 mean unserved). A batch with failures is never cached; the build reports it.
+  - **Missing data:** a missing benchmark is reported, and missing SPY raises.
+  - **Assets, SEC ticker map, name index:** none of them caches empty or "unmatched" any more; they raise instead.
+  - **Calendar:** a range of a week or more with no session raises.
+  - **Filings:** a listed extra page that 404s is a failure.
+  - **SEC and Finnhub failures** after the retry pass are reported.
+  - **Report:** symbols with no closes are reported and noted on the card.
+- **Other paths:**
+  - **Execution test:** a past session with no SIP minute bars is reported (the modelled day was silently empty).
+  - **Earnings:** an empty calendar window raises, and an unavailable calendar is reported.
+  - **Research:** no structured report, or a schema failure, is reported. A failed exit review is reported (the position stays held unreviewed).
+  - **AI trader:** faults are reported as they happen, not only at the end of the day.
+  - **Weekly card and lab scoreboard:** a missing account value or main-book history is reported.
+
+**Left as is (argued):**
+- No new posts or filings in a minute or a poll.
+- Unserved or delisted symbols with no bars.
+- A name with no options.
+- A one-sided option quote (a deep out-of-the-money contract with no bid).
+- Triage with no verdict: it proceeds to a full pass, so it fails toward more scrutiny.
+- 13F index failures: already retried each poll.
+
+**Not done:**
+- An in-session X heartbeat. Multi-day silence is carded at each session start; hourly silence is not.
+- `contracts_backtest` and `momentum_golden`: offline research tools.
+- `spread_pct`: a fill-quality annotation; its quote outages are covered by the quote check.
+
 ### 2026-10-15 (evening) — RULING: the brief runs as an A/B; no control holdings; weekly shortlist; search first
 
 **Ruled before switch-on:**

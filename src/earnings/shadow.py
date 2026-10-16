@@ -34,6 +34,7 @@ produces is only worth having if its gaps are visible.
 
 from __future__ import annotations
 
+import datahealth
 import json
 import logging
 from dataclasses import dataclass
@@ -208,6 +209,8 @@ class ShadowObserver:
             # An unreadable calendar is not an empty one, and the difference has
             # to survive into the log or the series looks complete when it is not.
             logger.warning("earnings calendar unavailable: %s", error)
+            datahealth.report("earnings calendar", f"the earnings calendar is unavailable ({error}); nothing was "
+                                                   f"armed this pass")
             return 0, [f"calendar unavailable: {error}"]
 
         universe = {symbol.upper() for symbol in self._config.universe}

@@ -39,7 +39,8 @@ from datetime import date, datetime, timedelta
 from typing import Optional, Sequence
 
 from signals.config import SourceConfig
-from signals.edgar import ARCHIVES_URL, FTS_URL, EdgarFetcherBase
+import datahealth
+from signals.edgar import ARCHIVES_URL, FTS_URL, EdgarError, EdgarFetcherBase, has_past_weekday
 from signals.form13d import tickers_from_display
 from signals.scanners import RawItem
 
@@ -126,6 +127,10 @@ class Form8KFetcher(EdgarFetcherBase):
                 accession = (hit.get("_source") or {}).get("adsh") or ""
                 if accession and accession not in hits_by_accession:
                     hits_by_accession[accession] = hit
+        if not hits_by_accession and has_past_weekday((today - self._lookback).isoformat(), today):
+            # dozens of whitelisted 8-K items are filed every business day
+            datahealth.report("form_8k", f"the EDGAR 8-K listings for items {', '.join(whitelist)} over "
+                                         f"{(today - self._lookback).isoformat()}..{today} returned no filings at all")
         items: list[RawItem] = []
         for accession, hit in hits_by_accession.items():
             tally["listed"] += 1
@@ -157,18 +162,13 @@ class Form8KFetcher(EdgarFetcherBase):
                 },
             )
             if response.status_code != 200:
-                logger.warning(
-                    "8-K listing (item %s, from %d) returned HTTP %d; keeping the %d hits read",
-                    item,
-                    offset,
-                    response.status_code,
-                    len(hits),
-                )
-                break
+                # a refused page is a failure, never a short listing (rule 2026-10-15):
+                # the whole poll fails loudly and the next one reads it again
+                raise EdgarError(f"8-K listing (item {item}, from {offset}) returned HTTP {response.status_code}")
             try:
                 body = response.json().get("hits", {})
-            except ValueError:
-                break
+            except ValueError as error:
+                raise EdgarError(f"8-K listing (item {item}, from {offset}) returned no JSON") from error
             page = body.get("hits", [])
             hits.extend(page)
             total = body.get("total", {})
@@ -299,8 +299,12 @@ class Form8KFetcher(EdgarFetcherBase):
                 return ""
             response = self._get(base + primary, user_agent)
             if response.status_code != 200:
+                datahealth.report("form_8k", f"8-K document fetches are failing (HTTP {response.status_code}); "
+                                             f"latest: {accession} - its signal carries no excerpt")
                 return ""
             return strip_html(response.text, self._excerpt_chars)
-        except Exception as error:  # noqa: BLE001 - the excerpt is a courtesy
+        except Exception as error:  # noqa: BLE001 - the excerpt is a courtesy - degraded, never silently
             logger.warning("8-K excerpt for %s failed: %s", accession, error)
+            datahealth.report("form_8k", f"8-K document fetches are failing ({type(error).__name__}); "
+                                         f"latest: {accession} - its signal carries no excerpt")
             return ""

@@ -31,8 +31,11 @@ from typing import Any, Optional
 
 import httpx
 
+import datahealth
+
 from execution.base import (
     BrokerAdapter,
+    BrokerError,
     BrokerPermissions,
     BrokerPosition,
     BrokerRejected,
@@ -115,9 +118,13 @@ class AlpacaAdapter(BrokerAdapter):
         try:
             response = self._client.get(f"/v2/assets/{symbol}")
             if response.status_code != 200:
+                datahealth.report("Alpaca assets", f"the asset record for {symbol} returned HTTP "
+                                                   f"{response.status_code}; its leverage reads as unmeasured (1x)")
                 return None
             name = response.json().get("name")
-        except Exception:  # noqa: BLE001 - a missing name means "unknown", never an error
+        except Exception as error:  # noqa: BLE001 - a missing name means "unknown" - and is reported
+            datahealth.report("Alpaca assets", f"the asset record for {symbol} is unavailable "
+                                               f"({type(error).__name__}); its leverage reads as unmeasured (1x)")
             return None
         return str(name) if name else None
 

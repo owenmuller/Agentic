@@ -114,11 +114,13 @@ class Sec:
 
     def company_ciks(self) -> dict[str, int]:
         cached = self.cache.get("sec_company_tickers")
-        if cached is None:
+        if not cached:
             r = self._get("https://www.sec.gov/files/company_tickers_exchange.json")
             data = r.json() if r else {"fields": [], "data": []}
             fields = data["fields"]
             cached = {row[fields.index("ticker")].upper(): int(row[fields.index("cik")]) for row in data["data"]}
+            if not cached:  # the ticker map is never empty: never cached, never used (rule 2026-10-15)
+                raise RuntimeError("the SEC ticker map (company_tickers_exchange.json) came back empty")
             self.cache.put("sec_company_tickers", cached)
         return cached
 
@@ -132,6 +134,10 @@ class Sec:
             found: dict[str, int] = {}
             time.sleep(self._interval)
             with self._client.stream("GET", "https://www.sec.gov/Archives/edgar/cik-lookup-data.txt") as r:
+                if r.status_code != 200:
+                    # a refusal must not be remembered as "unmatched" for every
+                    # name (2026-10-15: that dropped delisted names silently)
+                    raise RuntimeError(f"the SEC name index (cik-lookup-data.txt) returned HTTP {r.status_code}")
                 if r.status_code == 200:
                     for line in r.iter_lines():
                         name, _, rest = line.rpartition(":")[0].rpartition(":")
@@ -165,7 +171,10 @@ class Sec:
             if extra.get("filingTo", "9999") < since:
                 continue
             r2 = self._get(f"https://data.sec.gov/submissions/{extra['name']}")
-            if r2 is not None:
+            if r2 is None:  # a page the index lists is never legitimately missing, 404 included
+                if not self.failures or not self.failures[-1].endswith(extra["name"]):
+                    self.failures.append(f"https://data.sec.gov/submissions/{extra['name']}")
+            else:
                 pages.append(r2.json())
         if len(self.failures) > failed:
             return None  # a page failed: a partial history is not cached
@@ -293,13 +302,19 @@ class Alpaca:
         self.cache = cache
         self._trading = httpx.Client(base_url="https://paper-api.alpaca.markets", timeout=120, headers=headers)
         self._data = httpx.Client(base_url="https://data.alpaca.markets", timeout=120, headers=headers)
+        #: symbol -> why, for the last ``bars`` call's symbols still refused alone
+        self.last_failed: dict[str, str] = {}
 
     def assets(self) -> list[dict]:
         cached = self.cache.get("alpaca_assets")
         if cached is None:
             cached = []
             for status in ("active", "inactive"):
-                rows = self._trading.get("/v2/assets", params={"status": status, "asset_class": "us_equity"}).json()
+                r = self._trading.get("/v2/assets", params={"status": status, "asset_class": "us_equity"})
+                r.raise_for_status()
+                rows = r.json()
+                if not rows:  # the listing is never empty: a refusal, never an answer to cache
+                    raise RuntimeError(f"Alpaca returned no {status} assets")
                 for row in rows:
                     if row.get("exchange") in EXCHANGES and not _NOT_COMMON.search(row.get("name") or ""):
                         cached.append({k: row.get(k) for k in ("id", "symbol", "name", "status", "exchange")})
@@ -308,10 +323,15 @@ class Alpaca:
 
     def sessions(self, start: str, end: str) -> list[str]:
         """Trading days from ``start`` to ``end`` inclusive (the exchange
-        calendar, holidays and all). Never cached: it answers 'when'."""
+        calendar, holidays and all). Never cached: it answers 'when'. Raises
+        when a range of a week or more has no session at all - the calendar
+        answering nothing is a failure, not "no session" (rule 2026-10-15)."""
         r = self._trading.get("/v2/calendar", params={"start": start, "end": end})
         r.raise_for_status()
-        return [row["date"] for row in r.json()]
+        days = [row["date"] for row in r.json()]
+        if not days and (datetime.fromisoformat(end[:10]) - datetime.fromisoformat(start[:10])).days >= 7:
+            raise RuntimeError(f"the Alpaca calendar returned no sessions for {start}..{end}")
+        return days
 
     def bars(self, symbols: list[str], start: str, end: str, adjustment: str) -> dict[str, list]:
         """{symbol: [[date, close], ...]} - multi-symbol pages, a failing
@@ -325,8 +345,14 @@ class Alpaca:
         latest = (datetime.now(timezone.utc) - timedelta(minutes=16)).strftime("%Y-%m-%dT%H:%M:%SZ")
         end = min(end, latest)
         out: dict[str, list] = {}
+        self.last_failed = {}
         self._fetch(symbols, start, end, adjustment, out)
         return out
+
+    def failed(self) -> dict[str, str]:
+        """The symbols of the last ``bars`` call that FAILED (403, 5xx, the
+        network) - not those the feed does not serve (400/404/422)."""
+        return {s: why for s, why in self.last_failed.items() if why not in ("HTTP 400", "HTTP 404", "HTTP 422")}
 
     def _fetch(self, symbols, start, end, adjustment, out) -> None:
         token = None
@@ -352,6 +378,12 @@ class Alpaca:
                     half = len(symbols) // 2
                     self._fetch(symbols[:half], start, end, adjustment, out)
                     self._fetch(symbols[half:], start, end, adjustment, out)
+                else:
+                    # one symbol still refused: never silent (rule 2026-10-15).
+                    # 400/404/422 is a symbol the feed does not serve; anything
+                    # else (403, 5xx, the network) is a FAILURE the caller reports
+                    status = None if r is None else r.status_code
+                    self.last_failed[symbols[0]] = "network" if status is None else f"HTTP {status}"
                 return
             body = r.json()
             for sym, rows in (body.get("bars") or {}).items():

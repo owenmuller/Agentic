@@ -74,6 +74,7 @@ never become unexitable because the LLM layer is down.
 
 from __future__ import annotations
 
+import datahealth
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -779,6 +780,10 @@ class ExitReviewPass:
         message: str,
         excerpt: str = "",
     ) -> ExitReviewRejection:
+        # a review that could not be had is a card, not only an audit line: the
+        # position stays held unreviewed (data-health rule 2026-10-15)
+        datahealth.report("exit review", f"the exit review of {position.symbol} failed ({code.value}): "
+                                         f"{message[:200]}; the position is held unreviewed")
         return ExitReviewRejection(
             code=code,
             message=message,

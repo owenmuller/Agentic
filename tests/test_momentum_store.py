@@ -47,6 +47,10 @@ def true_shares(sym: str, day: str) -> float:
 class FakeAlpaca:
     def __init__(self, cache) -> None:
         self.cache = cache
+        self.last_failed: dict = {}
+
+    def failed(self):
+        return {}
 
     def assets(self):
         return [{"id": s, "symbol": s, "name": f"{s} Corp", "status": "active", "exchange": "NYSE"}

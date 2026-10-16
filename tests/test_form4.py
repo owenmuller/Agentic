@@ -631,3 +631,47 @@ def test_the_forward_funnel_reads_the_form4_door_from_the_content():
         "Form 4 insider filing\nissuer: X (X)\nsingle qualifying purchase — no cluster"
     )) == "single"
     assert snapshot_form4_qualification(snap("Congressional trading disclosure")) == ""
+
+
+# ================================================================================
+# No silent data gaps (global rule 2026-10-15)
+# ================================================================================
+
+
+def test_a_refused_listing_is_a_failure_never_no_new_filings(source):
+    from signals.edgar import EdgarError
+
+    class Refused(Form4Recorder):
+        def handler(self, request):
+            if "efts.sec.gov" in str(request.url):
+                return httpx.Response(403, text="slow down")
+            return super().handler(request)
+
+    recorder = Refused([FILING_A])
+    fetcher = Form4InsiderFetcher(httpx.Client(transport=httpx.MockTransport(recorder.handler)),
+                                  clock=lambda: NOW, sleeper=lambda seconds: None)
+    with pytest.raises(EdgarError, match="HTTP 403"):
+        fetcher(source)
+
+
+def test_a_failed_document_fetch_stays_unseen_and_is_retried(source):
+    import datahealth
+
+    datahealth.reset()
+
+    class Flaky(Form4Recorder):
+        failures = 2  # the base retries a 5xx once: two in a row is a real failure
+
+        def handler(self, request):
+            if str(request.url).endswith(".txt") and Flaky.failures:
+                Flaky.failures -= 1
+                return httpx.Response(503, text="busy")
+            return super().handler(request)
+
+    recorder = Flaky([FILING_A])
+    fetcher = Form4InsiderFetcher(httpx.Client(transport=httpx.MockTransport(recorder.handler)),
+                                  clock=lambda: NOW, sleeper=lambda seconds: None)
+    assert fetcher(source) == []  # the fetch failed: nothing emitted, and nothing lost
+    assert any("could not be fetched" in message for _, message, _ in datahealth.held())
+    items = fetcher(source)  # the next poll lists it again and reads it
+    assert len(items) == 1 and items[0].fields["ticker"] == SYMBOL

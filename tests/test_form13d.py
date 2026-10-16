@@ -192,3 +192,20 @@ def test_the_scanner_and_prompt_speak_13d(signals_config, source):
 
 def test_13d_joins_the_13f_family():
     assert family_of("form_13d", SignalClass.CLASS_2_MOMENTUM) == "13f_filings"
+
+
+def test_a_refused_listing_raises_and_a_failed_fact_fetch_is_reported(source):
+    # global rule 2026-10-15
+    import datahealth
+    from signals.edgar import EdgarError
+
+    datahealth.reset()
+    fetcher, _ = fetcher_with(xml_status=503)
+    items = fetcher(source)
+    assert items  # under-filtering by design: the filing still surfaces...
+    assert any("primary_doc.xml returned HTTP 503" in m for _, m, _ in datahealth.held())  # ...but not silently
+    refused, recorder = fetcher_with()
+    refused._client = httpx.Client(transport=httpx.MockTransport(  # noqa: SLF001
+        lambda request: httpx.Response(403, text="slow down")))
+    with pytest.raises(EdgarError, match="HTTP 403"):
+        refused(source)

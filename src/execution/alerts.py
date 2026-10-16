@@ -472,3 +472,31 @@ class Alerter:
         except queue.Full:
             return
         self._worker.join(timeout=timeout)
+
+
+def data_sink(account: str, alerter: Optional["Alerter"] = None, *,
+              status_path: Optional[Path] = None) -> Callable[[str, str, bool], None]:
+    """The ``datahealth`` sink for any process but the main session (which
+    routes through its run log): each report becomes a YELLOW card (global
+    rule, human ruling 2026-10-15). The alerter is built on the first report,
+    AFTER the environment is loaded (2026-10-14: an alerter built before the
+    keys was silently disabled), and drained at exit. Rate-limited per
+    source and message like every card."""
+    import atexit
+    from zoneinfo import ZoneInfo
+
+    from execution.cards import data_card
+    from execution.environment import load_environment
+
+    holder: dict[str, Any] = {"alerter": alerter}
+
+    def sink(source: str, message: str, urgent: bool) -> None:
+        if holder["alerter"] is None:
+            load_environment()
+            holder["alerter"] = Alerter(status_path=status_path)
+            atexit.register(holder["alerter"].close)
+        when = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M ET")
+        holder["alerter"].card(f"DATA:{source}:{message[:60]}",
+                               data_card(account, when, source, message, urgent=urgent))
+
+    return sink

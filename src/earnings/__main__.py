@@ -28,6 +28,8 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+import datahealth
+from execution.alerts import data_sink
 from execution.environment import load_environment
 from execution.market_data import AlpacaDailyBars, AlpacaPriceSource
 from execution.options_data import AlpacaOptionsChain
@@ -186,6 +188,8 @@ def shadow_report() -> int:
 
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "pass"
+    # DATA HEALTH (global rule 2026-10-15): an expected fetch empty or failed is a yellow card
+    datahealth.set_sink(data_sink("Earnings shadow"))
     if command == "pass":
         return shadow_pass()
     if command == "report":

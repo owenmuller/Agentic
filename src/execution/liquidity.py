@@ -102,5 +102,6 @@ class AdvSource:
                 self._days,
                 symbol,
             )
-        self._cache[key] = value
+        if value is not None:  # a None is never cached: an outage must not last the day (2026-10-15)
+            self._cache[key] = value
         return value

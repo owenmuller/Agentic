@@ -15,6 +15,7 @@ package imports nothing that could.
 
 from __future__ import annotations
 
+import datahealth
 import logging
 from datetime import datetime, timezone
 from typing import Callable, Optional, Union
@@ -283,6 +284,9 @@ class ResearchPass:
 
         if not result.structured:
             # The model answered in prose, or not at all. One attempt, no re-roll.
+            # An empty report is never silent (data-health rule 2026-10-15).
+            datahealth.report("research", f"the research pass on {signal.source_id} returned no structured report "
+                                          f"(stop: {getattr(result, 'stop_reason', None)}); no position")
             return (
                 self._reject(
                     signal,
@@ -296,6 +300,8 @@ class ResearchPass:
         try:
             report = ResearchReport.model_validate(result.structured)
         except ValidationError as error:
+            datahealth.report("research", f"the research pass on {signal.source_id} returned a report that failed "
+                                          f"its schema ({error.error_count()} error(s)); no position")
             return (
                 self._reject(
                     signal,

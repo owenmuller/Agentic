@@ -316,3 +316,23 @@ def test_the_forward_funnel_reads_the_items_and_the_report_slices_them():
     recent = [replace(e, observed_at=datetime(2026, 10, 8, 14, 0, tzinfo=timezone.utc)) for e in entries]
     report2 = render_forward_report(recent, {})
     assert "CAUTION: 0 rows observed before 2026-10-08" in report2 and "3 rows since carry the whole listed set" in report2
+
+
+def test_a_refused_listing_page_is_a_failure_never_a_short_list(source):
+    # global rule 2026-10-15: a 4xx/5xx page used to keep "the hits read" silently
+    from signals.edgar import EdgarError
+
+    fetcher, recorder = fetcher_with({})
+    recorder.handler = lambda request: httpx.Response(503, text="busy")
+    fetcher._client = httpx.Client(transport=httpx.MockTransport(recorder.handler))  # noqa: SLF001
+    with pytest.raises(EdgarError, match="HTTP 503"):
+        fetcher(source)
+
+
+def test_an_empty_weekday_listing_is_reported(source):
+    import datahealth
+
+    datahealth.reset()
+    fetcher, _ = fetcher_with({})
+    assert fetcher(source) == []
+    assert any(src == "form_8k" and "no filings at all" in message for src, message, _ in datahealth.held())

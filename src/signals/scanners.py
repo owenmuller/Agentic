@@ -24,6 +24,7 @@ interface the real ones will use.
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from abc import ABC, abstractmethod
@@ -46,6 +47,8 @@ from signals.records import (
     SignalQueue,
     signal_id_for,
 )
+
+logger = logging.getLogger("signals.scanners")
 
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
@@ -148,6 +151,10 @@ class Scanner(ABC):
         #: "12 fetched, 0 emitted" and organic quiet stop looking identical.
         self._classify_sink = classify_sink
         self._classify_tally: Counter = Counter()
+        #: (source id, error) for each source whose fetch raised in the last poll:
+        #: one failing source no longer blinds its class (rule 2026-10-15); the
+        #: loop reports each to its error sink
+        self.last_failures: list[tuple[str, Exception]] = []
 
     @property
     def interval(self) -> timedelta:
@@ -173,13 +180,20 @@ class Scanner(ABC):
         protects the account, because a scanner has nothing like that to bypass.
         """
         now = self._clock()
+        self.last_failures = []  # this poll's only: a skipped poll reports nothing again
         if not force and not self.is_due(now):
             return []
         self._last_poll = now
 
         emitted: list[Signal] = []
         for source in self._config.sources:
-            for item in self._fetcher(source):
+            try:
+                items = list(self._fetcher(source))
+            except Exception as error:  # noqa: BLE001 - reported by the loop, never swallowed
+                logger.exception("source %s failed to fetch", getattr(source, "id", source))
+                self.last_failures.append((str(getattr(source, "id", source)), error))
+                continue
+            for item in items:
                 emitted.extend(self._handle(source, item, now))
         self._flush_classify_tally()
         return emitted

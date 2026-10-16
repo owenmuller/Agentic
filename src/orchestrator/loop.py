@@ -459,6 +459,15 @@ class TradingLoop:
                     except Exception:  # noqa: BLE001 - a sink must not kill the loop
                         logger.exception("error sink failed")
                 continue
+            # a source that failed while its class kept polling (rule 2026-10-15)
+            for source_id, error in getattr(scanner, "last_failures", None) or []:
+                report.scanner_failures += 1
+                if self._error_sink is not None:
+                    try:
+                        self._error_sink(f"source {source_id} failed to fetch: "
+                                         f"{type(error).__name__}: {str(error)[:200]}")
+                    except Exception:  # noqa: BLE001 - a sink must not kill the loop
+                        logger.exception("error sink failed")
             report.polled += len(emitted)
 
         pending = self._deferred + self._queue.drain()

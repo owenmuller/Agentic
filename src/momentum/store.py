@@ -14,6 +14,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable, Optional
 
+import datahealth
 from momentum import engine, feeds
 from momentum.feeds import Cache, Segment
 from momentum.rules import ff12
@@ -113,7 +114,9 @@ def build(cache_dir: Path, *, start: str = "2016-01-01", end: Optional[str] = No
     bar_end = end + "T23:59:00Z"
     stats: dict = {"universe_version": universe_version}
 
-    spy_rows = alpaca.bars(["SPY"], start + "T00:00:00Z", bar_end, "all")["SPY"]
+    spy_rows = alpaca.bars(["SPY"], start + "T00:00:00Z", bar_end, "all").get("SPY")
+    if not spy_rows:  # the calendar itself: nothing can be built without it
+        raise RuntimeError(f"no SPY bars for {start}..{end} ({alpaca.last_failed.get('SPY', 'empty')})")
     calendar = [d for d, _ in spy_rows]
     index = {d: i for i, d in enumerate(calendar)}
     n = len(calendar)
@@ -121,6 +124,8 @@ def build(cache_dir: Path, *, start: str = "2016-01-01", end: Optional[str] = No
     bench = {}
     for sym in benchmarks:
         rows = alpaca.bars([sym], start + "T00:00:00Z", bar_end, "all").get(sym, [])
+        if not rows:
+            datahealth.report("momentum benchmarks", f"no {sym} bars for {start}..{end}; its column will be empty")
         bench[sym] = feeds.align(rows, index, n)
     log(f"calendar {calendar[0]} .. {calendar[-1]} ({n} sessions)")
 
@@ -132,15 +137,21 @@ def build(cache_dir: Path, *, start: str = "2016-01-01", end: Optional[str] = No
 
     adj_all: dict[str, array] = {}
     raw_all: dict[str, array] = {}
+    bar_failures: dict[str, str] = {}
     for b in range(0, len(symbols), 100):
         batch = symbols[b:b + 100]
         name = f"bars_{b // 100:04d}"
         cached = cache.get(name)
         if cached is None:
             got_all = alpaca.bars(batch, start + "T00:00:00Z", bar_end, "all")
+            failed = alpaca.failed()
             got_raw = alpaca.bars(batch, start + "T00:00:00Z", bar_end, "raw")
+            failed.update(alpaca.failed())
             cached = {"all": got_all, "raw": got_raw}
-            cache.put(name, cached)
+            if failed:  # a batch with refused symbols is never cached as their answer (rule 2026-10-15)
+                bar_failures.update(failed)
+            else:
+                cache.put(name, cached)
         for sym in batch:
             if sym in cached["all"]:
                 adj_all[sym] = feeds.align(cached["all"][sym], index, n)
@@ -148,6 +159,11 @@ def build(cache_dir: Path, *, start: str = "2016-01-01", end: Optional[str] = No
         if b // 100 % 10 == 0:
             log(f"bars {b + len(batch)}/{len(symbols)}")
 
+    stats["bar_failures"] = len(bar_failures)
+    if bar_failures:
+        sample = ", ".join(f"{s} ({why})" for s, why in sorted(bar_failures.items())[:8])
+        datahealth.report("momentum bars", f"{len(bar_failures)} symbols' daily bars failed for {start}..{end} "
+                                           f"and are missing from this build: {sample}")
     # SPY is fetched fresh and the stock bars come from the cache: a folder
     # filled for an earlier end leaves every stock blank at the calendar's end
     # (2026-10-15: the shared research cache ended 10-13 under a 10-14 run)
@@ -216,6 +232,8 @@ def build(cache_dir: Path, *, start: str = "2016-01-01", end: Optional[str] = No
     stats["sec_failures"] = len(sec.failures)
     if sec.failures:
         log(f"SEC: {len(sec.failures)} fetches still failing; those companies lack facts this build")
+        datahealth.report("momentum SEC facts", f"{len(sec.failures)} SEC fetches failed after a retry pass; those "
+                                                f"companies lack facts in this build (first: {sec.failures[0]})")
 
     adj: dict[str, array] = {}
     raw: dict[str, array] = {}
@@ -284,6 +302,9 @@ def _fallback_caps(store: Store, finnhub, stats: dict, log: Callable[[str], None
     stats["fallback_wanted"] = len(wanted)
     stats["fallback_found"] = found
     stats["fallback_failures"] = len(finnhub.failures)
+    if finnhub.failures:
+        datahealth.report("momentum Finnhub caps", f"{len(finnhub.failures)} Finnhub market-cap fetches failed; those "
+                                                   f"companies are unranked this build: {', '.join(finnhub.failures[:8])}")
     log(f"market-cap fallback: Finnhub cap for {found} of {len(wanted)} ({len(finnhub.failures)} fetches failed)")
 
 

@@ -63,6 +63,26 @@ class EdgarError(RuntimeError):
     """A poll that could not be completed. The loop logs it and skips the cycle."""
 
 
+class FetchFailed(RuntimeError):
+    """One document's fetch failed (not "it does not exist"): the caller keeps
+    it unseen so the next poll retries it, and reports the count (data-health
+    rule 2026-10-15)."""
+
+
+def has_past_weekday(start: str, today) -> bool:
+    """Whether [start, today) holds a weekday: a market-wide EDGAR listing
+    over such a window is never legitimately empty (holidays aside)."""
+    from datetime import date as _date, timedelta as _td
+
+    day = _date.fromisoformat(str(start)[:10])
+    end = today if isinstance(today, _date) else _date.fromisoformat(str(today)[:10])
+    while day < end:
+        if day.weekday() < 5:
+            return True
+        day += _td(days=1)
+    return False
+
+
 def _local_name(tag: str) -> str:
     """Strip the XML namespace: '{http://…}infoTable' -> 'infoTable'."""
     return tag.rsplit("}", 1)[-1]

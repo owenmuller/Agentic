@@ -121,6 +121,8 @@ TOPOLOGY: dict[str, Rules] = {
     "earnings": Rules(
         may_import=frozenset(
             {
+                # its data-gap card (global rule 2026-10-15): cards and transports, no order path
+                "execution.alerts",
                 "execution.environment",
                 "execution.market_data",
                 "execution.options_data",
@@ -188,10 +190,16 @@ TOPOLOGY: dict[str, Rules] = {
     "datasafety": Rules(
         because="the write guard; stdlib only, a leaf every package may import",
     ),
+    # DATA HEALTH (global rule, human ruling 2026-10-15): an expected fetch that
+    # comes back empty or fails raises a yellow card. Every fetcher reports
+    # through it, so it is a leaf like the guard: stdlib only.
+    "datahealth": Rules(
+        because="the data-gap reporter; stdlib only, a leaf every package may import",
+    ),
 }
 
 #: Leaves any package may import (each stated in TOPOLOGY with its own rules).
-UNIVERSAL = frozenset({"datasafety"})
+UNIVERSAL = frozenset({"datasafety", "datahealth"})
 
 
 # ================================================================================
@@ -372,9 +380,10 @@ def test_the_earnings_logger_is_isolated_from_the_trading_path():
     rules = TOPOLOGY["earnings"]
     reachable = {entry.split(".")[0] for entry in rules.may_import}
     assert reachable == {"execution"}
-    # ...and only the market-data corner of it: nothing that can submit anything.
+    # ...and only the market-data corner of it, plus the alert transport for
+    # its data-gap card (2026-10-15): nothing that can submit anything.
     assert rules.may_import == frozenset(
-        {"execution.environment", "execution.market_data", "execution.options_data"}
+        {"execution.alerts", "execution.environment", "execution.market_data", "execution.options_data"}
     )
     for package, other in TOPOLOGY.items():
         assert "earnings" not in {

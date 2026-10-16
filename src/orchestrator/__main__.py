@@ -45,6 +45,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import datahealth
 import datasafety
 
 from audit.attribution import DEFAULT_WINDOW_DAYS, build_attribution
@@ -64,7 +65,7 @@ from signals import (
 from orchestrator.contracts_feed import build_awards_fetcher, pending_path_for
 
 from execution import cards
-from execution.alerts import Alerter
+from execution.alerts import Alerter, data_sink
 from execution.market_data import BenchmarkMoves
 from execution.atr import AtrSource
 from execution.alpaca import AlpacaAdapter
@@ -268,8 +269,12 @@ def _weekly_card(report: str, today, gate=None):
         if len(equities) >= 2 and equities[0] > 0:
             week = equities[-1] / equities[0] - 1
         spy_week = BenchmarkMoves().between(start, today)
-    except Exception:  # noqa: BLE001 - a missing number is "n/a", never a lost report
-        pass
+    except Exception as error:  # noqa: BLE001 - a missing number is "n/a", never a lost report - nor a silent one
+        datahealth.report("weekly report", f"the account value or week is unavailable ({type(error).__name__}: "
+                                           f"{str(error)[:120]}); the weekly card shows n/a")
+    if value is None or week is None:
+        datahealth.report("weekly report", f"the weekly card has no {'account value' if value is None else 'week'} "
+                                           f"from the broker; it shows n/a")
     judged = None
     if gate is not None:
         from risk_gate.state import Sleeve
@@ -1019,6 +1024,11 @@ def run() -> int:
             alerter.card(f"guard:{detail[:40]}", cards.guard_card("Main book", "REFUSED" in kind, when, message))
         elif event == "ERROR":
             alerter.card(f"ERROR:{detail[:40]}", cards.error_card("Main book", when, detail))
+        elif event == "DATA":
+            # an expected fetch empty or failed (global rule 2026-10-15): yellow
+            urgent = detail.startswith("URGENT ")
+            source, _, what = detail.removeprefix("URGENT ").partition(": ")
+            alerter.card(f"DATA:{detail[:60]}", cards.data_card("Main book", when, source, what, urgent=urgent))
         elif event == "COST":
             alerter.card(f"COST:{detail[:40]}", cards.cost_card("Main book", when, detail))
         elif event == "READS":
@@ -1033,6 +1043,8 @@ def run() -> int:
                 alerter.card(f"exec-test-{card.lines[0]}", card)
 
     run_log = RunLog(data_dir / "run.log", observer=observe)
+    datahealth.set_sink(lambda source, message, urgent: run_log.note(
+        "DATA", f"{'URGENT ' if urgent else ''}{source}: {message}"))
     # The data guard's production events (a refused write, or a guard error
     # that failed open) ride the run log's ERROR line, so both reach the same
     # urgent alert and the same health view (ruling 2026-10-10, item 4).
@@ -1218,6 +1230,8 @@ def run() -> int:
         ):
             logger.warning("%s", message)
             run_log.note("MIRROR", message)
+            # a silent feed is a yellow card, not only a run-log line (rule 2026-10-15)
+            datahealth.report("X mirrors", message)
 
         options_chain = AlpacaOptionsChain()
         prices = AlpacaPriceSource(
@@ -1691,6 +1705,9 @@ def contracts_evening() -> int:
             clock=checks.clock,
             recorded_external_ids=recorded,
         )
+    except Exception as error:  # noqa: BLE001 - a failed evening is a card, not only a unit status
+        datahealth.report("gov_contract_awards", f"the evening digest run failed: {type(error).__name__}: {error}")
+        raise
     finally:
         stack.close()
     print(report.render())
@@ -2125,6 +2142,10 @@ def main() -> int:
     stop = _data_safety(command)
     if stop is not None:
         return stop
+    # DATA HEALTH (global rule 2026-10-15): an expected fetch that comes back
+    # empty or fails is a yellow card in every command; the session (run)
+    # re-routes it through its run log once that exists
+    datahealth.set_sink(data_sink("Main book"))
     if command == "contracts-evening":
         return contracts_evening()
     if command == "contracts-backtest":

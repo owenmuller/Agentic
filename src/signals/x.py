@@ -127,6 +127,11 @@ class XRecentSearchFetcher:
             )
 
         payload = self._fetch(params)
+        if not payload.get("data") and payload.get("errors"):
+            # a 200 that carries only errors is a failure, never "no new posts" (rule 2026-10-15)
+            first = (payload.get("errors") or [{}])[0]
+            raise XError(f"X search for {handle} returned errors and no posts: "
+                         f"{first.get('title') or first.get('detail') or first}")
         posts = payload.get("data") or []
         self._count_reads(len(posts), source)
 

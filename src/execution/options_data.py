@@ -30,6 +30,8 @@ from typing import Any, Optional
 
 import httpx
 
+import datahealth
+
 from dataclasses import dataclass
 
 from execution.environment import load_environment, require_env
@@ -134,8 +136,9 @@ class AlpacaOptionsChain:
                 type(error).__name__,
                 error,
             )
-            return None
-        if contracts is None:
+            # an outage is not "no options" (data-health rule 2026-10-15)
+            datahealth.report("Alpaca options", f"the options chain for {underlying} is unavailable "
+                                                f"({type(error).__name__}); any option idea on it falls back")
             return None
 
         quotes: list[OptionQuote] = []
@@ -177,6 +180,8 @@ class AlpacaOptionsChain:
                 type(error).__name__,
                 error,
             )
+            datahealth.report("Alpaca options", f"option quotes are failing ({type(error).__name__}); latest: "
+                                                f"{occ_symbol} - its mark and stop wait")
             return None
         quote = ((data or {}).get("quotes") or {}).get(occ_symbol) or {}
         bid = _decimal_or_none(quote.get("bp"))
@@ -196,6 +201,8 @@ class AlpacaOptionsChain:
             )
         except Exception as error:  # noqa: BLE001
             logger.warning("option quote for %s unavailable (%s: %s)", occ_symbol, type(error).__name__, error)
+            datahealth.report("Alpaca options", f"option quotes are failing ({type(error).__name__}); latest: "
+                                                f"{occ_symbol} - its close waits")
             return None
         quote = ((data or {}).get("quotes") or {}).get(occ_symbol) or {}
         bid = _decimal_or_none(quote.get("bp"))
@@ -237,7 +244,10 @@ class AlpacaOptionsChain:
             token = (data or {}).get("next_page_token")
             if not token:
                 break
-        return rows or None
+        # an empty dict is the documented "the venue lists nothing in the
+        # window"; a failure raises above and is reported (2026-10-15: both
+        # came back as None, indistinguishable)
+        return rows
 
     def _snapshots(
         self, underlying: str, min_expiry: date, max_expiry: date
@@ -273,6 +283,8 @@ class AlpacaOptionsChain:
                 type(error).__name__,
                 error,
             )
+            datahealth.report("Alpaca options", f"option quotes for {underlying} are unavailable "
+                                                f"({type(error).__name__}); its contracts are refused as unquoted")
             return None
         return snapshots
 

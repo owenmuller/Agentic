@@ -33,11 +33,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import datahealth
 import datasafety
 from lab.account import LabAccount, LabRefused, LabState, Ledger, open_account
 from lab.config import LabConfig
 from execution import cards
-from execution.alerts import Alerter
+from execution.alerts import Alerter, data_sink
 from execution.market_data import BenchmarkMoves
 from lab import reports
 from lab.ladder import LadderEngine
@@ -503,6 +504,8 @@ def scoreboard(email: bool) -> int:
                 main_equity[datetime.fromtimestamp(int(stamp), timezone.utc).astimezone(NY).date()] = float(equity)
     except Exception as error:  # noqa: BLE001 - the main line is optional on the board
         print(f"(main book history unavailable: {error})", file=sys.stderr)
+        datahealth.report("lab scoreboard", f"the main book's history is unavailable ({type(error).__name__}); "
+                                            f"its row reads n/a")
     board = board_mod.build(
         ladder_events=ladder_events, ai_events=ai_events, exec_lines=exec_lines, spy=spy,
         main_equity=dict(sorted(main_equity.items())),
@@ -530,6 +533,8 @@ def date_from(text: str):
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # DATA HEALTH (global rule 2026-10-15): an expected fetch empty or failed is a yellow card
+    datahealth.set_sink(data_sink("Paper lab"))
     parser = argparse.ArgumentParser(prog="python -m lab")
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("tick")

@@ -46,6 +46,7 @@ entry, stop and close-out in basis points, faults, P&L live vs modelled.
 
 from __future__ import annotations
 
+import datahealth
 import json
 import logging
 import statistics
@@ -594,6 +595,12 @@ class ExecutionTest:
         inverse = by_session(self._bars.bars(inv, datetime.combine(day, SESSION_OPEN, NY), end, "sip")).get(day, {})
         past = [sessions[d] for d in sorted(sessions) if d < day][-self._c.lookback_sessions:]
         today = sessions.get(day, {})
+        if not today or not past:
+            # a past session always has SIP minute bars: without them the model
+            # would read "no actions" and the live-vs-model report would be
+            # quietly wrong (data-health rule 2026-10-15)
+            datahealth.report("execution test", f"no SIP minute bars for {sym} on {day}"
+                                                f"{'' if past else ' or its lookback'}; the modelled day is empty")
         sigma = sigma_table(past, self._marks)
         o = float(today[0]["o"]) if 0 in today else None
         pc = close_at(past[-1], 389) if past else None

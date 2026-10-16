@@ -25,6 +25,8 @@ from datetime import date
 from pathlib import Path
 from typing import Iterable, Optional
 
+import datahealth
+
 COST_PER_SIDE = 0.0010
 
 
@@ -322,4 +324,13 @@ def gather(directory: Path, trails, today: date, alpaca) -> Optional[Report]:
         # report": the card says so (2026-10-15: refused requests went silent)
         raise RuntimeError("the market data returned no SPY closes; the momentum report cannot be built")
     week_start = (today - timedelta(days=today.weekday())).isoformat()  # week to date: from the close before Monday
-    return build(directory, fills, prices, days, week_start, today.isoformat())
+    report = build(directory, fills, prices, days, week_start, today.isoformat())
+    missing = sorted(s for s in symbols if not prices.get(s))
+    if missing:
+        # a book holding a name with no closes would value it at nothing:
+        # never silent (rule 2026-10-15) - the card carries it and a yellow card goes out
+        why = getattr(alpaca, "last_failed", {}) or {}
+        detail = ", ".join(f"{s} ({why.get(s, 'no bars')})" for s in missing[:10])
+        report.notes.append(f"NO CLOSES for {len(missing)} symbol(s): {detail} - the books holding them are wrong")
+        datahealth.report("momentum report", f"no closes for {len(missing)} held or planned symbol(s): {detail}")
+    return report

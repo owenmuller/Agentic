@@ -33,7 +33,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Optional, Protocol, Sequence
 
 import httpx
@@ -126,6 +126,10 @@ class FinnhubEarningsCalendar:
             raise EarningsCalendarError(
                 "Finnhub response carried no earningsCalendar list"
             )
+        if not rows and any((start + timedelta(days=k)).weekday() < 5 for k in range((end - start).days + 1)):
+            # companies report every business day: an empty window is a
+            # failure, never "no earnings" (data-health rule 2026-10-15)
+            raise EarningsCalendarError(f"Finnhub returned no earnings at all for {start}..{end}")
         events: list[EarningsEvent] = []
         for row in rows:
             event = _event_from_row(row)

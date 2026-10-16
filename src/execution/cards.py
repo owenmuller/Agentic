@@ -293,6 +293,18 @@ def error_card(account: str, when: str, what: str, detail: str = "", sample: boo
         detail=detail or what, channel=URGENT, sample=sample)
 
 
+def data_card(account: str, when: str, source: str, what: str, *, urgent: bool = False,
+              sample: bool = False) -> Card:
+    """A data fetch or report came back empty, or failed, when data was
+    expected (global rule, human ruling 2026-10-15): yellow, never silent."""
+    return Card(account, f"data missing ({source})", LOOK, (
+        f"When: {when}.",
+        f"What: {plain(what)}",
+        "Whatever needed it ran without it or skipped it; nothing was guessed silently.",
+    ), look_at=f"{source} returned no data where data was expected", detail=what,
+        channel=URGENT if urgent else DAILY, sample=sample)
+
+
 def cost_card(account: str, when: str, what: str, sample: bool = False) -> Card:
     return Card(account, "research spend tripwire hit", ACTION, (
         f"When: {when}.",

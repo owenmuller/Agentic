@@ -57,6 +57,8 @@ from decimal import ROUND_DOWN, ROUND_UP, Decimal
 from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
+
+import datahealth
 from execution import BrokerError
 from execution.base import OrderStatus
 from lab.account import LabAccount
@@ -873,6 +875,8 @@ class AiTrader:
         logger.warning("LAB %s: %s", self.account.name, message)
         self.notes.append(f"FAULT: {message}")
         self.account.ledger.append("fault", message=message)
+        # a fault is a card when it happens, not only at the end of the day (data-health rule 2026-10-15)
+        datahealth.report("AI trader", message)
 
 
 def select_contract(chain: Optional[list], right: str, today: date, cfg: Any) -> tuple[Optional[Any], str]:

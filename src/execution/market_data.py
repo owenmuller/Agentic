@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time as dtime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -40,9 +40,14 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+import datahealth
+
 from execution.environment import load_environment, require_env
 
 DATA_BASE_URL = "https://data.alpaca.markets"
+_NEW_YORK = ZoneInfo("America/New_York")
+#: Symbols whose daily bars are never legitimately empty for a past window.
+BENCHMARKS = frozenset({"SPY", "QQQ", "SPMO", "IWM", "RSP"})
 
 ZERO = Decimal("0")
 
@@ -122,7 +127,32 @@ class AlpacaPriceSource:
             return None
         return price
 
+    #: A symbol with no usable quote for this long in market hours is an
+    #: outage, reported once until a quote returns (data-health rule 2026-10-15).
+    QUOTE_GAP = timedelta(minutes=15)
+
     def _fresh_quote(self, symbol: str) -> Optional[dict]:
+        """The latest quote body if it is fresh and well-formed, else None;
+        a long gap in market hours raises a yellow card."""
+        body = self._fetch_quote(symbol)
+        now = self._clock()
+        gaps = self.__dict__.setdefault("_gaps", {})
+        if body is not None:
+            gaps.pop(symbol, None)
+            return body
+        local = now.astimezone(_NEW_YORK)
+        if local.weekday() >= 5 or not (dtime(9, 35) <= local.time() <= dtime(15, 55)):
+            return None
+        first, reported = gaps.get(symbol, (now, False))
+        if not reported and now - first >= self.QUOTE_GAP:
+            datahealth.report("Alpaca quotes", f"no usable quote for {symbol} for "
+                                               f"{int((now - first).total_seconds() // 60)} minutes in market hours; "
+                                               f"anything priced off it (a stop, a mark, an order) waits")
+            reported = True
+        gaps[symbol] = (first, reported)
+        return None
+
+    def _fetch_quote(self, symbol: str) -> Optional[dict]:
         """The latest quote body if it is fresh and well-formed, else None."""
         try:
             response = self._client.get(
@@ -506,6 +536,8 @@ class AlpacaDailyBars:
                 )
             except Exception as error:  # noqa: BLE001 - an outage is missing data
                 logger.warning("bars request for %s failed: %s", symbol, error)
+                datahealth.report("Alpaca daily bars", f"daily bar requests are failing ({type(error).__name__}); "
+                                                       f"latest: {symbol}")
                 return collected
             if response.status_code >= 400:
                 if response.status_code in _UNSERVED_STATUSES:
@@ -522,6 +554,8 @@ class AlpacaDailyBars:
                     logger.warning(
                         "bars for %s returned HTTP %d", symbol, response.status_code
                     )
+                    datahealth.report("Alpaca daily bars", f"daily bar requests are failing (HTTP "
+                                                           f"{response.status_code}); latest: {symbol}")
                 return collected
             try:
                 payload: Any = response.json()
@@ -538,6 +572,10 @@ class AlpacaDailyBars:
                 break
         if collected:
             self._unserved.served(symbol)
+        elif symbol in BENCHMARKS and end - start >= timedelta(days=3):
+            # a benchmark always has bars for a past window of a few days
+            datahealth.report("Alpaca daily bars", f"no {symbol} bars for {start:%Y-%m-%d}..{end:%Y-%m-%d}; anything "
+                                                   f"measured against it reads n/a")
         return collected
 
     def bars_many(
@@ -570,13 +608,19 @@ class AlpacaDailyBars:
                     response = self._client.get("/v2/stocks/bars", params=params)
                 except Exception as error:  # noqa: BLE001 - an outage is missing data
                     logger.warning("batched bars request failed: %s", error)
+                    datahealth.report("Alpaca daily bars", f"a batch of {len(batch)} symbols' bars failed "
+                                                           f"({type(error).__name__}); they come back absent")
                     break
                 if response.status_code >= 400:
                     logger.warning("batched bars returned HTTP %d", response.status_code)
+                    datahealth.report("Alpaca daily bars", f"a batch of {len(batch)} symbols' bars returned HTTP "
+                                                           f"{response.status_code}; they come back absent")
                     break
                 try:
                     payload: Any = response.json()
                 except ValueError:
+                    datahealth.report("Alpaca daily bars", f"a batch of {len(batch)} symbols' bars was not JSON; "
+                                                           f"they come back absent")
                     break
                 for symbol, rows in ((payload or {}).get("bars") or {}).items():
                     if isinstance(rows, list):
@@ -826,7 +870,9 @@ class BenchmarkMoves:
             now = float((data.get("latestTrade") or {}).get("p") or (data.get("dailyBar") or {}).get("c"))
             prior = float((data.get("prevDailyBar") or {}).get("c"))
             return now / prior - 1 if prior > 0 else None
-        except Exception:  # noqa: BLE001 - n/a on the card, never a crash
+        except Exception as error:  # noqa: BLE001 - n/a on the card, never a crash - and never silent
+            datahealth.report("benchmark moves", f"{self.symbol}'s move today is unavailable "
+                                                 f"({type(error).__name__}); cards show n/a beside it")
             return None
 
     def between(self, start: date, end: date) -> Optional[float]:
@@ -838,6 +884,12 @@ class BenchmarkMoves:
             closes = {str(bar["t"])[:10]: float(bar["c"]) for bar in (response.json().get("bars") or [])}
             first = [closes[d] for d in sorted(closes) if d <= start.isoformat()]
             last = [closes[d] for d in sorted(closes) if d <= end.isoformat()]
-            return last[-1] / first[-1] - 1 if first and last and first[-1] > 0 else None
-        except Exception:  # noqa: BLE001
+            if first and last and first[-1] > 0:
+                return last[-1] / first[-1] - 1
+            datahealth.report("benchmark moves", f"{self.symbol}'s move {start}..{end} is unavailable "
+                                                 f"(no closes); cards show n/a beside it")
+            return None
+        except Exception as error:  # noqa: BLE001 - n/a on the card, never a crash - and never silent
+            datahealth.report("benchmark moves", f"{self.symbol}'s move {start}..{end} is unavailable "
+                                                 f"({type(error).__name__}); cards show n/a beside it")
             return None

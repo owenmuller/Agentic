@@ -162,6 +162,7 @@ class QuiverCongressFetcher:
 
         rows = self._fetch_recent()
         items: list[RawItem] = []
+        self._malformed = 0
         for row in rows:
             representative = str(row.get("Representative", ""))
             # Full roster (human ruling 2026-08-25): an EMPTY watchlist means
@@ -175,6 +176,9 @@ class QuiverCongressFetcher:
             item = self._item_from_row(row, source.filer_aliases)
             if item is not None:
                 items.append(item)
+        if self._malformed and self._malformed == len(rows):
+            # every row unreadable: the feed changed shape - a failure, not quiet (rule 2026-10-15)
+            raise QuiverError(f"all {len(rows)} Quiver congress rows lack core fields; did the feed format change?")
         return items
 
     # -- one pull ------------------------------------------------------------------------
@@ -200,6 +204,10 @@ class QuiverCongressFetcher:
             raise QuiverError(
                 f"Quiver congress feed returned {type(payload).__name__}, not a list"
             )
+        if not payload:
+            # the live feed always holds recent disclosures: an empty list is a
+            # failure, never "nothing new" (rule 2026-10-15)
+            raise QuiverError("Quiver congress feed returned an empty list")
         return payload
 
     def _item_from_row(self, row: dict, aliases=None) -> Optional[RawItem]:
@@ -220,6 +228,7 @@ class QuiverCongressFetcher:
         terms = _terms_of(ticker_type, description)
 
         if not (representative and ticker and transaction and transaction_date):
+            self._malformed = getattr(self, "_malformed", 0) + 1
             logger.warning(
                 "disclosure row is missing core fields; skipping: %r",
                 {k: row.get(k) for k in ("Representative", "Ticker", "Transaction")},

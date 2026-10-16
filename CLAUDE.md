@@ -245,6 +245,21 @@ The MOMENTUM LIVE BUILD runs v1 as a sleeve inside the main book: no data purcha
 - **Any approved strategy goes live at the next trading session once its checks pass. Never wait for a calendar boundary.** Rebalance cadence controls how often holdings are re-ranked, not when a strategy starts. (First applied: the momentum sleeve's v1.1 started with an off-cycle plan for 2026-10-15 instead of waiting for 2026-11-02; Nov 2 stays its first regular rebalance, applying the buffer rule to the holdings it then has.)
 - **Performance and every shadow are tracked daily from inception**, reported as **daily, week-to-date and since-start** against SPY and SPMO (and any other named benchmark). For the momentum sleeve: the session's end-of-day card (`orchestrator/momentum_report.py`; today and week-to-date from the prior close, since-start from the first trade) and the Friday weekly.
 
+## No Silent Data Gaps (GLOBAL RULE, human ruling 2026-10-15)
+
+**Any data fetch or report that returns empty when data is expected — or fails — must raise a yellow card. It never passes silently.** Origin, a pattern: an alerter built before the keys were loaded (silently disabled), SEC fetch failures cached as "no shares", and an Alpaca bar request refused by the free feed that came back as no data, so a day's momentum card was never sent.
+
+- **One mechanism:** `datahealth.report(source, message)`, a stdlib-only leaf every package may import. Each process installs one sink at its entry point:
+  - the main session: a run-log `DATA` line, which the observer turns into a yellow card;
+  - every other CLI: `execution.alerts.data_sink`, which builds its alerter after the environment loads.
+  - At most 3 cards per source per 30 minutes; the rest are counted on the next card and always logged.
+- **Raise where the caller can only go on by guessing** (a listing refused, a feed returning an empty list it never legitimately returns). The loop turns a raise into its error card, and one failing source no longer blinds its class.
+- **Report where the path degrades and carries on** (a missing quote for 15 minutes in market hours, a failed page, a fallback taken).
+- **A failure is never cached as an answer.** Only a definitive response (a 200, or a 404 meaning "no such fact") is cached.
+- **A refused document stays unseen**, so the next poll retries it.
+- **"Legitimately empty" must be argued, not assumed**, and stated where the code decides it: no new posts this minute, a symbol with no options, a delisted name with no bars.
+- The audit that introduced this rule, path by path: SESSION_NOTES 2026-10-15 (night).
+
 ## Learning Loop — every strategy learns from its own record (GLOBAL RULE, human ruling 2026-10-14)
 
 Every sleeve and every lab account learns through ONE shared, structured loop, gated by evidence. Build order: after the momentum sleeve's first live rebalance (2026-11-02) unless there is a reason to interleave. Golden replay (and the live round trip) for the journal and hypothesis prompts.

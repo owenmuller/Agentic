@@ -33,7 +33,8 @@ from typing import Optional, Sequence
 
 from signals.config import SourceConfig
 from signals.classification import is_us_listed_symbol
-from signals.edgar import ARCHIVES_URL, FTS_URL, EdgarFetcherBase
+import datahealth
+from signals.edgar import ARCHIVES_URL, FTS_URL, EdgarError, EdgarFetcherBase, has_past_weekday
 from signals.scanners import RawItem
 
 logger = logging.getLogger("signals.form13d")
@@ -117,25 +118,42 @@ class Form13DFetcher(EdgarFetcherBase):
                     items.append(item)
         return items
 
+    #: Full-text search pages 100 hits: every page is read (2026-10-15 - one
+    #: page truncated a busy market-wide listing silently), up to this cap.
+    MAX_PAGES = 20
+
     def _list(self, form_name: str, user_agent: str, today: date) -> list[dict]:
-        response = self._get(
-            FTS_URL,
-            user_agent,
-            params={
-                "q": '"13D"',
-                "forms": form_name,
-                "startdt": (today - self._lookback).isoformat(),
-                "enddt": today.isoformat(),
-            },
-        )
-        if response.status_code != 200:
-            logger.warning(
-                "13D listing (%s) returned HTTP %d; skipping this cycle",
-                form_name,
-                response.status_code,
+        hits: list[dict] = []
+        offset = 0
+        for _page in range(self.MAX_PAGES):
+            response = self._get(
+                FTS_URL,
+                user_agent,
+                params={
+                    "q": '"13D"',
+                    "forms": form_name,
+                    "startdt": (today - self._lookback).isoformat(),
+                    "enddt": today.isoformat(),
+                    "from": offset,
+                },
             )
-            return []
-        return response.json().get("hits", {}).get("hits", [])
+            if response.status_code != 200:
+                # a refused listing is a failure, never "no filings" (rule 2026-10-15)
+                raise EdgarError(f"13D listing ({form_name}, from {offset}) returned HTTP {response.status_code}")
+            body = response.json().get("hits", {})
+            page = body.get("hits", [])
+            hits.extend(page)
+            total = body.get("total", {})
+            total = int(total.get("value", 0) if isinstance(total, dict) else total or 0)
+            offset += len(page)
+            if not page or offset >= total:
+                break
+        if not hits and form_name == FORM_NAMES[0] and has_past_weekday(
+                (today - self._lookback).isoformat(), today):
+            # market-wide, Schedule 13D filings arrive every business day
+            datahealth.report("form_13d", f"the EDGAR {form_name} listing for "
+                                          f"{(today - self._lookback).isoformat()}..{today} returned no filings at all")
+        return hits
 
     # -- one filing ------------------------------------------------------------------
 
@@ -232,10 +250,15 @@ class Form13DFetcher(EdgarFetcherBase):
         base = f"{ARCHIVES_URL}/{int(cik)}/{accession.replace('-', '')}"
         response = self._get(f"{base}/primary_doc.xml", user_agent)
         if response.status_code != 200:
+            # the filing still surfaces (under-filtering, by design) - but not silently
+            datahealth.report("form_13d", f"{accession}: primary_doc.xml returned HTTP {response.status_code}; "
+                                          f"the signal carries no stake facts")
             return {}
         try:
             root = ET.fromstring(response.text)
         except ET.ParseError:
+            datahealth.report("form_13d", f"{accession}: primary_doc.xml did not parse; the signal carries no "
+                                          f"stake facts")
             return {}
         percents = []
         for element in root.iter():

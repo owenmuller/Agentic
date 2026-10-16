@@ -54,6 +54,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import yaml
 
+import datahealth
 from signals.config import SourceConfig
 from signals.scanners import RawItem
 
@@ -546,6 +547,8 @@ def load_edgar_names(client: httpx.Client, user_agent: str) -> dict[str, tuple[s
         key = normalize_name(str(entry.get("title", "")))
         if key and key not in out:
             out[key] = (str(entry["ticker"]).upper(), int(entry["cik_str"]))
+    if not out:  # the SEC ticker map is never empty (data-health rule 2026-10-15)
+        raise ContractsError("company_tickers.json came back empty")
     return out
 
 
@@ -591,10 +594,16 @@ class SecCompanyFacts:
         try:
             response = self._client.get(url, headers={"User-Agent": self._ua})
         except httpx.HTTPError as error:
-            logger.warning("SEC companyfacts %s failed: %s", url, error)
+            # not cached: a failure is not "no such fact" (data-health rule 2026-10-15)
+            datahealth.report("gov_contract_awards", f"SEC companyfacts {url} failed: {error}")
+            return None
+        if response.status_code == 404:  # the SEC has no such fact: a definitive answer
             self._cache[url] = None
             return None
-        payload = response.json() if response.status_code == 200 else None
+        if response.status_code != 200:
+            datahealth.report("gov_contract_awards", f"SEC companyfacts {url} returned HTTP {response.status_code}")
+            return None
+        payload = response.json()
         self._cache[url] = payload
         return payload
 
@@ -673,12 +682,22 @@ class FinnhubProfile:
         self._last = self._monotonic()
         try:
             response = self._client.get(FINNHUB_PROFILE_URL, params={"symbol": ticker, "token": self._resolve_key()})
-            payload = response.json() if response.status_code == 200 else {}
-            raw = payload.get("marketCapitalization")
+            if response.status_code in (429, 500, 502, 503, 504):
+                self._sleep(self._interval * 2)  # one retry
+                response = self._client.get(FINNHUB_PROFILE_URL, params={"symbol": ticker, "token": self._resolve_key()})
+            if response.status_code != 200:
+                # never cached, never silent (data-health rule 2026-10-15): the
+                # award still falls to the measure tier, as for an unknown cap
+                datahealth.report("gov_contract_awards", f"Finnhub profile2 {ticker} returned HTTP "
+                                                         f"{response.status_code}; its award sizes as cap unknown")
+                return None
+            raw = (response.json() or {}).get("marketCapitalization")
             value = (Decimal(str(raw)) * Decimal(1_000_000)).quantize(Decimal("1")) if raw else None
         except (httpx.HTTPError, InvalidOperation, ValueError, ContractsError) as error:
-            logger.warning("Finnhub profile2 %s failed: %s", ticker, error)
-            value = None
+            # the token rides in the query: the error's class only, never its text
+            datahealth.report("gov_contract_awards", f"Finnhub profile2 {ticker} failed ({type(error).__name__}); "
+                                                     f"its award sizes as cap unknown")
+            return None
         self._cache[ticker] = value
         return value
 
@@ -1022,15 +1041,19 @@ class DodDigestFetcher:
         try:
             refs = self.list_digests()
         except ContractsError as error:
-            logger.warning("DoD digest RSS unavailable: %s", error)
+            # retried next poll; never silent (data-health rule 2026-10-15)
+            datahealth.report("gov_contract_awards", f"the DoD contracts RSS is unavailable: {error}")
             return items
+        if not refs:
+            datahealth.report("gov_contract_awards", "the DoD contracts RSS listed no articles at all")
         for ref in refs:
             if ref.article_id in self._parsed_articles or now - ref.published_at > self._lookback:
                 continue
             try:
                 items.extend(self.items_for(ref, rules))
             except ContractsError as error:
-                logger.warning("DoD digest %s unreadable this poll: %s", ref.title, error)
+                # NOT marked parsed: retried next poll, and reported
+                datahealth.report("gov_contract_awards", f"DoD digest {ref.title} unreadable this poll: {error}")
                 continue
             self._parsed_articles.add(ref.article_id)
         return items
@@ -1060,6 +1083,10 @@ class DodDigestFetcher:
         """Parse one digest (fetched through the proxy unless ``text`` is given)."""
         body = text if text is not None else self.fetch_digest_text(ref.url)
         facts_list = parse_digest(body)
+        if not facts_list:
+            # a daily digest always lists awards: zero is a parse or proxy
+            # failure, never cached as "read" (2026-10-15)
+            raise ContractsError("the digest parsed to zero awards")
         event_date = ref.digest_date or ref.published_at.astimezone(NEW_YORK).date()
         items = []
         tally = {"awards": 0, "below_parser_floor": 0, "no_instrument": 0, TIER_RESEARCH: 0, TIER_MEASURE: 0, TIER_BELOW_FLOOR: 0, "seen": 0, "same_day_collapsed": 0}
@@ -1325,10 +1352,14 @@ class FpdsCivilianFetcher:
             try:
                 response = self._client.get(FPDS_ATOM_URL, params={"FEEDNAME": "PUBLIC", "q": query, "start": page * 10}, headers={"User-Agent": self._ua})
             except httpx.HTTPError as error:
-                logger.warning("FPDS feed failed: %s", error)
+                # never silent (data-health rule 2026-10-15): page 0 means no data at all
+                datahealth.report("gov_contract_awards", f"the FPDS feed failed at page {page}: {error}")
                 break
             if response.status_code != 200:
-                logger.warning("FPDS feed returned HTTP %d", response.status_code)
+                datahealth.report("gov_contract_awards", f"the FPDS feed returned HTTP {response.status_code} at page {page}")
+                break
+            if "<feed" not in response.text:
+                datahealth.report("gov_contract_awards", f"the FPDS feed returned a non-feed body at page {page}")
                 break
             batch = parse_fpds_atom(response.text)
             if not batch:

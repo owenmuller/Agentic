@@ -714,3 +714,16 @@ def test_unstated_terms_reach_the_model_as_unstated(signals_config):
     prompt = build_user_prompt(option_signal(bare, signals_config))
     assert "- strike: not stated by the filing" in prompt
     assert "never infer a strike or an expiry" in prompt
+
+
+def test_an_empty_or_unreadable_feed_is_a_failure_not_quiet(source):
+    # global rule 2026-10-15: the live feed always holds recent disclosures
+    from signals.quiver import QuiverError
+
+    fetcher, _ = fetcher_with([httpx.Response(200, json=[])])
+    with pytest.raises(QuiverError, match="empty list"):
+        fetcher(source)
+    broken = {**PELOSI_ROW, "Ticker": ""}
+    fetcher, _ = fetcher_with([httpx.Response(200, json=[broken, broken])])
+    with pytest.raises(QuiverError, match="lack core fields"):
+        fetcher(source)
