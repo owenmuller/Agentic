@@ -40,7 +40,7 @@ from typing import Optional, Sequence
 
 from signals.config import SourceConfig
 import datahealth
-from signals.edgar import ARCHIVES_URL, FTS_URL, EdgarError, EdgarFetcherBase, has_past_weekday
+from signals.edgar import ARCHIVES_URL, FTS_URL, EdgarError, EdgarFetcherBase, has_past_weekday, listing_start
 from signals.form13d import tickers_from_display
 from signals.scanners import RawItem
 
@@ -127,10 +127,11 @@ class Form8KFetcher(EdgarFetcherBase):
                 accession = (hit.get("_source") or {}).get("adsh") or ""
                 if accession and accession not in hits_by_accession:
                     hits_by_accession[accession] = hit
-        if not hits_by_accession and has_past_weekday((today - self._lookback).isoformat(), today):
+        window_start = listing_start(today, self._lookback.days).isoformat()
+        if not hits_by_accession and has_past_weekday(window_start, today):
             # dozens of whitelisted 8-K items are filed every business day
             datahealth.report("form_8k", f"the EDGAR 8-K listings for items {', '.join(whitelist)} over "
-                                         f"{(today - self._lookback).isoformat()}..{today} returned no filings at all")
+                                         f"{window_start}..{today} returned no filings at all")
         items: list[RawItem] = []
         for accession, hit in hits_by_accession.items():
             tally["listed"] += 1
@@ -156,7 +157,7 @@ class Form8KFetcher(EdgarFetcherBase):
                 params={
                     "q": f'"Item {item}"',
                     "forms": "8-K",
-                    "startdt": (today - self._lookback).isoformat(),
+                    "startdt": listing_start(today, self._lookback.days).isoformat(),
                     "enddt": today.isoformat(),
                     "from": offset,
                 },

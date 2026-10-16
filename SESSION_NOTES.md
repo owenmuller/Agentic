@@ -4102,6 +4102,55 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-15 (late night) — SAMPLE data cards; HISTORICAL IMPACT of the silent-gap bugs; a FRIDAY listing gap found and fixed
+
+**1. SAMPLE yellow cards** were sent with the deployed code (66826d4), one per sink path. All three are in the alert ledger as delivered (Discord, #reports):
+
+| Path | Card | Delivered (UTC) |
+|---|---|---|
+| Session: report -> run-log DATA line -> the session's own observer (`session_observer`, now module level) -> alerter | "Main book: data missing (SAMPLE main-session path), worth a look" | 00:58:16 |
+| Lab CLI sink | "Paper lab: data missing (SAMPLE lab path), worth a look" | 00:58:17 |
+| One-off command sink | "Main book: data missing (SAMPLE one-off command path), worth a look" | 00:58:17 |
+
+**2a. The missing `BrokerError` import: no order affected.**
+- The only path that catches it, the order lookup by client reference (startup recovery), made **0 requests** in `orchestrator.log` from 2026-08-19 to now.
+- There are 0 "order lookup failed" / "could not ask the broker" lines, and 0 NameError lines in the paper-session and lab journals or the lab ledgers.
+- The logs start 2026-08-19; 08-18 is not covered.
+
+**2b. SEC filings:**
+- **Form 4:**
+  - Documents: 12,828 fetched, **0 non-200**, so the mark-seen-before-fetch bug never dropped a filing.
+  - Insider histories: 1,272, all 200, so the never-expiring "no history" cache was never poisoned.
+  - Listings: on 4 polls a 500 survived the retry; the next poll's window covered them.
+- **8-K and 13D:** 9 and 5 such polls, covered the same way. 13D facts: 0 failures.
+- **13D 100-hit cap:** 13 of the windows since 09-22 held more than 100 filings. Every watchlist filing in every window, on any page, was compared with the record: **one missed**, Third Point's 13D on Strata Critical Medical (SRTA), filed 2026-10-15. The fixed fetcher reads it at the next poll (3-day window, every page, never seen), so it is recovered through the normal path, observed 10-16.
+- **FOUND, a bigger gap the audit had not named: the Friday listing gap.**
+  - Form 4 and 8-K listed a 1-CALENDAR-day window, so Monday's window started on Sunday. Most filings land after the close, after the session's last poll, so **every Friday-evening filing was never listed**.
+  - **Form 4:** about 2,600-2,800 filings on the six Fridays 09-04 to 10-09 (10-02 alone 1,213), around 17% of all Form 4s.
+    - Among them, **55 qualifying open-market purchases** (code P, not a 10b5-1 plan, >= $50K per insider; 45 issuers), against 330 recorded purchase rows: about 14% of purchases missed.
+  - **Verdict unchanged**, graded alike (excess over SPY from the first close after the filing):
+
+| | 5-day | 20-day |
+|---|---|---|
+| Recorded purchases | -2.50 pts (n=253, 28% hit) | -10.85 pts (n=142) |
+| Missed purchases | -1.73 pts (n=44, 32% hit) | -7.12 pts (n=17) |
+| Together | -2.38 pts (n=297) | -10.45 pts (n=159) |
+
+  - **8-K:** Friday 10-09 recorded only 19 of 73 whitelisted, tickered filings (54 never recorded), against 82/83 and 53/54 on Tuesday/Wednesday.
+    - Before 10-08 the funnel was cap-selected by design, so earlier Fridays cannot be separated.
+    - 10-09's rows mature at 5d next week.
+    - The 8-K verdict that moved it to measurement-only rests on the 2024-26 EDGAR backtest (n=33k), which this does not touch.
+  - **Fixed:** `signals.edgar.listing_start` lists back `lookback` BUSINESS days plus one holiday margin (Monday reaches Thursday; the Tuesday after a Monday holiday reaches Friday). Form 4's seen set is kept two days past that window. Tested.
+  - **Records:** not backfilled into the audit log. A row there is the system's own observation; writing observations it never made would falsify the trail, and the forward engine grades from `observed_at`. The missed purchases are measured above instead.
+
+**2c. Sizing:**
+- **VIX lockout:** 7 days had a failed fetch and the day locked out (09-25, 09-30, 10-02, 10-06, 10-07, 10-13, 10-14). The regime scalar ran at x1.0. The prior closes those days were 15.0-16.4, and the highest close since 08-18 is 17.84; the scalar only shrinks at 25. **No sizing changed.**
+- **ATR:** all 9 judged equity decisions since the ATR rule (09-02) carry an ATR. **None was sized on the 15% fallback.**
+- **ADV:** on 2026-09-03 the first-day form of the 15-minute SIP rule (bars requested up to "now", HTTP 403; fixed that day) made the liquidity gate refuse two mechanical-arm slices (about $833 each) as illiquid: NVDA and EQIX.
+  - NVDA was bought the next day: +0.72% paid, about +$6.
+  - EQIX was never bought: -4.28% since (SPY -0.17%), so the missed slice would have lost about $36.
+  - The refusal records are accurate (they say the volume was unavailable); nothing to correct.
+
 ### 2026-10-15 (night) — RULINGS: flags-only brief; Saturday timer verified; GLOBAL RULE "no silent data gaps" and the fetch-path audit
 
 **1. Brief:**

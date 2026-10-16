@@ -64,7 +64,15 @@ import datahealth
 
 from signals.config import SourceConfig
 from signals.classification import is_us_listed_symbol
-from signals.edgar import ARCHIVES_URL, FTS_URL, EdgarError, EdgarFetcherBase, FetchFailed, has_past_weekday
+from signals.edgar import (
+    ARCHIVES_URL,
+    FTS_URL,
+    EdgarError,
+    EdgarFetcherBase,
+    FetchFailed,
+    has_past_weekday,
+    listing_start,
+)
 from signals.scanners import RawItem
 
 SUBMISSIONS_URL = "https://data.sec.gov/submissions"
@@ -391,7 +399,8 @@ class Form4InsiderFetcher(EdgarFetcherBase):
         lookback = (
             self._first_poll_lookback_days if not self._seen else self._lookback_days
         )
-        start = (today - timedelta(days=lookback)).isoformat()
+        # business days, across the weekend (2026-10-15: Friday-evening filings were never listed)
+        start = listing_start(today, lookback).isoformat()
         offset = 0
         for _ in range(self._max_list_pages):
             response = self._get(
@@ -817,9 +826,10 @@ class Form4InsiderFetcher(EdgarFetcherBase):
 
         self._window = fresh_only(self._window)
         self._sell_window = fresh_only(self._sell_window)
+        # kept two days past the widest listing window, so nothing is fetched twice
         seen_floor = (
-            today
-            - timedelta(days=max(self._first_poll_lookback_days, self._lookback_days) + 2)
+            listing_start(today, max(self._first_poll_lookback_days, self._lookback_days))
+            - timedelta(days=2)
         ).isoformat()
         self._seen = {
             accession: filed

@@ -196,3 +196,36 @@ def test_the_session_path_turns_a_report_into_a_yellow_card(tmp_path):
     assert [c.status for _, c in sent] == [cards.LOOK, cards.LOOK]
     assert sent[0][1].channel == cards.DAILY and sent[1][1].channel == cards.URGENT
     assert "Alpaca daily bars" in sent[0][1].title and "DATA" in (tmp_path / "run.log").read_text()
+
+
+def test_an_edgar_listing_reaches_back_across_the_weekend():
+    # 2026-10-15: a 1-calendar-day window on a Monday started on Sunday, and
+    # every Friday-evening Form 4 / 8-K was never listed (2,669 Form 4s)
+    from signals.edgar import listing_start
+
+    assert listing_start(date(2026, 10, 19), 1) == date(2026, 10, 15)   # Monday -> Thursday (Friday + margin)
+    assert listing_start(date(2026, 10, 20), 1) == date(2026, 10, 16)   # Tuesday after a Monday holiday reaches Friday
+    assert listing_start(date(2026, 10, 15), 1) == date(2026, 10, 13)   # an ordinary Thursday: Tuesday
+    assert listing_start("2026-10-19", 3) == date(2026, 10, 13)
+
+
+def test_form4_lists_from_the_business_day_window(monkeypatch):
+    import httpx as _httpx
+
+    from signals.form4 import Form4InsiderFetcher
+
+    starts = []
+
+    def handler(request):
+        if "efts.sec.gov" in str(request.url):
+            starts.append(request.url.params.get("startdt"))
+            return _httpx.Response(200, json={"hits": {"hits": []}})
+        return _httpx.Response(404)
+
+    monday = datetime(2026, 10, 19, 14, 0, tzinfo=timezone.utc)
+    fetcher = Form4InsiderFetcher(_httpx.Client(transport=_httpx.MockTransport(handler)), clock=lambda: monday,
+                                  sleeper=lambda s: None, seen=["0000000000-26-000001"])
+    from signals import SignalsConfig
+
+    fetcher(SignalsConfig.load().source("class_2", "form4_insiders"))
+    assert starts and starts[0] <= "2026-10-16"  # Friday is inside Monday's window

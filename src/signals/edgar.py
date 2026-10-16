@@ -69,6 +69,25 @@ class FetchFailed(RuntimeError):
     rule 2026-10-15)."""
 
 
+def listing_start(today, lookback_days: int):
+    """The first day an EDGAR listing must cover so nothing filed after the
+    previous session's last poll is missed: ``lookback_days`` business days
+    back, plus one more as a holiday margin.
+
+    2026-10-15: a 1-CALENDAR-day window on a Monday started on Sunday, so
+    every Form 4 and 8-K filed on a Friday evening (most are filed after the
+    close) was never listed - 2,669 Form 4s on six Fridays, Sep 4 to Oct 9."""
+    from datetime import date as _date, timedelta as _td
+
+    day = today if isinstance(today, _date) else _date.fromisoformat(str(today)[:10])
+    remaining = max(1, int(lookback_days)) + 1
+    while remaining > 0:
+        day -= _td(days=1)
+        if day.weekday() < 5:
+            remaining -= 1
+    return day
+
+
 def has_past_weekday(start: str, today) -> bool:
     """Whether [start, today) holds a weekday: a market-wide EDGAR listing
     over such a window is never legitimately empty (holidays aside)."""
