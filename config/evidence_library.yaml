@@ -110,3 +110,8 @@ findings:
     strength: weak
     n: "0 graded trades"
     date: 2026-10-07
+  - id: E21
+    finding: "Quiver's Lobbying Spending Growth (equal weight, the 10 companies with the most quarter-over-quarter growth in disclosed federal lobbying, monthly) made 20.8%/yr 2016-2026 against QQQ 20.7%, with beta 1.20 and no significant alpha vs SPY (95% range -5.7% to +12.9%/yr). Quiver's published figures for this and its congressional strategies start at market bottoms (Mar 2009, Apr 2020)."
+    strength: moderate
+    n: "128 months, 10 annual starts, 2016-2026"
+    date: 2026-10-29
