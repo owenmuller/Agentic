@@ -4125,6 +4125,30 @@ It opened 30 positions (its cap), closed none (the 367-day time exits come later
 
 **4. Evidence library:** E4 now carries the House replication result: 0 of 40 starts, the published +41.4% unreproduced, start date and trade-date timing.
 
+### 2026-10-29 (evening) — LOBBYING SPENDING GROWTH backtest RESULT: NOT MET
+
+Run exactly as pre-registered below. Data: 7,106 symbols queried, 1,721 with lobbying history, 0 failed (`~/research-data/lobbying/`, `complete.json`). The rules are `orchestrator/quiver_books.py`, the live shadow's own code (script `~/scratch/lobby_bt.py`, report `~/research-data/lobbying/report.txt`).
+
+| 2016-02-01 to 2026-10-28, 10 bp a side | CAGR | max DD |
+|---|---|---|
+| Lobbying Spending Growth | **20.82%** | -42.81% |
+| SPY / QQQ | 15.53% / 20.71% | |
+
+- **Alpha vs SPY:** +3.16%/yr, **95% CI -5.66 .. +12.88** (128 months, bootstrap), **beta 1.20**.
+- **Annual starts:** it beats SPY from **9 of 10**, with CAGR minus SPY from -1.07 to +5.29 points (median +2.26). Against QQQ it trails from 8 of 10 (from -6.90 to +0.74).
+- **SUCCESS CRITERION: NOT MET.** The alpha interval spans zero. The edge over SPY is about what a beta of 1.2 earns in a rising market, and the strategy roughly matches QQQ.
+- **Start-date dependence: modest.** The excess over SPY shrinks the later the start: +5.3 from 2016, +0.5 to +2.3 from 2022-2024, -1.1 from 2025. Every start shares the same 2020-22 drawdown, about -42% (-20% from 2023).
+- **Quiver's number:** its 27.33% (from 2009-03) cannot be tested here; our prices start in 2016. Its start sits at the market bottom.
+- **Sensitivities (not graded):**
+
+| Variant | CAGR | Max DD | Beats SPY (of 10 starts) |
+|---|---|---|---|
+| Dollar growth | 20.25% | -32.19% | 8 |
+| $50K minimum base | 18.60% | -42.59% | 7 |
+| No costs | 21.86% | -42.70% | 9 |
+
+- **Reading:** a high-beta, roughly QQQ-like book with no measurable alpha. The live shadow (from 2026-10-30) keeps measuring it after this test date.
+
 ### 2026-10-29 — QUIVER "LOBBYING SPENDING GROWTH" BACKTEST — PRE-REGISTERED (before any return was computed)
 
 Human ruling 2026-10-29, item 3. The rules are Quiver's stated ones, as published (quiverquant.com/strategies, read 2026-10-29): "an equal-weighted position in 10 publicly-traded companies that disclosed the most Quarter over Quarter growth in U.S. federal lobbying expenditures, rebalanced monthly." Quiver's own backtest starts 2009-03-01 and reports 27.33% CAGR, max DD -42.80%.
