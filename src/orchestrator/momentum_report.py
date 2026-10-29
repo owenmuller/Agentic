@@ -178,6 +178,9 @@ class Report:
     holdings: int = 0
     invested: Optional[float] = None
     notes: list = field(default_factory=list)
+    #: the Quiver strategy shadows (human ruling 2026-10-29): (book, started,
+    #: week to date, since start, SPY and QQQ over the same days since start)
+    quiver: list = field(default_factory=list)
 
     def table(self) -> str:
         names = sorted(self.since, key=lambda n: -(self.since[n] if self.since[n] is not None else -9e9))
@@ -186,6 +189,12 @@ class Report:
         for name in names:
             d, w, s = self.day.get(name), self.week.get(name), self.since.get(name)
             lines.append(f"{name:32s} {_fmt(d):>8s} {_fmt(w):>13s} {_fmt(s):>12s}")
+        if self.quiver:
+            lines += ["", "QUIVER STRATEGY SHADOWS - software books on Quiver's published rules (ruling 2026-10-29)",
+                      f"{'book':24s} {'since':>10s} {'week to date':>13s} {'since start':>12s} {'SPY':>8s} {'QQQ':>8s}"]
+            for name, started, week, since, spy, qqq in self.quiver:
+                lines.append(f"{name:24s} {started:>10s} {_fmt(week):>13s} {_fmt(since):>12s} {_fmt(spy):>8s} "
+                             f"{_fmt(qqq):>8s}")
         lines += ["", "Notes:"] + [f"- {n}" for n in self.notes]
         return "\n".join(lines)
 
@@ -237,6 +246,7 @@ def build(directory: Path, fills: list[Fill], prices: dict[str, dict[str, float]
     for bench in ("SPY", "SPMO"):
         series = prices.get(bench, {})
         paths[bench] = {d: series[d] for d in days if d in series}
+    report.quiver = quiver_rows(directory, prices, days, week_start, today)
     for name, path in paths.items():
         report.day[name] = window(path, today, today)
         report.week[name] = window(path, week_start, today)
@@ -299,6 +309,44 @@ def record(directory: Path, report: Report, day: str) -> None:
     os.replace(temporary, path)
 
 
+def load_quiver_books(directory: Path) -> dict:
+    """``data/quiver/books.json`` beside ``data/momentum`` (ruling 2026-10-29)."""
+    try:
+        return json.loads((directory.parent / "quiver" / "books.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _from_close(path: dict[str, float], start: str, end: str) -> Optional[float]:
+    """From the close OF ``start`` (a book that starts at that close) to the
+    last close on or before ``end``."""
+    first = [d for d in sorted(path) if d >= start]
+    last = [d for d in sorted(path) if d <= end]
+    if not first or not last or last[-1] < first[0]:
+        return None
+    a, b = path[first[0]], path[last[-1]]
+    return b / a - 1 if a > 0 else None
+
+
+def quiver_rows(directory: Path, prices: dict[str, dict[str, float]], days: list[str], week_start: str,
+                today: str) -> list:
+    """Each Quiver shadow since ITS OWN start, SPY and QQQ over the same days."""
+    rows = []
+    for name, book in sorted(load_quiver_books(directory).items()):
+        schedule = [(d, w) for d, w in book.get("schedule") or []]
+        if not schedule:
+            continue
+        started = schedule[0][0]
+        path = book_path(schedule, prices, days)
+        bench = {s: {d: prices.get(s, {})[d] for d in days if d in prices.get(s, {})} for s in ("SPY", "QQQ")}
+        held = [d for d in sorted(path) if started <= d <= today]
+        # from the capital it started with (1.0 before its entry cost), so the cost counts
+        since = path[held[-1]] - 1 if held else None
+        rows.append((name, started, window(path, week_start, today), since,
+                     _from_close(bench["SPY"], started, today), _from_close(bench["QQQ"], started, today)))
+    return rows
+
+
 def gather(directory: Path, trails, today: date, alpaca) -> Optional[Report]:
     """Fetch the closes the report needs and build it; None before the first
     plan exists (there is nothing to report)."""
@@ -310,7 +358,10 @@ def gather(directory: Path, trails, today: date, alpaca) -> Optional[Report]:
     fills = fills_from_trails(trails)
     first = min([p["rebalance_date"] for p in plans] + [f.day for f in fills])
     start = (date.fromisoformat(first) - timedelta(days=10)).isoformat()
-    symbols = {f.symbol for f in fills} | {"SPY", "SPMO"}
+    symbols = {f.symbol for f in fills} | {"SPY", "SPMO", "QQQ"}
+    for book in load_quiver_books(directory).values():
+        for _day, weights in book.get("schedule") or []:
+            symbols |= set(weights)
     for p in plans:
         symbols |= {t["symbol"] for t in p["targets"]}
     for month in load_months(directory):

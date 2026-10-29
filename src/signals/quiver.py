@@ -392,6 +392,37 @@ class QuiverCongressFetcher:
         self._client.close()
 
 
+class QuiverDataClient(QuiverCongressFetcher):
+    """Raw Quiver datasets for the software shadows (human ruling 2026-10-29):
+    the live congressional feed and the lobbying feeds. Same key, pacing and
+    retry as the fetcher. A failure or an empty feed RAISES (data-health rule
+    2026-10-15): neither feed is ever legitimately empty."""
+
+    BASE = "https://api.quiverquant.com/beta"
+
+    def _rows(self, path: str, *, allow_empty: bool = False) -> list[dict]:
+        response = self._get(f"{self.BASE}{path}")
+        if response.status_code != 200:
+            raise QuiverError(f"Quiver {path} returned HTTP {response.status_code}")
+        payload = response.json()
+        if not isinstance(payload, list):
+            raise QuiverError(f"Quiver {path} returned {type(payload).__name__}, not a list")
+        if not payload and not allow_empty:
+            raise QuiverError(f"Quiver {path} returned an empty list")
+        return payload
+
+    def congress_live(self) -> list[dict]:
+        return self._rows("/live/congresstrading")
+
+    def lobbying_live(self) -> list[dict]:
+        """The most recent lobbying filings (about the last ten days)."""
+        return self._rows("/live/lobbying")
+
+    def lobbying_history(self, symbol: str) -> list[dict]:
+        """One ticker's full lobbying history; empty when it has none."""
+        return self._rows(f"/historical/lobbying/{symbol}", allow_empty=True)
+
+
 def _matches_name(representative: str, watchlist_name: str) -> bool:
     """Every token of the watchlist name appears in the Representative field.
 

@@ -4102,6 +4102,29 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-29 — RULINGS: Quiver strategies (control-arm record; shadows; lobbying backtest; evidence line)
+
+**1. The congressional control arm's live record** (mechanical sleeve, from its first fill 2026-08-27 through 10-28, 44 sessions). Time-weighted return of the invested book: daily Modified Dietz on real fills, chained.
+
+| | Return | Max drawdown |
+|---|---|---|
+| Control arm | +0.03% | -3.64% |
+| SPY | +0.83% | -2.47% |
+| QQQ | +2.01% | -7.29% |
+
+It opened 30 positions (its cap), closed none (the 367-day time exits come later) and holds 30, about $24,000 invested.
+
+**2. Quiver strategy shadows (CLAUDE.md § Quiver Strategy Shadows), built:**
+- Congress Buys and Lobbying Spending Growth, software only, decided before the open, from 2026-10-30.
+- Our plan's datasets, probed 2026-10-29:
+  - congress trading (live and bulk), lobbying (live and per-ticker history from 1999) and government contracts are in;
+  - insiders is not (HTTP 403, "Upgrade your subscription plan");
+  - there is no analyst endpoint.
+- Insider Purchases and Analyst Buys are therefore NOT built. Both also rest on Quiver's proprietary scoring, which cannot be replicated from its description.
+- Congress Buys' holding window is unpublished: 182 days is the replication's pre-registered window.
+
+**4. Evidence library:** E4 now carries the House replication result: 0 of 40 starts, the published +41.4% unreproduced, start date and trade-date timing.
+
 ### 2026-10-29 — QUIVER "LOBBYING SPENDING GROWTH" BACKTEST — PRE-REGISTERED (before any return was computed)
 
 Human ruling 2026-10-29, item 3. The rules are Quiver's stated ones, as published (quiverquant.com/strategies, read 2026-10-29): "an equal-weighted position in 10 publicly-traded companies that disclosed the most Quarter over Quarter growth in U.S. federal lobbying expenditures, rebalanced monthly." Quiver's own backtest starts 2009-03-01 and reports 27.33% CAGR, max DD -42.80%.

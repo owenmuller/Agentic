@@ -411,6 +411,40 @@ def _momentum_brief_files(directory: Path, cache_root: Path, config, latest: Opt
         log.warning("momentum prep: daily scoreboard line not recorded (%s: %s)", type(error).__name__, error)
 
 
+def _quiver_shadows_step(directory: Path, alpaca, now: datetime, log) -> None:
+    """The Quiver strategy shadows (human ruling 2026-10-29, item 2): software
+    books, decided in the prep unit's runs. A failure is a yellow card, never a
+    failed prep."""
+    from signals.quiver import QuiverDataClient
+
+    from orchestrator import quiver_shadows
+
+    today = now.astimezone(_NY).date()
+    try:
+        sessions = alpaca.sessions((today - timedelta(days=12)).isoformat(), (today + timedelta(days=12)).isoformat())
+        prior = [s for s in sessions if s < today.isoformat()]
+
+        def tradeable(symbol: str) -> bool:  # a bar on the prior session: listed and trading
+            if not prior:
+                return False
+            rows = alpaca.bars([symbol], prior[-1] + "T00:00:00Z", prior[-1] + "T23:59:00Z", "all")
+            return bool(rows.get(symbol))
+
+        client = QuiverDataClient()
+        try:
+            # decided only before the open (the 07:30 run), from data public before the day
+            local = now.astimezone(_NY)
+            quiver_shadows.step(directory, client, today.isoformat(), sessions, tradeable, log.info,
+                                seed_path=Path.home() / "research-data" / "lobbying" / "rows.jsonl",
+                                decide=local.hour < 9 or (local.hour == 9 and local.minute < 15))
+        finally:
+            client.close()
+    except Exception as error:  # noqa: BLE001 - a shadow's failure must not cost the momentum prep
+        log.warning("quiver shadows step failed: %s: %s", type(error).__name__, error)
+        datahealth.report("Quiver shadows", f"the Quiver strategy shadows did not update ({type(error).__name__}: "
+                                            f"{str(error)[:160]})")
+
+
 def _weekly_shortlist(directory: Path, cache_root: Path, config, today, alpaca, build, log) -> None:
     """The Saturday refresh of the AI trader's momentum shortlist: fresh bars
     and SEC facts through the week's last session, in their own cache folder
@@ -1845,6 +1879,7 @@ def momentum_prep() -> int:
                 del shadow_store
         if wanted is None:
             _momentum_brief_files(directory, cache_root, config, latest, now, alpaca, build, log)
+            _quiver_shadows_step(directory.parent / "quiver", alpaca, now, log)
         if wanted is not None:
             sessions = alpaca.sessions((_date.fromisoformat(wanted) - timedelta(days=12)).isoformat(), wanted)
             if not sessions or sessions[-1] != wanted or len(sessions) < 2:

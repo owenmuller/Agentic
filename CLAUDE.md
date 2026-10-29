@@ -206,6 +206,18 @@ The MOMENTUM LIVE BUILD runs v1 as a sleeve inside the main book: no data purcha
   - Market data: runs of 10+ identical closes are blanked as dormant prints (`feeds.drop_flat_runs`) so a reused ticker splits (the LINE defect).
   - Order-path round trip PASSED live 2026-10-14 12:28 ET in the main paper account (1.496 F bought at 11.96 and sold at 11.95 through the engine, the gate's momentum path and the adapter; full trail). Weekly card: `orchestrator/momentum_report.py` (the live sleeve by Modified Dietz on the invested book, shadows as software books at 10 bp a side, SPY and SPMO). Step 2: `python -m orchestrator momentum-step2-report` (reports, applies nothing), scheduled on the droplet for 2026-11-06 16:45 ET as a persistent timer.
 
+## Quiver Strategy Shadows (human ruling 2026-10-29)
+
+Software-only books on two of Quiver's published strategies (quiverquant.com/strategies), on our own Quiver data and live prices, from 2026-10-30. No order, no gate, no prompt. They sit in the Friday weekly's shadow table, each since its own start, beside SPY and QQQ over the same days (`orchestrator/quiver_books.py` rules, `orchestrator/quiver_shadows.py` files and step, run by the momentum prep unit; `data/quiver/`).
+
+- **Congress Buys:** disclosed stock purchases by members of Congress, weighted by reported size (the range midpoint), rebalanced at the close of the first session of each week.
+  - Quiver does not publish how long a purchase stays in the book; 182 days is the window our House replication pre-registered.
+- **Lobbying Spending Growth:** equal weight in the 10 companies with the highest quarter-over-quarter growth in disclosed federal lobbying spend, rebalanced at the close of the first session of each month. The readings are pre-registered for its backtest (SESSION_NOTES 2026-10-29), and the backtest and the live book share the same code.
+- **Entry on the disclosure or publication date only:** a row counts only when its own public date is before the rebalance day, and decisions are made before the open of that day.
+- **Not built:**
+  - Insider Purchases: our Quiver plan lacks the insiders dataset (HTTP 403), and the strategy rests on a proprietary model.
+  - Analyst Buys: our plan has no analyst dataset, and the scoring is proprietary.
+
 ## Paper Lab — separate paper accounts (PAPER PUSH, human ruling 2026-10-09 late)
 
 "Risk costs nothing in paper, so run aggressive strategies live in parallel and let results sort them. The main paper book and its rules are untouched."
