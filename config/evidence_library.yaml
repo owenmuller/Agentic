@@ -26,7 +26,7 @@ findings:
     n: "1,541 small-band; about 35 per large band"
     date: 2026-09-18
   - id: E4
-    finding: "A replication of the popular congressional long-short strategy (2016-2026) showed no alpha against QQQ (-0.9%/yr, CI -13.7 to +11.9), and its short leg lost 15.9%/yr."
+    finding: "Quiver's U.S. House long-short strategy, replicated on disclosure dates (2016-2026): its long leg beat 1.3x QQQ from 0 of 40 quarterly start dates, with no alpha (-0.9%/yr, CI -13.7 to +11.9). Quiver's published +41.4%/yr could not be reproduced (+18.0%/yr from its own 2020-04-01 start, +13.6% from 2016): the published figure leans on a start just after the 2020 crash and on trade-date timing (dating trades by transaction, not disclosure, adds 2.3 points a year of look-ahead)."
     strength: strong
     n: "40 quarterly start dates, 2016-2026"
     date: 2026-10-09

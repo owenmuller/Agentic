@@ -4102,6 +4102,38 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-10-29 — QUIVER "LOBBYING SPENDING GROWTH" BACKTEST — PRE-REGISTERED (before any return was computed)
+
+Human ruling 2026-10-29, item 3. The rules are Quiver's stated ones, as published (quiverquant.com/strategies, read 2026-10-29): "an equal-weighted position in 10 publicly-traded companies that disclosed the most Quarter over Quarter growth in U.S. federal lobbying expenditures, rebalanced monthly." Quiver's own backtest starts 2009-03-01 and reports 27.33% CAGR, max DD -42.80%.
+
+**Our plan includes the data:** `/beta/historical/lobbying/{ticker}`, 1999 onward per ticker, with delisted tickers kept (TWTR, ATVI, XLNX); there is no bulk endpoint. Insiders: NOT in our plan (HTTP 403, "Upgrade your subscription"). Analyst ratings: no endpoint.
+
+**Window, and the reason it is not 2009:** our price data (Alpaca SIP daily bars, adjusted for splits and dividends) starts 2016-01. The backtest runs 2016-02 to 2026-10, so Quiver's 2009 start (the market bottom) cannot be reproduced here. Stated, not worked around.
+
+**What Quiver leaves unstated, and the readings chosen here (each reported, never tuned):**
+- **Universe:** every symbol in Alpaca's US-listed common-like asset list (active and inactive, about 7,100) for which Quiver returns lobbying history.
+  - A reused ticker may carry another company's prices; stated, not modelled.
+- **Public date:** the row's `Date`, the filing date. It clusters on the 20th after quarter end, the Lobbying Disclosure Act deadline, and is entered no earlier than that date.
+- **Rows:** exact duplicates on (Date, Registrant, Amount) are dropped. Amendments filed later are not identifiable and add to the quarter they are assigned to (noise, stated).
+- **Report quarter:** each filing is assigned to the calendar quarter containing (Date - 45 days). That catches on-time and mildly late filings; much later amendments land in a later quarter.
+- **"Quarter over quarter growth":** (spend in P - spend in P-1) / spend in P-1, where P is the latest report quarter whose deadline (the 20th of the month after it ends) has passed before the rebalance day. Only filings dated before the rebalance day count, point in time.
+  - A company needs spend(P-1) >= $10,000 and spend(P) > 0, so growth from a near-zero base cannot top the list.
+- **Portfolio:** the top 10 by growth that have a daily bar on the rebalance day, equal weight.
+  - Rebalanced at the close of the first trading session of each month; 10 bp per side on traded notional (net of costs).
+  - A name that stops trading is sold at its last close.
+- **Benchmarks:** SPY and QQQ total return over the same days.
+
+**Every annual start date:** a start at each February from 2016 to 2025, each run to 2026-10. Reported: CAGR, max DD, CAGR minus SPY and minus QQQ, the spread across starts, and alpha vs SPY with a month-clustered 95% CI over the full window.
+
+**SUCCESS CRITERION (pre-registered):** the strategy beats SPY on CAGR net of costs from at least 75% of the annual starts, AND its full-window alpha CI vs SPY excludes zero. QQQ is reported beside it, not graded.
+
+**Sensitivities (reported, NOT graded):**
+- dollar growth instead of percent growth;
+- a $50,000 minimum base;
+- no costs.
+
+**Start-date dependence** is read off the spread across annual starts and stated plainly.
+
 ### 2026-10-15 (late night) — SAMPLE data cards; HISTORICAL IMPACT of the silent-gap bugs; a FRIDAY listing gap found and fixed
 
 **1. SAMPLE yellow cards** were sent with the deployed code (66826d4), one per sink path. All three are in the alert ledger as delivered (Discord, #reports):
