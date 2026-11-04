@@ -95,7 +95,8 @@ def run(checks, prices, symbol: str, work: Path, *, clock: Callable[[], datetime
 
     def engine(state_name: str) -> MomentumSleeve:
         return MomentumSleeve(gate=gate, adapter=adapter, audit=audit, prices=prices,
-                              bids=getattr(prices, "bid", None), limits=limits, config=config,
+                              bids=getattr(prices, "bid", None), sides=getattr(prices, "sides", None),
+                              limits=limits, config=config,
                               plan_dir=work / "plans", state_path=work / state_name,
                               spendable=lambda: gate.state.settled_buying_power, clock=clock,
                               id_factory=ids, note=result.note)
@@ -120,7 +121,8 @@ def run(checks, prices, symbol: str, work: Path, *, clock: Callable[[], datetime
     _write_plan(work / "plans", later().astimezone(NY).strftime("%Y-%m"),
                 later().astimezone(NY).date().isoformat(), [])
     seller = MomentumSleeve(gate=gate, adapter=adapter, audit=audit, prices=prices,
-                            bids=getattr(prices, "bid", None), limits=limits, config=config,
+                            bids=getattr(prices, "bid", None), sides=getattr(prices, "sides", None),
+                            limits=limits, config=config,
                             plan_dir=work / "plans", state_path=work / "state-sell.json",
                             spendable=lambda: gate.state.settled_buying_power, clock=later,
                             id_factory=ids, note=result.note)

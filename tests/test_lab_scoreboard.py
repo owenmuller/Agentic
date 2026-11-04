@@ -102,6 +102,39 @@ def test_the_stop_floor_is_proposed_only_after_ten_measured_stops():
     assert any("PROPOSAL" in note for note in board.notes)
 
 
+def test_directional_bets_apart_from_single_names_and_the_market_lean():
+    # human ruling 2026-11-04, item 7: luck and market lean stay visible
+    def trade(pid, symbol, instrument, pnl, mult=1):
+        return [dict(opened(pid, symbol), instrument=instrument), settled(pid, "buy", 1, 100, mult=mult),
+                settled(pid, "sell", 1, 100 + pnl / mult, "target", mult), closed(pid)]
+    days = range(13, 30)
+    equity = {d: 100000 * (1 - 0.004 * (d % 3 - 1)) for d in days}   # rises when SPY falls
+    spy = {date(2026, 10, d): 600 * (1 + 0.004 * (d % 3 - 1)) for d in days}
+    ai = [snap(d, v) for d, v in equity.items()]
+    ai += trade("a", "SOXS", "etf", 1800) + trade("b", "XLE", "etf", 300) + trade("c", "SMH", "call", -100, 100)
+    ai += trade("d", "INTC", "put", 3000, 100) + trade("e", "GS", "stock", -300)
+    fund = sb.fund_lookup({"SMH": "VanEck Semiconductor ETF", "INTC": "Intel Corporation",
+                           "NTRS": "Northern Trust Corporation"}.get)
+    assert fund("SMH") and not fund("INTC") and not fund("NTRS") and not fund("ZZZ")
+    board = sb.build(ladder_events=[], ai_events=ai, exec_lines=[], spy=spy, main_equity={}, rung_labels={},
+                     fund=fund)
+    rows = {r.name.strip(): r for r in board.rows}
+    bets, picks = rows["AI trader: directional market bets"], rows["AI trader: single-name picks"]
+    assert bets.trades == 3 and bets.net_pnl == pytest.approx(2000)
+    assert picks.trades == 2 and picks.net_pnl == pytest.approx(2700)
+    assert "(43% of closed-trade P&L)" in bets.note
+    ai_row = rows["AI TRADER"]
+    assert ai_row.beta == pytest.approx(-1.0, abs=0.05) and ai_row.beta_n == len(days) - 1
+    assert "market lean: beta to SPY -1.00" in ai_row.note
+    from lab import reports
+    card = reports.scoreboard_report(board, date(2026, 10, 30), "TABLE", 20, 60)
+    text = "\n".join(card.shown_lines)
+    assert "+$2,000 from market bets" in text and "+$2,700 from single names" in text
+    assert "beta to SPY -1.0 over 16 days (it leaned against the market)" in text
+    # too few days: no beta rather than a noisy one
+    assert sb.daily_beta({date(2026, 10, d): 1.0 + d / 100 for d in range(13, 18)}, spy) is None
+
+
 def test_the_momentum_control_and_spmo_sit_beside_the_ai_trader():
     # ruling 2026-10-15, item 4: AI trader vs the mechanical momentum sleeve vs SPMO
     ai = [snap(13, 100000), snap(14, 101000)]

@@ -786,6 +786,7 @@ def start(
             audit=checks.audit,
             prices=prices,
             bids=getattr(prices, "bid", None),
+            sides=getattr(prices, "sides", None),
             limits=momentum_limits,
             config=checks.orchestrator_config.momentum_sleeve,
             plan_dir=data_directory / "momentum",

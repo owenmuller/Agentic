@@ -100,13 +100,15 @@ def seed_from_research(path: Path, today: str) -> Optional[dict[str, list[dict]]
 
 def step(directory: Path, client, today: str, sessions: list[str], tradeable: Callable[[str], bool],
          log: Callable[[str], None], *, seed_path: Optional[Path] = None,
-         seed_symbols: Optional[Callable[[], list[str]]] = None, decide: bool = True) -> list[str]:
+         seed_symbols: Optional[Callable[[], list[str]]] = None, decide: bool = True,
+         listed: Optional[Callable[[str], bool]] = None) -> list[str]:
     """One run: keep the lobbying store current, then decide every book due
     today. Returns the books rebalanced. Any failure is raised AFTER the other
     book is decided and written (the prep sends a yellow card); an unseeded
     store is never saved, so the next run seeds it. ``decide`` False (an
     evening run) keeps the store current and decides nothing: a rebalance is
-    decided before the open of its own day."""
+    decided before the open of its own day. ``listed`` restricts Congress
+    Buys to listed, tradeable US equities (human ruling 2026-11-04)."""
     store_path, books_path = directory / "lobbying.json", directory / "books.json"
     store = load(store_path, None)
     if store is None:
@@ -131,7 +133,7 @@ def step(directory: Path, client, today: str, sessions: list[str], tradeable: Ca
             continue
         try:
             if name == "congress_buys":
-                weights = qb.congress_buys_weights(client.congress_live(), today)
+                weights = qb.congress_buys_weights(client.congress_live(), today, listed=listed)
             else:
                 weights = qb.lobbying_weights(store, today, tradeable)
         except Exception as error:  # noqa: BLE001 - one book failing must not cost the other

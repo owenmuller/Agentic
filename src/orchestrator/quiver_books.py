@@ -67,9 +67,13 @@ def reported_size(range_text: object, amount: object = None) -> Optional[float]:
 
 
 def congress_buys_weights(rows: Iterable[dict], day: str,
-                          window_days: int = CONGRESS_WINDOW_DAYS) -> dict[str, float]:
+                          window_days: int = CONGRESS_WINDOW_DAYS,
+                          listed: Optional[Callable[[str], bool]] = None) -> dict[str, float]:
     """Target weights on ``day``: purchases disclosed in [day - window, day),
-    stock tickers only, weighted by reported size and summed per ticker."""
+    stock tickers only, weighted by reported size and summed per ticker.
+    ``listed`` keeps only listed, tradeable US equities (human ruling
+    2026-11-04: Quiver tags mutual funds and OTC names as stock - LSYIX,
+    NOKBF and WUXIF entered the first book and had no price)."""
     end = _day(day)
     start = end - timedelta(days=window_days)
     size: dict[str, float] = {}
@@ -81,6 +85,8 @@ def congress_buys_weights(rows: Iterable[dict], day: str,
         disclosed = _day(row.get("ReportDate"))
         ticker = str(row.get("Ticker") or "").strip().upper()
         if disclosed is None or not ticker or not (start <= disclosed < end):
+            continue
+        if listed is not None and not listed(ticker):
             continue
         value = reported_size(row.get("Range"), row.get("Amount"))
         if value:

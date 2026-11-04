@@ -21,8 +21,8 @@ if [[ -n "$LOCAL" ]]; then
     tar -xzf "$LOCAL" -C "$scratch"
 else
     if [[ ! -f "$ENV_FILE" ]]; then
-        echo "BLOCKED: $ENV_FILE does not exist; no off-box backup has ever been pushed." >&2
-        echo "Create it per ops/vps/push_backup.sh, let one nightly push run, then re-run." >&2
+        echo "BLOCKED: $ENV_FILE does not exist. Off-box backups are DigitalOcean Droplet Backups" >&2
+        echo "(human ruling 2026-11-04; the Spaces push was removed): use --local with an on-box tarball." >&2
         exit 3
     fi
     # shellcheck disable=SC1090

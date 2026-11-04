@@ -411,6 +411,17 @@ def breaker_card(what: str, sample: bool = False) -> Card:
         detail=what, channel=URGENT, sample=sample)
 
 
+def momentum_funding_card(when: str, what: str, sample: bool = False) -> Card:
+    """The momentum rebalance was held back by cash, or its month ended with
+    names under target (human ruling 2026-11-04: never silent)."""
+    return Card("Main book", "the momentum rebalance is short of cash", LOOK, (
+        f"When: {when}.",
+        f"What: {plain(what)}",
+        "The rebalance keeps trying each session until every name is at least 90% funded or the month ends.",
+    ), look_at="where the account's cash is committed, and whether the momentum allocation can be funded",
+        detail=what, channel=DAILY, sample=sample)
+
+
 def halt_card(account: str, what: str, sample: bool = False) -> Card:
     return Card(account, "halted by an operator", LOOK, (
         "Someone ran the halt command and the live session obeyed it.",

@@ -75,7 +75,7 @@ def write_plan(directory, month="2026-11", day="2026-11-02", targets=None, **ext
 
 class Rig:
     def __init__(self, tmp_path, limits, *, cash="100000", clock=None, broker=None, gate=None,
-                 audit=None, spendable=None, config=None, ids="m"):
+                 audit=None, spendable=None, config=None, ids="m", sides=None):
         self.clock = clock or FakeClock(OPEN)
         self.limits = limits
         self.gate = gate or RiskGate(
@@ -99,6 +99,7 @@ class Rig:
             clock=self.clock,
             id_factory=counter(ids),
             note=self.notes.append,
+            sides=sides,
         )
 
     def run(self, ticks=12, step=timedelta(seconds=30)):
@@ -234,18 +235,83 @@ def test_a_stale_order_is_cancelled_and_repriced(tmp_path, limits):
     assert any(t.stage_rejections for t in rig.audit.trails())
 
 
-def test_a_short_funded_month_closes_after_its_sessions_and_says_so(tmp_path, limits, caplog):
+def test_a_short_funded_rebalance_carries_to_the_month_end_and_reports_the_shortfall(tmp_path, limits, caplog):
+    # human ruling 2026-11-04: no 3-session cap - it keeps trying until every
+    # target is at least 90% funded or the month ends, and says so every day
     rig = Rig(tmp_path, limits, spendable=lambda: D("0"))
     write_plan(rig.plans)
-    for day in (2, 3, 4, 5):
+    days = (2, 3, 4, 5, 6, 9, 30)
+    for day in days:
         rig.clock.now = datetime(2026, 11, day, 15, 30, tzinfo=timezone.utc)
-        with caplog.at_level(logging.ERROR, logger="orchestrator.momentum_sleeve"):
-            rig.run(2)
+        rig.run(3)
     state = rig.engine.month_state
-    assert state.sessions == ["2026-11-02", "2026-11-03", "2026-11-04"] and state.done
-    assert "work left undone" in state.note and "not bought: AAPL, MSFT" in state.note
-    assert any("work left undone" in r.message for r in caplog.records)
+    assert state.sessions == [f"2026-11-{d:02d}" for d in days] and not state.done
+    short = [n for n in rig.notes if n.startswith("MOMENTUM short of cash")]
+    assert len(short) == len(days)                    # once a day, not once a tick
+    assert "AAPL needs" in short[0] and "0.00 spendable" in short[0]
     assert rig.broker.submitted == []
+    # the next month's plan closes November and says what was left undone
+    rig.clock.now = datetime(2026, 12, 1, 15, 30, tzinfo=timezone.utc)
+    write_plan(rig.plans, month="2026-12", day="2026-12-01")
+    with caplog.at_level(logging.ERROR, logger="orchestrator.momentum_sleeve"):
+        rig.run(1)
+    ended = [n for n in rig.notes if "2026-11 ended with its month after 7 sessions with work left undone" in n]
+    assert len(ended) == 1 and "short of cash" in ended[0]
+    assert any("with work left undone" in r.message for r in caplog.records)
+    assert rig.engine.month_state.month == "2026-12"
+
+
+def test_a_wait_for_settlement_is_a_note_not_a_shortfall(tmp_path, limits):
+    rig = Rig(tmp_path, limits, spendable=lambda: D("0"))
+    rig.gate.state.roll_deployment_window(OPEN.date())
+    rig.gate.state.unsettled_proceeds = D("5000")    # today's sales cover the plan
+    write_plan(rig.plans)
+    rig.run(2)
+    assert any(n.startswith("MOMENTUM waiting on settlement: AAPL") for n in rig.notes)
+    assert not any(n.startswith("MOMENTUM short of cash") for n in rig.notes)
+
+
+def trims(rig, symbol):
+    return sum(len(t.exits) for t in rig.audit.trails() if (t.decision.gate.order or {}).get("symbol") == symbol)
+
+
+def test_a_wide_quote_is_no_mark_and_never_triggers_a_trim(tmp_path, limits):
+    # 2026-11-04: EPD and THC were marked at a thin IEX ask (36.85 x 42.28,
+    # 265.06 x 299.01), valued about 12% high and trimmed when no trim was due
+    quotes = {"AAPL": (D("200.00"), D("200.20")), "MSFT": (D("400.00"), D("400.40"))}
+    rig = Rig(tmp_path, limits, sides=lambda symbol: quotes.get(symbol))
+    write_plan(rig.plans)
+    rig.run(6)
+    assert rig.held("AAPL") == 7 and rig.held("MSFT") == 3
+    value = rig.gate.state.position(("momentum", "AAPL")).market_value
+    # next month, same book; AAPL's IEX ask jumps to 300 over a 200 bid
+    rig.prices.set("AAPL", "300.00")
+    quotes["AAPL"] = (D("200.00"), D("300.00"))
+    rig.clock.now = datetime(2026, 12, 1, 15, 30, tzinfo=timezone.utc)
+    write_plan(rig.plans, month="2026-12", day="2026-12-01")
+    rig.run(4)
+    assert rig.gate.state.position(("momentum", "AAPL")).market_value == value  # the last mark stands
+    assert rig.held("AAPL") == 7 and trims(rig, "AAPL") == 0
+    assert rig.engine.month_state.done        # nothing was due: December closed at target
+    # a tight quote at 300 is a real price: at January's rebalance the trim is due
+    quotes["AAPL"] = (D("299.90"), D("300.10"))
+    rig.clock.now = datetime(2027, 1, 4, 15, 30, tzinfo=timezone.utc)
+    write_plan(rig.plans, month="2027-01", day="2027-01-04")
+    rig.run(4)
+    assert rig.gate.state.position(("momentum", "AAPL")).market_value < 7 * D("300.00")
+    assert trims(rig, "AAPL") == 1
+
+
+def test_without_sides_the_old_ask_mark_would_have_trimmed(tmp_path, limits):
+    # the regression the fix removes: a single-price source marks at the ask
+    rig = Rig(tmp_path, limits)
+    write_plan(rig.plans)
+    rig.run(6)
+    rig.prices.set("AAPL", "300.00")
+    rig.clock.now = datetime(2026, 12, 1, 15, 30, tzinfo=timezone.utc)
+    write_plan(rig.plans, month="2026-12", day="2026-12-01")
+    rig.run(4)
+    assert trims(rig, "AAPL") == 1
 
 
 def test_a_stale_plan_is_skipped_not_chased(tmp_path, limits, caplog):

@@ -506,14 +506,18 @@ def scoreboard(email: bool) -> int:
         print(f"(main book history unavailable: {error})", file=sys.stderr)
         datahealth.report("lab scoreboard", f"the main book's history is unavailable ({type(error).__name__}); "
                                             f"its row reads n/a")
-    board = board_mod.build(
-        ladder_events=ladder_events, ai_events=ai_events, exec_lines=exec_lines, spy=spy,
-        main_equity=dict(sorted(main_equity.items())),
-        rung_labels={rung.name: rung.label for rung in config.ladder.rungs},
-        stop_floor=float(config.ai_trader.min_stop_fraction) if config.ai_trader else None,
-        leverage_table=dict(config.ai_trader.leverage_factors) if config.ai_trader else None,
-        momentum=momentum, spmo=dict(sorted(spmo.items())),
-    )
+    # an option on a fund is a market bet, not a stock pick (ruling 2026-11-04,
+    # item 7): the broker's asset name decides, read-only
+    with AlpacaAdapter() as broker:
+        board = board_mod.build(
+            ladder_events=ladder_events, ai_events=ai_events, exec_lines=exec_lines, spy=spy,
+            main_equity=dict(sorted(main_equity.items())),
+            rung_labels={rung.name: rung.label for rung in config.ladder.rungs},
+            stop_floor=float(config.ai_trader.min_stop_fraction) if config.ai_trader else None,
+            leverage_table=dict(config.ai_trader.leverage_factors) if config.ai_trader else None,
+            momentum=momentum, spmo=dict(sorted(spmo.items())),
+            fund=board_mod.fund_lookup(broker.asset_name),
+        )
     text = board_mod.render(board, today)
     print(text)
     if email:

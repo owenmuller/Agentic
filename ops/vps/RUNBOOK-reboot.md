@@ -15,14 +15,15 @@ Saturday is safe: markets are closed, no trading timer fires, and the next sessi
 
 ## 2. Fixes while you have root (each independent; 2a recommended, 2b recommended, 2c optional)
 
-a. **Backup unit fails every night (exit 203)**: its second step `/usr/local/bin/agentic-push-backup` was never installed. Install it (unconfigured, it logs one line and exits 0):
+a. **Backup unit fails every night (exit 203)**: its second step, the Spaces push, was never installed. Human ruling 2026-11-04: the push is removed and DigitalOcean Droplet Backups is the off-box layer. Install the one-step unit:
 
 ```
-sudo install -m 755 /home/agentic/Agentic/ops/vps/push_backup.sh /usr/local/bin/agentic-push-backup
+sudo cp /home/agentic/Agentic/ops/vps/agentic-backup.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl reset-failed agentic-backup.service
 sudo systemctl start agentic-backup.service && systemctl status agentic-backup --no-pager | head -5
 ```
 
-Expect `status=0/SUCCESS`; this also makes a fresh on-box tarball before the reboot. To push backups off-box, do §6 as well.
+Expect `status=0/SUCCESS`; this also makes a fresh on-box tarball before the reboot.
 
 b. **No swap on a 961 MB box** (a monthly momentum prep peaks near 500 MB). Add 2 GB:
 
@@ -103,7 +104,11 @@ If something fails:
 
 Then tell Claude Code: "post-reboot check: ALL PASS" (or paste the FAIL lines) so it is recorded in SESSION_NOTES.
 
-## 6. Off-box backups (DigitalOcean Spaces) — today nothing leaves the droplet
+## 6. Off-box backups — SUPERSEDED 2026-11-04
+
+Human ruling 2026-11-04: off-box backups are **DigitalOcean Droplet Backups** (DO console → Droplets → this droplet → Backups → Enable). The Spaces steps below are kept for the record only; `push_backup.sh` is removed.
+
+### (Superseded) DigitalOcean Spaces
 
 1. DO console → **Spaces Object Storage** → **Create Bucket**:
    - region **NYC3** (the droplet is in NYC1; NYC3 is the nearest Spaces region and what the push script expects);

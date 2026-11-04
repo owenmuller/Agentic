@@ -222,7 +222,8 @@ momentum_sleeve:
 # The sweeper keeps cash >= buffer, where buffer = judged daily deployment cap
 # + mechanical daily deployment cap + working-order reservations + the margin
 # below — so on a day the system wants to deploy maximally, the cash is already
-# there. Sweep buys halt under the kill switch; unsweep sells are risk-reducing
+# there. Each sleeve's cap is bounded by its undeployed allotment (human ruling
+# 2026-11-04): a sleeve at or over its allocation reserves nothing. Sweep buys halt under the kill switch; unsweep sells are risk-reducing
 # and stay permitted. No allocation weight, no alpha caps, no signal-class
 # attribution; its accrual gets its own attribution line. Settled/unsettled
 # cash split deferred to the live-gate review (paper settles instantly).

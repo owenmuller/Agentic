@@ -330,6 +330,9 @@ def session_observer(alerter: Alerter):
             alerter.card(f"READS:{detail[:40]}", cards.billing_card("Main book", when, detail))
         elif event == "MECH" and "BREAKER" in detail.upper():
             alerter.card("mech_breaker", cards.breaker_card(detail))
+        elif event == "MECH" and (detail.startswith("MOMENTUM short of cash")
+                                  or "with work left undone" in detail):
+            alerter.card(f"MOMENTUM:{detail[:40]}", cards.momentum_funding_card(when, detail))
         elif event == "HALT":
             alerter.card("operator_halt_loop", cards.halt_card("Main book", detail))
         elif "EXEC-TEST daily " in detail:
@@ -430,13 +433,19 @@ def _quiver_shadows_step(directory: Path, alpaca, now: datetime, log) -> None:
             rows = alpaca.bars([symbol], prior[-1] + "T00:00:00Z", prior[-1] + "T23:59:00Z", "all")
             return bool(rows.get(symbol))
 
+        # listed, tradeable US equities (ruling 2026-11-04): the momentum
+        # universe's asset list - active, on a national exchange, no fund,
+        # ETF, note or preferred - so mutual funds and OTC names never enter
+        common = {a["symbol"] for a in alpaca.assets() if a.get("status") == "active"}
+
         client = QuiverDataClient()
         try:
             # decided only before the open (the 07:30 run), from data public before the day
             local = now.astimezone(_NY)
             quiver_shadows.step(directory, client, today.isoformat(), sessions, tradeable, log.info,
                                 seed_path=Path.home() / "research-data" / "lobbying" / "rows.jsonl",
-                                decide=local.hour < 9 or (local.hour == 9 and local.minute < 15))
+                                decide=local.hour < 9 or (local.hour == 9 and local.minute < 15),
+                                listed=common.__contains__)
         finally:
             client.close()
     except Exception as error:  # noqa: BLE001 - a shadow's failure must not cost the momentum prep

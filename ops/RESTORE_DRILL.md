@@ -7,7 +7,13 @@ the backup path.
 
 ## Status
 
-**BLOCKED as of 2026-09-02:** `/home/agentic/.backup_env` does not exist on the
+**SUPERSEDED 2026-11-04 (human ruling):** off-box backups are DigitalOcean
+Droplet Backups (whole-disk, enabled in the control panel); the Spaces push and
+`push_backup.sh` are removed. The `--local` drill below still proves an on-box
+nightly tarball restores and parses. A Droplet Backup is restored from the
+control panel (restore to a new droplet, never over the live one).
+
+**Was BLOCKED as of 2026-09-02:** `/home/agentic/.backup_env` does not exist on the
 droplet, so no encrypted tarball has ever been pushed to Spaces and there is
 nothing to restore from. The on-box nightly tarballs
 (`/var/backups/agentic/data-YYYY-MM-DD.tar.gz`) do exist; the drill script

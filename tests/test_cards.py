@@ -24,6 +24,9 @@ ALL = {
     "pending": cards.pending_card(2, "order a\norder b"),
     "breaker": cards.breaker_card("MECH BREAKER sleeve drawdown 25.4%"),
     "halt": cards.halt_card("Main book", "operator halted: testing"),
+    "momentum_funding": cards.momentum_funding_card(
+        "Nov 4, 10:30 ET", "MOMENTUM short of cash: SN needs 1946.88, 0.00 spendable (settled buying power "
+                           "9800.00; 9800.00 held for other sleeves' reserves and the margin; 0.00 unsettled)"),
     "exits": cards.exits_card(2, 1),
     "first": cards.first_entry_card("judged", 1),
     "close": cards.close_card(100334.2, 0.0012, 0.0031, 0.004, 34, 6.2, False, "detail"),

@@ -31,10 +31,12 @@ beside the modelled P&L, and it is never adjusted by its own numbers.
 from __future__ import annotations
 
 import json
+import math
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 from zoneinfo import ZoneInfo
 
 from lab import leverage
@@ -63,6 +65,13 @@ class Row:
     #: The execution test only: live and modelled dollars.
     live_pnl: Optional[float] = None
     model_pnl: Optional[float] = None
+    #: closed-trade P&L of a subset row (the AI trader's splits)
+    net_pnl: Optional[float] = None
+    #: the AI trader's market lean (human ruling 2026-11-04, item 7): daily
+    #: beta and correlation to SPY, over this many daily returns
+    beta: Optional[float] = None
+    beta_corr: Optional[float] = None
+    beta_n: int = 0
     note: str = ""
 
 
@@ -151,6 +160,8 @@ class Trade:
     cost: Optional[float]  # slippage charge at the measured rates; None = pending
     #: leveraged_etf / inverse_etf / None (ruling 2026-10-14, second, item 2)
     tag: Optional[str] = None
+    #: stock / etf / call / put, as the position was opened
+    instrument: Optional[str] = None
 
 
 def lab_trades(events: list[dict], table: dict[str, tuple[int, Optional[float]]],
@@ -182,8 +193,59 @@ def lab_trades(events: list[dict], table: dict[str, tuple[int, Optional[float]]]
         tag = plan.get("tag") if "tag" in plan else leverage.tag(
             leverage.factor(plan["symbol"], "etf", leverage_table or {}) if plan.get("instrument") in ("stock", "etf")
             else leverage.ONE)
-        trades.append(Trade(pid, plan["symbol"], pnl, None if pending else cost, tag))
+        trades.append(Trade(pid, plan["symbol"], pnl, None if pending else cost, tag, plan.get("instrument")))
     return trades
+
+
+#: A fund's name at the broker ("SPDR S&P 500 ETF Trust", "VanEck
+#: Semiconductor ETF", "Technology Select Sector SPDR Fund"). "Trust" alone
+#: is not enough: Northern Trust is a company.
+_FUND_NAME = re.compile(r"\b(ETF|ETN|Fund|SPDR|iShares|ProShares|Direxion|Select Sector|QQQ)\b", re.I)
+
+
+def fund_lookup(name_of: Callable[[str], Optional[str]]) -> Callable[[str], bool]:
+    """``symbol -> is it a fund`` from the broker's asset name, cached; an
+    unknown name reads as a company (a single-name pick)."""
+    seen: dict[str, bool] = {}
+
+    def fund(symbol: str) -> bool:
+        if symbol not in seen:
+            name = name_of(symbol)
+            seen[symbol] = bool(name and _FUND_NAME.search(name))
+        return seen[symbol]
+    return fund
+
+
+def directional(trade: Trade, fund: Optional[Callable[[str], bool]] = None) -> bool:
+    """A bet on the market or a sector rather than on one company (human
+    ruling 2026-11-04, item 7): any ETF - leveraged, inverse or plain - and
+    any option on a fund. Everything else is a single-name pick."""
+    if trade.tag or trade.instrument == "etf":
+        return True
+    return fund is not None and fund(trade.symbol)
+
+
+def daily_beta(series: dict[date, float], spy: dict[date, float],
+               min_returns: int = 10) -> Optional[tuple[float, float, int]]:
+    """(beta, correlation, n) of the account's daily returns on SPY's, over
+    the days both have; None below ``min_returns`` daily returns."""
+    days = [d for d in series if d in spy]
+    mine, market = [], []
+    for before, after in zip(days, days[1:]):
+        if series[before] > 0 and spy[before] > 0:
+            mine.append(series[after] / series[before] - 1)
+            market.append(spy[after] / spy[before] - 1)
+    n = len(mine)
+    if n < min_returns:
+        return None
+    mean_mine, mean_market = sum(mine) / n, sum(market) / n
+    var_market = sum((m - mean_market) ** 2 for m in market) / (n - 1)
+    var_mine = sum((m - mean_mine) ** 2 for m in mine) / (n - 1)
+    if var_market <= 0:
+        return None
+    cov = sum((a - mean_mine) * (b - mean_market) for a, b in zip(mine, market)) / (n - 1)
+    corr = cov / math.sqrt(var_mine * var_market) if var_mine > 0 else 0.0
+    return cov / var_market, corr, n
 
 
 def _trade_stats(row: Row, trades: list[Trade]) -> None:
@@ -226,6 +288,7 @@ def build(
     leverage_table: Optional[dict] = None,
     momentum: Optional[dict[date, float]] = None,
     spmo: Optional[dict[date, float]] = None,
+    fund: Optional[Callable[[str], bool]] = None,
 ) -> Board:
     table = slippage_table(exec_lines)
     ladder = daily_last(ladder_events, "equity")
@@ -250,6 +313,14 @@ def build(
         else:
             first = list(ai.values())[0]
             row.ret_adj = row.ret - sum(t.cost or 0.0 for t in trades) / first
+    # its market lean (human ruling 2026-11-04, item 7): a short lean in a
+    # falling market reads as skill unless it is shown
+    lean = daily_beta(ai, spy)
+    if lean is not None:
+        row.beta, row.beta_corr, row.beta_n = lean
+        row.note = "; ".join(filter(None, [row.note, (
+            f"market lean: beta to SPY {row.beta:+.2f} (correlation {row.beta_corr:+.2f}, "
+            f"{row.beta_n} daily returns)")]))
     rows.append(row)
     # Leveraged and inverse ETFs apart from the other picks (ruling 2026-10-14,
     # second, item 2): closed-trade statistics only; the account has one equity line.
@@ -258,6 +329,20 @@ def build(
         sub = Row(label)
         _trade_stats(sub, subset)
         sub.note = "closed-trade statistics only" + (f"; net ${sum(t.pnl for t in subset):+,.0f}" if subset else "")
+        rows.append(sub)
+    # Directional market bets apart from single-name picks (human ruling
+    # 2026-11-04, item 7), so luck and market lean stay visible.
+    total = sum(t.pnl for t in trades)
+    for label, what, subset in (
+            ("  AI trader: directional market bets", "ETFs of any kind and options on funds",
+             [t for t in trades if directional(t, fund)]),
+            ("  AI trader: single-name picks", "company stocks and options on them",
+             [t for t in trades if not directional(t, fund)])):
+        sub = Row(label)
+        _trade_stats(sub, subset)
+        sub.net_pnl = sum(t.pnl for t in subset)
+        share = f" ({sub.net_pnl / total:.0%} of closed-trade P&L)" if total > 0 and subset else ""
+        sub.note = f"{what}; net ${sub.net_pnl:+,.0f}{share}"
         rows.append(sub)
 
     # The control beside the AI trader (ruling 2026-10-15, item 4): the main
@@ -328,7 +413,12 @@ def stop_floor_note(table: dict[str, tuple[int, Optional[float]]], floor: Option
     proposed = 3 * max(mean, 0.0) / 1e4
     return (f"AI trader stop floor PROPOSAL (for a human ruling): measured stop slippage {mean:.2f} bp over n = {n}; "
             f"3x = {proposed:.2%}; current floor {current}. A floor of at least {proposed:.2%} is proposed; "
-            f"nothing changes until a human rules.")
+            f"nothing changes until a human rules. {STOP_FLOOR_RULED}")
+
+
+#: The standing ruling on the proposal above (human ruling 2026-11-04, item 1).
+STOP_FLOOR_RULED = ("Ruled 2026-11-04: the floor stays at 1% - stop slippage measured on SPY/SH understates "
+                    "single names and options (evidence E13: median 0.10%, mean 0.27% on stocks).")
 
 
 def _parse(day: str) -> date:

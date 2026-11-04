@@ -36,6 +36,16 @@ def test_congress_buys_weighs_purchases_disclosed_in_the_window_only():
     assert w["FFF"] == pytest.approx(fff / (aaa + fff))
 
 
+def test_congress_buys_keeps_only_listed_tradeable_us_equities():
+    # human ruling 2026-11-04: Quiver tags mutual funds and OTC names as stock
+    rows = [buy("AAA", "2026-10-28"), buy("LSYIX", "2026-10-28"), buy("NOKBF", "2026-10-27"),
+            buy("WUXIF", "2026-10-26", "$50,001 - $100,000")]
+    listed = {"AAA"}.__contains__
+    assert set(qb.congress_buys_weights(rows, "2026-10-29")) == {"AAA", "LSYIX", "NOKBF", "WUXIF"}
+    w = qb.congress_buys_weights(rows, "2026-10-29", listed=listed)
+    assert w == {"AAA": pytest.approx(1.0)}
+
+
 def test_lobbying_quarters_and_deadlines():
     assert qb.report_quarter(date(2026, 10, 20)) == (2026, 3)   # filed on the deadline: Q3
     assert qb.report_quarter(date(2026, 11, 10)) == (2026, 3)   # mildly late: still Q3

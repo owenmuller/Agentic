@@ -385,30 +385,33 @@ def test_sells_relieve_lots_oldest_first_and_a_flat_lot_resolves_as_beta(
         tmp_path, limits, signals_config, research_config, broker=broker
     )
     baseline = started.loop.baseline
-    started.loop.tick()  # lot 1: only 6,000 sits above the 24,000 floor -> 12 shares
+    # The unmanaged 70,000 of AAPL sits in the judged sleeve, over its 55,000
+    # allotment, so it reserves nothing (ruling 2026-11-04): the floor is the
+    # mechanical 2,250 plus the 2,500 margin.
+    started.loop.tick()  # lot 1: 25,250 sits above the 4,750 floor -> 50 of 60 shares
     started.loop.tick()
-    assert [lot.quantity for lot in baseline.lots] == [Decimal("12")]
-    assert baseline.rebalancing is True  # still 24,000 short, nothing to unpark
+    assert [lot.quantity for lot in baseline.lots] == [Decimal("50")]
+    assert baseline.rebalancing is True  # still 5,000 short, nothing to unpark
 
     started.gate.state.cash += Decimal("60000")  # a deposit; NAV 160,000
-    started.loop.tick()  # lot 2: target 48,000 - 6,000 held = 42,000 -> 84 shares
+    started.loop.tick()  # lot 2: target 48,000 - 25,000 held = 23,000 -> 46 shares
     started.loop.tick()
-    assert [lot.quantity for lot in baseline.lots] == [Decimal("12"), Decimal("84")]
+    assert [lot.quantity for lot in baseline.lots] == [Decimal("50"), Decimal("46")]
     assert baseline.rebalancing is False
     first_lot, second_lot = (lot.decision_id for lot in baseline.lots)
 
-    # SPY 500 -> 2000: 192,000 of a ~304,000 NAV; target ~91,200; the excess
-    # is ~50 shares at the 1999.99 bid — but one lot per tick, oldest first:
-    # the 23-share lot goes flat first.
-    prices.table["SPY"] = Decimal("2000.00")
+    # SPY 500 -> 3000: 288,000 of a ~400,000 NAV; target ~120,000; the excess
+    # is ~56 shares at the 2999.99 bid - but one lot per tick, oldest first:
+    # the 50-share lot goes flat first, then the second lot is trimmed.
+    prices.table["SPY"] = Decimal("3000.00")
     clock.advance(days=7)
     assert started.loop.tick().baseline_orders == 1
-    started.loop.tick()  # settles; the second tranche (16 more) goes out
+    started.loop.tick()  # settles; the trim of the second lot goes out
     trail = started.audit.trail(first_lot)
     assert [f.side for f in trail.fills] == ["buy", "sell"]
-    assert trail.fills[-1].filled_quantity == Decimal("12")  # the first lot is 12 shares since the 24,000 floor
+    assert trail.fills[-1].filled_quantity == Decimal("50")
     assert trail.outcome is not None
-    assert trail.outcome.realised_pnl == Decimal("12") * (Decimal("1999.99") - Decimal("500"))
+    assert trail.outcome.realised_pnl == Decimal("50") * (Decimal("2999.99") - Decimal("500"))
     assert "baseline lot sold flat" in trail.outcome.note
     assert [lot.decision_id for lot in baseline.lots] == [second_lot]
     outcomes = [r for r in started.audit.records() if isinstance(r, OutcomeRecord)]
@@ -416,7 +419,7 @@ def test_sells_relieve_lots_oldest_first_and_a_flat_lot_resolves_as_beta(
     # The second lot is trimmed, not closed: no outcome for it.
     started.loop.tick()
     assert started.audit.trail(second_lot).outcome is None
-    assert baseline.lots[0].quantity == Decimal("46")  # 73 less the 27 trimmed
+    assert baseline.lots[0].quantity == Decimal("40")  # 46 less the 6 trimmed
 
 
 # ================================================================================

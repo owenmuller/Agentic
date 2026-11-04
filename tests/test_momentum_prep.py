@@ -353,6 +353,32 @@ def test_the_aggressive_reserve_is_one_position_while_only_the_execution_test_tr
     assert momentum_spendable(gate, limits.cash_management) >= Decimal("100000") * limits.portfolio.sleeves.momentum
 
 
+def test_a_sleeve_over_its_allocation_reserves_nothing_and_cannot_crowd_out_momentum():
+    # human ruling 2026-11-04: the mechanical sleeve sat at ~23.5% against 15%
+    # (no forced trim), its refills refused by the gate, yet its daily cap was
+    # reserved and held the momentum rebalance's SN back
+    from orchestrator.sweep import liquidity_buffer, momentum_spendable
+    from risk_gate import RiskGate
+    from risk_gate.state import AccountState, Position, Sleeve
+
+    limits = RiskLimits.load()
+
+    def gate(mechanical_value):
+        held = {("mechanical", "XYZ"): Position(key=("mechanical", "XYZ"), sleeve=Sleeve.MECHANICAL,
+                                                quantity=Decimal(100), cost_basis=mechanical_value,
+                                                market_value=mechanical_value)}
+        return RiskGate(limits, AccountState(cash=Decimal("100000") - mechanical_value,
+                                             high_water_mark=Decimal("100000"), positions=held))
+
+    under, over = gate(Decimal("5000")), gate(Decimal("23500"))
+    cap = Decimal("100000") * limits.portfolio.sleeves.mechanical * limits.mechanical_sleeve.max_daily_deployment
+    base = liquidity_buffer(under, limits.cash_management, include_momentum=False)
+    assert base - liquidity_buffer(over, limits.cash_management, include_momentum=False) == cap
+    # what the over-allocated sleeve no longer holds back is momentum's to spend
+    assert momentum_spendable(over, limits.cash_management) == (
+        over.state.settled_buying_power - (base - cap - over.state.reserved_cash))
+
+
 def test_a_shadow_declared_after_the_plan_is_backfilled_from_its_start(world, tmp_path):
     from datetime import datetime as _dt, timezone as _tz
 

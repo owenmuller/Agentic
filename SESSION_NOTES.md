@@ -4102,6 +4102,52 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 **Service note.** The running service still predates every commit of the last two days
 (staleness, silence wording, boundary extraction, step 1, step 2) and needs a bounce.
 
+### 2026-11-04 — PROGRESS REVIEW and its RULINGS (stop floor; learning loop first; momentum marks and funding; Congress Buys; backup; AI card)
+
+**The review (as of the 2026-11-03 close):**
+
+| Book | Since | Return | Max drawdown | SPY |
+|---|---|---|---|---|
+| AI trader | 10-13 | +5.08% | -2.09% | -3.04% |
+| Momentum v1.1 | 10-15 | -0.18% | -2.10% | -1.98% (SPMO -8.28%) |
+| Ladder | 10-12 | -6.09% | -9.22% | -3.10% |
+| Main book | 10-05 | -1.46% | -1.81% | about -2.0% |
+| Control arm | 08-27 | -2.27% | -4.52% | -1.51% |
+
+- **AI trader closed trades:** 29, 48% won, +$5,855. Average win $919 vs average loss $468.
+  - The top 3 made 112% of the profit.
+  - Directional market bets made +$4,634 (79%).
+  - Single-stock earnings-gap buys: 12 trades, -$313.
+  - Daily beta to SPY -0.60.
+  - Leverage-adjusted gross averaged 54% (peak 109%); the 150% alert never fired.
+  - Spend $0.62 a day.
+- **A/B:** too early (brief arm 7 closed, control 10).
+- **Execution test after 17 sessions:** live +$28.82 vs modelled +$44.87. Slippage: stop 1.88 bp (n 11), close-out 7.92 bp (n 6).
+
+**Rulings (human, 2026-11-04):**
+
+1. **AI trader stop floor STAYS at 1%.** The 0.06% proposal (3 x 1.88 bp on 11 SPY/SH stops) understates single names and options (E13). The scoreboard now prints the ruling under the proposal.
+2. **The learning loop is TOP PRIORITY.** Feed, post-mortem writer through its golden replay, a backfill of the AI trader's 29 closed trades, then hypotheses, the playbook and the weekly card. Report the first mined patterns, including "buy after an earnings gap-up". In progress (its own entry as it lands).
+3. **Momentum trims - the overstated market value (FIXED):**
+   - **Cause:** the engine marked held names at the IEX ask, and a thin IEX book quoted EPD 36.85 x 42.28 (14:59 UTC) and THC 265.06 x 299.01 (14:30 UTC). The marks matched those asks exactly (2,220.40 / 52.516 = 42.28; 2,219.25 / 7.422 = 299.01). The values read about 12% high, and the trims ($204 EPD, $214 THC) were not due. Not reversed, by ruling.
+   - **Fix:** marks are now the MID of one quote (`AlpacaPriceSource.sides`). A quote wider than `mark_max_spread` (2%) is no price, and the last mark stands. Tested with a wide quote (no mark, no trim), a tight one (trim due) and the old single-price path (trims).
+   - **Not changed (flagged):** the exit engine (judged and aggressive stops) and the mechanical arm still mark at the ask. A stale high ask there delays a stop.
+4. **Momentum funding (FIXED):**
+   - **Carry-over:** a rebalance now carries until every target is at least 90% funded or the month ends; the 3-session cap is removed.
+   - **Reserves:** other sleeves' reservations are bounded by their undeployed allotment (`sweep._reserve`). The mechanical sleeve, at ~23.5% of NAV against 15% after the no-trim ruling, had reserved its 2,250 daily cap for refills the gate refuses; that crowded out SN.
+   - **Cards:** a genuine shortfall is carded once a day, with settled buying power, the part held for others and unsettled proceeds. A T+1 wait is a note. A month that ends short is carded. Before this, the month-close message was never carded: `MECH` lines carded only the breaker.
+   - **Baseline test re-derived:** its fixture's 70,000 of unmanaged AAPL now frees the judged reserve. The floor is 4,750, lots are 50 and 46, and a rally to 3,000 still sells the oldest lot flat and then trims the second.
+5. **Congress Buys:** listed, tradeable US equities only, using the momentum universe's asset list (active, national exchange, no fund, ETF, note or preferred). It applies from the next weekly rebalance (2026-11-09); the first book is not rewritten.
+   - **My reading:** ETFs (AVUV, AGZ, CMBS) drop out as well, not only mutual funds and OTC names. Flagged for the human.
+6. **Backup:** the off-box layer is now DigitalOcean Droplet Backups (enabled by the human).
+   - `agentic-backup.service` keeps only the on-box tarball step. `push_backup.sh` is removed; the runbook and the restore drill (`--local` still works) are updated.
+   - **Human to install:** `sudo cp ops/vps/agentic-backup.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl reset-failed agentic-backup.service`.
+7. **The AI trader's weekly card:**
+   - Closed-trade P&L is split into directional market bets (any ETF, and options on funds, judged by the broker's asset name) and single-name picks, with the share of the total.
+   - The card also shows the daily beta and correlation to SPY, from 10 daily returns, on the table and the Friday card.
+
+Suite green on the droplet (exit 0).
+
 ### 2026-10-29 — RULINGS: Quiver strategies (control-arm record; shadows; lobbying backtest; evidence line)
 
 **1. The congressional control arm's live record** (mechanical sleeve, from its first fill 2026-08-27 through 10-28, 44 sessions). Time-weighted return of the invested book: daily Modified Dietz on real fills, chained.

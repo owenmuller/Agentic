@@ -654,10 +654,10 @@ class MomentumSleeveConfig(BaseModel):
     #: New York time. The plan trades only inside this window.
     trade_after: str = "10:00"
     trade_before: str = "15:30"
-    #: A rebalance not finished after this many sessions closes for the month
-    #: with what it has done (funds, T+1 or the gate held the rest back) and
-    #: says so. Constraint #6: a stale plan is not chased into a later week.
-    max_rebalance_sessions: int = Field(default=3, ge=1, le=5)
+    #: A started rebalance carries from session to session until every target
+    #: is within ``drift_tolerance`` (at least 90% funded) or the month ends
+    #: (human ruling 2026-11-04, replacing a 3-session cap that left SN 2%
+    #: funded); a genuine cash shortfall is reported once a day, never silent.
     #: A plan not started within this many calendar days of its rebalance
     #: date (the session was down) is skipped for the month, not chased.
     plan_valid_days: int = Field(default=7, ge=1, le=14)
@@ -672,6 +672,10 @@ class MomentumSleeveConfig(BaseModel):
     fill_wait_seconds: int = Field(default=120, ge=10, le=1800)
     #: How often held names are marked to market outside a rebalance.
     mark_interval_seconds: int = Field(default=300, ge=30, le=3600)
+    #: Held names are marked at the MID of one quote; a quote whose spread is
+    #: wider than this fraction of the mid is not a price (a thin IEX book)
+    #: and the previous mark stands (human ruling 2026-11-04).
+    mark_max_spread: Decimal = Field(default=Decimal("0.02"), gt=0, le=Decimal("0.10"))
 
 
 class MomentumPrepConfig(BaseModel):

@@ -11,10 +11,15 @@ The rules
   when          from ``trade_after`` (10:00 ET) on the plan's rebalance day -
                 the first trading day of the month - until ``trade_before``;
                 a rebalance that cannot finish (funds, T+1, the gate) carries
-                into the next session, at most ``max_rebalance_sessions``,
-                then closes for the month and says what it left undone. A plan
-                not started within ``plan_valid_days`` of its date is skipped,
-                never chased.
+                from session to session until every target is within
+                ``drift_tolerance`` (at least 90% funded) or the month ends,
+                which closes it and says what it left undone (human ruling
+                2026-11-04). A genuine cash shortfall is reported once a day.
+                A plan not started within ``plan_valid_days`` of its date is
+                skipped, never chased.
+  marks         the MID of one quote (bid and ask together); a quote wider
+                than ``mark_max_spread`` is no price and the last mark stands
+                (2026-11-04: IEX asks 12% over the market triggered two trims).
   order         sells first (names that left the book, then trims back to
                 target), then buys (new names and top-ups) in rank order. One
                 working order at a time; marketable limits; an order still
@@ -222,12 +227,16 @@ class MomentumSleeve:
         id_factory: Callable[[], str],
         note: Optional[Callable[[str], None]] = None,
         bids: Optional[Callable[[str], Optional[Decimal]]] = None,
+        sides: Optional[Callable[[str], Optional[tuple[Decimal, Decimal]]]] = None,
     ) -> None:
         self._gate = gate
         self._adapter = adapter
         self._audit = audit
         self._prices = prices
         self._bids = bids
+        #: (bid, ask) of one quote, for marks. Optional: a price source without
+        #: it (the test doubles) marks at its single price.
+        self._sides = sides
         self._limits = limits
         self._config = config
         self._plan_dir = plan_dir
@@ -344,6 +353,15 @@ class MomentumSleeve:
         if plan is None:
             return 0
         if self._state.month != month:
+            if self._state.month and not self._state.done:
+                # the month ended before every target was funded (ruling 2026-11-04)
+                message = (
+                    f"MOMENTUM rebalance {self._state.month} ended with its month after "
+                    f"{len(self._state.sessions)} sessions with work left undone"
+                    + (f" (last: {self._state.note})" if self._state.note else "")
+                )
+                logger.error(message)
+                self._note(message)
             if local.date() > plan.rebalance_date + timedelta(days=self._config.plan_valid_days):
                 self._close(
                     month,
@@ -362,10 +380,6 @@ class MomentumSleeve:
             )
         today = local.date().isoformat()
         if today not in self._state.sessions:
-            if len(self._state.sessions) >= self._config.max_rebalance_sessions:
-                self._close(month, self._summary(plan, "closed after "
-                            f"{len(self._state.sessions)} sessions with work left undone"), error=True)
-                return 0
             self._state.sessions.append(today)
             self._save_state()
 
@@ -507,6 +521,8 @@ class MomentumSleeve:
                 continue  # the gap is under one tradeable unit: at target
             amount = min(gap, self._spendable())
             quantity = (amount / limit).quantize(step, rounding=ROUND_DOWN)
+            if amount < gap:
+                self._report_short(plan, symbol, gap, amount)
             if amount < self._limits.min_order_notional_usd or quantity <= 0:
                 owed = True  # settled cash arrives tomorrow, or the sweep is unparking it
                 continue
@@ -551,6 +567,35 @@ class MomentumSleeve:
             )
             return True, True
         return False, owed
+
+    def _report_short(self, plan: Plan, symbol: str, gap: Decimal, spendable: Decimal) -> None:
+        """Cash held a buy back (ruling 2026-11-04: never silent). Once a day:
+        a wait for today's sale proceeds to settle is a note; anything else is
+        a genuine shortfall, carded with where the cash is."""
+        today = self._clock().astimezone(NY).date().isoformat()
+        state = self._gate.state
+        unsettled = state.unsettled_proceeds
+        settled = state.settled_buying_power
+        if spendable + unsettled >= gap:
+            key = f"t1:{plan.month}:{today}"
+            text = (
+                f"MOMENTUM waiting on settlement: {symbol} needs {gap:.2f}, {spendable:.2f} "
+                f"spendable now; {unsettled:.2f} of today's sale proceeds settle next business day"
+            )
+        else:
+            key = f"short:{plan.month}:{today}"
+            text = (
+                f"MOMENTUM short of cash: {symbol} needs {gap:.2f}, {spendable:.2f} spendable "
+                f"(settled buying power {settled:.2f}; {max(ZERO, settled - spendable):.2f} held "
+                f"for other sleeves' reserves and the margin; {unsettled:.2f} unsettled from today's sales)"
+            )
+        if key in self._warned:
+            return
+        self._warned.add(key)
+        logger.warning(text)
+        self._note(text)
+        self._state.note = text
+        self._save_state()
 
     # -- settlement --------------------------------------------------------------------
 
@@ -750,11 +795,31 @@ class MomentumSleeve:
         self._last_mark = now
         marks = {}
         for symbol in held:
-            quote = self._quote(symbol)
-            if quote is not None:
-                marks[(SLEEVE, symbol)] = quote
+            price = self._mark_price(symbol)
+            if price is not None:
+                marks[(SLEEVE, symbol)] = price
         if marks:
             self._gate.mark_to_market(marks)
+
+    def _mark_price(self, symbol: str) -> Optional[Decimal]:
+        """The mid of one quote, or None when the quote is missing or too wide
+        to be a price - then the previous mark stands (ruling 2026-11-04)."""
+        if self._sides is None:
+            return self._quote(symbol)
+        try:
+            sides = self._sides(symbol)
+        except Exception:  # noqa: BLE001 - a price bug must not kill the loop
+            logger.exception("momentum mark failed for %s", symbol)
+            return None
+        if sides is None:
+            return None
+        bid, ask = sides
+        mid = (bid + ask) / 2
+        if mid <= ZERO or (ask - bid) / mid > self._config.mark_max_spread:
+            logger.info("momentum mark for %s skipped: quote %s x %s is wider than %s of mid",
+                        symbol, bid, ask, self._config.mark_max_spread)
+            return None
+        return mid
 
     def _sell_limit(self, symbol: str, quote: Decimal) -> Decimal:
         """Marketable: the bid rounded down, else the quote less the buffer."""

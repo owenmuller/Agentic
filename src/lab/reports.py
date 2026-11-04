@@ -142,6 +142,16 @@ def scoreboard_report(board: Any, as_of: date, table: str, grade_at: int, verdic
             extra += (", " if extra else "") + f"{cards.pct(ai.ret_adj)} after measured fill costs"
         if _spmo(ai) is not None:
             extra += (", " if extra else "") + f"SPMO {cards.pct(_spmo(ai))} over the same days"
+        # luck and market lean stay visible (human ruling 2026-11-04, item 7)
+        bets, picks = rows.get("AI trader: directional market bets"), rows.get("AI trader: single-name picks")
+        if bets is not None and picks is not None and (bets.trades or picks.trades):
+            extra += (", " if extra else "") + (
+                f"closed trades {cards.usd(bets.net_pnl, signed=True)} from market bets (ETFs, fund options) "
+                f"vs {cards.usd(picks.net_pnl, signed=True)} from single names")
+        if ai.beta is not None:
+            extra += (", " if extra else "") + (
+                f"beta to SPY {ai.beta:+.1f} over {ai.beta_n} days"
+                + (" (it leaned against the market)" if ai.beta < 0 else ""))
         lines.append(cards.BoardLine("AI trader", ai.ret, _spy(ai), since(ai), extra))
     momentum = rows.get("MOMENTUM SLEEVE (main book; control)")
     if momentum is not None and momentum.ret is not None:

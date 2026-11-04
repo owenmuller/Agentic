@@ -127,6 +127,23 @@ class AlpacaPriceSource:
             return None
         return price
 
+    def sides(self, symbol: str) -> Optional[tuple[Decimal, Decimal]]:
+        """(bid, ask) from ONE fresh quote, or None when either side is
+        missing, non-positive or crossed: a MARK needs both sides of the same
+        quote (2026-11-04: marking at the IEX ask alone overstated EPD and THC
+        by about 12% on a thin book and triggered two trims that were not due)."""
+        quote_body = self._fresh_quote(symbol)
+        if quote_body is None:
+            return None
+        try:
+            bid = Decimal(str(quote_body.get("bp")))
+            ask = Decimal(str(quote_body.get("ap")))
+        except (InvalidOperation, ValueError):
+            return None
+        if bid <= ZERO or ask <= ZERO or ask < bid:
+            return None
+        return bid, ask
+
     #: A symbol with no usable quote for this long in market hours is an
     #: outage, reported once until a quote returns (data-health rule 2026-10-15).
     QUOTE_GAP = timedelta(minutes=15)

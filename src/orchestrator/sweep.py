@@ -16,6 +16,9 @@ The buffer, per the ruling
 Full caps, not remaining: on the day the system wants to deploy maximally, the
 cash must already be sitting there — the conservative sweep design costs almost
 nothing precisely because the buffer is sized to the worst deployment day.
+Each cap is bounded by the sleeve's undeployed allotment (human ruling
+2026-11-04): a sleeve at or over its allocation cannot deploy, and its
+reservation must not crowd out another sleeve's approved allocation.
 
 Kill switch: sweep BUYS are opening orders and stop while halted (checked here
 so a halt does not accumulate one rejection record per tick, and enforced by
@@ -84,7 +87,8 @@ def liquidity_buffer(
     gate: RiskGate, config: CashManagementLimits, *, include_momentum: bool = True
 ) -> Decimal:
     """The cash floor the sweep defends. Deterministic, per the ruling: both
-    trading sleeves' FULL daily deployment caps, working-order reservations,
+    trading sleeves' FULL daily deployment caps (each bounded by the sleeve's
+    undeployed allotment, ruling 2026-11-04), working-order reservations,
     and the configured margin. Module-level so the baseline sleeve (ruling
     2026-09-18) spends only cash above the same floor."""
     limits = gate.limits
@@ -119,14 +123,24 @@ def liquidity_buffer(
         undeployed = max(ZERO_D, nav - gate.state.sleeve_exposure(Sleeve.MOMENTUM))
         momentum = min(nav * limits.momentum_sleeve.max_daily_deployment, undeployed)
     return (
-        gate.sleeve_nav(Sleeve.EQUITY) * limits.equity_sleeve.max_daily_deployment
-        + gate.sleeve_nav(Sleeve.MECHANICAL)
-        * limits.mechanical_sleeve.max_daily_deployment
+        _reserve(gate, Sleeve.EQUITY, limits.equity_sleeve.max_daily_deployment)
+        + _reserve(gate, Sleeve.MECHANICAL, limits.mechanical_sleeve.max_daily_deployment)
         + aggressive
         + momentum
         + gate.state.reserved_cash
         + config.buffer_margin_usd
     )
+
+
+def _reserve(gate: RiskGate, sleeve: Sleeve, daily_cap: Decimal) -> Decimal:
+    """A sleeve's part of the floor: its daily deployment cap, but never more
+    than its undeployed allotment (human ruling 2026-11-04: another sleeve's
+    reservation must not crowd out an approved allocation - the mechanical
+    sleeve, over its 15% after the no-trim ruling, reserved a refill the gate
+    would refuse and held the momentum rebalance's SN back)."""
+    nav = gate.sleeve_nav(sleeve)
+    undeployed = max(ZERO_D, nav - gate.state.sleeve_exposure(sleeve))
+    return min(nav * daily_cap, undeployed)
 
 
 def momentum_spendable(gate: RiskGate, config: CashManagementLimits) -> Decimal:

@@ -474,9 +474,10 @@ momentum_sleeve:
   enabled: true
   trade_after: "10:00"
   trade_before: "15:30"
-  # Funds, T+1 or the gate can hold part of a rebalance over; after this many
-  # sessions the month closes with what it did and says what it left undone.
-  max_rebalance_sessions: 3
+  # Funds, T+1 or the gate can hold part of a rebalance over; it carries from
+  # session to session until every target is at least 90% funded (within
+  # drift_tolerance) or the month ends, and a genuine cash shortfall is carded
+  # once a day (human ruling 2026-11-04; the 3-session cap left SN 2% funded).
   # A plan not started within this many days of its date is skipped, not chased.
   plan_valid_days: 7
   # A holding within 10% of its target value is left alone (fewer trades -
@@ -485,6 +486,9 @@ momentum_sleeve:
   limit_buffer: 0.002
   fill_wait_seconds: 120
   mark_interval_seconds: 300
+  # Marks are the MID of one quote; a quote wider than this (a thin IEX book:
+  # EPD 36.85 x 42.28 on 2026-11-04) is no price and the last mark stands.
+  mark_max_spread: 0.02
 
 # The momentum book's monthly prep (human ruling 2026-10-13; python -m
 # orchestrator momentum-prep, unit agentic-momentum). Defaults live in
