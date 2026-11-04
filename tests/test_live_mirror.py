@@ -77,6 +77,8 @@ class Broker:
         self.orders[oid] = OrderStatus(oid, "filled", order.quantity, D(ask if buy else bid))
         held = D(self.reader.held.get(order.symbol, "0")) + (order.quantity if buy else -order.quantity)
         self.reader.held[order.symbol] = str(held)
+        value = order.quantity * D(ask if buy else bid)     # a fill moves the broker's cash
+        self.reader.cash = str(D(self.reader.cash) + (-value if buy else value))
         return OrderReceipt(oid, "queued", order.symbol, order.quantity, order.execution.price_bound, client_reference)
 
     def get_order(self, oid):
@@ -143,7 +145,7 @@ def test_it_waits_for_the_funding_then_round_trips_then_mirrors_from_the_next_se
     mirror.start()
     mirror.tick()
     assert mirror.e["phase"] == "waiting_funds" and mirror.broker.sent == []
-    reader.cash, reader.pending = "1100", "1000"       # in transit: not settled
+    reader.cash, reader.pending = "1100", "1000"       # in transit: $100 settled, under the $500 minimum
     mirror.tick()
     assert mirror.e["phase"] == "waiting_funds"
     reader.pending = "0"
@@ -330,3 +332,56 @@ def test_the_cash_account_is_exempt_from_the_day_trade_limit_and_margin_never_is
     assert gate(AccountType.CASH, limits).submit(order).is_approved
     assert gate(AccountType.MARGIN, limits).submit(order).code == "pdt_limit_reached"
     assert gate(AccountType.CASH, shipped).submit(order).code == "pdt_limit_reached"
+
+
+# ================================================================================
+# Deposits and withdrawals are cash flows (human ruling 2026-11-04, second)
+# ================================================================================
+
+
+def test_a_deposit_moves_the_baselines_and_is_never_gain(tmp_path, config):
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    start, hwm = D(mirror.e["starting_equity"]), D(mirror.state.high_water_mark)
+    clock.now += timedelta(minutes=5)
+    reader.cash = str(D(reader.cash) + 300)
+    reader.total = str(D(reader.total) + 300)
+    mirror.tick()
+    flow = mirror.ledger.events(["cash_flow"])[-1]
+    assert flow["kind"] == "deposit" and D(flow["amount"]) == D("300")
+    assert D(mirror.e["starting_equity"]) == start + 300 and D(mirror.state.high_water_mark) == hwm + 300
+    assert any(c.happened == "a deposit of $300" for c in seen)
+    pnl, base, rate = mirror.day_return(D(reader.total))
+    assert pnl == D(reader.total) - D(mirror.e["day_start_equity"]) - 300 and base > D(mirror.e["day_start_equity"])
+    # the kill switch reads the raised baseline: a fall that is 12% of it trips, not 12% of the old one
+    reader.total = str((start + 300) * D("0.87"))
+    paper(tmp_path, opened("k", "F"), filled("k", price="40"))
+    mirror.tick()
+    assert "kill switch" in mirror.ledger.events(["skip"])[-1]["why"]
+
+
+def test_a_withdrawal_lowers_the_baselines_and_the_gates_cash_and_fills_are_not_flows(tmp_path, config):
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    paper(tmp_path, opened("a", "F"), filled("a", price="40"))
+    mirror.tick()
+    mirror.tick()                                     # the buy fills; cash moves by the fill
+    clock.now += timedelta(minutes=2)
+    mirror.tick()
+    assert mirror.ledger.events(["cash_flow"]) == []  # the mirror's own fill is not a flow
+    gate_cash = mirror.gate.state.cash
+    reader.cash = str(D(reader.cash) - 200)
+    reader.total = str(D(reader.total) - 200)
+    mirror.tick()
+    flow = mirror.ledger.events(["cash_flow"])[-1]
+    assert flow["kind"] == "withdrawal" and D(flow["amount"]) == D("-200")
+    assert mirror.gate.state.cash == gate_cash - 200
+
+
+def test_sizing_scales_with_live_equity_less_deposits_in_transit(tmp_path, config):
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    from lab.live_mirror import Snapshot
+
+    plan = {"symbol": "F", "instrument": "stock", "stop_pct": "2.5"}
+    small = Snapshot(equity=D("600"), settled_cash=D("600"), unsettled=D(0), pending_deposits=D(0), held={})
+    big = Snapshot(equity=D("2000"), settled_cash=D("1000"), unsettled=D(0), pending_deposits=D("1000"), held={})
+    assert mirror._size({"pid": "a"}, plan, small)[0].quantity == D("2")     # 600 x 18.75% x 0.99 / 40.08
+    assert mirror._size({"pid": "b"}, plan, big)[0].quantity == D("4")       # sized on 1000, not 2000

@@ -231,11 +231,12 @@ ai_trader:
 # (agentic-lab-live-mirror) after the human has done what Constraint #4
 # requires there; any other process resolves to paper, and the mirror then
 # runs DRY (reads and logs, sends nothing). Sequence: wait for the funding to
-# settle -> one tiny live round trip -> mirroring from the NEXT session.
+# reach $500 settled -> one tiny live round trip -> mirroring from the NEXT
+# session. Deposits and withdrawals are cash flows, never P&L.
 live_mirror:
   enabled: true
   account_number: "742288012"
-  funding_usd: 1000
+  min_funding_usd: 500         # settled cash before the round trip (ruling 2026-11-04, second); later deposits are cash flows
   paper_account: ai-trader
   risk_fraction: 0.02          # of live equity at risk per trade (the AI trader's)
   max_position_fraction: 0.1875  # the AI trader's per-stock cap

@@ -76,6 +76,14 @@ class Snapshot:
     unsettled: Decimal
     pending_deposits: Decimal
     held: dict[str, Decimal]
+    #: The broker's raw cash (it includes early access to deposits in transit):
+    #: what the cash-flow reconciliation compares.
+    cash: Decimal = ZERO
+
+    @property
+    def tradeable_equity(self) -> Decimal:
+        """Equity less deposits still in transit: what sizing scales with."""
+        return max(ZERO, self.equity - self.pending_deposits)
 
 
 class LiveMirror:
@@ -147,7 +155,57 @@ class LiveMirror:
         unsettled, pending = _d(row.get("unsettled_funds")), _d(portfolio.get("pending_deposits"))
         cash = _d(portfolio.get("cash"))
         return Snapshot(equity=_d(portfolio.get("total_value")), settled_cash=max(ZERO, cash - unsettled - pending),
-                        unsettled=unsettled, pending_deposits=pending, held=held)
+                        unsettled=unsettled, pending_deposits=pending, held=held, cash=cash)
+
+    # -- cash flows (ruling 2026-11-04, second: deposits are flows, never P&L) -----------
+
+    def _flows(self, snap: Snapshot) -> None:
+        """A change in the broker's cash that the mirror's own fills and fees
+        do not explain is a DEPOSIT or a WITHDRAWAL (the Agentic MCP has no
+        transfer records; a dividend or interest credit cannot be told apart
+        and is treated the same way - the stricter reading). Each one moves
+        the kill-switch baseline, today's loss-limit baseline and the gate's
+        high-water mark by its amount, enters the day's time-weighting, and
+        is carded."""
+        if "cash_expected" not in self.e:
+            self.e["cash_expected"] = str(snap.cash)
+            return
+        last_fill = self.e.get("last_fill_at")
+        if self._working is not None or (
+                last_fill and (self.clock() - datetime.fromisoformat(last_fill)).total_seconds() < 60):
+            return   # the broker's cash can trail a fill: reconcile once it has caught up
+        amount = snap.cash - _d(self.e["cash_expected"])
+        self.e["cash_expected"] = str(snap.cash)
+        if abs(amount) < self.config.flow_threshold_usd:
+            return
+        kind = "deposit" if amount > 0 else "withdrawal"
+        if self.e.get("starting_equity"):
+            self.e["starting_equity"] = str(_d(self.e["starting_equity"]) + amount)
+        self.e.setdefault("flows_today", []).append({"amount": str(amount), "at": self.clock().isoformat()})
+        self.e["net_flows"] = str(_d(self.e.get("net_flows")) + amount)
+        if self.state.high_water_mark:
+            self.state.high_water_mark = str(_d(self.state.high_water_mark) + amount)
+        if self.gate is not None:
+            self.gate.state.high_water_mark += amount
+            if amount < 0:   # a withdrawal leaves the gate's cash, at once (a deposit counts once settled)
+                self.gate.state.cash = max(ZERO, self.gate.state.cash + amount)
+        self.ledger.append("cash_flow", kind=kind, amount=amount, cash=snap.cash,
+                           pending_deposits=snap.pending_deposits, starting_equity=self.e.get("starting_equity"))
+        self._card(f"a {kind} of {cards.usd(float(abs(amount)))}", cards.GOOD, [
+            f"Cash moved by {cards.usd(float(amount), signed=True)} with no trade behind it: counted as a "
+            f"{kind}, not as gain or loss.",
+            "The kill switch's baseline, today's loss-limit baseline and the gate's high-water mark moved by the "
+            "same amount." + (f" Kill-switch baseline now {cards.usd(float(_d(self.e['starting_equity'])))}."
+                              if self.e.get("starting_equity") else ""),
+            "A dividend or interest credit looks the same and is treated the same way."])
+        self._save()
+
+    def _expect(self, side: str, value: Decimal, fees: Decimal) -> None:
+        """The mirror's own fill moves the cash it expects to see."""
+        if "cash_expected" in self.e:
+            delta = (value if side == "sell" else -value) - fees
+            self.e["cash_expected"] = str(_d(self.e["cash_expected"]) + delta)
+        self.e["last_fill_at"] = self.clock().isoformat()
 
     def _build_gate(self, snap: Snapshot) -> RiskGate:
         account = AccountState(cash=snap.settled_cash, high_water_mark=ZERO, account_type=AccountType.CASH,
@@ -172,9 +230,11 @@ class LiveMirror:
         """Session start: read the account, roll the day, build the gate."""
         snap = self.snapshot()
         today = self._today()
+        self._flows(snap)   # an overnight deposit moves the baselines BEFORE the day rolls
         if self.e.get("day") != today.isoformat():
             self.e["day"] = today.isoformat()
             self.e["day_start_equity"] = str(snap.equity)
+            self.e["flows_today"] = []
             self.e.pop("daily_halt", None)
         self.e.setdefault("phase", "waiting_funds")
         self.e.setdefault("positions", {})
@@ -198,11 +258,12 @@ class LiveMirror:
         if self.e.get("approvals_on"):
             return
         snap = self.snapshot()
+        self._flows(snap)
         today = self._today()
         phase = self.e["phase"]
         if phase == "waiting_funds":
-            if (snap.settled_cash >= self.config.funding_usd and snap.pending_deposits == 0
-                    and snap.unsettled == 0):
+            # settled cash excludes deposits in transit and unsettled funds
+            if snap.settled_cash >= self.config.min_funding_usd:
                 if self.dry:
                     if not self.e.get("dry_noted") == today.isoformat():
                         self.e["dry_noted"] = today.isoformat()
@@ -363,6 +424,8 @@ class LiveMirror:
             pass
         if filled > 0 and price is not None:
             self.gate.record_fill(working["decision"], price, filled_units=filled)
+            side = "buy" if type(working["decision"].order).__name__ == "EquityBuyOrder" else "sell"
+            self._expect(side, filled * price, fees)
         else:
             self.gate.cancel(working["decision"])
         result = {"order_id": working["order_id"], "status": status.status, "filled": filled,
@@ -529,7 +592,8 @@ class LiveMirror:
             return "the kill switch (12% below starting equity)"
         if self.state.kill_switch_tripped or (self.gate is not None and self.gate.state.kill_switch_tripped):
             return "the kill switch"
-        day_start = _d(self.e.get("day_start_equity"))
+        # today's baseline moves with today's deposits and withdrawals
+        day_start = _d(self.e.get("day_start_equity")) + self._flows_today()
         if day_start > 0 and snap.equity <= day_start * (1 - self.config.daily_loss_fraction):
             if self.e.get("daily_halt") != self._today().isoformat():
                 self.e["daily_halt"] = self._today().isoformat()
@@ -576,7 +640,8 @@ class LiveMirror:
 
     def _size(self, item: dict, plan: dict, snap: Snapshot):
         instrument, symbol = plan.get("instrument"), str(plan.get("symbol") or "").upper()
-        budget = (snap.equity * self.config.risk_fraction).quantize(CENTS, ROUND_DOWN)
+        equity = snap.tradeable_equity   # live equity, less deposits still in transit
+        budget = (equity * self.config.risk_fraction).quantize(CENTS, ROUND_DOWN)
         if instrument in ("call", "put"):
             contract = _d(item.get("paper_price")) * _d(item.get("multiplier") or 100)
             if contract > budget:
@@ -595,7 +660,7 @@ class LiveMirror:
         # the cap is checked against what the GATE reserves (the limit, or a
         # market buy's ask + 5%), 1% inside it for the gap between the
         # broker's equity and the gate's marked NAV
-        cap = snap.equity * self.config.max_position_fraction * Decimal("0.99")
+        cap = equity * self.config.max_position_fraction * Decimal("0.99")
         limit = (ask * (1 + self.config.limit_buffer)).quantize(CENTS, ROUND_UP)
         whole = min(shares, cap / limit).to_integral_value(rounding=ROUND_DOWN)
         if whole >= 1:
@@ -610,21 +675,51 @@ class LiveMirror:
 
     # -- the day's card (item 6) -----------------------------------------------------------
 
+    def _flows_today(self) -> Decimal:
+        return sum((_d(f["amount"]) for f in self.e.get("flows_today", [])), ZERO)
+
+    def day_return(self, equity: Decimal) -> tuple[Decimal, Decimal, Optional[Decimal]]:
+        """(P&L, the Modified Dietz base, the day's return): deposits and
+        withdrawals are taken out of the P&L, and weighted into the base by
+        the share of the session left after each arrived."""
+        day_start = _d(self.e.get("day_start_equity"))
+        today = self._today()
+        start = datetime.combine(today, _clock_time(self.config.session_start), NY)
+        end = datetime.combine(today, _clock_time(self.config.session_end), NY)
+        span = (end - start).total_seconds()
+        weighted = ZERO
+        for flow in self.e.get("flows_today", []):
+            at = datetime.fromisoformat(flow["at"])
+            share = Decimal(str(min(1.0, max(0.0, (end - at).total_seconds() / span))))
+            weighted += _d(flow["amount"]) * share
+        pnl = equity - day_start - self._flows_today()
+        base = day_start + weighted
+        return pnl, base, (pnl / base if base > 0 else None)
+
     def daily_card(self) -> Optional[cards.Card]:
         snap = self.snapshot()
-        day_start = _d(self.e.get("day_start_equity"))
-        live = snap.equity - day_start
+        self._flows(snap)
+        live, base, rate = self.day_return(snap.equity)
+        today = self._today().isoformat()
+        if rate is not None and self.e.get("twr_day") != today:
+            self.e["twr_day"] = today   # chained once a day: time-weighted since mirroring began
+            self.e["twr_index"] = str(_d(self.e.get("twr_index") or "1") * (1 + rate))
+        since = _d(self.e.get("twr_index") or "1") - 1
         paper_start, paper_end = _paper_day(self.paper_ledger, self._today())
         scaled = None
-        if paper_start and paper_end and day_start > 0:
-            scaled = (paper_end / paper_start - 1) * day_start
+        if paper_start and paper_end and base > 0:
+            scaled = (paper_end / paper_start - 1) * base
         skipped = set(self.e.get("skipped_today", []))
-        skip_effect = -_paper_pnl(self.paper_ledger, self._today(), skipped) * (day_start / paper_start) \
+        skip_effect = -_paper_pnl(self.paper_ledger, self._today(), skipped) * (base / paper_start) \
             if paper_start and skipped else ZERO
         fees = sum((_d(c.get("fees")) for c in self.e.get("closed_today", [])), ZERO)
         gap = None if scaled is None else live - scaled
         fills = None if gap is None else gap - skip_effect + fees
-        lines = [f"Live today: {cards.usd(float(live), signed=True)} on {cards.usd(float(day_start))}.",
+        flows = self._flows_today()
+        lines = [f"Live today: {cards.usd(float(live), signed=True)} ({cards.pct(float(rate)) if rate is not None else 'n/a'}"
+                 f" time-weighted) on {cards.usd(float(base))}; since mirroring began {cards.pct(float(since))}."
+                 + (f" Deposits and withdrawals today: {cards.usd(float(flows), signed=True)}, not counted as gain."
+                    if flows else ""),
                  ("Paper AI trader scaled to the same size: " + cards.usd(float(scaled), signed=True) + "."
                   if scaled is not None else "Paper AI trader: no day to compare."),
                  (f"Gap {cards.usd(float(gap), signed=True)}: skips {cards.usd(float(skip_effect), signed=True)}, "

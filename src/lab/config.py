@@ -177,8 +177,11 @@ class LiveMirrorConfig(_Strict):
     enabled: bool = False
     #: The Robinhood Agentic account, pinned (refused in code otherwise).
     account_number: str
-    #: The deposit the mirror waits to see settled before its round trip.
-    funding_usd: Decimal = Field(gt=ZERO)
+    #: Settled cash the mirror waits for before its round trip (human ruling
+    #: 2026-11-04, second: $500; deposits after it are cash flows).
+    min_funding_usd: Decimal = Field(gt=ZERO)
+    #: An unexplained cash change at least this large is a deposit or withdrawal.
+    flow_threshold_usd: Decimal = Field(default=Decimal("1"), gt=ZERO)
     paper_account: str = "ai-trader"
     token_store: str = "~/.config/agentic/rh_oauth.json"
     risk_fraction: Decimal = Field(default=Decimal("0.02"), gt=ZERO, le=Decimal("0.02"))
