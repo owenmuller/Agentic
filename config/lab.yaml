@@ -261,3 +261,9 @@ live_mirror:
       max_daily_deployment: 1.00
       max_sector_exposure: 0.50
       entries_enabled: true
+    # Human ruling 2026-11-04: the aggressive path's 3-day-trades rule does NOT
+    # apply to this CASH account (a cash account cannot be a pattern day
+    # trader); settled funds only is its limit. The mirror refuses any account
+    # type but cash, and margin accounts are never exempt.
+    pdt:
+      aggressive_limit_on_cash_accounts: false

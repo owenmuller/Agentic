@@ -302,3 +302,31 @@ def test_a_shared_dotenv_may_never_carry_a_live_flag(tmp_path, monkeypatch):
         live.write_text(text)
         with pytest.raises(LiveModeMisconfigured, match="only the live mirror"):
             load_environment(live)
+
+
+def test_the_cash_account_is_exempt_from_the_day_trade_limit_and_margin_never_is(config):
+    # human ruling 2026-11-04: settled funds are the cash account's limit
+    from datetime import date
+
+    from risk_gate.gate import RiskGate
+    from risk_gate.schema import EquityBuyOrder, LimitExecution
+    from risk_gate.state import AccountState, AccountType, Sleeve
+
+    live = config.live_mirror
+    limits = account_limits(AccountConfig(enabled=True, label="LIVE", sleeve="live_mirror",
+                                          limits_overrides=live.limits_overrides))
+    assert limits.pdt.aggressive_limit_on_cash_accounts is False
+    shipped = account_limits(config.account("ai-trader"))
+    assert shipped.pdt.aggressive_limit_on_cash_accounts is True       # every other account keeps the rule
+    clock = Clock(datetime(2026, 11, 6, 15, 0, tzinfo=timezone.utc))
+    order = EquityBuyOrder(symbol="F", quantity=D("5"), sleeve=Sleeve.AGGRESSIVE,
+                           execution=LimitExecution(limit_price=D("12.00")))
+
+    def gate(kind, table):
+        state = AccountState(cash=D("1000"), high_water_mark=D("1000"), account_type=kind)
+        state.day_trades = [date(2026, 11, 4), date(2026, 11, 5), date(2026, 11, 6)]
+        return RiskGate(table, state, clock)
+
+    assert gate(AccountType.CASH, limits).submit(order).is_approved
+    assert gate(AccountType.MARGIN, limits).submit(order).code == "pdt_limit_reached"
+    assert gate(AccountType.CASH, shipped).submit(order).code == "pdt_limit_reached"

@@ -273,6 +273,12 @@ class PdtLimits(_Strict):
     #: FINRA: four or more day trades in five rolling business days.
     max_day_trades_per_window: int = 3
     window_business_days: int = 5
+    #: The aggressive path's day-trade limit applies to ANY account type
+    #: (ruling 2026-10-09, item D). False exempts a CASH account only - a cash
+    #: account cannot be a pattern day trader; settled funds are its limit
+    #: (human ruling 2026-11-04, for the live mirror's cash account alone).
+    #: Margin accounts are never exempt.
+    aggressive_limit_on_cash_accounts: bool = True
 
 
 class SizingBand(_Strict):

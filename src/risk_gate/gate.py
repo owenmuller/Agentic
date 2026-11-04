@@ -429,7 +429,9 @@ class RiskGate:
             # threshold. The count is the gate's own ledger of closes that
             # completed a same-day round trip.
             pdt = limits.pdt
-            if state.nav < pdt.equity_threshold_usd:
+            cash_exempt = (state.account_type is AccountType.CASH
+                           and not pdt.aggressive_limit_on_cash_accounts)   # ruling 2026-11-04
+            if state.nav < pdt.equity_threshold_usd and not cash_exempt:
                 used = state.day_trades_in_window(today, pdt.window_business_days)
                 if used >= pdt.max_day_trades_per_window:
                     return Rejection(
