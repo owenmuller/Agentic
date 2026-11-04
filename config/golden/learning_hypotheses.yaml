@@ -1,0 +1,37 @@
+# Learning loop: the hypothesis prompt's golden set (human ruling 2026-11-04).
+# Candidates are what code would hand the model: flagged cells whose sign
+# permits a rule (losing trades -> skip; wrongly declined -> take). A run
+# passes when it parses, stays within the limit (and at or above `min`),
+# chooses only accepted candidates, and every rule names its pattern (one of
+# `rule_words`). Synthetic numbers, shaped like the journal's.
+cases:
+  - id: two_of_three_with_an_overlap
+    limit: 2
+    min: 1
+    accept: [C1, C2, C3]
+    rule_words: ["gap", "congress"]
+    candidates:
+      - {id: C1, account: ai-trader, kind: trade, filter: [[catalyst, earnings], [entry, long_after_gap_up]],
+         n: 24, mean: -1.9, low: -3.1, high: -0.7}
+      - {id: C2, account: ai-trader, kind: trade, filter: [[entry, long_after_gap_up]],
+         n: 31, mean: -1.5, low: -2.6, high: -0.4}
+      - {id: C3, account: main, kind: decline, filter: [[source, congressional_disclosures]],
+         n: 60, mean: 0.9, low: 0.2, high: 1.6}
+  - id: one_slot_left
+    limit: 1
+    min: 1
+    accept: [C1, C2]
+    rule_words: ["gap"]
+    candidates:
+      - {id: C1, account: ai-trader, kind: trade, filter: [[catalyst, earnings], [entry, long_after_gap_up]],
+         n: 24, mean: -1.9, low: -3.1, high: -0.7}
+      - {id: C2, account: ai-trader, kind: trade, filter: [[entry, long_after_gap_up]],
+         n: 31, mean: -1.5, low: -2.6, high: -0.4}
+  - id: a_marginal_single
+    limit: 3
+    min: 0
+    accept: [C1]
+    rule_words: ["other", "sector"]
+    candidates:
+      - {id: C1, account: main, kind: trade, filter: [[sector, other]],
+         n: 21, mean: -0.4, low: -0.79, high: -0.01}

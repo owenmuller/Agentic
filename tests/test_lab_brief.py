@@ -101,9 +101,13 @@ def test_promoted_playbook_lessons_render_and_unpromoted_do_not(tmp_path):
     (data / "learning").mkdir()
     (data / "learning" / "playbook.json").write_text(json.dumps({"lessons": [
         {"id": "P1", "lesson": "fade nothing", "evidence": "n=31, +1.2", "promoted": True},
-        {"id": "P2", "lesson": "a hypothesis", "promoted": False}]}), encoding="utf-8")
+        {"id": "P2", "lesson": "a hypothesis", "promoted": False},
+        # ruling 2026-11-04: a demoted lesson and a main-book lesson are not the AI trader's
+        {"id": "P3", "lesson": "demoted", "promoted": "2026-11-01", "demoted": "2026-12-04", "account": "ai-trader"},
+        {"id": "P4", "lesson": "main book", "promoted": "2026-11-01", "account": "main"}]}), encoding="utf-8")
     text = brief.render(data, EVIDENCE).text
-    assert "P1 fade nothing (evidence: n=31, +1.2)" in text and "P2" not in text
+    assert "P1 fade nothing (evidence: n=31, +1.2)" in text
+    assert "P2" not in text and "P3" not in text and "P4" not in text
 
 
 def test_the_evidence_library_keeps_its_discipline():

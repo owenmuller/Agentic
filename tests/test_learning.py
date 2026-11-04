@@ -163,3 +163,87 @@ def test_trades_and_declines_are_mined_apart_and_the_asked_question_is_always_re
     assert "asked: buy after an earnings gap-up: n=6, mean -1.10" in text
     assert "below n 20: a reading, not a finding" in text
     assert "TRADES: n=6" in text and "DECLINES: n=4" in text
+
+
+# ================================================================================
+# Hypotheses as shadows, the playbook, the weekly card (human ruling 2026-11-04)
+# ================================================================================
+
+from datetime import date  # noqa: E402
+
+from learning import hypotheses, playbook  # noqa: E402
+
+
+def gap_trades(n, start=0, excess=-2.0, resolved="2026-11-01"):
+    rng = random.Random(start)
+    return [Entry(decision_id=f"g{start + i}", account="ai-trader", strategy="ai_trader", kind="trade",
+                  resolved_at=resolved, thesis="t", expected="up", actual="down",
+                  excess=excess + rng.gauss(0, 0.3), process="wrong_reason",
+                  tags={"sector": "money", "setup": "earnings_drift", "catalyst": "earnings",
+                        "regime": "calm_uptrend", "confidence_band": "50-70", "source": "ai_trader",
+                        "instrument": "stock", "entry": "long_after_gap_up"}) for i in range(n)]
+
+
+def test_only_a_flagged_pattern_whose_sign_permits_a_rule_becomes_a_candidate():
+    assert hypotheses.candidates(gap_trades(10), []) == []                      # too few: not flagged
+    cands = hypotheses.candidates(gap_trades(30), [])
+    assert cands and all(c.action == "skip" and c.kind == "trade" and c.mean < 0 for c in cands)
+    winners = [Entry(**{**vars(e), "excess": abs(e.excess)}) for e in gap_trades(30)]
+    assert hypotheses.candidates(winners, []) == []                             # "do more" has no shadow
+    # a pattern already proposed is not proposed again
+    chosen = cands[0]
+    existing = [hypotheses.Hypothesis("H1", "2026-11-06", chosen.account, chosen.kind, dict(chosen.filter),
+                                      "skip", "r", "w")]
+    assert all(c.filter != chosen.filter for c in hypotheses.candidates(gap_trades(30), existing))
+
+
+def test_three_a_week_and_the_model_may_only_choose_offered_candidates():
+    friday = date(2026, 11, 6)
+    made = [hypotheses.Hypothesis(f"H{i}", "2026-11-04", "a", "trade", {"sector": "x"}, "skip", "r", "w")
+            for i in range(2)]
+    assert hypotheses.slots(made, friday) == 1 and hypotheses.slots(made, date(2026, 11, 9)) == 3
+    cands = hypotheses.candidates(gap_trades(30), [])
+    answer = {"hypotheses": [{"candidate": cands[0].id, "rule": "Skip earnings gap-up buys.", "rationale": "n=30"},
+                             {"candidate": "C99", "rule": "invented", "rationale": "x"},
+                             {"candidate": cands[0].id, "rule": "dup", "rationale": "x"}]}
+    got = hypotheses.parse(answer, cands, 2, friday, next_number=3)
+    assert [h.id for h in got] == ["H3"] and got[0].action == "skip" and got[0].proposed_at == "2026-11-06"
+    assert got[0].filter == dict(cands[0].filter) and got[0].evidence["n"] == 30
+    assert hypotheses.parse(None, cands, 2, friday, 1) == []
+
+
+def test_a_shadow_counts_only_cases_after_its_proposal_and_the_playbook_gate_holds():
+    h = hypotheses.Hypothesis("H1", "2026-11-06", "ai-trader", "trade",
+                              {"entry": "long_after_gap_up", "catalyst": "earnings"}, "skip", "Skip them.", "why")
+    before = gap_trades(30, start=0, resolved="2026-11-02")
+    assert hypotheses.evaluate(h, before).n == 0                                 # all before the proposal
+    after = gap_trades(12, start=100, resolved="2026-11-20")
+    shadow = hypotheses.evaluate(h, before + after)
+    assert shadow.n == 12 and shadow.ahead and not shadow.eligible()             # ahead, but n < 20
+    book = {"lessons": []}
+    with pytest.raises(ValueError):
+        playbook.promote(book, h, shadow, date(2026, 11, 27), "owen")
+    shadow = hypotheses.evaluate(h, before + gap_trades(25, start=200, resolved="2026-12-01"))
+    assert shadow.eligible() and shadow.advantage == pytest.approx(2.0, abs=0.3)
+    lesson = playbook.promote(book, h, shadow, date(2026, 12, 4), "owen")
+    assert lesson["id"] == "P1" and lesson["lesson"] == "Skip them." and "25 cases resolved after" in lesson["evidence"]
+    with pytest.raises(ValueError):
+        playbook.promote(book, h, shadow, date(2026, 12, 4), "owen")            # already a lesson
+    assert "P1: Skip them." in playbook.render_block(playbook.active(book, "ai-trader"))
+    assert playbook.render_block(playbook.active(book, "main")) == ""            # byte-identical when empty
+    # the monthly re-check demotes a lesson whose effect fell into the noise band
+    noisy = hypotheses.Shadow("H1", 40, 0.2, -0.5, 0.9)
+    demoted = playbook.recheck(book, [h], {"H1": noisy}, date(2027, 1, 1))
+    assert [l["id"] for l in demoted] == ["P1"] and playbook.active(book) == []
+
+
+def test_the_learning_card_reads_plainly():
+    from execution import cards
+
+    quiet = cards.learning_card(12, 289, 1.18, [], ["buy after an earnings gap-up, ai trader: 5 trades, -1.4 points "
+                                                    "a case against SPY (too few to call)"], [], 0, 0, [], [], [], "d")
+    assert quiet.status == cards.GOOD and "Patterns flagged: none yet" in quiet.description
+    vote = cards.learning_card(3, 300, 0.2, [], [], [], 1, 0, ["H1"], [], [], "d")
+    assert vote.status == cards.ACTION and "promote" in vote.what_to_do
+    drop = cards.learning_card(3, 300, 0.2, [], [], [], 0, 1, [], [], ["P1 (Skip them)"], "d")
+    assert drop.status == cards.LOOK

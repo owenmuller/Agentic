@@ -596,7 +596,7 @@ def learning_run(data_dir: Path, config, *, limit: int, accounts=("ai-trader", "
                  dump: Optional[Path] = None, log=print) -> tuple[str, int]:
     """Cases -> post-mortems -> the journal -> the miner. Returns the report
     text and an exit code."""
-    from dataclasses import asdict
+    from dataclasses import asdict, replace
 
     from learning import mining, writer
     from learning.journal import Journal
@@ -629,6 +629,8 @@ def learning_run(data_dir: Path, config, *, limit: int, accounts=("ai-trader", "
                                   max_tokens=config.max_tokens)
 
     entries, stats = writer.write(fresh, call, max_entries=limit, max_spend_usd=float(config.max_spend_per_run_usd))
+    stamp = datetime.now(_NY).date().isoformat()
+    entries = [replace(e, written_at=stamp) for e in entries]
     sources = {s.id for k in SignalsConfig.load().classes.values() for s in k.sources}
     sources |= {"ai_trader"} | {c.tags["source"] for c in cases}   # computed from the records, never the model
     added = journal.append(entries, tuple(sorted(sources)))
@@ -695,6 +697,190 @@ def learn_golden() -> int:
     print(f"learning golden: {total - len(failed)}/{total} cases pass (majority of {runs} runs); "
           f"spend ${spend:.3f}, {tokens} input tokens"
           + (f"; FAILED: {', '.join(failed)}" if failed else ""))
+    return 1 if failed else 0
+
+
+def _learning_card(checks):
+    """The Friday learning step and its card; a failure is a yellow card."""
+    from orchestrator.config import OrchestratorConfig
+    from research.client import AnthropicResearchClient
+
+    config = OrchestratorConfig.load().learning
+    if not config.enabled:
+        return None
+    try:
+        client = AnthropicResearchClient(checks.research_config)
+
+        def call(system: str, user: str, tool: dict):
+            return client.single_call(system=system, user=user, tool=tool, model=config.model,
+                                      max_tokens=config.max_tokens)
+
+        card, _detail = learning_weekly(checks.audit.path.parent, config, checks.clock().astimezone(_NY).date(),
+                                        call=call)
+        return card
+    except Exception as error:  # noqa: BLE001 - the weekly report must still go out
+        datahealth.report("Learning journal", f"the weekly learning step failed ({type(error).__name__}: "
+                                              f"{str(error)[:160]})")
+        return None
+
+
+def learning_weekly(data_dir: Path, config, today: date, call=None) -> tuple[Optional[object], str]:
+    """The learning loop's Friday step (§ Learning Loop, items 2-4 and 8;
+    human ruling 2026-11-04): mine the journal, open at most three hypotheses a
+    week from the flagged patterns (the model words them; code decides which
+    rule a pattern can be), score every shadow on its post-proposal cases,
+    re-check the playbook on the first Friday of a month, and build the
+    "What we learned this week" card. Returns (card, report text)."""
+    from learning import hypotheses, mining, playbook
+    from learning.journal import Journal
+
+    entries = Journal(data_dir / config.journal_file).entries()
+    hyp_path = data_dir / "learning" / "hypotheses.json"
+    book_path = data_dir / "learning" / "playbook.json"
+    hyps = hypotheses.load(hyp_path)
+    cands = hypotheses.candidates(entries, hyps)
+    limit = min(hypotheses.slots(hyps, today), len(cands))
+    opened, spend = [], 0.0
+    if limit and cands and call is not None:
+        result = call(hypotheses.SYSTEM, hypotheses.user_prompt(cands, limit),
+                      hypotheses.tool([c.id for c in cands], limit))
+        spend += float(getattr(result, "est_cost_usd", None) or 0)
+        opened = hypotheses.parse(result.structured, cands, limit, today, next_number=len(hyps) + 1)
+        if opened:
+            hyps = hyps + opened
+            hypotheses.save(hyp_path, hyps)
+    shadows = {h.id: hypotheses.evaluate(h, entries) for h in hyps}
+    book = playbook.load(book_path)
+    demoted = playbook.recheck(book, hyps, shadows, today) if today.day <= 7 else []
+    if demoted:
+        playbook.save(book_path, book)
+    lessons = {l["hypothesis"] for l in playbook.active(book)}
+    eligible = [h.id for h in hyps if shadows[h.id].eligible() and h.id not in lessons]
+    week = today.isocalendar()[:2]
+    this_week = [e for e in entries if e.written_at and date.fromisoformat(e.written_at).isocalendar()[:2] == week]
+    spend += sum(e.cost_usd or 0 for e in this_week)
+    by_kind = mining.tally_by_kind(entries)
+    flagged = [f"{kind}s where {c.label.replace('=', ' ').replace('_', ' ')}: {c.mean:+.1f} points a case (n {c.n})"
+               for kind, cells in by_kind.items() for c in cells if c.flagged]
+    asked = []
+    for label, tags in mining.FOCUS[:1]:
+        for account in sorted({e.account for e in entries if e.kind == "trade"}):
+            f = mining.focus([e for e in entries if e.kind == "trade" and e.account == account], label, **tags)
+            if f.n:
+                asked.append(f"{label}, {account.replace('-', ' ')}: {f.n} trades, {f.mean:+.1f} points a case "
+                             f"against SPY" + (" (too few to call)" if f.n < hypotheses.MIN_N else ""))
+    hyp_lines = [f"  {h.id} {h.proposed_at} {h.account} {h.kind}s {h.filter}: {h.rule} | shadow n={shadows[h.id].n}, "
+                 f"advantage {'n/a' if shadows[h.id].advantage is None else f'{shadows[h.id].advantage:+.2f}'} points"
+                 f"{' ELIGIBLE for promotion' if h.id in eligible else ''}" for h in hyps]
+    book_lines = [f"  {l['id']} ({l['account']}): {l['lesson']} - {l['evidence']}" for l in playbook.active(book)]
+    detail = "\n".join([
+        mining.render(entries), "", "HYPOTHESES (shadows scored on cases resolved after each was proposed)",
+        *(hyp_lines or ["  none yet"]), "", "PLAYBOOK", *(book_lines or ["  no lesson promoted"]),
+    ])
+    card = cards.learning_card(
+        len(this_week), len(entries), spend, flagged, asked,
+        [f"{h.id} ({h.rule})" for h in opened], sum(1 for s in shadows.values() if s.ahead),
+        sum(1 for s in shadows.values() if s.advantage is not None and not s.ahead), eligible,
+        [], [f"{l['id']} ({l['lesson']})" for l in demoted], detail)
+    return card, detail
+
+
+def learn_promote() -> int:
+    """Promote a hypothesis to the playbook (§ Learning Loop, item 4): a
+    human's act, refused unless its shadow is eligible. A declared operator
+    command (it writes production).
+
+        python -m orchestrator learn-promote H<n> --ack "your name"
+        python -m orchestrator learn-demote P<n> --ack "your name" --reason "..."
+    """
+    from learning import hypotheses, playbook
+    from learning.journal import Journal
+    from orchestrator.config import OrchestratorConfig
+
+    args = sys.argv[2:]
+    if len(args) < 3 or "--ack" not in args:
+        print(learn_promote.__doc__, file=sys.stderr)
+        return 2
+    target, who = args[0], args[args.index("--ack") + 1]
+    data_dir = default_data_dir()
+    config = OrchestratorConfig.load().learning
+    book_path = data_dir / "learning" / "playbook.json"
+    book = playbook.load(book_path)
+    today = datetime.now(_NY).date()
+    if sys.argv[1] == "learn-demote":
+        lesson = next((l for l in book["lessons"] if l["id"] == target and not l.get("demoted")), None)
+        if lesson is None:
+            print(f"no active lesson {target}", file=sys.stderr)
+            return 2
+        lesson["demoted"] = today.isoformat()
+        lesson["demotion_reason"] = f"demoted by {who}: " + (args[args.index("--reason") + 1] if "--reason" in args
+                                                              else "no reason given")
+        playbook.save(book_path, book)
+        print(f"demoted {target}")
+        return 0
+    hyps = {h.id: h for h in hypotheses.load(data_dir / "learning" / "hypotheses.json")}
+    if target not in hyps:
+        print(f"no hypothesis {target}", file=sys.stderr)
+        return 2
+    shadow = hypotheses.evaluate(hyps[target], Journal(data_dir / config.journal_file).entries())
+    try:
+        lesson = playbook.promote(book, hyps[target], shadow, today, who)
+    except ValueError as error:
+        print(f"REFUSED: {error}", file=sys.stderr)
+        return 2
+    playbook.save(book_path, book)
+    print(f"promoted {target} as {lesson['id']}: {lesson['lesson']} ({lesson['evidence']})")
+    if lesson["account"] == "main":
+        print("NOTE: a main-book lesson enters the research prompt at the next session - a prompt change: "
+              "run the golden replay (python -m orchestrator golden) before it does.")
+    return 0
+
+
+def learn_hypotheses_golden() -> int:
+    """The hypothesis prompt's golden replay (§ Learning Loop: golden for the
+    journal and hypothesis prompts). Each case is a set of candidates and a
+    limit; a run passes when what it returns parses, stays within the limit,
+    picks only accepted candidates and words each rule with its pattern.
+
+        python -m orchestrator learn-hypotheses-golden [--runs 3]"""
+    import yaml
+
+    from learning import hypotheses
+    from orchestrator.config import OrchestratorConfig
+    from research.client import AnthropicResearchClient
+    from research.config import ResearchConfig
+
+    args = sys.argv[2:]
+    runs = int(args[args.index("--runs") + 1]) if "--runs" in args else 3
+    path = Path(__file__).resolve().parents[2] / "config" / "golden" / "learning_hypotheses.yaml"
+    config = OrchestratorConfig.load().learning
+    load_environment()
+    client = AnthropicResearchClient(ResearchConfig.load())
+    golden = yaml.safe_load(path.read_text(encoding="utf-8"))
+    failed, spend = [], 0.0
+    print(f"hypotheses golden: {path} on {config.model}, {runs} run(s) a case")
+    for item in golden["cases"]:
+        cands = [hypotheses.Candidate(c["id"], c["account"], c["kind"], tuple(tuple(p) for p in c["filter"]),
+                                      c["n"], c["mean"], c["low"], c["high"]) for c in item["candidates"]]
+        passes = 0
+        for _ in range(runs):
+            result = client.single_call(system=hypotheses.SYSTEM, user=hypotheses.user_prompt(cands, item["limit"]),
+                                        tool=hypotheses.tool([c.id for c in cands], item["limit"]),
+                                        model=config.model, max_tokens=config.max_tokens)
+            spend += float(result.est_cost_usd or 0)
+            got = hypotheses.parse(result.structured, cands, item["limit"], date(2026, 11, 6), 1)
+            picked = [h.filter for h in got]
+            accepted = [dict(tuple(p) for p in c["filter"]) for c in item["candidates"] if c["id"] in item["accept"]]
+            words_ok = all(any(w in h.rule.lower() for w in item.get("rule_words", [""])) for h in got)
+            ok = (item["min"] <= len(got) <= item["limit"] and all(f in accepted for f in picked) and words_ok)
+            passes += ok
+            print(f"  {item['id']:30} {'PASS' if ok else 'FAIL'}  chose {[h.filter for h in got]}")
+            for h in got:
+                print(f"      {h.id}: {h.rule} | {h.rationale[:160]}")
+        if passes * 2 <= runs:
+            failed.append(item["id"])
+    print(f"hypotheses golden: {len(golden['cases']) - len(failed)}/{len(golden['cases'])} cases pass; "
+          f"spend ${spend:.3f}" + (f"; FAILED: {', '.join(failed)}" if failed else ""))
     return 1 if failed else 0
 
 
@@ -773,6 +959,11 @@ def weekly() -> int:
         alerter.card(f"momentum-weekly-{checks.clock().date()}", momentum_card)
     elif momentum_card is not None:
         print(momentum_card.detail)
+    learning = _learning_card(checks)
+    if alerter.enabled and learning is not None:
+        alerter.card(f"learning-weekly-{checks.clock().date()}", learning)
+    elif learning is not None:
+        print(learning.detail)
     if alerter.enabled:
         sent = alerter.card(f"weekly-{checks.clock().date()}", _weekly_card(text, checks.clock().date(), checks.gate))
         alerter.close()
@@ -2424,7 +2615,9 @@ def alerts_ledger() -> int:
 
 
 _NY = ZoneInfo("America/New_York")
-OPERATOR_COMMANDS = frozenset({"halt", "resume"})
+#: Commands a human runs that write production by declaration: the emergency
+#: halt and resume, and the playbook's promote and demote (ruling 2026-11-04).
+OPERATOR_COMMANDS = frozenset({"halt", "resume", "learn-promote", "learn-demote"})
 
 
 def _data_safety(command: str) -> Optional[int]:
@@ -2514,6 +2707,10 @@ def main() -> int:
         return learn()
     if command == "learn-golden":
         return learn_golden()
+    if command in ("learn-promote", "learn-demote"):
+        return learn_promote()
+    if command == "learn-hypotheses-golden":
+        return learn_hypotheses_golden()
     print(
         f"unknown command {command!r}: expected check, health, run, attribution, "
         f"weekly, replay, golden, halt, resume, stress, overreaction, "

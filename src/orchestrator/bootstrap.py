@@ -282,6 +282,28 @@ def _calibration_provider(checks: "Preflight") -> Optional[Callable]:
         return None
 
 
+def _playbook_block(checks: "Preflight") -> str:
+    """The learning playbook's active MAIN-BOOK lessons as fenced data, read
+    once at startup (§ Learning Loop, item 4). A promotion reaches the prompt
+    at the next session; the first one is a prompt change (golden replay)."""
+    try:
+        from learning import playbook
+
+        data = playbook.load(checks.audit.path.parent / "learning" / "playbook.json")
+        return playbook.render_block(playbook.active(data, "main"))
+    except Exception as error:  # noqa: BLE001 - evidence is optional; say so
+        logger.warning("playbook unavailable (%s); passes run without it", type(error).__name__)
+        return ""
+
+
+def _with_playbook(measured: Optional[Callable], block: str) -> Optional[Callable]:
+    if not block:
+        return measured
+    if measured is None:
+        return lambda signal: block
+    return lambda signal: "\n\n".join(part for part in (measured(signal), block) if part)
+
+
 def preflight(
     *,
     adapter: Optional[BrokerAdapter] = None,
@@ -514,7 +536,9 @@ def start(
         # measured record by voted-median band, n >= 20, rendered as data.
         # Built from the funnel and the forward engine's CACHED rows (no
         # fetch at startup); a failure here renders nothing, never blocks.
-        measured_record=_calibration_provider(checks),
+        # Plus the playbook's main-book lessons (ruling 2026-11-04), fenced as
+        # data; none promoted renders nothing, so the prompt is unchanged.
+        measured_record=_with_playbook(_calibration_provider(checks), _playbook_block(checks)),
         source_tiers=source_tiers,
         screen_graduation=(
             screen_config.graduation_confidence if screen_config is not None else None

@@ -24,6 +24,11 @@ ALL = {
     "pending": cards.pending_card(2, "order a\norder b"),
     "breaker": cards.breaker_card("MECH BREAKER sleeve drawdown 25.4%"),
     "halt": cards.halt_card("Main book", "operator halted: testing"),
+    "learning": cards.learning_card(
+        12, 289, 1.18, ["trades where entry long after gap up: -1.9 points a case (n 24)"],
+        ["buy after an earnings gap-up, ai trader: 5 trades, -1.4 points a case against SPY (too few to call)"],
+        ["H1 (Skip buying a stock after an earnings gap-up)"], 1, 0, ["H2"], [], [], "report"),
+    "learning_demoted": cards.learning_card(0, 289, 0.0, [], [], [], 0, 1, [], [], ["P1 (Skip them)"], "report"),
     "momentum_funding": cards.momentum_funding_card(
         "Nov 4, 10:30 ET", "MOMENTUM short of cash: SN needs 1946.88, 0.00 spendable (settled buying power "
                            "9800.00; 9800.00 held for other sleeves' reserves and the margin; 0.00 unsettled)"),

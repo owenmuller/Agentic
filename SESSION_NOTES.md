@@ -4161,6 +4161,12 @@ Suite green on the droplet (exit 0).
   - It then ignored the split on market-driven cases (PG, XOM), so the market check moved to code: when SPY's move is larger than the stock's own move, the cause is luck.
   - It invented outside events to answer "luck" (BE), so luck became code's alone.
   - Final: 27/27 runs, $0.11 for 27 calls.
+- **Steps 3-5 and 8 built the same day** (see CLAUDE.md § Learning Loop):
+  - Hypotheses as rules over the closed vocabulary (skip losing trade patterns, take wrongly declined ones), at most 3 a week; golden 3/3, 9/9 runs.
+  - Shadows scored on post-proposal cases only.
+  - The playbook: human promotion through an operator command, gated at n >= 20 with the interval clear of zero; a monthly automatic demotion with a card; rendered as fenced data in the AI trader's brief and beside the research pass's measured record (byte-identical while empty).
+  - The Friday "What we learned this week" card.
+  - `OPERATOR_COMMANDS` gains `learn-promote` and `learn-demote` (human acts that write production by declaration).
 - **Defect found (NOT fixed - a request-path change for the human to rule on):** the haiku triage gate has never returned a verdict. `AnthropicResearchClient.triage()` does not pass `expected_tool`, so `_to_result` looks for `submit_research` and `structured` is always None. Every signal has proceeded to the full pass, and the audit log has zero triage rejections since 2026-08-20. The fix is one argument, but it switches on a gate that has never filtered: golden replay plus a live round trip, after a ruling.
 
 ### 2026-10-29 — RULINGS: Quiver strategies (control-arm record; shadows; lobbying backtest; evidence line)

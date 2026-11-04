@@ -411,6 +411,34 @@ def breaker_card(what: str, sample: bool = False) -> Card:
         detail=what, channel=URGENT, sample=sample)
 
 
+def learning_card(new_entries: int, total: int, spend: float, flagged: Sequence[str], asked: Sequence[str],
+                  opened: Sequence[str], ahead: int, behind: int, eligible: Sequence[str],
+                  promoted: Sequence[str], demoted: Sequence[str], detail: str, sample: bool = False) -> Card:
+    """"What we learned this week" (§ Learning Loop, item 8; ruling 2026-11-04):
+    green when there is nothing to decide, red when a shadow has earned a
+    promotion vote, yellow when the monthly re-check demoted a lesson."""
+    lines = [f"Journal: {count(new_entries, 'new post-mortem')} this week, {total} in all."]
+    lines.append(f"Patterns flagged: {_joined(list(flagged[:3]))}." if flagged else
+                 "Patterns flagged: none yet (a pattern needs 20 cases and an interval clear of zero).")
+    lines += [f"Asked: {line}." for line in asked]
+    lines.append(f"Hypotheses opened: {_joined(list(opened))}." if opened else "Hypotheses opened: none.")
+    lines.append(f"Shadows: {ahead} ahead of the live rules, {behind} behind, on decisions made after each was "
+                 f"proposed.")
+    if promoted:
+        lines.append(f"Lessons promoted: {_joined(list(promoted))}.")
+    if demoted:
+        lines.append(f"Lessons demoted at the monthly re-check: {_joined(list(demoted))}.")
+    lines.append(f"Model spend on the journal: {cents(spend)}.")
+    status, what_to_do, look_at = GOOD, None, None
+    if eligible:
+        status = ACTION
+        what_to_do = _ask(f"Show me the evidence for {', '.join(eligible)} and promote the ones that hold up.")
+    elif demoted:
+        status, look_at = LOOK, "a playbook lesson lost its edge and was demoted"
+    return Card("Learning loop", "what we learned this week", status, tuple(lines), what_to_do=what_to_do,
+                look_at=look_at, detail=detail, detail_name="learning-report.txt", sample=sample)
+
+
 def momentum_funding_card(when: str, what: str, sample: bool = False) -> Card:
     """The momentum rebalance was held back by cash, or its month ended with
     names under target (human ruling 2026-11-04: never silent)."""

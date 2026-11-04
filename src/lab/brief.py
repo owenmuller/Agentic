@@ -144,7 +144,10 @@ def scoreboard_section(daily_path: Path) -> tuple[list[str], str]:
 
 def playbook_section(path: Path) -> tuple[list[str], str]:
     data = _read_json(path)
-    lessons = [l for l in (data or {}).get("lessons", []) if l.get("promoted")]
+    # active lessons learned from the AI trader's own record (ruling 2026-11-04):
+    # a demoted lesson, or one from the main book's decisions, is not rendered
+    lessons = [l for l in (data or {}).get("lessons", [])
+               if l.get("promoted") and not l.get("demoted") and l.get("account", "ai-trader") == "ai-trader"]
     if not lessons:
         return ["(none promoted yet)"], "ok: empty"
     return [f"{l['id']} {l['lesson']} (evidence: {l.get('evidence', 'n/a')})" for l in lessons], "ok"

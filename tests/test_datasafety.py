@@ -197,7 +197,8 @@ def test_read_only_commands_read_a_snapshot_in_scratch(trees):
 def test_only_the_operator_commands_may_declare_production_writes(trees):
     from orchestrator.__main__ import OPERATOR_COMMANDS
 
-    assert OPERATOR_COMMANDS == {"halt", "resume"}
+    # the emergency halt/resume, and the playbook's human promote/demote (ruling 2026-11-04)
+    assert OPERATOR_COMMANDS == {"halt", "resume", "learn-promote", "learn-demote"}
     result = _run(
         r'''
         from pathlib import Path

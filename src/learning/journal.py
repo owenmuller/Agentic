@@ -31,6 +31,8 @@ class Entry:
     post_mortem: str = ""
     model: str = ""
     cost_usd: Optional[float] = None
+    #: ISO date the post-mortem was written (the weekly card counts the week's)
+    written_at: str = ""
 
     def __post_init__(self) -> None:
         if self.kind not in vocabulary.KINDS:

@@ -294,7 +294,20 @@ Every sleeve and every lab account learns through ONE shared, structured loop, g
   - `instrument`: stock, etf or option;
   - `entry`: direction and the entry day's opening gap beyond 2%, for example `long_after_gap_up`. The 2% is my reading, flagged.
 - The miner tallies trades and declines apart (a decline's excess is the trade not made) and always reports the questions asked in advance (`mining.FOCUS`), flagged or not.
-- Runs in the momentum prep unit's evening run (`learning.enabled`, `orchestrator.yaml learning`); `python -m orchestrator learn [--dry-run]` by hand; the journal is `data/learning/journal.jsonl`. Golden replay (and the live round trip) for the journal and hypothesis prompts.
+- Runs in the momentum prep unit's evening run (`learning.enabled`, `orchestrator.yaml learning`); `python -m orchestrator learn [--dry-run]` by hand; the journal is `data/learning/journal.jsonl`.
+
+**Built 2026-11-04 (steps 3-5 and 8):**
+- **Hypotheses** (`learning/hypotheses.py`, `data/learning/hypotheses.json`): a flagged cell becomes a rule over the closed vocabulary.
+  - A losing TRADE pattern becomes "skip trades matching it"; a DECLINE pattern whose skipped trades beat SPY becomes "take declines matching it". Code fixes the rule by the sign.
+  - Winning patterns propose nothing: "do more" has no measurable shadow.
+  - The model (haiku, forced tool) picks at most 3 a week from code-validated candidates and words them. Golden `python -m orchestrator learn-hypotheses-golden`: 3/3 cases, 9/9 runs.
+- **Shadows** are scored only on cases resolved after the proposal date (advantage = points over SPY a matching case gains the shadow).
+- **Playbook** (`learning/playbook.py`, `data/learning/playbook.json`):
+  - Promotion is a human's: `python -m orchestrator learn-promote H<n> --ack NAME`, an operator command. It is refused unless the shadow is ahead at n >= 20 with its 95% interval clear of zero (my stricter reading, flagged).
+  - `learn-demote P<n>` by hand. The first Friday of each month re-checks every active lesson and demotes one whose interval now touches zero; a yellow card says so.
+  - Rendered as fenced data: AI-trader lessons in its brief (section d); main-book lessons beside the research pass's measured-record block. Nothing renders while no lesson exists, so the prompts stay byte-identical. The first main-book lesson is a prompt change and needs a golden replay.
+- **Weekly card** "What we learned this week" (the Friday weekly unit): journal count, flagged patterns, the advance question, hypotheses opened, shadows ahead and behind, lessons promoted and demoted, spend.
+  - Green when nothing is to decide, red when a shadow is eligible for promotion, yellow when a lesson was demoted. Golden replay (and the live round trip) for the journal and hypothesis prompts.
 
 1. **Journal.** When any decision resolves (a trade closed; a decline or veto past its grading horizon) the model writes a structured post-mortem: thesis, expected outcome, actual outcome, **right for the right reason** (process vs luck), and tags from a FIXED vocabulary (sector, setup, catalyst/news type, market regime, confidence band, source). Stored in a journal table. The cheapest model that does it reliably; its cost is reported.
 2. **Pattern mining** (weekly, code, no LLM): outcomes and forward excess tallied by tag and tag pair, with n and confidence intervals. A pattern is flagged only at n ≥ 20 with its CI excluding zero, **corrected for the number of patterns tested**.
