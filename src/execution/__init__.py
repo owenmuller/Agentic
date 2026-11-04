@@ -3,8 +3,9 @@
 Alpaca paper trading first; the paper/live flip is one environment variable, which
 only a human may set (CLAUDE.md Constraint #4). Nothing in this package writes it.
 
-Robinhood is not an execution backend: no official public equities API exists, and
-community wrappers are reverse-engineered and violate RH ToS. Kalshi's official API
+Robinhood: community wrappers are reverse-engineered and violate RH ToS and are never
+used. Robinhood's official Agentic Trading MCP serves ONE dedicated account, the AI
+trader's live mirror (human ruling 2026-11-04; ``execution.robinhood``). Kalshi's official API
 will serve the prediction-market sleeve, after the equity leg proves itself in paper.
 
 Everything that can move money takes an ``ApprovedOrder``, so an order that has not

@@ -4148,6 +4148,25 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 
 Suite green on the droplet (exit 0).
 
+### 2026-11-04 (evening) — GO LIVE ruling: the AI trader's $1,000 live mirror on Robinhood Agentic; step (a) read-only check DONE
+
+Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.py`: read-only unless built for orders, pinned to 742288012, `guide` stripped, atomic token rotation. Tests: `tests/test_robinhood.py`.
+
+**Step (a), read-only, run from the droplet** (the only holder of the grant; the laptop's credential store holds none):
+- **OAuth:** the stored grant, last rotated 2026-09-29, refreshed without a human. The new access token is good to about 2026-11-12, and the rotated pair was stored. The pre-check token backup was deleted (its refresh token died on rotation).
+- **Account:** 83 tools, 9 of them order-capable (all refused by the read-only client). 3 accounts are visible; exactly 1 is `agentic_allowed`.
+  - 742288012, nickname "MCP", active, individual, `type: limited_margin`, `option_level_2`, `unsettled_funds 0`.
+  - The pinned number matches.
+- **Portfolio:** cash $100, total value $100, `pending_deposits 0`; buying power 100.0000 == unleveraged buying power 100.0000. 0 equity and 0 option positions; 2 orders on record, both from the August spike (rejected, cancelled).
+- **Limited-margin upgrade:** `eligible: false`.
+- **Findings for the human:**
+  1. The $1,000 has not arrived: cash is still the spike's $100, with no pending deposit visible.
+  2. A limited-margin account under $25K is subject to pattern-day-trader rules: 3 day trades in 5 business days. The AI trader trades intraday and its stops can fire the same day.
+  3. Robinhood fractional orders are market orders in regular hours only (spike step 4).
+     - Buys by dollar amount bound the cost at the venue (cash-secured holds).
+     - Sells by quantity have no venue floor.
+     - Both carry the gate's market-order justification.
+
 ### 2026-11-04 (evening) — RULINGS: quotes for every engine; Congress Buys keeps ETFs; triage REMOVED; backup unit
 
 1. **Exit engine and mechanical arm: valuations at the mid; stops on the bid or the last trade, never the ask; a quote wider than 2% is not valued and is carded (BUILT).**

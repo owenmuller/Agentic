@@ -137,7 +137,7 @@ Two permitted strategies:
 ## Execution
 
 - **Broker adapter pattern:** one interface, swappable backends. Build against **Alpaca paper trading first** (identical interface for paper/live, flip is one env var — see Constraint #4).
-- **Robinhood note:** no official public API for equities exists; community MCP wrappers are reverse-engineered and violate RH ToS (account-restriction risk). Equity/options execution runs through an official-API broker. Kalshi's official API serves the prediction-market sleeve. Robinhood, if used at all, is manual-confirmation only.
+- **Robinhood note:** no official public API for equities exists; community MCP wrappers are reverse-engineered and violate RH ToS (account-restriction risk). Equity/options execution runs through an official-API broker. Kalshi's official API serves the prediction-market sleeve. Robinhood, if used at all, is manual-confirmation only. **Superseded for the dedicated Agentic account by § Live Mirror (human ruling 2026-11-04):** Robinhood Agentic Trading is an official first-party MCP API.
 - Orders are limit orders by default; market orders require explicit justification in the audit record.
 
 ## Audit & Attribution
@@ -257,6 +257,27 @@ Software-only books on two of Quiver's published strategies (quiverquant.com/str
 - **Scheduled one-shot checks run ON THE DROPLET (human ruling 2026-10-10, third)**, never in a laptop session: `ops/vps/schedule_check.sh NAME "YYYY-MM-DD HH:MM" -- COMMAND` installs a PERSISTENT systemd user timer (unit files in `~/.config/systemd/user`, `Persistent=true`; human ruling 2026-10-14: a check survives a reboot, and a run missed while the droplet is down fires at the next boot; lingering is on), which fires on its own clock. `--remove NAME` uninstalls one. `ops/check_runner.py` writes `~/checks/NAME-<stamp>.txt` and emails the result (DAILY tier on pass, URGENT on failure). A check is a non-production process: the data guard confines it to reads and scratch. Origin: on 2026-10-12 two checks scheduled in the laptop session fired late (10:01 and 11:57 ET instead of 09:37 and 10:13).
 - **Alerts (human ruling 2026-10-14):** every card attempt (delivered, failed with its reason, or refused) is a line in an `alerts_ledger.jsonl` beside each process's alert status file (checks and one-off scripts: the scratch ledger); `python -m orchestrator alerts [--days N]` merges them. Log records are redacted at the record factory (`execution/logredact.py`): webhook tokens, ntfy topics and token-like query values never reach a log line.
 - **Live checks of uncommitted code** (golden replays, dry runs, round trips) run either with `PYTHONPATH=src` from the copy or after deploying. They print the imported module path. On the droplet, `python -m` from a scratch copy imports the INSTALLED `~/Agentic/src`; three golden replays on 2026-10-10/12 ran the deployed code instead of the change under test.
+
+## Live Mirror — the AI trader on Robinhood Agentic (GO LIVE, human ruling 2026-11-04)
+
+- **Funding exception (2026-11-04, approved by the human):** $1,000 that the human deposits into the dedicated Robinhood Agentic account (742288012, separately funded) mirrors the paper AI trader as a live test. Depositing and withdrawing stay human-only.
+- **Venue:** Robinhood Agentic Trading, Robinhood's official MCP server. For THIS account it supersedes the § Execution note that Robinhood is manual-confirmation only.
+  - Client: `execution/robinhood.py`. It is read-only unless built for orders, hard-pinned to the account, and strips the server's `guide` text.
+  - The rotating OAuth grant has exactly one holder, the droplet (`~/.config/agentic/rh_oauth.json`), and is stored atomically before use.
+- **Mirror:** the live account copies the paper AI trader's entries and exits, scaled to live equity, with the same 2% risk per trade, stops, targets and horizons. The paper AI trader is unchanged and remains the measured version.
+- **Live constraints:** every Inviolable Constraint applies.
+  - Cash only, no margin, no shorting, settled funds only.
+  - An option only when one contract fits the premium cap; otherwise skip and log.
+  - Fractional shares where the venue supports them.
+  - Leveraged and inverse ETFs are NOT allowed (skip and log).
+  - A 12% kill switch on starting equity, and a 4% daily loss limit.
+- **Constraint #4 governs:** the live process trades real money only in its own unit, after the human has done what Constraint #4 requires there. Every other process stays paper. The agent sets nothing.
+- **Alerts:** every live order, fill and skip goes to #urgent for the first week, then to #reports. A daily card compares the live account with the paper AI trader scaled to the same size, showing the gap from fills, skips and fees.
+- **Steps:**
+  - (a) read-only connection check: DONE 2026-11-04;
+  - (b) one tiny live round trip (a fractional SPY buy and sell) once the $1,000 has settled;
+  - (c) mirroring from the next AI trader session after (b).
+  A report follows each step.
 
 ## Go Live at the Next Session (STANDING RULE, human ruling 2026-10-14)
 
