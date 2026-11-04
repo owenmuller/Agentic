@@ -41,7 +41,7 @@ import os
 import sys
 from decimal import Decimal, InvalidOperation
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -452,6 +452,269 @@ def _quiver_shadows_step(directory: Path, alpaca, now: datetime, log) -> None:
         log.warning("quiver shadows step failed: %s: %s", type(error).__name__, error)
         datahealth.report("Quiver shadows", f"the Quiver strategy shadows did not update ({type(error).__name__}: "
                                             f"{str(error)[:160]})")
+
+
+def _learning_inputs(data_dir: Path):
+    """The raw resolved decisions: the AI trader's ledger events (read as a
+    file), the main audit log's trails and rejections, the forward engine's
+    cached rows."""
+    from forward.returns import ForwardReturns
+    from orchestrator.learning_feed import DECLINE_CODES
+
+    ledger = datasafety.lab_production_dir("ai-trader") / "ledger.jsonl"
+    events = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines() if line.strip()] \
+        if ledger.exists() else []
+    if not events:  # the AI trader has traded since 2026-10-13: an empty ledger is a gap, not an answer
+        datahealth.report("Learning journal", f"the AI trader's ledger ({ledger}) is missing or empty; its trades "
+                                              f"are not journaled this run")
+    audit = AuditLog(data_dir / "audit.jsonl")
+    trails = [t for t in audit.trails() if t.outcome is not None and t.decision.research is not None]
+    rejections = [r for r in audit.records()
+                  if type(r).__name__ == "StageRejectionRecord" and r.research is not None and r.code in DECLINE_CODES]
+    engine = ForwardReturns(lambda *_a, **_k: [], data_dir / "forward_returns.jsonl", pace_seconds=0)
+    return events, trails, rejections, engine.cached()
+
+
+def _learning_lookups(symbols: set[str], earliest: date, cache_root: Path, log):
+    """Market facts for the case feed, fetched once: daily bars (open, close)
+    for every symbol, SEC sectors, fund names, VIX history and SPY's 200-day
+    trend. A lookup that fails reads as unknown, and is reported."""
+    from execution.market_data import AlpacaDailyBars
+    from execution.vix import vix_history
+    from learning import vocabulary
+    from momentum import feeds
+    from momentum.rules import SECTOR_NAMES, ff12
+    from orchestrator.learning_feed import Lookups
+
+    import yaml
+
+    start = datetime.combine(earliest - timedelta(days=330), datetime.min.time(), timezone.utc)
+    raw = AlpacaDailyBars().bars_many(sorted(symbols | {"SPY"}), start, datetime.now(timezone.utc))
+    bars = {s: {date.fromisoformat(str(b["t"])[:10]): (float(b["o"]), float(b["c"])) for b in rows}
+            for s, rows in raw.items()}
+    if not bars.get("SPY"):
+        raise RuntimeError("no SPY bars: the case feed cannot measure anything against SPY")
+    missing = sorted(s for s in symbols if not bars.get(s))
+    if missing:
+        datahealth.report("Learning journal", f"no daily bars for {len(missing)} symbol(s) ({', '.join(missing[:12])}"
+                                              f"{'...' if len(missing) > 12 else ''}); their gaps read as unknown")
+    cache = feeds.Cache(cache_root / "sec")
+    sec = feeds.Sec(cache)
+    ciks = sec.company_ciks()
+    names = feeds.Alpaca(feeds.Cache(cache_root / "assets" / date.today().isoformat())).asset_names()
+    try:
+        vix = {d: float(v) for d, v in vix_history().items()}
+    except Exception as error:  # noqa: BLE001 - the regime tag reads unknown without it
+        datahealth.report("Learning journal", f"VIX history unavailable ({type(error).__name__}); regimes read unknown")
+        vix = {}
+    spy = bars["SPY"]
+    spy_days = sorted(spy)
+    table = (yaml.safe_load((Path(__file__).resolve().parents[2] / "config" / "lab.yaml").read_text(encoding="utf-8"))
+             or {}).get("ai_trader", {}).get("leverage_factors", {}) or {}
+    sectors: dict[str, str] = {}
+
+    def sector(symbol: str) -> str:
+        if symbol not in sectors:
+            cik = ciks.get(symbol.upper().replace(".", "-")) or ciks.get(symbol.upper())
+            facts = sec.filings(cik) if cik else None
+            sectors[symbol] = SECTOR_NAMES.get(ff12(facts.get("sic")), "other") if facts else "unknown"
+        return sectors[symbol]
+
+    def regime(day: date) -> str:
+        known = [d for d in spy_days if d < day]           # what was known the morning of ``day``
+        vix_known = [d for d in vix if d < day]
+        if len(known) < 200 or not vix_known:
+            return "unknown"
+        closes = [spy[d][1] for d in known[-200:]]
+        return vocabulary.regime(vix[max(vix_known)], spy[known[-1]][1] > sum(closes) / len(closes))
+
+    def leverage(symbol: str) -> float:
+        if symbol.upper() in table:
+            return float(table[symbol.upper()])
+        name = names.get(symbol, "")
+        lowered = name.lower()
+        if not name or not any(k in lowered for k in ("2x", "3x", "ultra", "bear", "inverse", "short")):
+            return 1.0
+        magnitude = 3.0 if ("3x" in lowered or "ultrapro" in lowered) else (2.0 if ("2x" in lowered or "ultra" in lowered) else 1.0)
+        return -magnitude if any(k in lowered for k in ("bear", "inverse", "short")) else magnitude
+
+    log(f"learning lookups: bars for {len(bars)} symbols, {len(vix)} VIX closes, {len(names)} asset names")
+    return Lookups(bars=lambda s: bars.get(s, {}), sector=sector, regime=regime,
+                   fund=lambda s: AlpacaAdapter.names_a_fund(names.get(s)), leverage=leverage), sec
+
+
+def learning_cases(data_dir: Path, cache_root: Path, log, accounts=("ai-trader", "main")):
+    """Every resolved judged decision as a Case, AI trader first (ruling
+    2026-11-04: its closed trades are backfilled first), then the main book's
+    trades, then its declines."""
+    from orchestrator import learning_feed
+
+    events, trails, rejections, rows = _learning_inputs(data_dir)
+    symbols = {e["symbol"] for e in events if e.get("event") == "position_opened"}
+    symbols |= {(t.decision.research.tickers or ["SPY"])[0] for t in trails}
+    symbols |= {(r.research.tickers or list(r.signal.tickers) or ["SPY"])[0] for r in rejections}
+    stamps = [datetime.fromisoformat(e["at"]).date() for e in events if e.get("event") == "position_opened"]
+    stamps += [r.signal.observed_at.date() for r in rejections] + [t.decision.recorded_at.date() for t in trails]
+    look, sec = _learning_lookups({s for s in symbols if s}, min(stamps or [date.today()]), cache_root, log)
+    cases = []
+    if "ai-trader" in accounts:
+        cases += learning_feed.ai_trader_cases(events, look)
+    if "main" in accounts:
+        cases += learning_feed.judged_trade_cases(trails, look)
+        cases += learning_feed.decline_cases(rejections, rows, look)
+    if sec.failures:
+        datahealth.report("Learning journal", f"{len(sec.failures)} SEC lookup(s) failed; those sectors read unknown")
+    return cases
+
+
+def learn() -> int:
+    """The learning loop's journal step (human rulings 2026-10-14 and
+    2026-11-04): post-mortems of every resolved judged decision not yet in the
+    journal, then the pattern miner's report.
+
+        python -m orchestrator learn [--dry-run] [--limit N] [--account ai-trader|main] [--dump PATH]
+
+    Run by the momentum prep unit's evening run when ``learning.enabled``;
+    outside a production unit it writes the scratch snapshot's journal."""
+    from orchestrator.config import OrchestratorConfig
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    args = sys.argv[2:]
+    config = OrchestratorConfig.load().learning
+    limit = int(args[args.index("--limit") + 1]) if "--limit" in args else config.max_entries_per_run
+    accounts = (args[args.index("--account") + 1],) if "--account" in args else ("ai-trader", "main")
+    load_environment()
+    text, code = learning_run(default_data_dir(), config, limit=limit, accounts=accounts,
+                              dry_run="--dry-run" in args,
+                              dump=Path(args[args.index("--dump") + 1]) if "--dump" in args else None,
+                              log=print)
+    print(text)
+    return code
+
+
+def learning_run(data_dir: Path, config, *, limit: int, accounts=("ai-trader", "main"), dry_run: bool = False,
+                 dump: Optional[Path] = None, log=print) -> tuple[str, int]:
+    """Cases -> post-mortems -> the journal -> the miner. Returns the report
+    text and an exit code."""
+    from dataclasses import asdict
+
+    from learning import mining, writer
+    from learning.journal import Journal
+    from research.client import AnthropicResearchClient
+    from research.config import ResearchConfig
+    from signals.config import SignalsConfig
+
+    cache_root = Path(os.path.expanduser(config.cache_dir))
+    cases = learning_cases(data_dir, cache_root, log, accounts)
+    journal = Journal(data_dir / config.journal_file)
+    done = journal.ids()
+    fresh = [c for c in cases if (c.account, c.decision_id) not in done and writer.side(c) is not None]
+    lines = [f"LEARNING JOURNAL - {len(cases)} resolved judged decisions, {len(done)} already journaled, "
+             f"{len(fresh)} to write (" + ", ".join(
+                 f"{k} {sum(1 for c in fresh if f'{c.account}/{c.kind}' == k)}"
+                 for k in sorted({f'{c.account}/{c.kind}' for c in fresh})) + ")"]
+    if dump is not None:
+        dump.parent.mkdir(parents=True, exist_ok=True)
+        dump.write_text("\n".join(json.dumps(asdict(c), default=str) for c in fresh) + "\n", encoding="utf-8")
+        lines.append(f"cases written to {dump}")
+    if dry_run:
+        if fresh:
+            lines += ["", "FIRST PROMPT:", writer.user_prompt(fresh[0])]
+        return "\n".join(lines), 0
+    research = ResearchConfig.load()
+    client = AnthropicResearchClient(research)
+
+    def call(system: str, user: str, tool: dict):
+        return client.single_call(system=system, user=user, tool=tool, model=config.model,
+                                  max_tokens=config.max_tokens)
+
+    entries, stats = writer.write(fresh, call, max_entries=limit, max_spend_usd=float(config.max_spend_per_run_usd))
+    sources = {s.id for k in SignalsConfig.load().classes.values() for s in k.sources}
+    sources |= {"ai_trader"} | {c.tags["source"] for c in cases}   # computed from the records, never the model
+    added = journal.append(entries, tuple(sorted(sources)))
+    lines.append(f"written {added} post-mortems (asked {stats['asked']}, failed {stats['failed']}), "
+                 f"spend ${stats['spend_usd']:.2f} on {config.model}"
+                 + (f"; stopped at the {stats['stopped']}" if stats["stopped"] else ""))
+    if stats["failed"]:
+        datahealth.report("Learning journal", f"{stats['failed']} of {stats['asked']} post-mortems failed or came back "
+                                              f"outside the vocabulary; they are retried next run")
+    lines += ["", mining.render(journal.entries())]
+    return "\n".join(lines), 0
+
+
+def learn_golden() -> int:
+    """The post-mortem writer's golden replay (a prompt on the request path:
+    CLAUDE.md § LLM Request-Path Changes). Each case runs ``--runs`` times on
+    the production client and model; a run passes when its answer parses and
+    its cause, setup and catalyst are among the case's accepted ones. A case
+    passes on a majority of its runs; the replay passes when every case does.
+
+        python -m orchestrator learn-golden [--runs 3] [--file config/golden/learning_postmortem.yaml]"""
+    import yaml
+
+    from learning import writer
+    from learning.cases import Case
+    from orchestrator.config import OrchestratorConfig
+    from research.client import AnthropicResearchClient
+    from research.config import ResearchConfig
+
+    args = sys.argv[2:]
+    runs = int(args[args.index("--runs") + 1]) if "--runs" in args else 3
+    path = Path(args[args.index("--file") + 1]) if "--file" in args else \
+        Path(__file__).resolve().parents[2] / "config" / "golden" / "learning_postmortem.yaml"
+    config = OrchestratorConfig.load().learning
+    load_environment()
+    client = AnthropicResearchClient(ResearchConfig.load())
+    print(f"learning golden: {path} on {config.model}, {runs} run(s) a case; client {AnthropicResearchClient.__module__}")
+    golden = yaml.safe_load(path.read_text(encoding="utf-8"))
+    failed, spend, tokens = [], 0.0, 0
+    for item in golden["cases"]:
+        case = Case(**{**item["case"], "notes": tuple(item["case"].get("notes") or ())})
+        expect = item["expect"]
+        verdicts = []
+        for _ in range(runs):
+            result = client.single_call(system=writer.SYSTEM, user=writer.user_prompt(case), tool=writer.tool(),
+                                        model=config.model, max_tokens=config.max_tokens)
+            spend += float(result.est_cost_usd or 0)
+            tokens += result.input_tokens
+            entry = writer.parse(case, result.structured, model=result.model)
+            got = result.structured or {}
+            # the cause the journal records: the model's, after code's market check
+            cause = None if entry is None else ("unclear" if entry.process == "unclear" else entry.process.split("_")[-1])
+            ok = (entry is not None and cause in expect["causes"]
+                  and got.get("setup") in expect["setups"] and got.get("catalyst") in expect["catalysts"])
+            verdicts.append(ok)
+            print(f"  {item['id']:28} {'PASS' if ok else 'FAIL'}  side {writer.side(case)}  cause {cause} "
+                  f"(model {got.get('cause')})  "
+                  f"setup {got.get('setup')}  catalyst {got.get('catalyst')}  -> {entry.process if entry else 'unparsed'}")
+            if entry is not None:
+                print(f"      post-mortem: {entry.post_mortem[:300]}")
+        if sum(verdicts) * 2 <= runs:
+            failed.append(item["id"])
+    total = len(golden["cases"])
+    print(f"learning golden: {total - len(failed)}/{total} cases pass (majority of {runs} runs); "
+          f"spend ${spend:.3f}, {tokens} input tokens"
+          + (f"; FAILED: {', '.join(failed)}" if failed else ""))
+    return 1 if failed else 0
+
+
+def _learning_step(data_dir: Path, now: datetime, log) -> None:
+    """The learning journal (human ruling 2026-11-04): the prep unit's EVENING
+    run writes the day's post-mortems. A failure is a yellow card, never a
+    failed prep."""
+    from orchestrator.config import OrchestratorConfig
+
+    config = OrchestratorConfig.load().learning
+    if not config.enabled or now.astimezone(_NY).hour < 16:
+        return
+    try:
+        text, _code = learning_run(data_dir, config, limit=config.max_entries_per_run, log=log.info)
+        for line in text.splitlines():
+            log.info("learning: %s", line)
+    except Exception as error:  # noqa: BLE001 - the journal's failure must not cost the momentum prep
+        log.warning("learning journal step failed: %s: %s", type(error).__name__, error)
+        datahealth.report("Learning journal", f"the journal step did not run ({type(error).__name__}: "
+                                              f"{str(error)[:160]})")
 
 
 def _weekly_shortlist(directory: Path, cache_root: Path, config, today, alpaca, build, log) -> None:
@@ -1889,6 +2152,7 @@ def momentum_prep() -> int:
         if wanted is None:
             _momentum_brief_files(directory, cache_root, config, latest, now, alpaca, build, log)
             _quiver_shadows_step(directory.parent / "quiver", alpaca, now, log)
+            _learning_step(directory.parent, now, log)
         if wanted is not None:
             sessions = alpaca.sessions((_date.fromisoformat(wanted) - timedelta(days=12)).isoformat(), wanted)
             if not sessions or sessions[-1] != wanted or len(sessions) < 2:
@@ -2246,6 +2510,10 @@ def main() -> int:
         return momentum_prep()
     if command == "overreaction":
         return overreaction()
+    if command == "learn":
+        return learn()
+    if command == "learn-golden":
+        return learn_golden()
     print(
         f"unknown command {command!r}: expected check, health, run, attribution, "
         f"weekly, replay, golden, halt, resume, stress, overreaction, "

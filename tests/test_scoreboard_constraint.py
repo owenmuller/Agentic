@@ -29,6 +29,9 @@ FENCED = (
     "learning/mining.py",  # the learning loop: lessons from aggregated outcomes only (ruling 2026-10-14, item 6)
     "learning/journal.py",
     "learning/vocabulary.py",
+    "learning/cases.py",  # the post-mortem writer and its facts (ruling 2026-11-04)
+    "learning/writer.py",
+    "orchestrator/learning_feed.py",
     "research/prompts.py",
     "research/exit_review.py",
     "research/triage.py",

@@ -2,9 +2,10 @@
 
 Every tag a journal entry carries comes from these lists; anything else is
 refused, so patterns tally over a closed set and a model cannot invent a
-category. Four tags are COMPUTED by code from the decision record (sector,
-regime, confidence band, source); the model chooses only ``setup`` and
-``catalyst`` from their lists, and the process verdict.
+category. Six tags are COMPUTED by code from the decision record and market
+data (sector, regime, confidence band, source, instrument, entry); the model
+chooses only ``setup`` and ``catalyst`` from their lists, and the process
+verdict.
 """
 from __future__ import annotations
 
@@ -27,15 +28,28 @@ CATALYSTS = (
 )
 REGIMES = ("calm_uptrend", "calm_downtrend", "volatile_uptrend", "volatile_downtrend", "unknown")
 CONFIDENCE_BANDS = ("<50", "50-70", "70-85", "85+", "n/a")
+#: What was (or, for a decline, would have been) bought: an option counts as
+#: one whatever its underlying.
+INSTRUMENTS = ("stock", "etf", "option", "n/a")
+#: Direction and the entry day's opening gap (human ruling 2026-11-04: "buy
+#: after an earnings gap-up" must be visible as a pattern). Short = a put or
+#: an inverse ETF, never a short sale. A gap is the open against the prior
+#: close beyond GAP_THRESHOLD either way.
+ENTRIES = (
+    "long_after_gap_up", "long_after_gap_down", "long_no_gap",
+    "short_after_gap_up", "short_after_gap_down", "short_no_gap", "unknown",
+)
+#: 2% - my reading, flagged: E1 measured the news gap at a mean of +2.0%.
+GAP_THRESHOLD = 0.02
 KINDS = ("trade", "decline", "veto")
 #: Process vs outcome (item 5). *_luck entries are logged and teach nothing:
 #: the miner and the playbook use only the *_reason verdicts.
 PROCESS = ("right_reason", "right_luck", "wrong_reason", "wrong_luck", "unclear")
 TEACHES = ("right_reason", "wrong_reason")
 
-TAG_NAMES = ("sector", "setup", "catalyst", "regime", "confidence_band", "source")
+TAG_NAMES = ("sector", "setup", "catalyst", "regime", "confidence_band", "source", "instrument", "entry")
 _ALLOWED = {"sector": SECTORS, "setup": SETUPS, "catalyst": CATALYSTS, "regime": REGIMES,
-            "confidence_band": CONFIDENCE_BANDS}
+            "confidence_band": CONFIDENCE_BANDS, "instrument": INSTRUMENTS, "entry": ENTRIES}
 
 
 def confidence_band(confidence: Optional[float]) -> str:
@@ -57,6 +71,17 @@ def regime(vix: Optional[float], spy_above_200d: Optional[bool]) -> str:
         return "unknown"
     calm = vix < 25
     return f"{'calm' if calm else 'volatile'}_{'uptrend' if spy_above_200d else 'downtrend'}"
+
+
+def entry(direction: Optional[str], gap: Optional[float]) -> str:
+    """``direction`` long/short and the entry day's open over the prior close."""
+    if direction not in ("long", "short") or gap is None:
+        return "unknown"
+    if gap >= GAP_THRESHOLD:
+        return f"{direction}_after_gap_up"
+    if gap <= -GAP_THRESHOLD:
+        return f"{direction}_after_gap_down"
+    return f"{direction}_no_gap"
 
 
 def check(tags: Mapping[str, str], sources: tuple[str, ...]) -> None:

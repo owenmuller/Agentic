@@ -280,7 +280,21 @@ Software-only books on two of Quiver's published strategies (quiverquant.com/str
 
 ## Learning Loop — every strategy learns from its own record (GLOBAL RULE, human ruling 2026-10-14)
 
-Every sleeve and every lab account learns through ONE shared, structured loop, gated by evidence. Build order: after the momentum sleeve's first live rebalance (2026-11-02) unless there is a reason to interleave. **TOP PRIORITY (human ruling 2026-11-04):** the resolved-case feed (orchestrator and lab ledgers), the post-mortem writer through its golden replay, a backfill of the AI trader's closed trades, then hypotheses as shadows, the playbook and the weekly card; the first mined patterns are reported, including whether "buy after an earnings gap-up" is a losing pattern. Golden replay (and the live round trip) for the journal and hypothesis prompts.
+Every sleeve and every lab account learns through ONE shared, structured loop, gated by evidence. Build order: after the momentum sleeve's first live rebalance (2026-11-02) unless there is a reason to interleave. **TOP PRIORITY (human ruling 2026-11-04):** the resolved-case feed (orchestrator and lab ledgers), the post-mortem writer through its golden replay, a backfill of the AI trader's closed trades, then hypotheses as shadows, the playbook and the weekly card; the first mined patterns are reported, including whether "buy after an earnings gap-up" is a losing pattern.
+
+**Built 2026-11-04 (steps 1-2):**
+- The resolved-case feed (`orchestrator/learning_feed.py`): the AI trader's closed trades (its ledger read as a file), the main book's judged trades with outcomes, and LLM declines once the forward engine has marked them at the verdict's horizon (days 5, weeks 20, months 60 sessions, else 20). A trade waits for its exit session's close.
+  - Rules-based books (momentum lots, the mechanical arm, the baseline, the sweep, the execution test) are not journaled: their learning runs through shadows.
+- The post-mortem writer (`learning/writer.py`): `claude-haiku-4-5-20251001` through one forced-tool call with no search (`AnthropicResearchClient.single_call`).
+  - **Code decides** the outcome side (a trade beat SPY over its window; a decline's skipped trade did not) and the MARKET CHECK: when SPY's move exceeded the stock's own move beyond it, the cause is luck.
+  - **The model chooses** reason or unclear, the setup and the catalyst from the fixed lists, and three short sentences.
+  - **Known limitation, flagged:** without search, a company-specific surprise reads as reason.
+  - Golden replay `python -m orchestrator learn-golden`: 9/9 cases, 27/27 runs, about $0.004 a post-mortem.
+- Two computed tags added to the vocabulary:
+  - `instrument`: stock, etf or option;
+  - `entry`: direction and the entry day's opening gap beyond 2%, for example `long_after_gap_up`. The 2% is my reading, flagged.
+- The miner tallies trades and declines apart (a decline's excess is the trade not made) and always reports the questions asked in advance (`mining.FOCUS`), flagged or not.
+- Runs in the momentum prep unit's evening run (`learning.enabled`, `orchestrator.yaml learning`); `python -m orchestrator learn [--dry-run]` by hand; the journal is `data/learning/journal.jsonl`. Golden replay (and the live round trip) for the journal and hypothesis prompts.
 
 1. **Journal.** When any decision resolves (a trade closed; a decline or veto past its grading horizon) the model writes a structured post-mortem: thesis, expected outcome, actual outcome, **right for the right reason** (process vs luck), and tags from a FIXED vocabulary (sector, setup, catalyst/news type, market regime, confidence band, source). Stored in a journal table. The cheapest model that does it reliably; its cost is reported.
 2. **Pattern mining** (weekly, code, no LLM): outcomes and forward excess tallied by tag and tag pair, with n and confidence intervals. A pattern is flagged only at n ≥ 20 with its CI excluding zero, **corrected for the number of patterns tested**.

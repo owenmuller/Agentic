@@ -23,6 +23,7 @@ want to be able to read during an incident.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 import warnings
 from datetime import datetime
@@ -62,6 +63,9 @@ logger = logging.getLogger("execution.alpaca")
 
 PAPER_BASE_URL = "https://paper-api.alpaca.markets"
 LIVE_BASE_URL = "https://api.alpaca.markets"
+#: A fund's name at the broker (ETF, ETN, SPDR, iShares, ...): used to tell an
+#: option on a fund (a market bet) from one on a company (human ruling 2026-11-04).
+_FUND_NAME = re.compile(r"\b(ETF|ETN|Fund|SPDR|iShares|ProShares|Direxion|Select Sector|QQQ)\b", re.I)
 
 _SIDES = {
     EquityBuyOrder: "buy",
@@ -110,6 +114,13 @@ class AlpacaAdapter(BrokerAdapter):
             and bool(asset.get("tradable"))
             and bool(asset.get("fractionable"))
         )
+
+    @staticmethod
+    def names_a_fund(name: Optional[str]) -> bool:
+        """Whether an asset name at the broker is a fund's ("SPDR S&P 500 ETF
+        Trust", "VanEck Semiconductor ETF", "Technology Select Sector SPDR
+        Fund"). "Trust" alone is not enough: Northern Trust is a company."""
+        return bool(name and _FUND_NAME.search(name))
 
     def asset_name(self, symbol: str) -> Optional[str]:
         """The asset's name at the broker ("Direxion Daily ... Bear 3X

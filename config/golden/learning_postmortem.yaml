@@ -1,0 +1,435 @@
+note: Learning journal post-mortem golden set (human ruling 2026-11-04). Facts are this system's own records (AI trader ledger,
+  main audit log, forward engine), built by orchestrator.learning_feed on 2026-11-04. Accepted answers were written before
+  the first replay; each case states why.
+cases:
+- id: unh_gap_up_buy_faded
+  why: 'bought after a +5% earnings gap that faded the same day: the news was already in the price (E1)'
+  case:
+    decision_id: 3ebb62c8be29
+    account: ai-trader
+    strategy: ai_trader
+    kind: trade
+    symbol: UNH
+    opened: '2026-10-13'
+    resolved: '2026-10-13'
+    direction: long
+    thesis: UnitedHealth Group beat Q3 earnings expectations and raised its full-year 2026 profit guidance, citing improved
+      margins in its Optum clinical care unit. UNH gained 5.28% premarket. Raised guidance is a durable catalyst — it resets
+      the earnings bar higher and typically sustains buying pressure for several sessions as healthcare funds rebalance.
+    expected: 'long via shares of UNH: target 6.5% and stop 2.5% from entry, horizon days, confidence 72'
+    actual: closed by stop on 2026-10-13 after 1 session(s); UNH moved -2.34% from the entry mid to that day's close; the
+      position returned -1.65% on cost
+    return_pct: -1.6456019582394177
+    spy_pct: 0.0
+    excess: -1.6456019582394177
+    own_move: -1.6456019582394177
+    market_move: 0.0
+    tags:
+      sector: money
+      regime: calm_uptrend
+      confidence_band: 70-85
+      source: ai_trader
+      instrument: stock
+      entry: long_after_gap_up
+    notes:
+    - 'catalyst named: Q3 2026 earnings beat + raised full-year 2026 profit guidance; Optum margin improvement.'
+    - 'invalidation stated: UNH gives back premarket gains and closes below the prior day''s close; guidance raise is questioned
+      by analysts; broader healthcare sector rotation reverses.'
+    - SPY measured close to close, from the session before entry to the exit session
+    - 'opening gap on the entry day: +5.15%'
+  expect:
+    causes:
+    - reason
+    setups: &id001
+    - earnings_drift
+    - price_momentum
+    - ai_idea
+    catalysts: &id002
+    - earnings
+    - guidance
+- id: intc_put_after_guidance
+  why: the named mechanism (a weak guide) drove the further fall; SPY fell far less
+  case:
+    decision_id: 0555574a7934
+    account: ai-trader
+    strategy: ai_trader
+    kind: trade
+    symbol: INTC
+    opened: '2026-10-30'
+    resolved: '2026-11-04'
+    direction: short
+    thesis: Intel collapsed ~25% premarket after issuing a severely weak Q4 revenue and earnings forecast, citing a deep PC
+      slump and a factory accident in Israel that will weigh on production. Management guided for cash burn this year, a rare
+      and alarming signal. The stock has both company-specific disasters (guidance miss, factory incident, cash burn) and
+      macro headwinds (broad tech selloff, Nasdaq futures -2%+) working against it. Post-earnings put on a catastrophic miss
+      with continued selling pressure expected through the session and into next week.
+    expected: 'short via put option on INTC: target 11.0% and stop 7.0% from entry, horizon days, confidence 65'
+    actual: closed by target on 2026-11-04 after 3 session(s); the position returned +156.32% on cost
+    return_pct: 156.31768953068593
+    spy_pct: -1.9636382539084396
+    excess: 158.28132778459437
+    own_move: null
+    market_move: null
+    tags:
+      sector: business equipment
+      regime: calm_uptrend
+      confidence_band: 50-70
+      source: ai_trader
+      instrument: option
+      entry: short_after_gap_down
+    notes:
+    - 'catalyst named: Intel Q4 2026 guidance catastrophic miss reported pre-market 2026-10-30; factory accident in Israel;
+      cash burn guidance; stock down ~25% premarket.'
+    - 'invalidation stated: INTC stages a strong relief bounce above ~$73.50 (pre-market gap fill attempt succeeds); broader
+      market reverses sharply higher pulling semis with it; any positive company response or buyback announcement.'
+    - SPY measured close to close, from the session before entry to the exit session
+    - 'opening gap on the entry day: -25.79%'
+  expect:
+    causes:
+    - reason
+    setups: *id001
+    catalysts: *id002
+- id: bac_put_chasing_gap_down
+  why: 'a put bought after a -7% earnings gap expired nearly worthless: chasing a move already made'
+  case:
+    decision_id: 036daf779308
+    account: ai-trader
+    strategy: ai_trader
+    kind: trade
+    symbol: BAC
+    opened: '2026-10-14'
+    resolved: '2026-10-15'
+    direction: short
+    thesis: Bank of America dropped ~7% on earnings after a $1.2B regulatory penalty hit the bottom line and Wall Street deal
+      activity slowed materially, compressing trading and advisory revenue. The hot CPI print further pressures BAC by pushing
+      out rate-cut expectations, which hurts net interest margin relief hopes. The combination of a hard fundamental miss,
+      a large regulatory overhang, and a macro headwind (higher-for-longer rates compressing loan demand) should keep the
+      stock heavy for several sessions as institutional holders reassess.
+    expected: 'short via put option on BAC: target 10.0% and stop 4.0% from entry, horizon days, confidence 68'
+    actual: closed by option expiry close on 2026-10-15 after 2 session(s); BAC moved +3.49% from the entry mid to that day's
+      close; the position returned -98.36% on cost
+    return_pct: -98.36065573770492
+    spy_pct: -0.8045962237959947
+    excess: -97.55605951390892
+    own_move: -4.299139129573504
+    market_move: 0.8045962237959947
+    tags:
+      sector: money
+      regime: calm_uptrend
+      confidence_band: 50-70
+      source: ai_trader
+      instrument: option
+      entry: short_after_gap_down
+    notes:
+    - 'catalyst named: Q3 2026 earnings miss driven by $1.2B regulatory penalty and deal-flow slowdown, reported 2026-10-14
+      pre-market; compounded by hot CPI print same morning.'
+    - 'invalidation stated: BAC reclaims pre-earnings levels (gap fills), or a surprise Fed official statement signals rate
+      cuts are back on the table, relieving pressure on bank net interest margins.'
+    - SPY measured close to close, from the session before entry to the exit session
+    - 'opening gap on the entry day: -7.60%'
+  expect:
+    causes:
+    - reason
+    setups:
+    - earnings_drift
+    - price_momentum
+    - ai_idea
+    - other
+    catalysts:
+    - earnings
+    - guidance
+    - legal
+- id: soxs_chip_selloff
+  why: the semiconductor sell-off the thesis named carried the inverse fund well past SPY
+  case:
+    decision_id: 7fdd0c5d0241
+    account: ai-trader
+    strategy: ai_trader
+    kind: trade
+    symbol: SOXS
+    opened: '2026-10-13'
+    resolved: '2026-10-14'
+    direction: short
+    thesis: 'Semiconductor sector is under severe pressure: Samsung fell ~10% and SK Hynix ~8% in Seoul overnight on fears
+      that Chinese chipmaker CXMT is rapidly gaining memory market share. MU fell 3.23%, WDC 4.87%, SNDK 4.07% premarket.
+      This is a second consecutive day of memory chip selling with a clear fundamental catalyst. SOXS (3x inverse semiconductor
+      ETF) offers leveraged exposure to continued sector downside.'
+    expected: 'short via fund SOXS: target 10.0% and stop 4.5% from entry, horizon days, confidence 65'
+    actual: closed by target on 2026-10-14 after 2 session(s); SOXS moved +9.95% from the entry mid to that day's close; the
+      position returned +9.90% on cost
+    return_pct: 9.900448042771703
+    spy_pct: -1.0770792900016701
+    excess: 10.977527332773374
+    own_move: null
+    market_move: null
+    tags:
+      sector: leveraged etf
+      regime: calm_uptrend
+      confidence_band: 50-70
+      source: ai_trader
+      instrument: etf
+      entry: short_after_gap_down
+    notes:
+    - 'catalyst named: Chinese CXMT competition fears triggering global memory chip selloff; Samsung -10%, SK Hynix -8% in
+      Seoul; MU, WDC, SNDK all down 3-5% premarket on 2026-10-13.'
+    - 'invalidation stated: Semiconductor stocks recover and SOX index closes green; CXMT threat is walked back or dismissed
+      by industry analysts; broader tech rally overwhelms sector-specific weakness.'
+    - SPY measured close to close, from the session before entry to the exit session
+    - 'opening gap on the entry day: -2.58%'
+    - 'leverage factor of the fund: -3'
+  expect:
+    causes:
+    - reason
+    setups:
+    - price_momentum
+    - theme_etf
+    - ai_idea
+    - other
+    catalysts:
+    - other
+    - product
+    - none
+    - macro_rates
+- id: ups_call_beat
+  why: an earnings double beat and a guidance raise moved the stock as named while SPY fell
+  case:
+    decision_id: f93c0dd96bdf
+    account: ai-trader
+    strategy: ai_trader
+    kind: trade
+    symbol: UPS
+    opened: '2026-10-28'
+    resolved: '2026-11-03'
+    direction: long
+    thesis: 'UPS reported a clean Q3 2026 double beat: adjusted EPS of $1.69 vs $1.63 consensus, revenue of $22.9B vs $22.3B
+      expected. Management raised full-year revenue guidance to ~$92.6B and lifted Q4 operating profit expectations, citing
+      a 25% QoQ rise in average daily package volumes for the holiday season. The stock surged ~5.8% on Tuesday and is pulling
+      back ~1% today, offering a better entry. Multiple analyst upgrades followed: BofA raised PT to $114, Goldman Sachs to
+      $135 (Buy), Oppenheimer to $119 (Outperform). The raised guidance + holiday volume tailwind + analyst re-rating cycle
+      should drive continued upside over the next several sessions.'
+    expected: 'long via call option on UPS: target 10.5% and stop 4.5% from entry, horizon days, confidence 65'
+    actual: closed by horizon end on 2026-11-03 after 5 session(s); UPS moved +3.90% from the entry mid to that day's close;
+      the position returned +85.45% on cost
+    return_pct: 85.44600938967142
+    spy_pct: -1.9903858646225903
+    excess: 87.43639525429401
+    own_move: 5.893289243965771
+    market_move: -1.9903858646225903
+    tags:
+      sector: other
+      regime: calm_uptrend
+      confidence_band: 50-70
+      source: ai_trader
+      instrument: option
+      entry: long_no_gap
+    notes:
+    - 'catalyst named: Q3 2026 earnings double beat (EPS $1.69 vs $1.63 est., revenue $22.9B vs $22.3B est.) reported pre-market
+      Oct 28, with full-year guidance raise and strong holiday volume outlook. Multiple analyst PT upgrades on Oct 28.'
+    - 'invalidation stated: UPS closes back below pre-earnings levels (~$99), FOMC delivers a hawkish surprise that broadly
+      crushes consumer/logistics sentiment, or management issues a negative intra-quarter update. A broad risk-off selloff
+      driven by the Fed decision would also undermine the thesis.'
+    - SPY measured close to close, from the session before entry to the exit session
+    - 'opening gap on the entry day: -0.89%'
+  expect:
+    causes:
+    - reason
+    setups: *id001
+    catalysts: *id002
+- id: pg_market_explains_loss
+  why: 'PG lost what SPY lost (-1.8 vs -1.7): the market, not the thesis, decided it'
+  case:
+    decision_id: c7ba43067c1a
+    account: ai-trader
+    strategy: ai_trader
+    kind: trade
+    symbol: PG
+    opened: '2026-10-22'
+    resolved: '2026-10-23'
+    direction: long
+    thesis: Procter & Gamble reported Q3 2026 earnings with a beat, up ~3.1% premarket. Organic sales growth of 4% and strong
+      cash flow highlight defensive quality. In today's risk-off tape (tech selling, geopolitical oil spike, inflation fears),
+      consumer staples with pricing power are a natural rotation destination. PG is a classic flight-to-quality name that
+      should attract capital fleeing tech and cyclicals.
+    expected: 'long via shares of PG: target 5.5% and stop 2.5% from entry, horizon days, confidence 62'
+    actual: closed by stop on 2026-10-23 after 2 session(s); PG moved -2.91% from the entry mid to that day's close; the position
+      returned -1.82% on cost
+    return_pct: -1.8222409943884466
+    spy_pct: -1.72027990118091
+    excess: -0.10196109320753655
+    own_move: -0.10196109320753655
+    market_move: -1.72027990118091
+    tags:
+      sector: chemicals
+      regime: calm_uptrend
+      confidence_band: 50-70
+      source: ai_trader
+      instrument: stock
+      entry: long_after_gap_up
+    notes:
+    - 'catalyst named: Q3 2026 earnings beat (pre-market 2026-10-22) combined with risk-off rotation into defensive consumer
+      staples on Middle East escalation and tech weakness.'
+    - 'invalidation stated: Market reverses sharply to the upside (risk-on rotation back into tech/growth), causing staples
+      to underperform; or PG gives back the entire earnings gap and trades below yesterday''s close.'
+    - SPY measured close to close, from the session before entry to the exit session
+    - 'opening gap on the entry day: +3.29%'
+  expect:
+    causes:
+    - luck
+    - unclear
+    setups: *id001
+    catalysts: *id002
+- id: xom_market_explains_win
+  why: 'XOM beat SPY by 0.1 point in a falling market: a coin-flip margin, not the mechanism'
+  case:
+    decision_id: 515f2f6f18ce
+    account: ai-trader
+    strategy: ai_trader
+    kind: trade
+    symbol: XOM
+    opened: '2026-10-30'
+    resolved: '2026-11-02'
+    direction: long
+    thesis: 'ExxonMobil reported a clean Q3 2026 double beat this morning: EPS of $4.23 vs. $4.12 consensus, revenue of $110.50B
+      vs. $104.89B expected. The stock is rising against a severely negative tape (Nasdaq -3%), demonstrating strong relative
+      strength and acting as a defensive rotation destination as investors flee tech. Energy''s cash-generative profile and
+      the beat-and-raise catalyst support multi-day follow-through. The sector rotation from tech into energy defensives is
+      the primary driver, with XOM as the highest-quality name in the space.'
+    expected: 'long via shares of XOM: target 4.0% and stop 2.5% from entry, horizon days, confidence 62'
+    actual: closed by stop on 2026-11-02 after 2 session(s); XOM moved -3.03% from the entry mid to that day's close; the
+      position returned -2.15% on cost
+    return_pct: -2.1545354900188274
+    spy_pct: -2.267735773044488
+    excess: 0.11320028302566065
+    own_move: 0.11320028302566065
+    market_move: -2.267735773044488
+    tags:
+      sector: energy
+      regime: calm_uptrend
+      confidence_band: 50-70
+      source: ai_trader
+      instrument: stock
+      entry: long_no_gap
+    notes:
+    - 'catalyst named: Q3 2026 earnings double beat reported today (EPS and revenue both above consensus); Chevron also beat,
+      confirming sector-wide energy strength and supporting the rotation narrative.'
+    - 'invalidation stated: XOM reverses and closes below today''s intraday low, or the broad market stabilizes and tech rebounds
+      sharply, reversing the defensive rotation. A crude oil price collapse would also kill the thesis.'
+    - SPY measured close to close, from the session before entry to the exit session
+    - 'opening gap on the entry day: +1.54%'
+  expect:
+    causes:
+    - luck
+    - unclear
+    setups: *id001
+    catalysts: *id002
+- id: nct_decline_right
+  why: declined a collapsing micro-cap; it fell a further 66 points against SPY as the named impairment said
+  case:
+    decision_id: aa5fbee02efb4604
+    account: main
+    strategy: judged
+    kind: decline
+    symbol: NCT
+    opened: '2026-09-25'
+    resolved: '2026-10-15'
+    direction: long
+    thesis: 'NCT (Intercont (Cayman) Ltd) presents no credible tradeable thesis. The stock has collapsed 99.4% from its 52-week
+      high of $981.25 to a last close of $5.83, sits 93.7% below its 200-day moving average for 62+ consecutive sessions,
+      and declined a further 94.4% over the prior 20 days and 32% over the prior 5 days. Zero volume was recorded on the observation
+      date against a 20-day average of ~3,493 shares — the market has effectively ceased normal trading in this name. The
+      CEO and Chairman (Zhu Muchun) filed a same-day Form 4 disclosing an open-market purchase of 1,625,000 shares for $650,000.
+      The CEO role is seniority-relevant, but the purchase cannot be interpreted as a signal of unpriced value because: (a)
+      the catastrophic move has already occurred across all lookback windows; (b) no identifiable catalyst explains what the
+      insider may see that is not already priced in; (c) the implied per-share transaction price (~$0.40, derived from $650,000
+      / 1,625,000) is arithmetically inconsistent with the reported last close of $5.83, which is itself unexplained and undermines
+      data integrity; (d) the company is Cayman-domiciled, a structural flag for opaque governance; and (e) this price/volume
+      pattern is consistent with the aftermath of a manipulated structure or fraud, not a temporary dislocation. No earnings
+      data is configured. No verifiable fundamental basis exists for a recovery thesis. Source track record: no resolved outcomes
+      — no confidence basis to credit. No position is the correct verdict at high confidence.'
+    expected: 'declined (no position): verdict no_position at confidence 90, horizon weeks'
+    actual: NCT returned -66.21% over the 20 sessions after the decision (-66.26 points against SPY)
+    return_pct: -66.21
+    spy_pct: 0.05000000000001137
+    excess: -66.26
+    own_move: -66.26
+    market_move: 0.05000000000001137
+    tags:
+      sector: other
+      regime: calm_uptrend
+      confidence_band: 85+
+      source: form4_insiders
+      instrument: stock
+      entry: long_after_gap_down
+    notes:
+    - 'why it was declined: research returned direction no_position: no position at any confidence, and this report scored
+      90'
+    - 'priced-in analysis: Transaction date is 2026-09-25, identical to the observation date — filing lag is effectively zero
+      days. Despite this, the opportunity window is closed: the stock has already declined 94.4% over 20 days and 32% over
+      5 days preceding the observation. The ''change since trade date'' field is unavailable, consistent with zero volume
+      on the day. Whatever events caused this collapse have fully expressed in price. The CEO buy occurred into a pre-existing
+      catastrophic decline, not ahead of an unpriced catalyst. There is nothing measurably unpriced to capture on the long
+      side.'
+    - 'signal source: form4_insiders'
+    - the trade not made is graded from the close of the decision day
+  expect:
+    causes:
+    - reason
+    setups:
+    - insider_cluster
+    - other
+    catalysts:
+    - insider_buying
+- id: be_decline_wrong
+  why: declined as already priced in; momentum carried BE 34 points past SPY
+  case:
+    decision_id: 8f4108bfdf4843d0
+    account: main
+    strategy: judged
+    kind: decline
+    symbol: BE
+    opened: '2026-08-28'
+    resolved: '2026-09-17'
+    direction: long
+    thesis: Nancy Pelosi purchased 5,000 shares of BE (Bloom Energy) on 2026-07-28 at an implied entry price of ~$167.035.
+      The stock has since advanced +29.97% to $217.10. At current price, an entrant is paying 30% above Pelosi's cost basis
+      for a move that has already been realised. The fundamental backdrop (strong revenue growth, AI data-center demand for
+      solid oxide fuel cells, positive FCF inflection) is broadly known and reflected in the current valuation. No residual
+      edge is available to a new entrant at today's price. Additionally, a severe volume anomaly (0.01× 20-day average) makes
+      the $217.10 close an unreliable fair-value reference. The confirmed second-order reflexivity pattern on this source
+      means remaining short-term momentum is copycat-driven, not thesis-driven — entering now risks providing exit liquidity
+      to earlier copycat buyers.
+    expected: 'declined (no position): verdict no_position at confidence 82, horizon weeks'
+    actual: BE returned +33.13% over the 20 sessions after the decision (+33.99 points against SPY)
+    return_pct: 33.13
+    spy_pct: -0.8599999999999994
+    excess: 33.99
+    own_move: 33.99
+    market_move: -0.8599999999999994
+    tags:
+      sector: manufacturing
+      regime: calm_uptrend
+      confidence_band: 70-85
+      source: congressional_disclosures
+      instrument: stock
+      entry: long_no_gap
+    notes:
+    - 'why it was declined: research returned direction no_position: no position at any confidence, and this report scored
+      82'
+    - 'priced-in analysis: Trade executed 2026-07-28 at $167.035 (first-session price per market context). Current last close:
+      $217.10. Change since trade date: +29.97%. This is demonstrated, measured priced-in movement — nearly 30% of gain has
+      already been extracted between trade date and observation date. A new entrant at $217.10 is not replicating the original
+      trade; they are buying into a stock that has already delivered the bulk of any disclosure-driven edge. The stock is
+      also +15.15% above its 200-DMA, confirming it is extended rather than dislocated. The signal is declined for demonstrated
+      priced-in movement, not elapsed time. Furthermore, the last-session volume was 0.01× the 20-day average (6,140 vs 418,397
+      shares), casting additional doubt on whether $217.10 represents a reliable, liquid fair-value price at which entry could
+      even be executed.'
+    - 'signal source: congressional_disclosures'
+    - the trade not made is graded from the close of the decision day
+  expect:
+    causes:
+    - reason
+    - unclear
+    setups:
+    - congressional_trade
+    catalysts:
+    - congressional_trade

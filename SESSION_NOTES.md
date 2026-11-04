@@ -4148,6 +4148,21 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 
 Suite green on the droplet (exit 0).
 
+### 2026-11-04 (later) — LEARNING LOOP steps 1-2 BUILT: the case feed, the post-mortem writer (golden 9/9), the miner's report; switched on
+
+- **Feed.** 289 resolved judged decisions on 2026-11-04:
+  - 28 AI trader closed trades (the INTC put closed today and waits for today's close);
+  - 9 main-book judged trades;
+  - 251 graded declines.
+  - The declines come from 573 LLM decline records; the rest have not reached their horizon mark or have no forward row.
+  - Computed tags: sector (SEC SIC to FF-12; funds as broad, sector or leveraged), regime (the prior VIX close and SPY against its 200-day average, as known that morning), confidence band, source, instrument, entry (direction plus the opening gap).
+- **Writer.** Haiku, one forced-tool call, no search. The golden replay went 5/9 -> 6/9 -> 8/9 -> 7/9 -> 9/9; what changed between runs:
+  - Haiku called gap-fade losers "luck", so the result split (the stock's own move beyond SPY, and SPY's move, signed in the decision's favour) was added to the facts and the luck rule tightened.
+  - It then ignored the split on market-driven cases (PG, XOM), so the market check moved to code: when SPY's move is larger than the stock's own move, the cause is luck.
+  - It invented outside events to answer "luck" (BE), so luck became code's alone.
+  - Final: 27/27 runs, $0.11 for 27 calls.
+- **Defect found (NOT fixed - a request-path change for the human to rule on):** the haiku triage gate has never returned a verdict. `AnthropicResearchClient.triage()` does not pass `expected_tool`, so `_to_result` looks for `submit_research` and `structured` is always None. Every signal has proceeded to the full pass, and the audit log has zero triage rejections since 2026-08-20. The fix is one argument, but it switches on a gate that has never filtered: golden replay plus a live round trip, after a ruling.
+
 ### 2026-10-29 — RULINGS: Quiver strategies (control-arm record; shadows; lobbying backtest; evidence line)
 
 **1. The congressional control arm's live record** (mechanical sleeve, from its first fill 2026-08-27 through 10-28, 44 sessions). Time-weighted return of the invested book: daily Modified Dietz on real fills, chained.

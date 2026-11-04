@@ -23,6 +23,28 @@ VIX_HISTORY_URL = (
 logger = logging.getLogger("execution.vix")
 
 
+def vix_history(get: Optional[Callable[[str], httpx.Response]] = None, *, url: str = VIX_HISTORY_URL,
+                timeout: float = 30.0) -> dict[date, Decimal]:
+    """Every VIX close in CBOE's CSV, by date: the learning journal's regime
+    tag (ruling 2026-11-04). Raises on a failed or empty fetch - a history is
+    never legitimately empty, and the caller decides what to do without it."""
+    fetch = get or (lambda target: httpx.get(target, timeout=timeout, follow_redirects=True))
+    response = fetch(url)
+    if response.status_code != 200:
+        raise RuntimeError(f"VIX history: HTTP {response.status_code}")
+    out: dict[date, Decimal] = {}
+    for line in response.text.strip().splitlines()[1:]:
+        try:
+            date_raw, _open, _high, _low, close_raw = line.split(",")
+            month, day, year = date_raw.split("/")
+            out[date(int(year), int(month), int(day))] = Decimal(close_raw)
+        except ValueError:
+            continue
+    if not out:
+        raise RuntimeError("VIX history: the CSV parsed to no closes")
+    return out
+
+
 class CboeVixSource:
     """The last VIX daily close from CBOE's public CSV. One fetch per UTC day,
     cached; a failed fetch returns the cached value if any, else None — and

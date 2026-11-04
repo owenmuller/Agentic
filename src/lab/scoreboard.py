@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -197,21 +196,16 @@ def lab_trades(events: list[dict], table: dict[str, tuple[int, Optional[float]]]
     return trades
 
 
-#: A fund's name at the broker ("SPDR S&P 500 ETF Trust", "VanEck
-#: Semiconductor ETF", "Technology Select Sector SPDR Fund"). "Trust" alone
-#: is not enough: Northern Trust is a company.
-_FUND_NAME = re.compile(r"\b(ETF|ETN|Fund|SPDR|iShares|ProShares|Direxion|Select Sector|QQQ)\b", re.I)
-
-
 def fund_lookup(name_of: Callable[[str], Optional[str]]) -> Callable[[str], bool]:
     """``symbol -> is it a fund`` from the broker's asset name, cached; an
     unknown name reads as a company (a single-name pick)."""
+    from execution.alpaca import AlpacaAdapter
+
     seen: dict[str, bool] = {}
 
     def fund(symbol: str) -> bool:
         if symbol not in seen:
-            name = name_of(symbol)
-            seen[symbol] = bool(name and _FUND_NAME.search(name))
+            seen[symbol] = AlpacaAdapter.names_a_fund(name_of(symbol))
         return seen[symbol]
     return fund
 

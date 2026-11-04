@@ -23,7 +23,8 @@ class Entry:
     expected: str                 # what the decision expected, in words
     actual: str                   # what happened, in words
     #: the outcome the miner tallies: return in excess of SPY over the same
-    #: window (a decline's or veto's is the trade it did NOT make)
+    #: window, in PERCENTAGE POINTS (the forward engine's unit); a decline's or
+    #: veto's is the trade it did NOT make, so a negative one means it was right
     excess: Optional[float]
     process: str                  # vocabulary.PROCESS
     tags: dict = field(default_factory=dict)

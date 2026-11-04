@@ -321,6 +321,24 @@ class Alpaca:
             self.cache.put("alpaca_assets", cached)
         return cached
 
+    def asset_names(self) -> dict[str, str]:
+        """Every US-equity asset's name, active and inactive, UNFILTERED (funds
+        included): the learning journal tells a fund from a company by it
+        (ruling 2026-11-04). Raises on an empty listing, never caches one."""
+        cached = self.cache.get("alpaca_asset_names")
+        if cached is None:
+            cached = {}
+            for status in ("active", "inactive"):
+                r = self._trading.get("/v2/assets", params={"status": status, "asset_class": "us_equity"})
+                r.raise_for_status()
+                rows = r.json()
+                if not rows:
+                    raise RuntimeError(f"Alpaca returned no {status} assets")
+                for row in rows:
+                    cached.setdefault(row.get("symbol"), row.get("name") or "")
+            self.cache.put("alpaca_asset_names", cached)
+        return cached
+
     def sessions(self, start: str, end: str) -> list[str]:
         """Trading days from ``start`` to ``end`` inclusive (the exchange
         calendar, holidays and all). Never cached: it answers 'when'. Raises

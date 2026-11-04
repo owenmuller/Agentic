@@ -678,6 +678,27 @@ class MomentumSleeveConfig(BaseModel):
     mark_max_spread: Decimal = Field(default=Decimal("0.02"), gt=0, le=Decimal("0.10"))
 
 
+class LearningConfig(BaseModel):
+    """The learning loop's journal step (human rulings 2026-10-14 and
+    2026-11-04): post-mortems of resolved judged decisions, written by the
+    momentum prep unit's evening run (``python -m orchestrator learn``)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    #: Off until the post-mortem writer's golden replay and live round trip pass.
+    enabled: bool = False
+    #: The cheapest model that does it reliably (pinned; research.yaml).
+    model: str = "claude-haiku-4-5-20251001"
+    max_tokens: int = Field(default=1200, ge=300, le=4000)
+    #: One run's ceilings: the first run is the backfill.
+    max_entries_per_run: int = Field(default=800, ge=1, le=5000)
+    max_spend_per_run_usd: Decimal = Field(default=Decimal("4.00"), gt=0, le=Decimal("20"))
+    #: Under the data directory.
+    journal_file: str = "learning/journal.jsonl"
+    #: Market-data cache for sectors and bars (not production data).
+    cache_dir: str = "~/agentic-cache/learning"
+
+
 class MomentumPrepConfig(BaseModel):
     """The momentum book's monthly prep job (human ruling 2026-10-13):
     ``python -m orchestrator momentum-prep``, run by its own unit. It builds
@@ -811,6 +832,8 @@ class OrchestratorConfig(BaseModel):
     #: under a combined cap. The combined cap can never exceed the hard cap, so
     #: absent-section defaults are safe.
     add_decisions: AddDecisionsConfig = Field(default_factory=AddDecisionsConfig)
+    #: The learning loop's journal (human rulings 2026-10-14 and 2026-11-04).
+    learning: LearningConfig = Field(default_factory=LearningConfig)
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "OrchestratorConfig":

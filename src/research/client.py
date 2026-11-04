@@ -248,6 +248,31 @@ class AnthropicResearchClient:
             est_cost_usd=self._estimate(triage_config.model, usage),
         )
 
+    def single_call(
+        self, *, system: str, user: str, tool: dict[str, Any], model: str, max_tokens: int
+    ) -> LLMResult:
+        """One forced-tool call, no search, no phases: the learning journal's
+        post-mortem writer (human ruling 2026-11-04). The model must be pinned;
+        the result is parsed against THIS tool's name."""
+        if model not in self._config.pinned_models:
+            raise RuntimeError(f"model {model!r} is not in research.yaml pinned_models")
+        usage = _fresh_usage()
+        response = self._client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=_cached_system(system),
+            messages=[{"role": "user", "content": user}],
+            tools=[tool],
+            tool_choice={"type": "tool", "name": tool["name"]},
+        )
+        self._track_usage(response, usage)
+        return self._to_result(
+            response,
+            expected_tool=tool["name"],
+            usage=usage,
+            est_cost_usd=self._estimate(model, usage),
+        )
+
     def _estimate(self, model: str, usage: dict[str, int]) -> Optional[Decimal]:
         return self._config.estimate_cost_usd(
             model,

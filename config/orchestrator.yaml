@@ -504,3 +504,16 @@ momentum_prep:
   # SEC has none. Plans and shadows for rebalances from this day; October
   # keeps the universe it traded on.
   universe_v2_from: 2026-11-02
+
+# The learning loop's journal (human rulings 2026-10-14 and 2026-11-04):
+# post-mortems of every resolved JUDGED decision (the AI trader's closed
+# trades, the main book's judged trades and graded declines), written by the
+# momentum prep unit's evening run (python -m orchestrator learn). Golden
+# replay 9/9 (27/27 runs) on 2026-11-04 before it was switched on.
+learning:
+  enabled: true
+  model: claude-haiku-4-5-20251001
+  max_tokens: 1200
+  # one run's ceilings: the first run is the backfill (~290 cases, ~$1.20)
+  max_entries_per_run: 800
+  max_spend_per_run_usd: 4.00
