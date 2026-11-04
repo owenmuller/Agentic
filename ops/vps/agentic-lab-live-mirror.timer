@@ -1,0 +1,10 @@
+# Weekdays 09:20 ET (with the paper AI trader); the session waits for 09:30.
+[Unit]
+Description=Agentic LIVE mirror session trigger (weekdays 9:20 ET)
+
+[Timer]
+OnCalendar=Mon..Fri 09:20 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

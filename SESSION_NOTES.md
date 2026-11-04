@@ -4167,6 +4167,25 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-04 (late) — the LIVE MIRROR built (dry until Constraint #4; waits for the $1,000)
+
+- **The human's answers:**
+  - The account is switched to CASH; re-checked read-only: `type: cash`. So every entry is mirrored, intraday included, on settled funds only.
+  - Fractional sizing goes "whole first".
+- **Found:** Robinhood now has a trade-approval setting. It is `human_must_approve_trades: false` on this account. The mirror re-reads it at every session start and refuses to place anything while it is on (a stop could not fire).
+- **Built:**
+  - `RobinhoodAgenticAdapter`: it cannot be built in paper; it reviews before placing; any review alert or required approval refuses the order; a 409 on its ref_id is reconciled; it reports settled cash only.
+  - `lab/live_mirror.py` (the sequence and the rules in CLAUDE.md § Live Mirror); `lab live-check` and `lab live-mirror`.
+  - Units `agentic-lab-live-mirror.{service,timer}`. The service reads its environment only from a file the human writes; the agent never writes it.
+  - `load_environment` refuses a `.env` carrying a live-direction value.
+- **Tests:** `tests/test_live_mirror.py`, `tests/test_robinhood.py`.
+- **Dry check on the real account:** reads and quotes parse. Sizing at $1,100: F 16 shares (limit 12.76), GS 0.209 shares (fractional market), KO 2, BMY 3; each about $190-204, inside the 18.75% cap less 1%.
+- **Choices I made, flagged:**
+  - Fractional buys go by share quantity, not dollar amount (the gate settles quantities); the reservation is at the ask + 5%.
+  - An option that fits the cap is skipped until a live option round trip.
+  - Cards for every order go to #urgent through the first 7 days of mirroring.
+- **Open for the human:** the gate's aggressive-path day-trade rule (3 in 5 business days under $25K, any account type) will refuse intraday openings after the third day trade even on the cash account.
+
 ### 2026-11-04 (evening) — RULINGS: quotes for every engine; Congress Buys keeps ETFs; triage REMOVED; backup unit
 
 1. **Exit engine and mechanical arm: valuations at the mid; stops on the bid or the last trade, never the ask; a quote wider than 2% is not valued and is carded (BUILT).**

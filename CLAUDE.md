@@ -273,6 +273,13 @@ Software-only books on two of Quiver's published strategies (quiverquant.com/str
   - A 12% kill switch on starting equity, and a 4% daily loss limit.
 - **Constraint #4 governs:** the live process trades real money only in its own unit, after the human has done what Constraint #4 requires there. Every other process stays paper. The agent sets nothing.
 - **Alerts:** every live order, fill and skip goes to #urgent for the first week, then to #reports. A daily card compares the live account with the paper AI trader scaled to the same size, showing the gap from fills, skips and fees.
+- **Built 2026-11-04** (`lab/live_mirror.py`, `python -m lab live-mirror` in unit `agentic-lab-live-mirror`, `python -m lab live-check`):
+  - The account is a CASH account (switched by the human 2026-11-04; re-checked; the mirror refuses any other type). Every entry is mirrored, intraday included, on settled funds only. The gate's aggressive-path rule (no opening after 3 day trades in 5 business days under $25K, ANY account type, ruling 2026-10-09 item D) still applies: open question to the human.
+  - Whole shares as day limits when one fits. Otherwise a fractional market buy by share QUANTITY (the gate settles exact quantities), reserved at the ask + 5%. Fractional closes are market sells. Every market order carries its justification.
+  - Exits fire on the paper close, or on the live stop or target checked on the bid (the last trade when there is no bid), never the ask; also at the intraday close and as a past-horizon backstop.
+  - Trade approvals are read at every session start; if they are on, nothing is placed and a red card goes out. A copy more than 5 minutes late is skipped.
+  - With no live broker the mirror runs DRY (logs what it would do, sends nothing).
+  - `.env` may never carry a live flag: `load_environment` refuses to start if it does.
 - **Steps:**
   - (a) read-only connection check: DONE 2026-11-04;
   - (b) one tiny live round trip (a fractional SPY buy and sell) once the $1,000 has settled;

@@ -530,6 +530,110 @@ def scoreboard(email: bool) -> int:
     return 0
 
 
+# -- the LIVE mirror (GO LIVE, human ruling 2026-11-04) --------------------------------
+
+LIVE = "live-mirror"
+
+
+def _live_parts(config):
+    """The read-only client, and the order-capable adapter ONLY when this
+    process resolves live under Constraint #4 (else None: the mirror runs
+    dry). A half-set live flag raises here and the process stops."""
+    import os
+
+    from execution import require_paper_or_confirmed_live
+    from execution.robinhood import RobinhoodAgenticAdapter, RobinhoodMcp, TokenStore
+
+    store = TokenStore(Path(os.path.expanduser(config.token_store)))
+    reader = RobinhoodMcp(store, config.account_number)
+    if require_paper_or_confirmed_live():
+        return reader, None
+    return reader, RobinhoodAgenticAdapter(RobinhoodMcp(store, config.account_number, allow_orders=True))
+
+
+def live_check() -> int:
+    """Read-only: the Agentic account as the mirror sees it. Never sends an order."""
+    from execution.robinhood import RobinhoodMcp, TokenStore, settled_cash
+    import os
+
+    config = LabConfig.load().live_mirror
+    mcp = RobinhoodMcp(TokenStore(Path(os.path.expanduser(config.token_store))), config.account_number)
+    row, portfolio = mcp.account_row(), mcp.portfolio()
+    positions = mcp.equity_positions()
+    print(f"LIVE {config.account_number}: type {row.get('type')}, state {row.get('state')}, "
+          f"{row.get('option_level')}; cash {portfolio.get('cash')}, settled {settled_cash(portfolio, row)}, "
+          f"unsettled {row.get('unsettled_funds')}, pending deposits {portfolio.get('pending_deposits')}, "
+          f"total {portfolio.get('total_value')}; buying power {portfolio.get('buying_power')}; "
+          f"positions {len(positions)}; trade approvals {'ON' if mcp.approvals_required() else 'off'}")
+    return 0
+
+
+def live_session() -> int:
+    """The live mirror's session, inside agentic-lab-live-mirror only."""
+    import time as _time
+
+    from lab.config import AccountConfig, account_limits
+    from lab.live_mirror import LiveMirror, NY, _clock_time
+
+    from execution import load_environment
+
+    load_environment()   # refuses a .env that carries a live flag (ruling 2026-11-04)
+    lab_config = LabConfig.load()
+    config = lab_config.live_mirror
+    if datasafety.current_unit() != datasafety.lab_unit(LIVE):
+        print(f"REFUSED: the live mirror runs only inside {datasafety.lab_unit(LIVE)}.service.", file=sys.stderr)
+        return 2
+    if config is None or not config.enabled or lab_config.ai_trader is None:
+        print("LIVE mirror: not enabled in config/lab.yaml", file=sys.stderr)
+        return 3
+    reader, broker = _live_parts(config)
+    directory = datasafety.resolve_lab_data_dir(LIVE)
+    clock = lambda: datetime.now(timezone.utc)  # noqa: E731
+    state = LabState.load(directory / "state.json")
+    if state.account_number is None:
+        state.account_number = config.account_number
+    elif state.account_number != config.account_number:
+        print(f"LIVE mirror pinned to {state.account_number}, config says {config.account_number}: refusing",
+              file=sys.stderr)
+        return 3
+    alerter = Alerter(status_path=directory / "alerts_status.json")
+    limits = account_limits(AccountConfig(enabled=True, label="LIVE MIRROR", sleeve="live_mirror",
+                                          live_eligible=True, limits_overrides=config.limits_overrides))
+    mirror = LiveMirror(
+        config=config, ai_config=lab_config.ai_trader, reader=reader, broker=broker,
+        paper_ledger=datasafety.lab_production_dir(config.paper_account) / "ledger.jsonl",
+        ledger=Ledger(directory / "ledger.jsonl", clock), state=state, state_path=directory / "state.json",
+        limits=limits, notify=lambda card: alerter.card(f"live-{card.happened}-{clock():%Y%m%dT%H%M%S%f}", card),
+        clock=clock, halt_path=directory / "HALT")
+    local = clock().astimezone(NY)
+    if local.weekday() >= 5:
+        print("LIVE mirror: no session on a weekend")
+        return 0
+    start = datetime.combine(local.date(), _clock_time(config.session_start), NY)
+    end = datetime.combine(local.date(), _clock_time(config.session_end), NY)
+    print(f"LIVE mirror: {'LIVE' if broker is not None else 'DRY (paper process: nothing is sent)'}; "
+          f"session {start:%H:%M}-{end:%H:%M} ET")
+    if clock() < start:
+        _time.sleep((start - clock()).total_seconds())
+    mirror.start()
+    while clock() < end:
+        try:
+            mirror.tick()
+        except Exception as error:  # noqa: BLE001 - one bad tick must not end the session
+            logging.getLogger("lab").exception("live mirror tick failed")
+            mirror.ledger.append("fault", message=f"tick failed: {type(error).__name__}: {error}")
+            when = clock().astimezone(NY)
+            alerter.card("live-mirror-tick", cards.crash_card("Live mirror", f"{when:%b} {when.day}, {when:%H:%M} ET",
+                                                              f"{type(error).__name__}: {error}"))
+        _time.sleep(config.tick_seconds)
+    if mirror.e.get("phase") == "mirroring":
+        card = mirror.daily_card()
+        if card is not None and broker is not None:
+            alerter.card(f"live-mirror-day-{local.date()}", card)
+    alerter.close()
+    return 0
+
+
 def date_from(text: str):
     from datetime import date
 
@@ -559,7 +663,13 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("account")
         if name == "golden":
             p.add_argument("--with-brief", action="store_true")
+    sub.add_parser("live-check")
+    sub.add_parser("live-mirror")
     args = parser.parse_args(argv)
+    if args.command == "live-check":
+        return live_check()
+    if args.command == "live-mirror":
+        return live_session()
     command = args.command
     if command in OPERATOR_COMMANDS:
         # halt / resume write the account's production data by declaration

@@ -169,11 +169,46 @@ class AiTraderConfig(_Strict):
         return self
 
 
+class LiveMirrorConfig(_Strict):
+    """The AI trader's LIVE mirror on the Robinhood Agentic account (GO LIVE,
+    human ruling 2026-11-04; ``lab.live_mirror``). Real money: every bound
+    here is the ruling's and only tightens."""
+
+    enabled: bool = False
+    #: The Robinhood Agentic account, pinned (refused in code otherwise).
+    account_number: str
+    #: The deposit the mirror waits to see settled before its round trip.
+    funding_usd: Decimal = Field(gt=ZERO)
+    paper_account: str = "ai-trader"
+    token_store: str = "~/.config/agentic/rh_oauth.json"
+    risk_fraction: Decimal = Field(default=Decimal("0.02"), gt=ZERO, le=Decimal("0.02"))
+    max_position_fraction: Decimal = Field(default=Decimal("0.1875"), gt=ZERO, le=Decimal("0.1875"))
+    #: Of STARTING equity (the ruling); the gate's own 12%-from-peak applies too.
+    kill_fraction: Decimal = Field(default=Decimal("0.12"), gt=ZERO, le=Decimal("0.12"))
+    daily_loss_fraction: Decimal = Field(default=Decimal("0.04"), gt=ZERO, le=Decimal("0.04"))
+    round_trip_symbol: str = "SPY"
+    round_trip_shares: Decimal = Field(default=Decimal("0.01"), gt=ZERO, le=Decimal("0.05"))
+    #: Cards go to #urgent for this many days of mirroring, then #reports.
+    urgent_days: int = Field(default=7, ge=7)
+    tick_seconds: int = Field(default=15, ge=5, le=120)
+    session_start: str = "09:30"
+    session_end: str = "16:05"
+    fill_wait_seconds: int = Field(default=60, ge=10, le=600)
+    limit_buffer: Decimal = Field(default=Decimal("0.002"), ge=ZERO, lt=Decimal("0.02"))
+    #: The gate's dust floor (risk_limits equity_sleeve.min_order_notional_usd).
+    min_notional_usd: Decimal = Field(default=Decimal("5"), ge=Decimal("1"))
+    #: A paper entry copied later than this is skipped, not chased.
+    max_entry_delay_seconds: int = Field(default=300, ge=30, le=1800)
+    #: The live account's own cap table on top of risk_limits.yaml.
+    limits_overrides: dict[str, Any] = Field(default_factory=dict)
+
+
 class LabConfig(_Strict):
     version: int
     accounts: dict[str, AccountConfig]
     ladder: LadderConfig
     ai_trader: Optional[AiTraderConfig] = None
+    live_mirror: Optional[LiveMirrorConfig] = None
 
     @model_validator(mode="after")
     def _pinned_model(self) -> "LabConfig":

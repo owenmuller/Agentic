@@ -1,0 +1,35 @@
+# GO LIVE (human ruling 2026-11-04; CLAUDE.md § Live Mirror): the AI trader's
+# LIVE MIRROR on the dedicated Robinhood Agentic account. REAL MONEY.
+# One session per trigger: waits for 09:30 ET, ticks every 15 s until 16:05 ET,
+# sends the day's card, exits. Writes only data-lab/live-mirror/ (datasafety
+# owner marker). Reads the paper AI trader's ledger as a file.
+#
+# Constraint #4: this is the ONLY process whose environment may resolve live,
+# and it reads that environment ONLY from the EnvironmentFile below, which the
+# human writes by hand (mode 600). The agent never writes, reads out or
+# proposes its contents. Without it - or resolving to paper - the mirror runs
+# DRY: it reads, sizes and logs what it would do, and sends nothing. .env may
+# never carry a live flag (load_environment refuses to start if it does).
+# Install (root):
+#   sudo cp ops/vps/agentic-lab-live-mirror.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now agentic-lab-live-mirror.timer
+[Unit]
+Description=Agentic LIVE mirror of the AI trader (Robinhood Agentic account, real money)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=1h
+StartLimitBurst=3
+
+[Service]
+Type=exec
+User=agentic
+WorkingDirectory=/home/agentic/Agentic
+Environment=PYTHONIOENCODING=utf-8
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/home/agentic/.config/agentic/live_mirror.env
+ExecStart=/home/agentic/Agentic/.venv/bin/python -m lab live-mirror
+Restart=on-failure
+RestartSec=300
+RuntimeMaxSec=8h
+MemoryMax=512M

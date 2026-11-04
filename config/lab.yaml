@@ -223,3 +223,41 @@ ai_trader:
     max_spread_pct_of_mid: 0.15
     max_iv_percentile: 0.95
     expiry_close: "15:45"
+
+# THE LIVE MIRROR (GO LIVE, human ruling 2026-11-04; CLAUDE.md § Live Mirror).
+# REAL MONEY on the dedicated Robinhood Agentic account. It copies the paper AI
+# trader's FILLED entries and its closes, scaled to live equity, through this
+# account's own RiskGate. It trades live only inside its own unit
+# (agentic-lab-live-mirror) after the human has done what Constraint #4
+# requires there; any other process resolves to paper, and the mirror then
+# runs DRY (reads and logs, sends nothing). Sequence: wait for the funding to
+# settle -> one tiny live round trip -> mirroring from the NEXT session.
+live_mirror:
+  enabled: true
+  account_number: "742288012"
+  funding_usd: 1000
+  paper_account: ai-trader
+  risk_fraction: 0.02          # of live equity at risk per trade (the AI trader's)
+  max_position_fraction: 0.1875  # the AI trader's per-stock cap
+  kill_fraction: 0.12          # of STARTING equity (plus the gate's 12%-from-peak)
+  daily_loss_fraction: 0.04
+  round_trip_symbol: SPY
+  round_trip_shares: 0.01      # "one fractional share": about $8
+  urgent_days: 7
+  # The same cap table as the paper AI trader: stocks on the AGGRESSIVE path
+  # (18.75% of NAV a name, 5 names, T+1 on today's sale proceeds). Options
+  # never reach the live gate (skipped until a live option round trip).
+  limits_overrides:
+    portfolio:
+      sleeves: {equity: 0.25, mechanical: 0, prediction: 0, baseline: 0, aggressive: 0.75, momentum: 0}
+    equity_sleeve:
+      max_single_position: 0.10
+      max_daily_deployment: 1.00
+      max_options_premium_at_risk: 0.40
+      max_short_dated_premium_at_risk: 0.40
+    aggressive_sleeve:
+      max_single_position: 0.25
+      max_positions: 5
+      max_daily_deployment: 1.00
+      max_sector_exposure: 0.50
+      entries_enabled: true

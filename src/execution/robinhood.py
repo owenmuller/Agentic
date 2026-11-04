@@ -26,10 +26,15 @@ import json
 import logging
 import os
 import time
+import uuid
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Optional
 
 import httpx
+
+from execution.base import BrokerAdapter, BrokerError, BrokerPermissions, BrokerPosition, OrderReceipt, OrderStatus
+from risk_gate import ApprovedOrder
 
 MCP_URL = "https://agent.robinhood.com/mcp/trading"
 TOKEN_URL = "https://api.robinhood.com/oauth2/token/"
@@ -180,3 +185,210 @@ class RobinhoodMcp:
             except json.JSONDecodeError:
                 content = {"text": "".join(texts)}
         return _strip_guides(content)
+
+    # -- typed reads (no order tool) --------------------------------------------------
+
+    def account_row(self) -> dict:
+        rows = _rows(self.call("get_accounts"), "accounts")
+        for row in rows:
+            if str(row.get("account_number")) == self.account_number:
+                if not row.get("agentic_allowed"):
+                    raise RobinhoodError(f"account {self.account_number} is not agentic_allowed")
+                return row
+        raise RobinhoodError(f"account {self.account_number} is not among this grant's accounts")
+
+    def portfolio(self) -> dict:
+        data = self.call("get_portfolio", {"account_number": self.account_number})
+        return data.get("data", data) if isinstance(data, dict) else {}
+
+    def equity_positions(self) -> list[dict]:
+        return _rows(self.call("get_equity_positions", {"account_number": self.account_number}), "positions")
+
+    def quotes(self, symbols: list[str]) -> dict[str, dict]:
+        out = {}
+        for row in _rows(self.call("get_equity_quotes", {"symbols": list(symbols)}), "results"):
+            quote = row.get("quote") if isinstance(row, dict) else None
+            if isinstance(quote, dict) and quote.get("symbol"):
+                out[str(quote["symbol"]).upper()] = quote
+        return out
+
+    def approvals_required(self) -> bool:
+        data = self.call("get_trade_approval_setting", {"account_number": self.account_number})
+        setting = ((data.get("data") or {}).get("setting") or {}) if isinstance(data, dict) else {}
+        return bool(setting.get("human_must_approve_trades", True))   # unknown reads as ON (Constraint #6)
+
+    def equity_orders(self, **filters: str) -> list[dict]:
+        return _rows(self.call("get_equity_orders", {"account_number": self.account_number, **filters}), "orders")
+
+
+def _rows(payload: Any, key: str) -> list[dict]:
+    data = payload.get("data", payload) if isinstance(payload, dict) else payload
+    if isinstance(data, dict):
+        data = data.get(key) or data.get("results") or []
+    return [row for row in (data or []) if isinstance(row, dict)]
+
+
+def _d(value: Any) -> Decimal:
+    try:
+        return Decimal(str(value)) if value not in (None, "") else Decimal("0")
+    except InvalidOperation:
+        return Decimal("0")
+
+
+# -- the adapter ---------------------------------------------------------------------
+
+
+class RobinhoodAgenticAdapter(BrokerAdapter):
+    """The live mirror's broker (GO LIVE ruling 2026-11-04). Equities only:
+    an option never reaches it (the mirror skips options until a live option
+    round trip has proved that path).
+
+    It cannot be built in paper: there is no Robinhood paper mode, so the
+    process must resolve LIVE under Constraint #4 (both human-set variables)
+    - otherwise construction raises and nothing can be sent. Every order is
+    reviewed first; any pre-trade alert, or trade approvals switched on in
+    the app, refuses the order (recorded) rather than placing it. Fractional
+    quantities go as market orders in regular hours (the venue's rule),
+    whole shares as day limits."""
+
+    #: Fractional shares (venue: market orders, regular hours only).
+    equity_quantity_step = Decimal("0.000001")
+
+    def __init__(self, mcp: RobinhoodMcp, *, clock=None) -> None:
+        from execution.environment import require_paper_or_confirmed_live
+
+        if require_paper_or_confirmed_live():
+            raise RobinhoodError("the Robinhood adapter trades real money and this process resolved to PAPER "
+                                 "(Constraint #4): nothing can be sent")
+        if not mcp._allow_orders:
+            raise RobinhoodError("the Robinhood adapter needs an order-capable client")
+        self._mcp = mcp
+        self.last_review: Optional[dict] = None
+
+    # -- orders -------------------------------------------------------------------
+
+    def _payload(self, order) -> dict:
+        from risk_gate.schema import EquityBuyOrder, EquitySellToCloseOrder
+
+        if not isinstance(order, (EquityBuyOrder, EquitySellToCloseOrder)):
+            raise RobinhoodError(f"{type(order).__name__} is not supported by the live mirror's adapter")
+        execution = order.execution
+        whole = order.quantity == order.quantity.to_integral_value()
+        payload = {"account_number": self._mcp.account_number, "symbol": order.symbol,
+                   "side": "buy" if isinstance(order, EquityBuyOrder) else "sell",
+                   "quantity": format(order.quantity.normalize(), "f"), "market_hours": "regular_hours"}
+        if execution.style == "limit":
+            if not whole:
+                raise RobinhoodError("a fractional quantity cannot be a limit order at Robinhood")
+            payload.update(type="limit", limit_price=str(execution.limit_price), time_in_force="gfd")
+        else:
+            payload.update(type="market", time_in_force="gfd")
+        return payload
+
+    def submit_order(self, approved: ApprovedOrder, client_reference: Optional[str] = None) -> OrderReceipt:
+        approved = self._require_approved(approved)
+        payload = self._payload(approved.order)
+        if self._mcp.approvals_required():
+            raise BrokerError("trade approvals are ON for the Agentic account (the human's app setting): an order "
+                              "would wait for a tap, so none is placed", 409, "human_must_approve_trades")
+        review = self._mcp.call("review_equity_order", payload)
+        review = review.get("data", review) if isinstance(review, dict) else {}
+        self.last_review = review
+        checks = review.get("order_checks") or {}
+        if checks:
+            raise BrokerError(f"review alert {checks.get('alert_type', 'UNKNOWN')}: not placed", 422,
+                              json.dumps(checks)[:500])
+        if review.get("customer_approval_required"):
+            raise BrokerError("the review says the customer must approve this order: not placed", 409,
+                              "customer_approval_required")
+        ref_id = client_reference or str(uuid.uuid4())
+        try:
+            placed = self._mcp.call("place_equity_order", {**payload, "ref_id": ref_id})
+        except RobinhoodError as error:
+            if "409" in str(error) or "unique" in str(error).lower():
+                found = self._by_ref(ref_id)     # the first attempt registered (spike part 2)
+                if found is None:
+                    raise BrokerError(f"place refused and no order carries ref {ref_id}", 409, str(error)) from error
+                order = found
+            else:
+                raise BrokerError(str(error), 400, str(error)) from error
+        else:
+            order = ((placed.get("data") or {}).get("order") if isinstance(placed, dict) else None) or {}
+        if not order.get("id"):
+            raise BrokerError("place returned no order id", 502, json.dumps(order)[:300])
+        return OrderReceipt(broker_order_id=str(order["id"]), status=str(order.get("state", "")),
+                            symbol=approved.order.symbol, quantity=approved.order.quantity,
+                            limit_price=approved.order.execution.price_bound, client_order_id=ref_id)
+
+    def _by_ref(self, ref_id: str) -> Optional[dict]:
+        for order in self._mcp.equity_orders():
+            if order.get("ref_id") == ref_id:
+                return order
+        return None
+
+    def get_order(self, broker_order_id: str) -> OrderStatus:
+        orders = self._mcp.equity_orders(order_id=broker_order_id)
+        if not orders:
+            raise BrokerError(f"no order {broker_order_id} on the Agentic account", 404, "")
+        return _status(orders[0])
+
+    def get_order_by_client_reference(self, client_reference: str) -> Optional[OrderStatus]:
+        found = self._by_ref(client_reference)
+        return _status(found) if found else None
+
+    def cancel_order(self, broker_order_id: str) -> None:
+        try:
+            self._mcp.call("cancel_equity_order", {"account_number": self._mcp.account_number,
+                                                   "order_id": broker_order_id})
+        except RobinhoodError as error:
+            if "cannot be cancelled" not in str(error).lower():   # terminal already: idempotent
+                raise BrokerError(str(error), 400, str(error)) from error
+
+    def open_orders(self) -> list[str]:
+        return [str(o["id"]) for o in self._mcp.equity_orders()
+                if o.get("id") and not _status(o).is_terminal]
+
+    # -- the account ----------------------------------------------------------------
+
+    def get_positions(self) -> list[BrokerPosition]:
+        out = []
+        for row in self._mcp.equity_positions():
+            quantity = _d(row.get("quantity"))
+            if quantity <= 0:
+                continue
+            cost = _d(row.get("average_buy_price")) * quantity
+            out.append(BrokerPosition(symbol=str(row.get("symbol", "")).upper(), quantity=quantity,
+                                      market_value=cost, cost_basis=cost))
+        return out
+
+    def get_buying_power(self) -> Decimal:
+        """SETTLED cash only (ruling 2026-11-04: settled funds only, no
+        good-faith violations): cash less the account's unsettled funds."""
+        return settled_cash(self._mcp.portfolio(), self._mcp.account_row())
+
+    def permissions(self) -> BrokerPermissions:
+        row = self._mcp.account_row()
+        level = int(str(row.get("option_level") or "option_level_0").rsplit("_", 1)[-1] or 0)
+        return BrokerPermissions(options_level=level, shorting_enabled=False,
+                                 margin_multiplier=Decimal("1") if row.get("type") == "cash" else Decimal("2"))
+
+
+def settled_cash(portfolio: dict, account: dict) -> Decimal:
+    """Cash the account may spend without a good-faith violation: cash less
+    unsettled funds and less pending deposits (Robinhood's cash includes
+    early access to deposits in transit)."""
+    cash = _d(portfolio.get("cash"))
+    held_back = _d(account.get("unsettled_funds")) + _d(portfolio.get("pending_deposits"))
+    return max(Decimal("0"), cash - held_back)
+
+
+_TERMINAL = {"filled": "filled", "cancelled": "cancelled", "rejected": "rejected", "failed": "rejected",
+             "voided": "rejected", "partially_filled_rest_cancelled": "cancelled"}
+
+
+def _status(order: dict) -> OrderStatus:
+    state = str(order.get("state", ""))
+    filled = _d(order.get("cumulative_quantity"))
+    price = order.get("average_price")   # never "price": that is a limit order's limit
+    return OrderStatus(broker_order_id=str(order.get("id", "")), status=_TERMINAL.get(state, state),
+                       filled_quantity=filled, filled_avg_price=_d(price) if filled > 0 and price else None)

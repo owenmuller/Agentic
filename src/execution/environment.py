@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 #: Values that turn paper mode OFF. Anything else — including an unset variable, an
 #: empty string, or a typo — leaves paper mode ON. Constraint #6: an ambiguous value
@@ -50,7 +50,23 @@ def load_environment(dotenv_path: Optional[Path] = None) -> None:
     """
     path = dotenv_path or (repo_root() / ".env")
     if path.exists():
+        _refuse_a_shared_live_flag(path)
         load_dotenv(path, override=False)
+
+
+def _refuse_a_shared_live_flag(path: Path) -> None:
+    """``.env`` is read by EVERY process on the box, so a live-direction value
+    in it would reach all of them (GO LIVE ruling 2026-11-04: the live flag
+    applies to the Robinhood live mirror only). A paper value is harmless;
+    a live one stops every process that loads the file. Read-only."""
+    values = dotenv_values(path)
+    raw = values.get("PAPER_MODE")
+    if (raw is not None and raw.strip().lower() in _DISABLED) or values.get(LIVE_CONFIRMATION_VARIABLE) is not None:
+        raise LiveModeMisconfigured(
+            f"{path.name} carries a live-trading variable (Constraint #4). Every process reads {path.name}, so a "
+            f"live flag there would reach all of them; by ruling 2026-11-04 it may reach only the live mirror's own "
+            f"unit. Refusing to start."
+        )
 
 
 def paper_mode() -> bool:
