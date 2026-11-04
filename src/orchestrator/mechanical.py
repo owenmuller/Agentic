@@ -54,6 +54,8 @@ from risk_gate.sectors import SectorMap
 from risk_gate.state import Sleeve
 from signals import Signal, SignalClass
 
+from orchestrator.quotes import QuoteReader
+
 ZERO = Decimal("0")
 CENTS = Decimal("0.01")
 
@@ -111,11 +113,15 @@ class MechanicalEngine:
         virtual_cash: Optional[Decimal] = None,
         high_water_mark: Optional[Decimal] = None,
         halted: bool = False,
+        sides: Optional[Callable[[str], Optional[tuple[Decimal, Decimal]]]] = None,
     ) -> None:
         self._gate = gate
         self._adapter = adapter
         self._audit = audit
         self._prices = prices
+        #: Valuations (the breaker's sleeve value) at the mid of a tight quote,
+        #: never the ask (human ruling 2026-11-04; orchestrator.quotes).
+        self._quotes = QuoteReader(prices, sides=sides, engine="mechanical", clock=clock)
         #: The bid side for time-exit sells (defect 2026-09-28, with the judged
         #: exit engine): a sell resting at the ask does not print in a falling
         #: tape. None = the quote rounded down, as before.
@@ -570,7 +576,7 @@ class MechanicalEngine:
     def _mark_and_check_breaker(self) -> None:
         marks = {}
         for position in self._tracked.values():
-            quote = self._prices(position.symbol)
+            quote = self._quotes.value(position.symbol)
             if quote is not None and quote > ZERO:
                 marks[("mechanical", position.symbol)] = quote
         if marks:

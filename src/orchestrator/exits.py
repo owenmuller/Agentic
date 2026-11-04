@@ -116,6 +116,7 @@ from signals.filers import same_filer
 from orchestrator.budget import ResearchBudget
 from orchestrator.config import ExitsConfig
 from orchestrator.pipeline import PriceSource, WorkingOrder
+from orchestrator.quotes import QuoteReader
 
 ZERO = Decimal("0")
 CENTS = Decimal("0.01")
@@ -370,6 +371,8 @@ class ExitEngine:
         cost_sink=None,
         option_prices=None,
         bids: Optional[Callable[[str], Optional[Decimal]]] = None,
+        sides: Optional[Callable[[str], Optional[tuple[Decimal, Decimal]]]] = None,
+        last_trade: Optional[Callable[[str], Optional[Decimal]]] = None,
         close_before_expiry_days: Optional[int] = None,
         short_dated_dte: Optional[int] = None,
         short_dated_close_before_expiry_days: Optional[int] = None,
@@ -404,6 +407,10 @@ class ExitEngine:
         #: reached the judged exit engine). None = the test doubles; the quote
         #: rounded down is then the limit, as before.
         self._bids = bids
+        #: Valuations at the mid and stops on the bid or last trade, never the
+        #: ask (human ruling 2026-11-04; orchestrator.quotes).
+        self._quotes = QuoteReader(prices, sides=sides, last_trade=last_trade, engine=f"{sleeve} exits",
+                                   clock=clock)
         #: Called with each review's estimated cost (None = unpriced/no call),
         #: so the daily cost tripwire sees reviews as well as entry passes.
         self._cost_sink = cost_sink
@@ -1385,8 +1392,17 @@ class ExitEngine:
         """
         moment = now or self._clock()
         marks: dict[tuple[str, ...], Decimal] = {}
+        # What a stop compares (ruling 2026-11-04): the bid of a tight quote, the
+        # last trade otherwise, never the ask; an option's premium mid as before.
+        triggers: dict[tuple[str, ...], Decimal] = {}
         for position in self._tracked.values():
-            price = self._mark_for(position)
+            if position.is_option:
+                price = self._mark_for(position)
+                trigger = price
+            else:
+                price, trigger = self._quotes.read(position.symbol)
+            if trigger is not None:
+                triggers[position.key] = trigger
             if price is None:
                 continue
             marks[position.key] = price
@@ -1428,12 +1444,15 @@ class ExitEngine:
             if position.pending_exit is not None:
                 continue
             price = marks.get(position.key)
+            trigger = triggers.get(position.key)
+            side = "" if position.is_option else " (bid or last trade)"
 
-            if price is not None and price <= position.stop_price:
+            if trigger is not None and trigger <= position.stop_price:
+                price = trigger
                 if position.stop_is_trailing:
                     reason: Optional[ExitReason] = ExitReason.TRAILING_STOP
                     detail = (
-                        f"{position.symbol} at {price} is at or below the "
+                        f"{position.symbol} at {price}{side} is at or below the "
                         f"{position.stop_price} trailing stop — "
                         f"{self._config.ratchet.trail_fraction:%} below the "
                         f"{position.high_water_price} high-water mark, armed after a "
@@ -1443,7 +1462,7 @@ class ExitEngine:
                 else:
                     reason = ExitReason.MAX_LOSS_STOP
                     detail = (
-                        f"{position.symbol} at {price} is at or below the "
+                        f"{position.symbol} at {price}{side} is at or below the "
                         f"{position.stop_price} stop set at entry "
                         f"({self._config.max_loss_fraction:%} below entry "
                         f"{position.entry_price})"
@@ -2261,12 +2280,9 @@ class ExitEngine:
         return self._price_for(position.symbol)
 
     def _price_for(self, symbol: str) -> Optional[Decimal]:
-        """A quote, or None. A price-source bug must not kill the loop."""
-        try:
-            return self._prices(symbol)
-        except Exception:  # noqa: BLE001 - degrade, never crash the cycle
-            logger.exception("price source failed for %s", symbol)
-            return None
+        """A valuation: the mid of a tight quote, or None (ruling 2026-11-04:
+        never the ask; a quote wider than 2% is carded and skipped)."""
+        return self._quotes.value(symbol)
 
 
 def _first_buy_at(trail: AuditTrail) -> datetime:

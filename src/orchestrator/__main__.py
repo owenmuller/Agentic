@@ -433,10 +433,10 @@ def _quiver_shadows_step(directory: Path, alpaca, now: datetime, log) -> None:
             rows = alpaca.bars([symbol], prior[-1] + "T00:00:00Z", prior[-1] + "T23:59:00Z", "all")
             return bool(rows.get(symbol))
 
-        # listed, tradeable US equities (ruling 2026-11-04): the momentum
-        # universe's asset list - active, on a national exchange, no fund,
-        # ETF, note or preferred - so mutual funds and OTC names never enter
-        common = {a["symbol"] for a in alpaca.assets() if a.get("status") == "active"}
+        # listed, tradeable US instruments (rulings 2026-11-04): active and on a
+        # national exchange, listed ETFs included; mutual funds, OTC names and
+        # anything not exchange-listed never enter
+        common = alpaca.exchange_listed()
 
         client = QuiverDataClient()
         try:

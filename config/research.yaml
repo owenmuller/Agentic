@@ -69,16 +69,11 @@ web_search:
 # Bounds the evidence-gathering phase; the report phase always runs exactly once.
 max_search_continuations: 3
 
-# TRIAGE GATE (cost reduction 2026-08-20). One cheap forced-tool call before any
-# full research pass: "does this signal contain a plausibly tradeable, verifiable,
-# non-stale thesis?" No -> stage_rejection code "triage" (~$0.02), full pass never
-# invoked. Yes -> proceeds exactly as before; nothing the triage model returns has
-# any authority beyond the yes/no. Counts toward the daily COST meter, NOT the
-# 40-pass research budget. A triage failure (outage, malformed output) FAILS OPEN
-# to the full pass - a broken gate must not silently stop the research layer.
-triage:
-  model: claude-haiku-4-5-20251001
-  max_tokens: 200
+# TRIAGE GATE - REMOVED (human ruling 2026-11-04). It never returned a verdict:
+# the client parsed its answer against the research tool's name, so every
+# signal proceeded to the full pass, as it still does. Records written with a
+# "triage" stage (none exist) still parse. haiku stays pinned for the learning
+# journal (orchestrator.yaml learning.model).
 
 # Two-stage research (cost architecture 2026-08-25): every full pass screens on
 # Sonnet first. The sonnet tiers stay THINKING-OFF by ruling (2026-09-03): the

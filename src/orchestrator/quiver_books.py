@@ -71,9 +71,10 @@ def congress_buys_weights(rows: Iterable[dict], day: str,
                           listed: Optional[Callable[[str], bool]] = None) -> dict[str, float]:
     """Target weights on ``day``: purchases disclosed in [day - window, day),
     stock tickers only, weighted by reported size and summed per ticker.
-    ``listed`` keeps only listed, tradeable US equities (human ruling
-    2026-11-04: Quiver tags mutual funds and OTC names as stock - LSYIX,
-    NOKBF and WUXIF entered the first book and had no price)."""
+    ``listed`` keeps only exchange-listed, tradeable US instruments, listed
+    ETFs included (human rulings 2026-11-04: Quiver tags mutual funds and OTC
+    names as stock - LSYIX, NOKBF and WUXIF entered the first book and had no
+    price)."""
     end = _day(day)
     start = end - timedelta(days=window_days)
     size: dict[str, float] = {}

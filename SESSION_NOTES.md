@@ -4148,6 +4148,23 @@ Same-name-same-day de-duplication is a separate ruling — flagged, not built.
 
 Suite green on the droplet (exit 0).
 
+### 2026-11-04 (evening) — RULINGS: quotes for every engine; Congress Buys keeps ETFs; triage REMOVED; backup unit
+
+1. **Exit engine and mechanical arm: valuations at the mid; stops on the bid or the last trade, never the ask; a quote wider than 2% is not valued and is carded (BUILT).**
+   - One reader, `orchestrator/quotes.py` `QuoteReader`, serves the momentum sleeve, the exit engine (judged and aggressive) and the mechanical arm.
+   - A wide quote gives no valuation (the last mark stands) and one "Quote quality" yellow card per symbol a day.
+   - The stop trigger is the bid of a tight quote; on a wide quote or one with no bid it is the last trade (`AlpacaPriceSource.last_trade`, same staleness rule); with neither, no trigger that tick.
+   - **My reading, flagged:** on a wide quote the stop uses the last trade, not the bid, because a thin IEX bid can sit far under the market.
+   - Options keep their premium mid.
+   - Tests: `tests/test_quotes.py`. A stop fires on a 118.95 bid under an ask of 119.40 (the old ask-based check held it off). A wide quote keeps the last mark, cards once a day, and fires on the last trade. The mechanical valuation is the mid.
+2. **Congress Buys keeps listed ETFs** (`feeds.Alpaca.exchange_listed`: active and on a national exchange, 13,176 symbols on 2026-11-04). AVUV, AGZ and CMBS are in; LSYIX, NOKBF and WUXIF are out; AVB and EA are out too, being no longer active at Alpaca.
+3. **Triage gate REMOVED** (the module, the client method, the config, the pipeline and loop gate, its tests).
+   - Records with a TRIAGE stage still parse; none were ever written.
+   - Spend saved, estimated from the audit log: 581 calls since 2026-08-20 at about $0.001 each, $0.57 in all, about $0.01 a trading day ($0.0093 over the last 10 sessions). The estimate is from each signal's content length; the exact-prompt rebuild failed.
+   - The "~$0.02 a call" in its docs was 20x too high.
+   - Live round trip of the research pass without it: golden `--limit 1 --single-pass`, PASS, $0.31.
+4. **Backup unit:** installed by the human.
+
 ### 2026-11-04 (later) — LEARNING LOOP steps 1-2 BUILT: the case feed, the post-mortem writer (golden 9/9), the miner's report; switched on
 
 - **Feed.** 289 resolved judged decisions on 2026-11-04:

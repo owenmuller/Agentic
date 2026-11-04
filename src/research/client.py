@@ -225,29 +225,6 @@ class AnthropicResearchClient:
             result = _replace(result, transcript_hash=transcript_hash)
         return result
 
-    def triage(
-        self, *, system: str, user: str, tool: dict[str, Any]
-    ) -> LLMResult:
-        """One cheap forced-tool call. No search, no phases, no authority."""
-        triage_config = self._config.triage
-        if triage_config is None:
-            raise RuntimeError("triage called with no triage config")
-        usage = _fresh_usage()
-        response = self._client.messages.create(
-            model=triage_config.model,
-            max_tokens=triage_config.max_tokens,
-            system=_cached_system(system),
-            messages=[{"role": "user", "content": user}],
-            tools=[tool],
-            tool_choice={"type": "tool", "name": tool["name"]},
-        )
-        self._track_usage(response, usage)
-        return self._to_result(
-            response,
-            usage=usage,
-            est_cost_usd=self._estimate(triage_config.model, usage),
-        )
-
     def single_call(
         self, *, system: str, user: str, tool: dict[str, Any], model: str, max_tokens: int
     ) -> LLMResult:

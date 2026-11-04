@@ -37,7 +37,6 @@ from research.client import AnthropicResearchClient, LLMClient
 from research.config import ResearchConfig
 from research.credibility import CredibilityTracker
 from research.exit_review import ExitReviewPass
-from research.triage import TriagePass
 from research.research_pass import ResearchPass
 from risk_gate.gate import RiskGate
 from risk_gate.limits import RiskLimits
@@ -544,11 +543,6 @@ def start(
             screen_config.graduation_confidence if screen_config is not None else None
         ),
     )
-    # The triage gate: only when configured AND the client can actually run one.
-    # Fakes without a triage method simply have no gate — fail-open by absence.
-    triage = None
-    if checks.research_config.triage is not None and hasattr(client, "triage"):
-        triage = TriagePass(client)
     from datetime import time as _time
 
     from orchestrator.ops import CostMeter
@@ -570,6 +564,9 @@ def start(
         prices=prices,
         # The bid side for sells (defect 2026-09-28): a marketable exit limit.
         bids=getattr(prices, "bid", None),
+        # Valuations at the mid, stops on the bid or last trade (ruling 2026-11-04).
+        sides=getattr(prices, "sides", None),
+        last_trade=getattr(prices, "last_trade", None),
         review_pass=ExitReviewPass(client, checks.clock),
         budget=checks.budget,
         config=checks.orchestrator_config.exits,
@@ -659,7 +656,6 @@ def start(
     )
     pipeline = SignalPipeline(
         research=research,
-        triage=triage,
         sizing=SizingEngine(checks.limits),
         gate=checks.gate,
         adapter=checks.adapter,
@@ -728,6 +724,7 @@ def start(
             virtual_cash=checks.session.mechanical_virtual_cash,
             high_water_mark=checks.session.mechanical_high_water_mark,
             halted=checks.session.mechanical_halted,
+            sides=getattr(prices, "sides", None),
         )
         mechanical.replay(checks.audit.mechanical_trails())
 

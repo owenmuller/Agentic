@@ -16,7 +16,6 @@ import pytest
 
 from audit.records import RejectedStage, SignalSnapshot
 from orchestrator.prefilter import ResearchPreFilter
-from research.triage import build_triage_prompt
 from signals import SignalsConfig
 from config_overrides import pre_demotion_signals_config
 from signals.records import Classification, Priority, Signal, SignalClass, sanitize_invisible
@@ -114,7 +113,6 @@ def test_no_prompt_surface_carries_an_invisible_character():
     laced_signal = signal(f"Tar{ZWSP}iffs are wor{ZWJ}king!")
     for rendered in (
         laced_signal.for_research_prompt(),
-        build_triage_prompt(laced_signal),
     ):
         assert ZWSP not in rendered and ZWJ not in rendered
         assert "Tariffs are working!" in rendered

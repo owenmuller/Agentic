@@ -78,13 +78,6 @@ class ScreenStage(_Strict):
         )
 
 
-class TriageConfig(_Strict):
-    """The cheap yes/no gate in front of the full research pass."""
-
-    model: str
-    max_tokens: int = Field(gt=0)
-
-
 class ModelPricing(_Strict):
     """Dollars per million tokens. Estimates for the audit record — the console
     bill is the truth; these exist so attribution can charge research spend to
@@ -147,7 +140,7 @@ class ResearchConfig(_Strict):
     web_search: WebSearchConfig
     max_search_continuations: int
     #: Model pinning (human ruling 2026-09-02): the closed set of model ids this
-    #: system is allowed to call. Every configured model — top-level, triage,
+    #: system is allowed to call. Every configured model — top-level,
     #: screen, tiers — must be a member, and floating aliases (-latest) are
     #: rejected outright. Editing this list IS the model-change ruling trigger:
     #: CLAUDE.md requires a dated ruling, an attribution partition, and a golden-
@@ -159,8 +152,6 @@ class ResearchConfig(_Strict):
     #: Cost-estimate table, keyed by model id. A model missing from the table
     #: yields no estimate (None), never a guessed one.
     pricing: dict[str, ModelPricing] = Field(default_factory=dict)
-    #: The triage gate. None disables it (every signal goes straight to research).
-    triage: Optional[TriageConfig] = None
     #: The two-stage screen. None disables it (single pass at the source tier).
     screen: Optional[ScreenStage] = None
     #: Report-phase sampling (ruling 2026-09-03). Defaults to "send nothing".
@@ -198,8 +189,6 @@ class ResearchConfig(_Strict):
         """Startup hard-fail on an unpinned or floating model id — a model that
         can drift silently invalidates every attribution partition behind it."""
         configured: dict[str, str] = {"model": self.model}
-        if self.triage is not None:
-            configured["triage.model"] = self.triage.model
         if self.screen is not None:
             configured["screen.model"] = self.screen.model
         if self.tiers is not None:

@@ -144,6 +144,30 @@ class AlpacaPriceSource:
             return None
         return bid, ask
 
+    def last_trade(self, symbol: str) -> Optional[Decimal]:
+        """The latest trade's price if fresh (the quote staleness rule), else
+        None: what a stop compares when the quote is too wide to trust
+        (human ruling 2026-11-04). Never raises."""
+        try:
+            response = self._client.get(f"/v2/stocks/{quote(symbol)}/trades/latest", params={"feed": self._feed})
+            if response.status_code >= 400:
+                logger.warning("last trade for %s returned HTTP %d", symbol, response.status_code)
+                return None
+            body = (response.json() or {}).get("trade")
+        except Exception as error:  # noqa: BLE001 - an outage is a missing price
+            logger.warning("last trade request for %s failed: %s", symbol, error)
+            return None
+        if not isinstance(body, dict):
+            return None
+        age = self._age_of(body.get("t"))
+        if age is None or age > self._max_age:
+            return None
+        try:
+            price = Decimal(str(body.get("p")))
+        except (InvalidOperation, ValueError):
+            return None
+        return price if price > ZERO else None
+
     #: A symbol with no usable quote for this long in market hours is an
     #: outage, reported once until a quote returns (data-health rule 2026-10-15).
     QUOTE_GAP = timedelta(minutes=15)

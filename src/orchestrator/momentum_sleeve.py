@@ -62,6 +62,7 @@ from risk_gate.schema import EquityBuyOrder, EquitySellToCloseOrder, LimitExecut
 from risk_gate.state import Sleeve
 
 from orchestrator.config import MomentumSleeveConfig
+from orchestrator.quotes import QuoteReader
 
 ZERO = Decimal("0")
 CENTS = Decimal("0.01")
@@ -237,6 +238,8 @@ class MomentumSleeve:
         #: (bid, ask) of one quote, for marks. Optional: a price source without
         #: it (the test doubles) marks at its single price.
         self._sides = sides
+        self._quotes = QuoteReader(prices, sides=sides, max_spread=config.mark_max_spread, engine="momentum",
+                                   clock=clock)
         self._limits = limits
         self._config = config
         self._plan_dir = plan_dir
@@ -803,23 +806,11 @@ class MomentumSleeve:
 
     def _mark_price(self, symbol: str) -> Optional[Decimal]:
         """The mid of one quote, or None when the quote is missing or too wide
-        to be a price - then the previous mark stands (ruling 2026-11-04)."""
+        to be a price - then the previous mark stands, and a wide quote is
+        carded (rulings 2026-11-04; orchestrator.quotes)."""
         if self._sides is None:
             return self._quote(symbol)
-        try:
-            sides = self._sides(symbol)
-        except Exception:  # noqa: BLE001 - a price bug must not kill the loop
-            logger.exception("momentum mark failed for %s", symbol)
-            return None
-        if sides is None:
-            return None
-        bid, ask = sides
-        mid = (bid + ask) / 2
-        if mid <= ZERO or (ask - bid) / mid > self._config.mark_max_spread:
-            logger.info("momentum mark for %s skipped: quote %s x %s is wider than %s of mid",
-                        symbol, bid, ask, self._config.mark_max_spread)
-            return None
-        return mid
+        return self._quotes.value(symbol)
 
     def _sell_limit(self, symbol: str, quote: Decimal) -> Decimal:
         """Marketable: the bid rounded down, else the quote less the buffer."""

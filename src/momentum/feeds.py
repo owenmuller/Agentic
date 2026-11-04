@@ -321,6 +321,23 @@ class Alpaca:
             self.cache.put("alpaca_assets", cached)
         return cached
 
+    def exchange_listed(self) -> frozenset[str]:
+        """Every ACTIVE US-equity asset listed on a national exchange, funds
+        and ETFs included: the Congress Buys shadow's universe (human ruling
+        2026-11-04, second: listed ETFs stay; mutual funds, OTC and anything
+        not exchange-listed go). Raises on an empty listing."""
+        cached = self.cache.get("alpaca_exchange_listed")
+        if cached is None:
+            r = self._trading.get("/v2/assets", params={"status": "active", "asset_class": "us_equity"})
+            r.raise_for_status()
+            rows = r.json()
+            if not rows:
+                raise RuntimeError("Alpaca returned no active assets")
+            cached = sorted({row["symbol"] for row in rows if row.get("exchange") in EXCHANGES
+                             and row.get("tradable", True)})
+            self.cache.put("alpaca_exchange_listed", cached)
+        return frozenset(cached)
+
     def asset_names(self) -> dict[str, str]:
         """Every US-equity asset's name, active and inactive, UNFILTERED (funds
         included): the learning journal tells a fund from a company by it

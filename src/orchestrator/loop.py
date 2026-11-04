@@ -90,8 +90,6 @@ class TickReport:
     #: Signals recorded as pre_filter rejections this tick — arrived, written down,
     #: not worth a research pass.
     prefiltered: int = 0
-    #: Signals the triage gate stopped this tick — ~$0.02 each, no pass spent.
-    triaged_out: int = 0
     settled: int = 0
     #: Thesis reviews run this tick (each spent one research pass).
     reviews_run: int = 0
@@ -597,10 +595,10 @@ class TradingLoop:
                     self._pipeline.record_prefiltered(signal, reason, code=code)
                     report.prefiltered += 1
                     continue
-            # The judged arm's off switch (2026-08-27). Before triage and the
-            # budget: an arm that cannot open a position must not spend a
-            # dollar deciding what it would have opened. Recorded, never
-            # sealed — the backlog re-emits when it is switched back on.
+            # The judged arm's off switch (2026-08-27). Before the budget: an
+            # arm that cannot open a position must not spend a dollar deciding
+            # what it would have opened. Recorded, never sealed — the backlog
+            # re-emits when it is switched back on.
             if not self._gate.limits.equity_sleeve.entries_enabled:
                 self._pipeline.record_prefiltered(
                     signal,
@@ -630,7 +628,7 @@ class TradingLoop:
                 report.prefiltered += 1
                 continue
             # Per-source daily cap (2026-08-25): after the content rules so the
-            # rejection code stays precise, before triage so a capped source
+            # rejection code stays precise, before the budget so a capped source
             # spends nothing further today.
             if self._source_pass_day != dispatch_now.date():
                 self._source_pass_day = dispatch_now.date()
@@ -695,7 +693,7 @@ class TradingLoop:
                     continue
             if self._class_caps is not None:
                 # Combined class pool (ruling 2026-09-18): after the per-source
-                # cap so the code stays precise, before triage so a capped
+                # cap so the code stays precise, before the budget so a capped
                 # class spends nothing further today.
                 bucket = self._class_caps.bucket(signal.signal_class)
                 class_cap = self._class_caps.cap_for(signal.signal_class)
@@ -712,16 +710,6 @@ class TradingLoop:
                         )
                     report.prefiltered += 1
                     continue
-            # The triage gate: dollars (metered) but never a budget pass. A no
-            # writes the trail and stops here; a yes or a gate failure proceeds
-            # exactly as before. Runs BEFORE the budget so a gated signal cannot
-            # waste a pass; a deferred signal is re-triaged tomorrow (~$0.02).
-            triaged = self._pipeline.triage_gate(signal)
-            if triaged is not None:
-                report.triaged_out += 1
-                if self._cost_meter is not None and triaged.rejection is not None:
-                    self._cost_meter.add(triaged.rejection.est_cost_usd)
-                continue
             if not self._budget.try_spend():
                 # Deferred, not dropped: these are the first thing researched tomorrow.
                 self._deferred = pending[index:]

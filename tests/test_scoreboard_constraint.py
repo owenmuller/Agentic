@@ -36,7 +36,6 @@ FENCED = (
     "orchestrator/learning_feed.py",
     "research/prompts.py",
     "research/exit_review.py",
-    "research/triage.py",
 )
 
 #: Where the scoreboard lives. Importing any of these from a fenced module is
@@ -95,7 +94,7 @@ def test_the_hurdle_reads_only_the_opportunity_set():
     assert fields == {"deployed_fraction", "positive_candidates", "open_positions", "target_positions"}
 
 
-@pytest.mark.parametrize("relative", ("research/prompts.py", "research/exit_review.py", "research/triage.py", "research/add_decision.py",
+@pytest.mark.parametrize("relative", ("research/prompts.py", "research/exit_review.py", "research/add_decision.py",
                                       "orchestrator/momentum_veto.py"))
 def test_prompt_builders_never_name_the_target_or_the_scoreboard(relative):
     path = SRC / relative
