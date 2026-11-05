@@ -27,6 +27,18 @@ class BrokerError(RuntimeError):
     """Any failure originating at the broker boundary."""
 
 
+class OrderOutcomeUnknown(BrokerError):
+    """The place call failed in a way that says nothing about whether the
+    broker acted (a 5xx, a timeout), and no order carries its client reference
+    yet. The caller treats the order as WORKING under that reference - never
+    as refused, never re-sent - until the venue's own listing shows it, or has
+    shown it absent for long enough to call it never placed."""
+
+    def __init__(self, client_reference: str, message: str) -> None:
+        super().__init__(message)
+        self.client_reference = client_reference
+
+
 class UnsupportedInstrument(BrokerError):
     """This backend cannot trade this instrument.
 

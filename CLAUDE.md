@@ -279,6 +279,11 @@ Software-only books on two of Quiver's published strategies (quiverquant.com/str
   - Exits fire on the paper close, or on the live stop or target checked on the bid (the last trade when there is no bid), never the ask; also at the intraday close and as a past-horizon backstop.
   - Trade approvals are read at every session start; if they are on, nothing is placed and a red card goes out. A copy more than 5 minutes late is skipped.
   - With no live broker the mirror runs DRY (logs what it would do, sends nothing).
+  - **Broker failures (2026-11-05, after an HTTP 502 on the MCP):**
+    - A read is retried through a 5xx or a timeout. An order is never re-sent.
+    - A place call that fails mid-request is found by its reference, or held as working until Robinhood's own order list has not shown it for 120 s.
+    - The working order survives a restart, and a restart cancels one still open.
+    - A holding the mirror does not track blocks new entries and is carded red; it is never sold blind.
   - **Deposits and withdrawals are cash flows, never P&L (human ruling 2026-11-04, second).** The Agentic MCP has no transfer records, so a flow is a change in the broker's cash that the mirror's own fills and fees do not explain. It is reconciled only with no order working and 60 seconds after a fill.
     - Each flow moves the kill-switch baseline (starting equity plus net flows), today's loss-limit baseline and the gate's high-water mark; a withdrawal also leaves the gate's cash at once. Each one is carded.
     - Returns are Modified Dietz by day, chained into a time-weighted return since mirroring began.

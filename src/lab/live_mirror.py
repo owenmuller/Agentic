@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
-from execution import BrokerError, cards
+from execution import BrokerError, OrderOutcomeUnknown, cards
 from risk_gate.gate import RiskGate
 from risk_gate.schema import (
     EquityBuyOrder, EquitySellToCloseOrder, LimitExecution, MarketBuyExecution, MarketSellExecution,
@@ -228,7 +228,9 @@ class LiveMirror:
     # -- the session --------------------------------------------------------------------
 
     def start(self) -> None:
-        """Session start: read the account, roll the day, build the gate."""
+        """Session start: settle a working order an earlier process left,
+        read the account, roll the day, build the gate."""
+        self._stray()
         snap = self.snapshot()
         today = self._today()
         self._flows(snap)   # an overnight deposit moves the baselines BEFORE the day rolls
@@ -253,6 +255,60 @@ class LiveMirror:
                            held={k: str(v) for k, v in snap.held.items()})
         self._save()
 
+    def _stray(self) -> None:
+        """A working order an earlier process left in the state file. Its gate
+        reservation died with that process, so it is never left to run
+        unwatched: cancelled if still open, recorded if finished or never
+        placed. A fill it left shows up as a held position and is caught by
+        ``_check_unwatched``. A failed lookup raises: the start is retried at
+        the next tick and nothing trades meanwhile."""
+        left = self.e.get("working")
+        if not left or self.dry:
+            return
+        status = (self.broker.get_order(left["order_id"]) if left.get("order_id")
+                  else self.broker.get_order_by_client_reference(left["ref"]))
+        if status is None:
+            outcome = "never placed"
+        elif status.is_terminal:
+            outcome = f"{status.status}, {status.filled_quantity} filled"
+        else:
+            self.broker.cancel_order(status.broker_order_id)
+            outcome = f"still {status.status} with {status.filled_quantity} filled: cancel requested"
+        self.ledger.append("stray_order", **{k: v for k, v in left.items() if k != "ref"}, client_ref=left.get("ref"),
+                           outcome=outcome)
+        self.e.pop("working", None)
+        self._card(f"a live {left['symbol']} order from an earlier run", cards.LOOK if status is None else cards.ACTION,
+                   [f"The mirror restarted with a {left['kind']} order working ({outcome}).",
+                    "Any shares it left are checked against what the mirror tracks; new entries wait while they "
+                    "do not match."],
+                   look_at="a live order an earlier run left behind" if status is None else None,
+                   what_to_do=None if status is None else
+                   cards._ask(f"Show me the live {left['symbol']} order the mirror found after its restart."))
+        self.state.save(self.state_path)
+
+    def _check_unwatched(self, snap: Snapshot) -> None:
+        """Every holding must be a tracked position (or the working order's
+        symbol): anything else has no stop watching it. It blocks new
+        entries and is carded once a symbol a day; it is never sold blind."""
+        known = {p["symbol"] for p in self.e.get("positions", {}).values()}
+        if self._working is not None:
+            known.add(self._working["symbol"])
+        unwatched = sorted(s for s in snap.held if s not in known)
+        if unwatched:
+            self.e["unwatched"] = unwatched
+        else:
+            self.e.pop("unwatched", None)
+        noted, today = self.e.setdefault("unwatched_noted", {}), self._today().isoformat()
+        for symbol in unwatched:
+            if noted.get(symbol) == today:
+                continue
+            noted[symbol] = today
+            self.ledger.append("unwatched_position", symbol=symbol, quantity=snap.held[symbol])
+            self._card(f"the live account holds {symbol} that the mirror does not track", cards.ACTION, [
+                f"{snap.held[symbol]} {symbol} is held with no mirrored position behind it, so no stop watches it.",
+                "New live entries are blocked until it is closed or explained; exits of tracked positions keep "
+                "running."], what_to_do=cards._ask(f"Show me the untracked live {symbol} holding and how it got there."))
+
     def tick(self) -> None:
         if self.gate is None:
             self.start()
@@ -262,6 +318,12 @@ class LiveMirror:
         self._flows(snap)
         today = self._today()
         phase = self.e["phase"]
+        if self._working is not None and phase != "mirroring":
+            done = self._settle(self._working)   # e.g. a round-trip order whose outcome was unknown
+            if done is None:
+                return
+            self._after_fill(self._working, done)
+            self._release()
         if phase == "waiting_funds":
             # settled cash excludes deposits in transit and unsettled funds
             if snap.settled_cash >= self.config.min_funding_usd:
@@ -363,6 +425,18 @@ class LiveMirror:
             return None
         try:
             receipt = self.broker.submit_order(decision, client_reference=(extra or {}).get("ref"))
+        except OrderOutcomeUnknown as error:
+            # the broker may have acted: keep the reservation and watch it by its reference (never re-sent)
+            self.ledger.append("order_unknown", kind=kind, symbol=order.symbol, client_ref=error.client_reference,
+                               error=str(error))
+            self._card(f"a live {order.symbol} order's outcome is unknown", cards.LOOK, [
+                f"{kind.replace('_', ' ')}: Robinhood failed mid-request ({cards.plain(str(error))[:160]}).",
+                "It is watched by its reference: adopted if it appears, called never placed if Robinhood's own "
+                f"order list has not shown it for {self.config.unknown_order_seconds} seconds. Nothing new is "
+                "placed meanwhile."], look_at="a live order Robinhood may or may not have taken")
+            self._hold({"decision": decision, "order_id": None, "ref": error.client_reference, "kind": kind,
+                        "symbol": order.symbol, "placed": self.clock(), "extra": extra or {}})
+            return None
         except BrokerError as error:
             self.gate.cancel(decision)
             self.ledger.append("broker_refused", kind=kind, symbol=order.symbol, error=str(error),
@@ -379,7 +453,7 @@ class LiveMirror:
         working = {"decision": decision, "order_id": receipt.broker_order_id, "kind": kind,
                    "symbol": order.symbol, "placed": self.clock(), "extra": extra or {}}
         if not wait:
-            self._working = working
+            self._hold(working)
             return {"order_id": receipt.broker_order_id}
         wait_for = timedelta(seconds=self.config.fill_wait_seconds)
         deadline, cancelled = self.clock() + wait_for, False
@@ -390,7 +464,7 @@ class LiveMirror:
             if self.clock() >= deadline:
                 if cancelled:
                     # a cancel that has not landed: settle it later, never forget it
-                    self._working = working
+                    self._hold(working)
                     self.ledger.append("still_working", order_id=working["order_id"], kind=kind)
                     return None
                 self._cancel(working)   # accepted means "requested", not "done" (spike 2b)
@@ -402,13 +476,51 @@ class LiveMirror:
 
         time.sleep(2)
 
+    def _hold(self, working: dict) -> None:
+        """The one working order, in memory and in the state file, so a
+        restarted process finds it (``_stray``) instead of forgetting it."""
+        self._working = working
+        self.e["working"] = {"order_id": working["order_id"], "ref": working.get("ref"), "kind": working["kind"],
+                             "symbol": working["symbol"], "placed": working["placed"].isoformat(),
+                             "pid": (working.get("extra") or {}).get("pid")}
+        self._save()
+
+    def _release(self) -> None:
+        self._working = None
+        self.e.pop("working", None)
+        self._save()
+
     def _cancel(self, working: dict) -> None:
+        if working.get("order_id") is None:
+            return   # not found yet: there is nothing to cancel until it is
         try:
             self.broker.cancel_order(working["order_id"])
         except BrokerError as error:
             self.ledger.append("cancel_failed", order_id=working["order_id"], error=str(error))
 
     def _settle(self, working: dict) -> Optional[dict]:
+        if working.get("order_id") is None:
+            # the place call's outcome was unknown: find it by its reference
+            try:
+                found = self.broker.get_order_by_client_reference(working["ref"])
+            except BrokerError as error:
+                self.ledger.append("poll_failed", client_ref=working["ref"], error=str(error))
+                return None
+            if found is None:
+                if (self.clock() - working["placed"]).total_seconds() < self.config.unknown_order_seconds:
+                    return None
+                # absent from Robinhood's own order list for the whole window: never placed
+                self.gate.cancel(working["decision"])
+                result = {"order_id": None, "status": "not_placed", "filled": ZERO, "price": ZERO, "fees": ZERO}
+                self.ledger.append("not_placed", kind=working["kind"], symbol=working["symbol"],
+                                   client_ref=working["ref"],
+                                   **{k: v for k, v in working.get("extra", {}).items() if k != "ref"})
+                self._save()
+                return result
+            working["order_id"] = found.broker_order_id
+            self.ledger.append("order_found", kind=working["kind"], symbol=working["symbol"], client_ref=working["ref"],
+                               order_id=found.broker_order_id)
+            self._hold(working)
         try:
             status = self.broker.get_order(working["order_id"])
         except BrokerError as error:
@@ -454,6 +566,7 @@ class LiveMirror:
             return sum(1 for _ in handle)
 
     def _mirror(self, snap: Snapshot) -> None:
+        self._check_unwatched(snap)
         plans = self.e.setdefault("plans", {})
         for event in self._paper_events():
             kind, pid = event.get("event"), event.get("pid")
@@ -479,7 +592,7 @@ class LiveMirror:
                     self._cancel(self._working)
                 return
             self._after_fill(self._working, done)
-            self._working = None
+            self._release()
         if self._exit_one(snap):
             return
         self._enter_one(snap)
@@ -505,6 +618,11 @@ class LiveMirror:
             self._card(f"sold {working['symbol']}", cards.GOOD, [
                 f"Closed {done['filled']} {working['symbol']} at {done['price']} a share ({extra.get('why')}).",
                 f"Result {cards.usd(float(pnl), signed=True)} after {_fees(done['fees'])}."])
+        elif done["status"] == "not_placed":
+            self._card(f"a live {working['symbol']} order was never placed", cards.LOOK,
+                       [f"{working['kind']}: Robinhood's order list never showed it in "
+                        f"{self.config.unknown_order_seconds} seconds; its reservation is released."],
+                       look_at="a live order that Robinhood never took")
         elif done["filled"] == 0:
             self._card(f"a live {working['symbol']} order did not fill", cards.LOOK,
                        [f"{working['kind']}: {done['status']} after {self.config.fill_wait_seconds} seconds."],
@@ -577,6 +695,8 @@ class LiveMirror:
     def _entries_blocked(self, snap: Snapshot) -> Optional[str]:
         if self.halt_path is not None and self.halt_path.exists():
             return "halted by an operator (HALT marker)"
+        if self.e.get("unwatched"):
+            return f"the account holds {', '.join(self.e['unwatched'])}, which the mirror does not track"
         start = _d(self.e.get("starting_equity"))
         if start > 0 and snap.equity <= start * (1 - self.config.kill_fraction):
             if not self.state.kill_switch_tripped:

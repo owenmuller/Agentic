@@ -33,7 +33,9 @@ from typing import Any, Optional
 
 import httpx
 
-from execution.base import BrokerAdapter, BrokerError, BrokerPermissions, BrokerPosition, OrderReceipt, OrderStatus
+from execution.base import (
+    BrokerAdapter, BrokerError, BrokerPermissions, BrokerPosition, OrderOutcomeUnknown, OrderReceipt, OrderStatus,
+)
 from risk_gate import ApprovedOrder
 
 MCP_URL = "https://agent.robinhood.com/mcp/trading"
@@ -46,8 +48,24 @@ DEFAULT_STORE = Path.home() / ".config" / "agentic" / "rh_oauth.json"
 logger = logging.getLogger("execution.robinhood")
 
 
+#: A 5xx or a dropped/timed-out request says nothing about whether the server
+#: acted. A READ is retried this many times, with these pauses (seconds); an
+#: order is never re-sent blind - it is found by its reference instead.
+READ_RETRY_PAUSES = (1.0, 3.0)
+TRANSIENT_STATUS = frozenset({500, 502, 503, 504})
+#: After a transient failure on the place call, look the order up by its
+#: reference after these pauses (seconds) before handing back "unknown".
+RECONCILE_PAUSES = (1.0, 2.0, 4.0)
+
+
 class RobinhoodError(RuntimeError):
     """A refused call: the server's category and message (never a token)."""
+
+
+class RobinhoodTransient(RobinhoodError):
+    """A 5xx, a timeout or a dropped connection: the server may or may not
+    have acted. Origin: an HTTP 502 on ``initialize`` failed a live-mirror
+    tick on 2026-11-05 13:40 ET."""
 
 
 def _strip_guides(value: Any) -> Any:
@@ -108,7 +126,7 @@ class RobinhoodMcp:
     """JSON-RPC over streamable HTTP to the Agentic MCP server."""
 
     def __init__(self, store: TokenStore, account_number: str, *, allow_orders: bool = False,
-                 http: Optional[httpx.Client] = None, timeout: float = 60.0) -> None:
+                 http: Optional[httpx.Client] = None, timeout: float = 60.0, sleep=time.sleep) -> None:
         if not account_number:
             raise ValueError("the Agentic account number must be pinned")
         self._store = store
@@ -117,15 +135,43 @@ class RobinhoodMcp:
         self._http = http or httpx.Client(timeout=timeout)
         self._session: Optional[str] = None
         self._next_id = 1
+        self.sleep = sleep
 
     # -- transport --------------------------------------------------------------------
 
+    @staticmethod
+    def _is_read(payload: dict) -> bool:
+        """Safe to send twice: the handshake and every ``get_*`` tool. An order
+        tool (place, cancel) is never retried here."""
+        method = payload.get("method")
+        if method in ("initialize", "notifications/initialized"):
+            return True
+        return method == "tools/call" and str((payload.get("params") or {}).get("name", "")).startswith("get_")
+
     def _post(self, payload: dict) -> Optional[dict]:
+        pauses = READ_RETRY_PAUSES if self._is_read(payload) else ()
+        for attempt in range(len(pauses) + 1):
+            try:
+                return self._post_once(payload)
+            except RobinhoodTransient as error:
+                if attempt >= len(pauses):
+                    raise
+                logger.warning("Robinhood %s; retrying in %.0fs (a read: safe to send again)", error,
+                               pauses[attempt])
+                self.sleep(pauses[attempt])
+        raise AssertionError("unreachable")
+
+    def _post_once(self, payload: dict) -> Optional[dict]:
         headers = {"Authorization": "Bearer " + self._store.access_token(), "Content-Type": "application/json",
                    "Accept": "application/json, text/event-stream", "MCP-Protocol-Version": PROTOCOL}
         if self._session:
             headers["Mcp-Session-Id"] = self._session
-        response = self._http.post(MCP_URL, content=json.dumps(payload), headers=headers)
+        try:
+            response = self._http.post(MCP_URL, content=json.dumps(payload), headers=headers)
+        except httpx.TransportError as error:   # a timeout or a dropped connection
+            raise RobinhoodTransient(f"MCP {type(error).__name__} on {payload.get('method')}") from error
+        if response.status_code in TRANSIENT_STATUS:
+            raise RobinhoodTransient(f"MCP HTTP {response.status_code} on {payload.get('method')}")
         if response.status_code >= 400:
             raise RobinhoodError(f"MCP HTTP {response.status_code} on {payload.get('method')}")
         self._session = response.headers.get("Mcp-Session-Id") or self._session
@@ -169,7 +215,10 @@ class RobinhoodMcp:
         named = arguments.get("account_number")
         if named is not None and str(named) != self.account_number:
             raise RobinhoodError(f"{tool} refused: account {named} is not the pinned Agentic account")
-        self._open()
+        try:
+            self._open()
+        except RobinhoodTransient as error:   # the call itself was never sent: a definite "no"
+            raise RobinhoodError(f"{tool} not sent: the MCP session could not be opened ({error})") from error
         self._next_id += 1
         message = self._post({"jsonrpc": "2.0", "id": self._next_id, "method": "tools/call",
                               "params": {"name": tool, "arguments": arguments}}) or {}
@@ -304,6 +353,13 @@ class RobinhoodAgenticAdapter(BrokerAdapter):
         ref_id = client_reference or str(uuid.uuid4())
         try:
             placed = self._mcp.call("place_equity_order", {**payload, "ref_id": ref_id})
+        except RobinhoodTransient as error:
+            # the server may have acted: never re-send blind - find it by its reference
+            found = self._reconcile(ref_id)
+            if found is None:
+                raise OrderOutcomeUnknown(ref_id, f"place_equity_order: {error}; no order carries ref {ref_id} "
+                                                  f"yet") from error
+            order = found
         except RobinhoodError as error:
             if "409" in str(error) or "unique" in str(error).lower():
                 found = self._by_ref(ref_id)     # the first attempt registered (spike part 2)
@@ -319,6 +375,19 @@ class RobinhoodAgenticAdapter(BrokerAdapter):
         return OrderReceipt(broker_order_id=str(order["id"]), status=str(order.get("state", "")),
                             symbol=approved.order.symbol, quantity=approved.order.quantity,
                             limit_price=approved.order.execution.price_bound, client_order_id=ref_id)
+
+    def _reconcile(self, ref_id: str) -> Optional[dict]:
+        """After a transient failure on the place call: the order by its
+        reference, looked up after each pause; None while it is not there."""
+        for pause in RECONCILE_PAUSES:
+            self._mcp.sleep(pause)
+            try:
+                found = self._by_ref(ref_id)
+            except RobinhoodError:
+                continue
+            if found is not None:
+                return found
+        return None
 
     def _by_ref(self, ref_id: str) -> Optional[dict]:
         for order in self._mcp.equity_orders():

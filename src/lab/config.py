@@ -197,6 +197,9 @@ class LiveMirrorConfig(_Strict):
     session_start: str = "09:30"
     session_end: str = "16:05"
     fill_wait_seconds: int = Field(default=60, ge=10, le=600)
+    #: A place call that failed mid-request is watched by its reference this long
+    #: before it is called never placed (2026-11-05: an HTTP 502 on the MCP).
+    unknown_order_seconds: int = Field(default=120, ge=30, le=900)
     limit_buffer: Decimal = Field(default=Decimal("0.002"), ge=ZERO, lt=Decimal("0.02"))
     #: The gate's dust floor (risk_limits equity_sleeve.min_order_notional_usd).
     min_notional_usd: Decimal = Field(default=Decimal("5"), ge=Decimal("1"))

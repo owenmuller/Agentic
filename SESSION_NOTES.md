@@ -4167,6 +4167,39 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-05 — LIVE MIRROR tick failure (Discord #urgent), investigated and fixed
+
+- **What:** one tick at 13:40:40 ET failed with `RobinhoodError: MCP HTTP 502 on initialize`. Robinhood's MCP gateway returned Bad Gateway on the session handshake.
+  - Once only; every tick before and after returned 200.
+  - The loop caught it, logged a `fault` and carded it.
+  - The mirror was ARMED (round trip passed 09:34 ET, mirroring from 2026-11-06), so no order could be in flight.
+- **Account at 13:50 ET (read-only, token 164 h from its refresh margin, so no rotation race):**
+  - Cash account; cash $1,050, settled $1,042.37, unsettled $7.63 (the round trip's sale proceeds, T+1).
+  - No positions and no working orders; trade approvals off.
+  - The only orders: the round trip's two filled SPY orders, plus two 2026-08-19 spike orders (cancelled, rejected).
+  - Nothing cancelled; no HALT needed.
+- **Step (b) done 09:34 ET:** $950 arrived as a deposit, so starting equity is $1,050. SPY 0.01 was bought at 763.4581 and sold at 763.3201, net −$0.0014, no fees, 2.5 bp over the mid.
+- **The latent defect the 502 exposed (no harm today):** a 5xx or a timeout on `place_equity_order` was handled as a refusal, and a timeout escaped every handler. Robinhood may have taken that order, which would have left:
+  - a live position no stop watched;
+  - the purchase's cash change read as a WITHDRAWAL, lowering the kill-switch baseline;
+  - the reservation stranded.
+  `live_session` also called `start()` outside the loop's guard, so a 502 at 09:30 would have ended the day's session.
+- **Fixed** (no sizing, limit or live-flag change):
+  1. **Reads:** `RobinhoodTransient` covers 5xx, timeouts and dropped connections. Reads (the handshake and `get_*`) are retried after 1 s and 3 s. An order tool is never retried.
+  2. **Placement:**
+     - A handshake failure before an order means the order was never sent: a definite refusal.
+     - A transient failure on the place call itself looks the order up by its `ref_id` (after 1, 2 and 4 s), then raises `OrderOutcomeUnknown`.
+     - The mirror then holds it as WORKING under its reference: the reservation stays held, nothing new is placed, and cash is not reconciled.
+     - It is adopted if it appears, or called "never placed" after `unknown_order_seconds` (120 s) of absence from Robinhood's own order list.
+  3. **Restarts:** the working order is persisted (`engine.working`). A restart cancels one still open and records one finished.
+  4. **Untracked holdings:** a broker holding that no mirrored position or working order explains blocks new entries and is carded red once a symbol a day. It is never sold blind.
+  5. **Session start:** the first tick starts the session inside the loop's guard.
+- **Tests:** 8 new tests; full suite green.
+- **Dry cycle** (new code from ~/scratch/wip, live account read-only, no broker, scratch state copy, clock 2026-11-06 09:31 ET):
+  - armed to mirroring; no positions, untracked holdings or working order;
+  - gate cash $1,042.37;
+  - the same 502 injected on `initialize` was retried and the tick completed.
+
 ### 2026-11-04 (night, later) — triage rulings (human ruling 2026-11-04, third)
 
 1. **@TrumpDailyPosts RETIRED (`trump_mirror_tdp`).**

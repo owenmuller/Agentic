@@ -385,3 +385,101 @@ def test_sizing_scales_with_live_equity_less_deposits_in_transit(tmp_path, confi
     big = Snapshot(equity=D("2000"), settled_cash=D("1000"), unsettled=D(0), pending_deposits=D("1000"), held={})
     assert mirror._size({"pid": "a"}, plan, small)[0].quantity == D("2")     # 600 x 18.75% x 0.99 / 40.08
     assert mirror._size({"pid": "b"}, plan, big)[0].quantity == D("4")       # sized on 1000, not 2000
+
+
+# ================================================================================
+# Transient broker failures (2026-11-05: an HTTP 502 on the MCP failed a live tick)
+# ================================================================================
+
+
+class FlakyBroker(Broker):
+    """The next place call fails mid-request; ``acted`` says whether Robinhood
+    took the order anyway (then it is in its order list under its reference)."""
+
+    def __init__(self, reader, acted):
+        super().__init__(reader)
+        self.acted, self.flaky, self.by_ref = acted, True, {}
+
+    def submit_order(self, approved, client_reference=None):
+        from execution.base import OrderOutcomeUnknown
+
+        if not self.flaky:
+            return super().submit_order(approved, client_reference)
+        self.flaky = False
+        ref = client_reference or f"ref{len(self.sent) + 1}"
+        if self.acted:
+            receipt = super().submit_order(approved, ref)
+            self.by_ref[ref] = receipt.broker_order_id
+        else:
+            self.sent.append(approved.order)
+        raise OrderOutcomeUnknown(ref, "place_equity_order: MCP HTTP 502 on tools/call")
+
+    def get_order_by_client_reference(self, ref):
+        oid = self.by_ref.get(ref)
+        return self.orders[oid] if oid else None
+
+
+def flaky_mirroring(tmp_path, config, acted):
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    mirror.broker = FlakyBroker(reader, acted)
+    mirror.broker.sent = [None, None]                  # the round trip's two orders
+    return mirror, seen, clock, reader
+
+
+def test_an_order_robinhood_took_despite_a_502_is_adopted_never_resent(tmp_path, config):
+    mirror, seen, clock, reader = flaky_mirroring(tmp_path, config, acted=True)
+    paper(tmp_path, opened("a", "F"), filled("a", price="40"))
+    mirror.tick()
+    assert len(mirror.broker.sent) == 3 and mirror.e["working"]["order_id"] is None
+    assert any("outcome is unknown" in c.happened for c in seen)
+    clock.now += timedelta(seconds=30)
+    mirror.tick()                                      # found by its reference, settled, tracked
+    assert len(mirror.broker.sent) == 3
+    assert "a" in mirror.e["positions"] and "working" not in mirror.e
+    assert mirror.ledger.events(["order_found"]) and not mirror.ledger.events(["cash_flow"])
+    assert not mirror.e.get("unwatched")
+
+
+def test_an_order_robinhood_never_took_is_released_after_the_window(tmp_path, config):
+    mirror, seen, clock, reader = flaky_mirroring(tmp_path, config, acted=False)
+    paper(tmp_path, opened("a", "F"), filled("a", price="40"))
+    mirror.tick()
+    assert mirror.gate.state.reserved_cash > 0            # held while the outcome is unknown
+    clock.now += timedelta(seconds=60)
+    mirror.tick()                                      # inside the window: still watched, nothing new sent
+    assert mirror.e["working"]["ref"] and len(mirror.broker.sent) == 3
+    clock.now += timedelta(seconds=config.live_mirror.unknown_order_seconds)
+    mirror.tick()
+    assert "working" not in mirror.e and mirror.ledger.events(["not_placed"])
+    assert any("never placed" in c.happened for c in seen)
+    assert len(mirror.broker.sent) == 3 and "a" not in mirror.e["positions"]
+    assert not mirror.ledger.events(["cash_flow"]) and mirror.gate.state.reserved_cash == 0
+
+
+def test_a_restart_cancels_a_working_order_an_earlier_run_left(tmp_path, config):
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    mirror.broker.orders["rh-9"] = OrderStatus("rh-9", "queued", D("0"))
+    cancelled = []
+    mirror.broker.cancel_order = cancelled.append
+    mirror.e["working"] = {"order_id": "rh-9", "ref": "r9", "kind": "entry", "symbol": "F",
+                           "placed": clock().isoformat(), "pid": "a"}
+    mirror.gate = None                                 # the process restarted
+    mirror.tick()
+    assert cancelled == ["rh-9"] and "working" not in mirror.e
+    assert mirror.ledger.events(["stray_order"])[-1]["outcome"].startswith("still queued")
+    assert any(c.status == cards.ACTION and "earlier run" in c.happened for c in seen)
+
+
+def test_a_holding_the_mirror_does_not_track_blocks_entries_and_is_carded(tmp_path, config):
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    reader.held["XYZ"] = "3"
+    paper(tmp_path, opened("a", "F"), filled("a", price="40"))
+    mirror.tick()
+    assert len(mirror.broker.sent) == 2                # nothing new placed, nothing sold blind
+    assert "does not track" in mirror.ledger.events(["skip"])[-1]["why"]
+    assert any(c.status == cards.ACTION and "XYZ" in c.happened for c in seen)
+    mirror.tick()
+    assert sum("XYZ" in c.happened for c in seen) == 1  # once a symbol a day
+    del reader.held["XYZ"]
+    mirror.tick()
+    assert not mirror.e.get("unwatched")

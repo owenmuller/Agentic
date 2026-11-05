@@ -615,7 +615,8 @@ def live_session() -> int:
           f"session {start:%H:%M}-{end:%H:%M} ET")
     if clock() < start:
         _time.sleep((start - clock()).total_seconds())
-    mirror.start()
+    # the first tick starts the session (mirror.start), inside the loop's guard:
+    # a broker error at the open is retried at the next tick, never fatal
     while clock() < end:
         try:
             mirror.tick()
