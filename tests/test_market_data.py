@@ -262,3 +262,34 @@ def test_a_real_quote_comes_back_positive():
 def test_a_real_unknown_symbol_is_missing_not_zero():
     with AlpacaPriceSource(max_quote_age_seconds=7 * 86400) as source:
         assert source("ZZZZZT") is None
+
+
+def test_a_quote_gap_is_carded_once_a_symbol_a_day_even_when_quotes_flicker(monkeypatch):
+    # 2026-11-04 triage: MSB's stale IEX quotes flickered back and re-carded it all day
+    import datahealth
+
+    clock = [datetime(2026, 11, 4, 15, 0, tzinfo=timezone.utc)]       # 10:00 New York
+    fresh = [False]
+    cards: list = []
+    monkeypatch.setattr(datahealth, "report", lambda source, message, urgent=False: cards.append(message))
+
+    def handler(request):
+        stamp = (clock[0] - timedelta(seconds=10 if fresh[0] else 900)).isoformat().replace("+00:00", "Z")
+        return quote_response(t=stamp, ap=13.0, bp=12.9)
+
+    client = httpx.Client(base_url=DATA_BASE_URL, transport=httpx.MockTransport(handler))
+    source = AlpacaPriceSource(client, clock=lambda: clock[0])
+    for _cycle in range(3):              # stale for 20 minutes, then one fresh quote, again and again
+        fresh[0] = False
+        for _ in range(3):
+            source("MSB")
+            clock[0] += timedelta(minutes=10)
+        fresh[0] = True
+        source("MSB")
+    assert len(cards) == 1 and "MSB" in cards[0]
+    clock[0] += timedelta(days=1)        # the next day it is carded again
+    fresh[0] = False
+    for _ in range(3):
+        source("MSB")
+        clock[0] += timedelta(minutes=10)
+    assert len(cards) == 2

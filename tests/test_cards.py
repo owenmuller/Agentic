@@ -24,6 +24,8 @@ ALL = {
     "pending": cards.pending_card(2, "order a\norder b"),
     "breaker": cards.breaker_card("MECH BREAKER sleeve drawdown 25.4%"),
     "halt": cards.halt_card("Main book", "operator halted: testing"),
+    "volume": cards.volume_card("Main book", "Nov 4, 15:08 ET",
+                                "X reads today for unusual whales=212, past its 200 warning threshold (volume)"),
     "learning": cards.learning_card(
         12, 289, 1.18, ["trades where entry long after gap up: -1.9 points a case (n 24)"],
         ["buy after an earnings gap-up, ai trader: 5 trades, -1.4 points a case against SPY (too few to call)"],

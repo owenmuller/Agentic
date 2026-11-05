@@ -160,3 +160,34 @@ def test_the_first_days_return_counts_its_own_fills(tmp_path):
     assert mr.live_return(fills, later, "2026-10-16", "2026-10-16") == pytest.approx(12 / 11 - 1)
     # a week-to-date window that opens before inception runs from inception
     assert mr.live_return(fills, prices, "2026-10-12", "2026-10-15") == pytest.approx(1100 / 1050 - 1)
+
+
+def test_only_names_held_now_raise_the_no_closes_card(tmp_path, monkeypatch):
+    # 2026-11-04 triage: a name a book held ONCE was re-carded every day forever
+    import json as _json
+    from datetime import date as _date
+
+    import datahealth
+    from orchestrator import momentum_report as mr
+
+    directory = tmp_path / "momentum"
+    directory.mkdir()
+    (directory / "plan-2026-11.json").write_text(_json.dumps(
+        {"month": "2026-11", "rebalance_date": "2026-11-02", "targets": [{"symbol": "AAA", "weight": "0.5"}]}))
+    (tmp_path / "quiver").mkdir()
+    (tmp_path / "quiver" / "books.json").write_text(_json.dumps({"congress_buys": {"started": "2026-10-30", "schedule": [
+        ["2026-10-30", {"AAA": 0.5, "OLDOTC": 0.5}], ["2026-11-02", {"AAA": 0.6, "NOWOTC": 0.4}]]}}))
+
+    class Feed:
+        last_failed: dict = {}
+
+        def bars(self, symbols, start, end, adjustment):
+            days = ["2026-10-29", "2026-10-30", "2026-11-02", "2026-11-03"]
+            return {s: [[d, 100.0] for d in days] for s in symbols if not s.endswith("OTC")}
+
+    cards: list = []
+    datahealth.reset()
+    monkeypatch.setattr(datahealth, "report", lambda source, message, urgent=False: cards.append(message))
+    report = mr.gather(directory, [], _date(2026, 11, 3), Feed())
+    assert report is not None
+    assert len(cards) == 1 and "NOWOTC" in cards[0] and "OLDOTC" not in cards[0] and "as cash" in cards[0]

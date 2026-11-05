@@ -376,12 +376,30 @@ def gather(directory: Path, trails, today: date, alpaca) -> Optional[Report]:
         raise RuntimeError("the market data returned no SPY closes; the momentum report cannot be built")
     week_start = (today - timedelta(days=today.weekday())).isoformat()  # week to date: from the close before Monday
     report = build(directory, fills, prices, days, week_start, today.isoformat())
-    missing = sorted(s for s in symbols if not prices.get(s))
+    # the names books hold NOW (2026-11-04 triage: a name a book held once
+    # was re-reported every day forever): the latest plan, the latest month's
+    # shadows, each Quiver book's latest weights, the sleeve's open fills
+    current = {t["symbol"] for t in max(plans, key=lambda p: p["rebalance_date"])["targets"]}
+    months = load_months(directory)
+    if months:
+        for book in months[-1].get("books", {}).values():
+            current |= set(book.get("weights", {}))
+    for book in load_quiver_books(directory).values():
+        if book.get("schedule"):
+            current |= set(book["schedule"][-1][1])
+    held_now: dict = {}
+    for fill in fills:
+        held_now[fill.symbol] = held_now.get(fill.symbol, 0.0) + fill.quantity
+    current |= {s for s, q in held_now.items() if q > 1e-9}
+    missing = sorted(s for s in current if not prices.get(s))
     if missing:
-        # a book holding a name with no closes would value it at nothing:
-        # never silent (rule 2026-10-15) - the card carries it and a yellow card goes out
+        # never silent (rule 2026-10-15): a name with no closes is held as CASH
+        # by its book from the rebalance (book_path), so the book's return
+        # carries cash where the name should be
         why = getattr(alpaca, "last_failed", {}) or {}
         detail = ", ".join(f"{s} ({why.get(s, 'no bars')})" for s in missing[:10])
-        report.notes.append(f"NO CLOSES for {len(missing)} symbol(s): {detail} - the books holding them are wrong")
-        datahealth.report("momentum report", f"no closes for {len(missing)} held or planned symbol(s): {detail}")
+        report.notes.append(f"NO CLOSES for {len(missing)} held symbol(s): {detail} - their books hold that weight "
+                            f"as cash")
+        datahealth.report("momentum report", f"no closes for {len(missing)} held symbol(s): {detail}; their books hold "
+                                             f"that weight as cash")
     return report

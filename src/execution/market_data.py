@@ -169,7 +169,7 @@ class AlpacaPriceSource:
         return price if price > ZERO else None
 
     #: A symbol with no usable quote for this long in market hours is an
-    #: outage, reported once until a quote returns (data-health rule 2026-10-15).
+    #: outage, reported once a symbol a day (data-health rule 2026-10-15; daily cap 2026-11-04).
     QUOTE_GAP = timedelta(minutes=15)
 
     def _fresh_quote(self, symbol: str) -> Optional[dict]:
@@ -185,7 +185,13 @@ class AlpacaPriceSource:
         if local.weekday() >= 5 or not (dtime(9, 35) <= local.time() <= dtime(15, 55)):
             return None
         first, reported = gaps.get(symbol, (now, False))
+        # once a symbol a day (2026-11-04 triage: MSB, a thin IEX name, re-armed
+        # each time a quote flickered back and carded five or six times a day)
+        carded = self.__dict__.setdefault("_carded", {})
+        if carded.get(symbol) == local.date():
+            reported = True
         if not reported and now - first >= self.QUOTE_GAP:
+            carded[symbol] = local.date()
             datahealth.report("Alpaca quotes", f"no usable quote for {symbol} for "
                                                f"{int((now - first).total_seconds() // 60)} minutes in market hours; "
                                                f"anything priced off it (a stop, a mark, an order) waits")

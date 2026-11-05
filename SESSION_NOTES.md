@@ -4167,6 +4167,23 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-04 (night) — CARD TRIAGE, last 48 hours (human request)
+
+Six distinct cards, all from the main book; none from the AI trader, the ladder or the live mirror. Every card was listed twice by `orchestrator alerts`, because the scratch snapshot carries a copy of production's ledger.
+
+1. **X reads past 200 (red, 3 days):**
+   - **Root cause:** ONE counter summed all five X accounts against each source's own threshold. Organic volume is 147-229 reads a day; no post was read twice, so it is not a regression.
+   - **Fixed:** counts are per source against that source's threshold, and volume is a yellow card. A post read twice in a day is detected directly and stays red.
+2. **EDGAR HTTP 500 at 09:30 ET on Nov 3 (red, x3: 8-K, Form 4, 13D):** a transient SEC outage. The next polls succeeded (09:52); refused listings stay unseen and are retried; no loss. No change.
+3. **No usable quote for MSB (yellow, about 6 a day):** MSB is on the options IV watch and is thin on IEX; each brief quote re-armed the card. **Fixed:** once a symbol a day.
+4. **Momentum report: no closes for 5 symbols (yellow, daily):** AVB, EA, LSYIX, NOKBF, WUXIF, from the Congress Buys shadow.
+   - Not a valuation error: a name without closes is held as CASH by its book (about 0.6% of its weight).
+   - **Fixed:** only names held NOW are checked (otherwise it would have carded forever after the Nov 9 rebalance drops them), and the text says "held as cash".
+5. **@TrumpDailyPosts has relayed nothing for 54 trading days (yellow, daily):** retained as a fallback by ruling 2026-09-16, but its own commentary is read and billed. **Proposed to the human:** drop it, or card weekly.
+6. **The `alerts` report double-listing:** fixed (scratch rows that copy production rows are dropped).
+
+**None touches the live mirror, sizing or risk limits. The live mirror holds $100 and sends nothing below $500 settled.**
+
 ### 2026-11-04 (late) — the LIVE MIRROR built (dry until Constraint #4; waits for the $1,000)
 
 - **The human's answers:**

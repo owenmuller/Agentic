@@ -323,6 +323,16 @@ def billing_card(account: str, when: str, what: str, sample: bool = False) -> Ca
         detail=what, channel=URGENT, sample=sample)
 
 
+def volume_card(account: str, when: str, what: str, sample: bool = False) -> Card:
+    """A billed feed read more than its usual volume, with no sign of a bug
+    (2026-11-04 triage: organic X volume was carded red as a regression)."""
+    return Card(account, "a billed feed read more than usual", LOOK, (
+        f"When: {when}.",
+        f"What: {plain(what)}",
+        "No post was read twice, so this is volume, not a bug; every post read is billed.",
+    ), look_at="whether the source is worth what it reads", detail=what, channel=DAILY, sample=sample)
+
+
 def kill_switch_card(account: str, value: float, peak: float, today: Optional[float], spy_today: Optional[float],
                      resume_command: str, sample: bool = False) -> Card:
     drawdown = 1 - value / peak if peak else 0.0

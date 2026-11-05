@@ -288,13 +288,26 @@ def test_crossing_the_threshold_warns_once_and_hits_the_sink(source, caplog):
     with caplog.at_level(logging.WARNING, logger="signals.x"):
         fetcher(bare)  # 3 reads: under
         assert warnings == []
-        fetcher(bare)  # 6 reads: past 4 — warn
-        fetcher(bare)  # still past — but the day already warned
+        fetcher(bare)  # 6 reads: past 4 - VOLUME, no post read twice
+        assert len(warnings) == 1 and "volume" in warnings[0] and "=6" in warnings[0]
+        fetcher(bare)  # the same three posts again: a REGRESSION, carded at once
 
-    assert len(warnings) == 1
-    assert "since_id regression" in warnings[0]
-    assert "6" in warnings[0]
+    assert len(warnings) == 2 and "since_id regression" in warnings[1] and "re-read 3" in warnings[1]
     assert sum("since_id regression" in r.message for r in caplog.records) == 1
+
+
+def test_each_source_is_counted_against_its_own_threshold(source):
+    # 2026-11-04 triage: one counter summed five X accounts against each one's 200
+    warnings: list[str] = []
+    fetcher, _ = fetcher_with(
+        [search_response(*(post(str(600 + n), "a") for n in range(3))),
+         search_response(*(post(str(700 + n), "b") for n in range(3)))],
+        warn_sink=warnings.append, seen=[])
+    one = source.model_copy(update={"daily_read_warning": 4, "id": "one"})
+    two = source.model_copy(update={"daily_read_warning": 4, "id": "two", "handle": "other"})
+    fetcher(one)
+    fetcher(two)
+    assert fetcher.posts_read_today == 6 and warnings == []   # 3 each: neither past its own 4
 
 
 def test_the_source_configured_threshold_wins(source):

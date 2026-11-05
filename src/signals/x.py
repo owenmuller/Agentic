@@ -93,7 +93,6 @@ class XRecentSearchFetcher:
         self._warn_sink = warn_sink
         self._reads_today = 0
         self._read_day: Optional[date] = None
-        self._warned_day: Optional[date] = None
 
     @property
     def posts_read_today(self) -> int:
@@ -133,7 +132,7 @@ class XRecentSearchFetcher:
             raise XError(f"X search for {handle} returned errors and no posts: "
                          f"{first.get('title') or first.get('detail') or first}")
         posts = payload.get("data") or []
-        self._count_reads(len(posts), source)
+        self._count_reads(posts, source)
 
         newest = (payload.get("meta") or {}).get("newest_id")
         if newest:
@@ -236,36 +235,51 @@ class XRecentSearchFetcher:
         if today != self._read_day:
             self._read_day = today
             self._reads_today = 0
+            self._reads_by_source: dict[str, int] = {}
+            self._read_ids: set[str] = set()
+            self._warned: set[tuple[str, str]] = set()
 
-    def _count_reads(self, returned: int, source: SourceConfig) -> None:
+    def _count_reads(self, posts: Sequence[dict], source: SourceConfig) -> None:
         """Every post the API returns is a post billed. Count, log, and trip loudly.
 
-        A healthy since_id run reads only what was actually posted; a broken one
-        re-reads the same posts every poll. The threshold is set well above organic
-        volume, so crossing it means a bug, not a busy day — and it must show up in
-        the logs before it shows up on the bill.
+        Two tripwires (2026-11-04 triage: one counter summed every X source
+        against each source's own threshold, so organic volume across five
+        accounts tripped a "regression" card nearly every day):
+          * a REGRESSION is a post read twice in a day - a healthy since_id run
+            never returns a post again - and is carded at once;
+          * VOLUME is this source's own reads past its own threshold, carded
+            once a source a day as volume, not as a bug.
         """
         self._roll_read_day()
-        if returned <= 0:
+        if not posts:
             return
-        self._reads_today += returned
+        ids = [str(p.get("id", "")) for p in posts if p.get("id") is not None]
+        again = [i for i in ids if i in self._read_ids]
+        self._read_ids.update(ids)
+        self._reads_today += len(posts)
+        count = self._reads_by_source.get(source.id, 0) + len(posts)
+        self._reads_by_source[source.id] = count
         threshold = source.daily_read_warning or self._read_threshold
         logger.info(
-            "X posts read today: %d (+%d this poll, warning threshold %d)",
-            self._reads_today,
-            returned,
-            threshold,
+            "X posts read today: %d in all, %d for %s (+%d this poll, its warning threshold %d)",
+            self._reads_today, count, source.id, len(posts), threshold,
         )
-        if self._reads_today > threshold and self._warned_day != self._read_day:
-            self._warned_day = self._read_day
-            message = (
-                f"X reads today={self._reads_today}, past the {threshold} warning "
-                f"threshold — possible since_id regression; every post read is "
-                f"billed"
-            )
-            logger.warning("%s", message)
-            if self._warn_sink is not None:
-                self._warn_sink(message)
+        if again:
+            self._warn("regression", source.id, (
+                f"X re-read {len(again)} post(s) already read today for {source.id} - a since_id regression; "
+                f"every post read is billed"))
+        if count > threshold:
+            self._warn("volume", source.id, (
+                f"X reads today for {source.id}={count}, past its {threshold} warning threshold (volume: no post "
+                f"was read twice); every post read is billed"))
+
+    def _warn(self, kind: str, source_id: str, message: str) -> None:
+        if (kind, source_id) in self._warned:
+            return
+        self._warned.add((kind, source_id))
+        logger.warning("%s", message)
+        if self._warn_sink is not None:
+            self._warn_sink(message)
 
     # -- plumbing --------------------------------------------------------------------------
 

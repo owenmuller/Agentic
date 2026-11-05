@@ -327,7 +327,10 @@ def session_observer(alerter: Alerter):
         elif event == "COST":
             alerter.card(f"COST:{detail[:40]}", cards.cost_card("Main book", when, detail))
         elif event == "READS":
-            alerter.card(f"READS:{detail[:40]}", cards.billing_card("Main book", when, detail))
+            # a post read twice is a bug (red); a busy source is volume (yellow) - 2026-11-04 triage
+            card = (cards.billing_card("Main book", when, detail) if "regression" in detail
+                    else cards.volume_card("Main book", when, detail))
+            alerter.card(f"READS:{detail[:40]}", card)
         elif event == "MECH" and "BREAKER" in detail.upper():
             alerter.card("mech_breaker", cards.breaker_card(detail))
         elif event == "MECH" and (detail.startswith("MOMENTUM short of cash")
@@ -2606,6 +2609,12 @@ def alerts_ledger() -> int:
                 continue
             if row.get("at", "") >= since:
                 rows.append((row["at"], source, row))
+    # the scratch directory holds a SNAPSHOT of production data, its alert
+    # ledger included: a scratch row that repeats a production row is the copy,
+    # not a second card (2026-11-04 triage: every card was listed twice)
+    produced = {(r["at"], r.get("type"), r.get("channel")) for _, s, r in rows if s != "scratch"}
+    rows = [(a, s, r) for a, s, r in rows
+            if s != "scratch" or (r["at"], r.get("type"), r.get("channel")) not in produced]
     for at, source, row in sorted(rows, key=lambda r: r[0]):
         status = "delivered" if row.get("delivered") else f"FAILED: {row.get('reason', '')}"
         print(f"{at}  {source:10s} {row.get('channel', ''):28s} {row.get('type', ''):32s} {status}  | {row.get('title', '')[:90]}")
