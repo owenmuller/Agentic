@@ -278,41 +278,12 @@ classes:
         # (ruling 2026-08-28): the date this source was wired.
         start_date: 2026-08-18
 
-      - id: trump_mirror_tdp
-        platforms: [x]
-        # Secondary: established (28K posts), full text with original-timestamp
-        # header; measured ~2.5-minute relay on a market-moving post (03.18.26).
-        handle: "@TrumpDailyPosts"
-        type: mirror
-        mirror_of: trump_posts
-        # REQUIRED MARKER (verified against live posts 2026-08-20): genuine
-        # relays carry the "Donald J. Trump Truth Social Post [time] [date]"
-        # header; the account's between-relay output is its OWN commentary,
-        # including market-shaped claims, delivered with no header (24/24 recent
-        # posts were headerless commentary — two reached research 2026-08-19 and
-        # cost ~$4.24 of Opus spend to catch). Headerless content is classified
-        # "other": logged to this mirror's credibility record, never emitted as
-        # a trump_posts signal. If the mirror's genuine-relay format changes,
-        # this filter silences the source and the 2-trading-day mirror-silence
-        # warning is the watchdog that tells a human to re-verify the format.
-        required_marker: 'donald\s+j\.?\s*trump\s+truth\s+social\s+post'
-        silence_warning_trading_days: 2
-        # Human ruling 2026-09-16: verified against the live API that this
-        # account no longer relays Truths (348 posts in 7 days, 0 carrying the
-        # header, none matching a @TrumpTruthOnX relay) — it posts its own
-        # commentary. RETAINED as a dormant fallback: marker enforcement makes
-        # it free, and it covers the single point of failure on ttox. The
-        # silence line below states this instead of asking a human to check.
-        silence_note: "currently posting its own commentary; retained as fallback (human ruling 2026-09-16)"
-        daily_read_warning: 200
-        monthly_cost: 0
-        # Feed cost is billed from here, not from the window start
-        # (ruling 2026-08-28): the date this source was wired.
-        start_date: 2026-08-18
-        extraction:
-          tickers: true
-          sectors: true
-          policy_themes: [tariffs, energy, defense, crypto]
+      # @TrumpDailyPosts (trump_mirror_tdp) RETIRED by human ruling 2026-11-04,
+      # third: it had relayed nothing for 54 trading days (no Truth Social
+      # header since 2026-09-16) while its own commentary was still read and
+      # billed every day. @TrumpTruthOnX is the one Trump mirror. The old entry
+      # survives only as a test fixture (tests/test_mirrors.py RETIRED_TDP), so
+      # the second-mirror machinery stays tested.
 
       - id: form_8k
         # Human ruling 2026-09-15 (design reviewed 2026-09-02): item-filtered

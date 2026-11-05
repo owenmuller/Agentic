@@ -497,14 +497,24 @@ def _learning_lookups(symbols: set[str], earliest: date, cache_root: Path, log):
             for s, rows in raw.items()}
     if not bars.get("SPY"):
         raise RuntimeError("no SPY bars: the case feed cannot measure anything against SPY")
-    missing = sorted(s for s in symbols if not bars.get(s))
+    assets = feeds.Alpaca(feeds.Cache(cache_root / "assets" / date.today().isoformat()))
+    # only an exchange-listed name owes bars (ruling 2026-11-04, third): an OTC
+    # name, a mutual fund, an index (SPX) or a delisted name legitimately has
+    # none, and its gap reads unknown without a card
+    listed = assets.exchange_listed()
+    missing = sorted(s for s in symbols if not bars.get(s) and s in listed)
+    unlisted = sorted(s for s in symbols if not bars.get(s) and s not in listed)
+    if unlisted:
+        log(f"learning lookups: no bars for {len(unlisted)} unlisted symbol(s) ({', '.join(unlisted[:12])}"
+            f"{'...' if len(unlisted) > 12 else ''}); their gaps read as unknown")
     if missing:
-        datahealth.report("Learning journal", f"no daily bars for {len(missing)} symbol(s) ({', '.join(missing[:12])}"
-                                              f"{'...' if len(missing) > 12 else ''}); their gaps read as unknown")
+        datahealth.report("Learning journal", f"no daily bars for {len(missing)} listed symbol(s) "
+                                              f"({', '.join(missing[:12])}{'...' if len(missing) > 12 else ''}); "
+                                              f"their gaps read as unknown")
     cache = feeds.Cache(cache_root / "sec")
     sec = feeds.Sec(cache)
     ciks = sec.company_ciks()
-    names = feeds.Alpaca(feeds.Cache(cache_root / "assets" / date.today().isoformat())).asset_names()
+    names = assets.asset_names()
     try:
         vix = {d: float(v) for d, v in vix_history().items()}
     except Exception as error:  # noqa: BLE001 - the regime tag reads unknown without it
@@ -558,7 +568,8 @@ def learning_cases(data_dir: Path, cache_root: Path, log, accounts=("ai-trader",
     symbols |= {(r.research.tickers or list(r.signal.tickers) or ["SPY"])[0] for r in rejections}
     stamps = [datetime.fromisoformat(e["at"]).date() for e in events if e.get("event") == "position_opened"]
     stamps += [r.signal.observed_at.date() for r in rejections] + [t.decision.recorded_at.date() for t in trails]
-    look, sec = _learning_lookups({s for s in symbols if s}, min(stamps or [date.today()]), cache_root, log)
+    look, sec = _learning_lookups({s for s in symbols if learning_feed.is_symbol(s)}, min(stamps or [date.today()]),
+                                  cache_root, log)
     cases = []
     if "ai-trader" in accounts:
         cases += learning_feed.ai_trader_cases(events, look)
@@ -1725,8 +1736,8 @@ def run() -> int:
                 # Truth API — the upgrade decision belongs to attribution data.
                 # Signals attribute to trump_posts; the audit record keeps the
                 # deliverer.
+                # @TrumpDailyPosts retired 2026-11-04 (human ruling, third).
                 "trump_mirror_ttox": logged("trump_mirror_ttox", x_search),
-                "trump_mirror_tdp": logged("trump_mirror_tdp", x_search),
             },
             # The original account is not polled directly; its content arrives via
             # the mirror sources above. The attention screen is declared unbuilt

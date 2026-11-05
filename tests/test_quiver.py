@@ -327,7 +327,6 @@ def test_the_router_dispatches_each_class_to_its_fetcher(signals_config):
             "optionshawk": fake("x"),
             "citrini": fake("x"),
             "trump_mirror_ttox": fake("x"),
-            "trump_mirror_tdp": fake("x"),
         },
         unbuilt={"trump_posts", "form_8k", "gov_contract_awards", "attention_momentum"},
     )
@@ -337,7 +336,6 @@ def test_the_router_dispatches_each_class_to_its_fetcher(signals_config):
 
     assert calls == [
         "x:trump_mirror_ttox",
-        "x:trump_mirror_tdp",
         "x:unusual_whales",
         "x:optionshawk",
         "x:nolimitgains",

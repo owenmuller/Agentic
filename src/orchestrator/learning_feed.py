@@ -33,6 +33,14 @@ NY = ZoneInfo("America/New_York")
 DECLINE_CODES = frozenset({"no_position", "insufficient_reward_risk", "unconfirmed_boundary", "vote_overturned"})
 HORIZON_SESSIONS = {"days": 5, "weeks": 20, "months": 60}
 DEFAULT_HORIZON = 20
+#: What a research pass writes in ``tickers`` when it names no instrument
+#: (26 declines carry ["NONE"]). The audit log keeps the model's words as
+#: written; the feed never reads them as a symbol.
+PLACEHOLDERS = frozenset({"NONE", "N/A", "NA", "NULL", "?"})
+
+
+def is_symbol(ticker) -> bool:
+    return bool(ticker) and str(ticker).strip().upper() not in PLACEHOLDERS
 #: Broad-market funds; any other fund is a sector fund.
 BROAD = frozenset({"SPY", "QQQ", "IWM", "DIA", "RSP", "VTI", "VOO", "IVV", "MDY"})
 
@@ -253,8 +261,8 @@ def decline_cases(rejections: Iterable[Any], forward_rows: Mapping[tuple[str, da
         if research is None or record.code not in DECLINE_CODES:
             continue
         ticker = (research.tickers or list(record.signal.tickers) or [None])[0]
-        if not ticker:
-            continue
+        if not is_symbol(ticker):
+            continue   # the model named no instrument: there is no trade not made to grade
         observed = record.signal.observed_at.date()
         row = forward_rows.get((ticker.upper(), observed))
         horizon = HORIZON_SESSIONS.get(research.time_horizon, DEFAULT_HORIZON)

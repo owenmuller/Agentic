@@ -60,9 +60,38 @@ def paper_mode(monkeypatch):
     monkeypatch.delenv(LIVE_CONFIRMATION_VARIABLE, raising=False)
 
 
+#: @TrumpDailyPosts' entry as it stood when it was retired (human ruling
+#: 2026-11-04, third). The live config has one Trump mirror now; this copy
+#: keeps the second-mirror machinery tested: the fallback relay, the required
+#: marker, commentary kept out of the signal stream, the dormant-fallback
+#: silence line.
+RETIRED_TDP = {
+    "id": "trump_mirror_tdp",
+    "platforms": ["x"],
+    "handle": "@TrumpDailyPosts",
+    "type": "mirror",
+    "mirror_of": "trump_posts",
+    "required_marker": r"donald\s+j\.?\s*trump\s+truth\s+social\s+post",
+    "silence_warning_trading_days": 2,
+    "silence_note": "currently posting its own commentary; retained as fallback (human ruling 2026-09-16)",
+    "daily_read_warning": 200,
+    "monthly_cost": 0,
+    "start_date": "2026-08-18",
+}
+
+
 @pytest.fixture(scope="session")
 def signals_config():
-    return SignalsConfig.load()
+    import yaml
+
+    from signals.config import default_signals_path
+
+    raw = yaml.safe_load(default_signals_path().read_text(encoding="utf-8"))
+    sources = raw["classes"]["class_1"]["sources"]
+    assert all(s["id"] != "trump_mirror_tdp" for s in sources)   # retired from the live config
+    ttox = next(i for i, s in enumerate(sources) if s["id"] == "trump_mirror_ttox")
+    sources.insert(ttox + 1, RETIRED_TDP)
+    return SignalsConfig.model_validate(raw)
 
 
 def scanner_with(fetcher, signals_config, queue=None):

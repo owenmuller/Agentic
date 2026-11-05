@@ -385,7 +385,6 @@ def route_to_nolimitgains(fetcher):
             "unusual_whales": lambda source: [],
             "optionshawk": lambda source: [],
             "trump_mirror_ttox": lambda source: [],
-            "trump_mirror_tdp": lambda source: [],
         },
         unbuilt={"trump_posts", "form_8k", "gov_contract_awards"},
     )

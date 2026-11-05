@@ -109,3 +109,13 @@ def test_declines_are_graded_at_the_verdicts_horizon_as_the_trade_not_made():
     short = feed.decline_cases([rejection("p1", "BE", "insufficient_reward_risk", direction="short_via_puts")],
                                rows, look())[0]
     assert short.direction == "short" and short.excess == pytest.approx(-33.99)
+
+
+def test_a_decline_that_named_no_instrument_is_never_read_as_a_symbol():
+    # 26 declines carry tickers ["NONE"]: the model's words, kept in the audit
+    # log as written, never a symbol to fetch bars for or grade
+    assert not feed.is_symbol("NONE") and not feed.is_symbol(" none ") and not feed.is_symbol("")
+    assert not feed.is_symbol(None) and feed.is_symbol("BE")
+    rows = {("NONE", D(2026, 8, 28)): SimpleNamespace(marks={
+        20: Mark(return_pct=Decimal("5"), excess_pct=Decimal("4"), marked_on=D(2026, 9, 17))})}
+    assert feed.decline_cases([rejection("n1", "NONE", "no_position")], rows, look()) == []

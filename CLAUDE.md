@@ -283,7 +283,7 @@ Software-only books on two of Quiver's published strategies (quiverquant.com/str
     - Each flow moves the kill-switch baseline (starting equity plus net flows), today's loss-limit baseline and the gate's high-water mark; a withdrawal also leaves the gate's cash at once. Each one is carded.
     - Returns are Modified Dietz by day, chained into a time-weighted return since mirroring began.
     - Sizing scales with live equity less deposits in transit.
-    - A dividend or interest credit cannot be told from a deposit and is treated as a flow (the stricter reading).
+    - A dividend or interest credit cannot be told from a deposit and is treated as a flow (the stricter reading; accepted at this size by human ruling 2026-11-04, third, and stated on the deposit card).
   - **Round trip at $500 settled** (`min_funding_usd`, ruling 2026-11-04, second), not a fixed deposit; mirroring from the next session.
   - `.env` may never carry a live flag: `load_environment` refuses to start if it does.
 - **Steps:**

@@ -176,7 +176,6 @@ def run_loop(tmp_path, signals_config, posts, clock=None):
         fetcher=SourceRouter(
             routes={
                 "trump_mirror_ttox": feed(trump_mirror_ttox=posts),
-                "trump_mirror_tdp": feed(),
                 "nolimitgains": feed(),
                 "unusual_whales": feed(),
                 "optionshawk": feed(),
@@ -450,7 +449,6 @@ def test_a_filtered_disclosure_writes_the_trail_and_spends_nothing(
         fetcher=SourceRouter(
             routes={
                 "trump_mirror_ttox": feed(),
-                "trump_mirror_tdp": feed(),
                 "nolimitgains": feed(),
                 "unusual_whales": feed(),
                 "optionshawk": feed(),

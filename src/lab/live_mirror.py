@@ -197,7 +197,8 @@ class LiveMirror:
             "The kill switch's baseline, today's loss-limit baseline and the gate's high-water mark moved by the "
             "same amount." + (f" Kill-switch baseline now {cards.usd(float(_d(self.e['starting_equity'])))}."
                               if self.e.get("starting_equity") else ""),
-            "A dividend or interest credit looks the same and is treated the same way."])
+            "A dividend or interest credit looks the same and is treated the same way: it moves the baselines "
+            "and is never counted as gain (accepted at this account's size, ruling 2026-11-04, third)."])
         self._save()
 
     def _expect(self, side: str, value: Decimal, fees: Decimal) -> None:

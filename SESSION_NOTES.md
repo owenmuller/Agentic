@@ -4167,6 +4167,19 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-04 (night, later) — triage rulings (human ruling 2026-11-04, third)
+
+1. **@TrumpDailyPosts RETIRED (`trump_mirror_tdp`).**
+   - It had relayed nothing with a Truth Social header since 2026-09-16 (54 trading days). The 2026-09-16 ruling kept it as a dormant fallback, but its own commentary was still read and billed every day.
+   - Removed from `config/signals.yaml` and from the X routes; @TrumpTruthOnX is the one Trump mirror. Its silence warning (2 trading days) is now the only watchdog on the Trump leg, with no fallback behind it.
+   - Its old entry survives only as a test fixture (`tests/test_mirrors.py RETIRED_TDP`), so the second-mirror machinery stays tested.
+   - Its past deliveries stay in the audit log as written.
+2. **Learning bar check restricted to listed tickers.**
+   - Bars are still fetched for every symbol, but only an exchange-listed name that comes back empty is a yellow card. An OTC name, mutual fund, index (SPX) or delisted name legitimately has no exchange bars: it is logged and its gap reads unknown.
+   - **"NONE" not cleaned, excluded instead.** It is the research model's own output (`tickers: ["NONE"]`) on 26 declines that named no instrument. Rewriting those audit records would falsify what the model said, so they stay as written.
+   - The feed never reads a placeholder (NONE, N/A, NA, NULL, ?) as a symbol (`learning_feed.is_symbol`), and such a decline is no case. None had been journaled.
+3. **Dividend and interest credits counted as deposits: ACCEPTED at this account's size.** The deposit card now says so.
+
 ### 2026-11-04 (night) — CARD TRIAGE, last 48 hours (human request)
 
 Six distinct cards, all from the main book; none from the AI trader, the ladder or the live mirror. Every card was listed twice by `orchestrator alerts`, because the scratch snapshot carries a copy of production's ledger.
