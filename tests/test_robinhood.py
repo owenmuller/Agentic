@@ -4,6 +4,8 @@ stripped, and a rotated OAuth pair stored atomically before it is used."""
 from __future__ import annotations
 
 import json
+from datetime import date
+from decimal import Decimal as D
 
 import httpx
 import pytest
@@ -205,3 +207,131 @@ def test_a_place_that_fails_mid_request_is_found_by_its_reference_never_resent(t
         adapter.submit_order(approved, client_reference="ref-b")
     assert raised.value.client_reference == "ref-b" and mcp.places == 1
     assert mcp.lookups == len(robinhood.RECONCILE_PAUSES)
+
+
+# ================================================================================
+# Long options (temporary option ruling 2026-11-09)
+# ================================================================================
+
+
+class OptionMcp:
+    """The adapter's MCP for option orders. ``flaky`` fails the place call
+    mid-request; ``acted`` says whether the server took it anyway."""
+
+    account_number = PINNED
+
+    def __init__(self, flaky=False, acted=True):
+        self.flaky, self.acted = flaky, acted
+        self.calls, self.places, self.since = [], 0, None
+
+    def sleep(self, seconds):
+        pass
+
+    def approvals_required(self):
+        return False
+
+    def option_instruments(self, underlying, expiration, right, strike=None):
+        assert (underlying, expiration.isoformat(), right, strike) == ("SPY", "2026-11-10", "call", D("780"))
+        return [{"id": "opt-1"}]
+
+    def _order(self, side="buy"):
+        return {"id": "rh-o1", "state": "filled", "quantity": "1.00000", "processed_quantity": "1.00000",
+                "legs": [{"option": "https://api.robinhood.com/options/instruments/opt-1/", "side": side,
+                          "executions": [{"price": "0.15000000", "quantity": "1.00000"}]}]}
+
+    def call(self, tool, arguments=None):
+        self.calls.append((tool, arguments))
+        if tool == "review_option_order":
+            return {"data": {}}
+        if tool == "place_option_order":
+            self.places += 1
+            if self.flaky:
+                raise robinhood.RobinhoodTransient("MCP HTTP 502 on tools/call")
+            return {"data": {"order": {"id": "rh-o1", "state": "queued"}}}
+        if tool == "cancel_option_order":
+            return {"data": {}}
+        raise AssertionError(tool)
+
+    def option_orders(self, **filters):
+        if "created_at_gte" in filters:
+            self.since = filters["created_at_gte"]
+            return [self._order()] if self.acted else []
+        return [self._order()] if filters.get("order_id") == "rh-o1" else []
+
+    def equity_orders(self, **filters):
+        return []
+
+
+def option_adapter(mcp, sell=False):
+    from types import SimpleNamespace
+
+    from risk_gate.schema import LimitExecution, OptionBuyToOpenOrder, OptionSellToCloseOrder
+
+    adapter = object.__new__(robinhood.RobinhoodAgenticAdapter)   # no live process in a test
+    adapter._mcp = mcp
+    adapter._require_approved = lambda approved: approved
+    kind = OptionSellToCloseOrder if sell else OptionBuyToOpenOrder
+    order = kind(symbol="SPY261110C00780000", underlying="SPY", right="call", expiration=date(2026, 11, 10),
+                 strike=D("780"), contracts=1, execution=LimitExecution(limit_price=D("0.15")))
+    return adapter, SimpleNamespace(order=order)
+
+
+def test_a_long_option_is_reviewed_then_placed_as_one_limit_leg():
+    mcp = OptionMcp()
+    adapter, approved = option_adapter(mcp)
+    receipt = adapter.submit_order(approved, client_reference="mirror-a")
+    assert [t for t, _ in mcp.calls] == ["review_option_order", "place_option_order"]
+    placed = mcp.calls[1][1]
+    assert placed["legs"] == [{"option_id": "opt-1", "side": "buy", "position_effect": "open", "ratio_quantity": 1}]
+    assert (placed["type"], placed["price"], placed["quantity"], placed["account_number"]) == \
+        ("limit", "0.15", "1", PINNED)
+    assert receipt.broker_order_id == "rh-o1"
+    status = adapter.get_order("rh-o1")
+    assert status.status == "filled" and status.filled_quantity == 1 and status.filled_avg_price == D("0.15")
+    adapter.cancel_order("rh-o1")
+    assert mcp.calls[-1][0] == "cancel_option_order"
+    mcp = OptionMcp()
+    adapter, approved = option_adapter(mcp, sell=True)
+    adapter.submit_order(approved)
+    assert mcp.calls[1][1]["legs"][0] == {"option_id": "opt-1", "side": "sell", "position_effect": "close",
+                                           "ratio_quantity": 1}
+
+
+def test_an_option_place_that_fails_mid_request_is_found_by_its_contract_never_resent():
+    """Robinhood places an option order under its own approval id, so the
+    order carries no ref_id: it is found by contract, side, size and time."""
+    from execution.base import OrderOutcomeUnknown
+
+    mcp = OptionMcp(flaky=True, acted=True)
+    adapter, approved = option_adapter(mcp)
+    receipt = adapter.submit_order(approved, client_reference="mirror-a")
+    assert receipt.broker_order_id == "rh-o1" and mcp.places == 1
+    assert receipt.client_order_id.startswith("opt:opt-1:buy:1:") and mcp.since
+    mcp = OptionMcp(flaky=True, acted=False)
+    adapter, approved = option_adapter(mcp)
+    with pytest.raises(OrderOutcomeUnknown) as raised:
+        adapter.submit_order(approved, client_reference="mirror-b")
+    assert mcp.places == 1 and raised.value.client_reference.startswith("opt:opt-1:buy:1:")
+    assert adapter.get_order_by_client_reference(raised.value.client_reference) is None
+    mcp.acted = True                                    # it shows up later
+    found = adapter.get_order_by_client_reference(raised.value.client_reference)
+    assert found.broker_order_id == "rh-o1" and found.filled_quantity == 1
+
+
+def test_an_option_fill_is_priced_per_share_from_its_executions_or_its_premium():
+    status = robinhood._option_status({"id": "x", "state": "filled", "processed_quantity": "2",
+                                       "legs": [{"executions": [{"price": "0.10", "quantity": "1"},
+                                                                {"price": "0.20", "quantity": "1"}]}]})
+    assert status.filled_quantity == 2 and status.filled_avg_price == D("0.15")
+    status = robinhood._option_status({"id": "x", "state": "filled", "processed_quantity": "1",
+                                       "processed_premium": "15.00", "legs": [{}]})
+    assert status.filled_avg_price == D("0.15")
+    status = robinhood._option_status({"id": "x", "state": "cancelled", "processed_quantity": "0", "legs": [{}]})
+    assert status.is_terminal and status.filled_quantity == 0 and status.filled_avg_price is None
+
+
+def test_occ_symbols_and_ticks():
+    assert robinhood.occ_parts("MRNA261113C00260000") == ("MRNA", date(2026, 11, 13), "call", D("260"))
+    assert robinhood.occ_parts("SPY261110P00752500") == ("SPY", date(2026, 11, 10), "put", D("752.5"))
+    ticks = {"min_ticks": {"above_tick": "0.05", "below_tick": "0.01", "cutoff_price": "3.00"}}
+    assert robinhood.option_tick(ticks, D("0.15")) == D("0.01") and robinhood.option_tick(ticks, D("3.20")) == D("0.05")

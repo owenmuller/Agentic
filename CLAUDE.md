@@ -267,7 +267,7 @@ Software-only books on two of Quiver's published strategies (quiverquant.com/str
 - **Mirror:** the live account copies the paper AI trader's entries and exits, scaled to live equity, with the same 2% risk per trade, stops, targets and horizons. The paper AI trader is unchanged and remains the measured version.
 - **Live constraints:** every Inviolable Constraint applies.
   - Cash only, no margin, no shorting, settled funds only.
-  - An option only when one contract fits the premium cap; otherwise skip and log.
+  - An option only when one contract fits the premium cap; otherwise skip and log. **TEMPORARY, superseded while the account is too small for typical contracts (human ruling 2026-11-09; see "Options, temporary" below).**
   - Fractional shares where the venue supports them.
   - Leveraged and inverse ETFs are NOT allowed (skip and log).
   - A 12% kill switch on starting equity, and a 4% daily loss limit.
@@ -285,7 +285,13 @@ Software-only books on two of Quiver's published strategies (quiverquant.com/str
     - The working order survives a restart, and a restart cancels one still open.
     - A holding the mirror does not track blocks new entries and is carded red; it is never sold blind.
     - A paper entry read but not yet copied is saved with the state (2026-11-09): after a restart it is copied, or skipped with a card when more than 5 minutes late, never lost.
-  - **Options are not mirrored yet:** a contract above the 2% premium cap is skipped, and one that fits is skipped too, because the live option path has no round trip. At $1,050 the cap is $21; no paper contract has cost under $61. Since mirroring began (2026-11-06) every paper entry has been an option (report 2026-11-09).
+  - **Options, TEMPORARY (human ruling 2026-11-09, while the account is too small for typical contracts; it reverts to native options by itself as equity grows, no further ruling needed).** Decided per trade, against the live premium cap (2% of live equity, $21 at $1,050; one contract's live limit × 100):
+    - **Fits:** the option itself is copied (one leg, buy to open, a limit on the contract's own tick, whole contracts within the cap). Native copies start only after the live option round trip has passed. It exits on the paper close; on the paper option's UNDERLYING stop or target (a call's on the bid or last trade, never the ask; a put's on the mid of a tight quote, else the last trade); at the option's expiry close; or past its horizon. It is sold as a limit at the contract's bid.
+    - **A call that does not fit: the proxy**, its underlying stock. The same 2% of live equity at risk to the paper option's own underlying stop, its underlying target and its horizon, through the stock path's cap, whole shares first, then fractional. Out on the paper option's close or that stop or target, whichever first. A leveraged or inverse underlying is skipped. **OFF (`option_proxy_enabled: false`) until the human approves the method** (proposed 2026-11-09 with worked examples, SESSION_NOTES).
+    - **A put that does not fit:** skipped (no shorting, no inverse ETFs live).
+    - **Live option round trip** (item 3): one cheap, liquid call bought and sold through the gate inside the live unit. The contract is the round-trip symbol (SPY), the nearest expiry after today, struck above the market, a spread of 2 cents or less, open interest 500 or more, and one contract within the cap. It runs from 09:45 to 15:00 ET, at most 3 attempts. It could not run on 2026-11-09: the live flags exist only in the live unit, and the unit restarts at its next session.
+    - **Daily card:** native copies, proxies and skips each on their own row. Each closed proxy is shown against the paper option it stood in for.
+    - **Robinhood places an option order under its own approval id,** so the order does not carry our `ref_id`. After a failed place call, the order is found by contract, side, size and time.
   - **Deposits and withdrawals are cash flows, never P&L (human ruling 2026-11-04, second).** The Agentic MCP has no transfer records, so a flow is a change in the broker's cash that the mirror's own fills and fees do not explain. It is reconciled only with no order working and 60 seconds after a fill.
     - Each flow moves the kill-switch baseline (starting equity plus net flows), today's loss-limit baseline and the gate's high-water mark; a withdrawal also leaves the gate's cash at once. Each one is carded.
     - Returns are Modified Dietz by day, chained into a time-weighted return since mirroring began.

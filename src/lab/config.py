@@ -205,6 +205,19 @@ class LiveMirrorConfig(_Strict):
     min_notional_usd: Decimal = Field(default=Decimal("5"), ge=Decimal("1"))
     #: A paper entry copied later than this is skipped, not chased.
     max_entry_delay_seconds: int = Field(default=300, ge=30, le=1800)
+    #: TEMPORARY option ruling 2026-11-09 (while the account is too small for
+    #: typical contracts): a paper CALL whose contract does not fit the premium
+    #: cap is copied as its underlying stock. Off until the human approves the
+    #: proxy method; a put that does not fit is always skipped.
+    option_proxy_enabled: bool = False
+    #: The one live option round trip (same ruling, item 3): buy and sell one
+    #: cheap, liquid call through the gate. Native option copies wait for it.
+    option_round_trip_enabled: bool = False
+    option_round_trip_symbol: str = "SPY"
+    option_round_trip_window: tuple[str, str] = ("09:45", "15:00")
+    #: A round-trip contract's spread may be at most this wide (dollars a share).
+    option_round_trip_max_spread: Decimal = Field(default=Decimal("0.02"), gt=ZERO, le=Decimal("0.05"))
+    option_round_trip_attempts: int = Field(default=3, ge=1, le=5)
     #: The live account's own cap table on top of risk_limits.yaml.
     limits_overrides: dict[str, Any] = Field(default_factory=dict)
 

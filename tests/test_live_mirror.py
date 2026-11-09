@@ -39,6 +39,35 @@ class Reader:
                      "F": ("39.95", "40.00", "39.97")}
         self.approvals = False
         self.fees: dict[str, str] = {}
+        self.contracts: dict[str, dict] = {}       # option instrument id -> its row
+        self.option_book: dict[str, tuple] = {}    # option instrument id -> (bid, ask)
+        self.option_held: dict[str, str] = {}      # option instrument id -> contracts
+
+    def add_contract(self, option_id, occ, bid, ask, open_interest=1000):
+        from execution.robinhood import occ_parts
+
+        underlying, expiration, right, strike = occ_parts(occ)
+        self.contracts[option_id] = {"id": option_id, "chain_symbol": underlying, "type": right,
+                                     "expiration_date": expiration.isoformat(), "strike_price": f"{strike:.4f}",
+                                     "tradability": "tradable",
+                                     "min_ticks": {"above_tick": "0.05", "below_tick": "0.01", "cutoff_price": "3.00"}}
+        self.option_book[option_id] = (bid, ask, open_interest)
+
+    def option_instruments(self, underlying, expiration, right, strike=None):
+        return [r for r in self.contracts.values()
+                if r["chain_symbol"] == underlying and r["expiration_date"] == expiration.isoformat()
+                and r["type"] == right and (strike is None or D(r["strike_price"]) == D(strike))]
+
+    def option_quotes(self, ids):
+        return {i: {"instrument_id": i, "bid_price": self.option_book[i][0], "ask_price": self.option_book[i][1],
+                    "open_interest": self.option_book[i][2]} for i in ids if i in self.option_book}
+
+    def option_positions(self):
+        return [{"option_id": i, "quantity": q, "type": "long", "chain_symbol": self.contracts[i]["chain_symbol"]}
+                for i, q in self.option_held.items() if D(q) > 0]
+
+    def option_orders(self, **filters):
+        return [{"id": filters.get("order_id"), "fees": self.fees.get(filters.get("order_id"), "0")}]
 
     def portfolio(self):
         return {"cash": self.cash, "total_value": self.total, "pending_deposits": self.pending}
@@ -72,6 +101,18 @@ class Broker:
         order = approved.order
         self.sent.append(order)
         oid = f"o{len(self.sent)}"
+        if hasattr(order, "contracts"):                  # a long option: fills at the option's ask or bid
+            [row] = self.reader.option_instruments(order.underlying, order.expiration, order.right, order.strike)
+            bid, ask, _ = self.reader.option_book[row["id"]]
+            buy = type(order).__name__ == "OptionBuyToOpenOrder"
+            price = D(ask if buy else bid)
+            self.orders[oid] = OrderStatus(oid, "filled", order.contracts, price)
+            held = D(self.reader.option_held.get(row["id"], "0")) + (order.contracts if buy else -order.contracts)
+            self.reader.option_held[row["id"]] = str(held)
+            value = order.contracts * price * 100
+            self.reader.cash = str(D(self.reader.cash) + (-value if buy else value))
+            return OrderReceipt(oid, "queued", order.symbol, order.contracts, order.execution.price_bound,
+                                client_reference)
         bid, ask, _ = self.reader.book[order.symbol]
         buy = type(order).__name__ == "EquityBuyOrder"
         self.orders[oid] = OrderStatus(oid, "filled", order.quantity, D(ask if buy else bid))
@@ -519,3 +560,184 @@ def test_a_paper_entry_read_before_a_restart_is_copied_or_carded_never_lost(tmp_
         assert "seconds late" in again.ledger.events(["skip"])[-1]["why"]
         assert any("skipped F" in c.happened for c in seen)
     assert again.e["queue"] == []
+
+
+# ================================================================================
+# Options: native, the call proxy, the round trip (temporary ruling 2026-11-09)
+# ================================================================================
+
+CHEAP = "F261113C00041000"        # a contract that fits under the 2% premium cap ($22 on $1,100)
+DEAR = "UNH261120C00400000"       # one that does not: $1,200 a contract
+
+
+def option_opened(pid, symbol, occ, right="call", stop="38.00", target="44.00"):
+    """A paper option entry: its stop and target are UNDERLYING levels."""
+    return {**opened(pid, symbol, instrument=right, stop="5.0", target="10.0", occ=occ, multiplier=100),
+            "stop": stop, "target": target}
+
+
+def with_proxy(config):
+    return config.model_copy(update={"live_mirror": config.live_mirror.model_copy(
+        update={"option_proxy_enabled": True})})
+
+
+def test_an_option_that_fits_is_copied_natively_once_the_option_round_trip_has_passed(tmp_path, config):
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    reader.add_contract("f41", CHEAP, "0.14", "0.15")
+    paper(tmp_path, option_opened("a", "F", CHEAP), filled("a", price="0.15", qty="1", mult=100))
+    mirror.tick()
+    assert "round trip has not passed" in mirror.ledger.events(["skip"])[-1]["why"]
+    mirror.e["option_round_trip"] = "passed"
+    paper(tmp_path, option_opened("b", "F", CHEAP), filled("b", price="0.15", qty="1", mult=100))
+    mirror.tick()
+    order = mirror.broker.sent[-1]
+    assert type(order).__name__ == "OptionBuyToOpenOrder" and order.symbol == CHEAP
+    assert order.contracts == 1 and order.execution.limit_price == D("0.15")   # 22 / 15 -> one contract
+    mirror.tick()                                       # settles
+    position = mirror.e["positions"]["b"]
+    assert (position["copy"], position["option_id"], position["stop"], position["target"]) == \
+        ("native", "f41", "38.00", "44.00")
+    assert any(c.happened == f"bought {CHEAP}" for c in seen)
+    reader.book["F"] = ("39.50", "39.55", "39.50")    # the underlying above the stop: held
+    mirror.tick()
+    assert type(mirror.broker.sent[-1]).__name__ == "OptionBuyToOpenOrder"
+    paper(tmp_path, {"event": "position_closed", "pid": "b", "reason": "target", "at": T0.isoformat()})
+    mirror.tick()
+    sell = mirror.broker.sent[-1]
+    assert type(sell).__name__ == "OptionSellToCloseOrder" and sell.execution.limit_price == D("0.14")
+    mirror.tick()
+    assert "b" not in mirror.e["positions"] and reader.option_held["f41"] == "0"
+    rows = mirror.daily_card().lines
+    assert any(r.startswith(f"Native option copies: 1 opened ({CHEAP}), 1 closed for -$1") for r in rows)
+    assert any(r.startswith("Skips: 1: F call:") for r in rows)
+
+
+def test_a_native_option_exits_on_the_underlying_stop_on_the_bid(tmp_path, config):
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    reader.add_contract("f41", CHEAP, "0.14", "0.15")
+    mirror.e["option_round_trip"] = "passed"
+    paper(tmp_path, option_opened("a", "F", CHEAP), filled("a", price="0.15", qty="1", mult=100))
+    mirror.tick()
+    mirror.tick()
+    reader.book["F"] = ("37.99", "38.30", "38.10")    # the underlying's bid at the paper's stop 38.00
+    mirror.tick()
+    sell = mirror.broker.sent[-1]
+    assert type(sell).__name__ == "OptionSellToCloseOrder"
+    assert "underlying stop 38.00" in mirror.ledger.events(["order"])[-1]["why"]
+
+
+def test_a_dear_call_is_skipped_while_the_proxy_is_off_and_a_dear_put_always(tmp_path, config):
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    reader.add_contract("unh400", DEAR, "11.90", "12.00")
+    paper(tmp_path, option_opened("a", "UNH", DEAR, stop="380.00", target="440.00"),
+          filled("a", price="12.00", qty="1", mult=100))
+    mirror.tick()
+    assert "proxy is off" in mirror.ledger.events(["skip"])[-1]["why"]
+    (tmp_path / "p").mkdir()
+    mirror, seen, clock, reader = mirroring(tmp_path / "p", with_proxy(config))
+    paper(tmp_path / "p", option_opened("b", "UNH", "UNH261120P00400000", right="put", stop="420.00",
+                                        target="360.00"), filled("b", price="12.00", qty="1", mult=100))
+    mirror.tick()
+    assert "a put that does not fit is skipped" in mirror.ledger.events(["skip"])[-1]["why"]
+    assert len(mirror.broker.sent) == 2
+
+
+def test_a_dear_call_is_proxied_by_its_stock_at_the_paper_options_underlying_levels(tmp_path, config):
+    mirror, seen, clock, reader = mirroring(tmp_path, with_proxy(config))
+    reader.add_contract("unh400", DEAR, "11.90", "12.00")
+    paper(tmp_path, option_opened("a", "UNH", DEAR, stop="380.00", target="440.00"),
+          filled("a", price="12.00", qty="1", mult=100))
+    mirror.tick()
+    order = mirror.broker.sent[-1]
+    # 2% of 1100 = 22 at risk to the paper's UNDERLYING stop: 22 / (400.00 - 380.00) = 1.1 shares, capped
+    # at 18.75% of 1100 x 0.99 over the gate's bound (420) -> 0.486160, a fractional market buy
+    assert type(order).__name__ == "EquityBuyOrder" and order.symbol == "UNH" and order.quantity == D("0.486160")
+    mirror.tick()
+    position = mirror.e["positions"]["a"]
+    assert (position["copy"], position["stop"], position["target"], position["paper_occ"]) == \
+        ("proxy", "380.00", "440.00", DEAR)
+    reader.book["UNH"] = ("379.90", "380.10", "380.00")   # the underlying's bid at the paper's stop
+    mirror.tick()
+    sell = mirror.broker.sent[-1]
+    assert type(sell).__name__ == "EquitySellToCloseOrder" and sell.symbol == "UNH"
+    mirror.tick()
+    rows = mirror.daily_card().lines
+    assert any(r.startswith("Call proxies: 1 opened (UNH), 1 closed") for r in rows)
+    assert any(r.startswith(f"Proxy UNH for {DEAR}:") and "the paper option is still open" in r for r in rows)
+
+
+def test_a_proxy_closes_with_the_paper_option_and_is_reported_against_it(tmp_path, config):
+    mirror, seen, clock, reader = mirroring(tmp_path, with_proxy(config))
+    reader.add_contract("unh400", DEAR, "11.90", "12.00")
+    paper(tmp_path, option_opened("a", "UNH", DEAR, stop="380.00", target="440.00"),
+          filled("a", price="12.00", qty="1", mult=100))
+    mirror.tick()
+    mirror.tick()
+    paper(tmp_path, {"event": "settled", "pid": "a", "side": "sell", "reason": "target", "filled_qty": "1",
+                     "avg_price": "15.00", "multiplier": 100, "at": T0.isoformat()},
+          {"event": "position_closed", "pid": "a", "reason": "target", "at": T0.isoformat()})
+    mirror.tick()
+    assert type(mirror.broker.sent[-1]).__name__ == "EquitySellToCloseOrder"
+    mirror.tick()
+    rows = mirror.daily_card().lines
+    assert any("against the paper option +$300" in r and "25" in r for r in rows), rows
+
+
+def test_the_option_round_trip_buys_and_sells_one_cheap_call_then_native_copies_are_on(tmp_path, config):
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    assert "option_round_trip" not in mirror.e          # no contract qualified yet: noted, nothing sent
+    reader.add_contract("wide", "SPY261106C00775000", "0.20", "0.30")          # too wide
+    reader.add_contract("dear", "SPY261106C00772000", "0.40", "0.41")          # $41: over the cap
+    reader.add_contract("thin", "SPY261106C00785000", "0.10", "0.11", open_interest=10)
+    reader.add_contract("good", "SPY261106C00780000", "0.14", "0.15")
+    mirror.tick()
+    buy = mirror.broker.sent[-1]
+    assert type(buy).__name__ == "OptionBuyToOpenOrder" and buy.symbol == "SPY261106C00780000"
+    assert buy.contracts == 1 and buy.execution.limit_price == D("0.15")
+    mirror.tick()                                       # the buy settles; the sell goes out
+    sell = mirror.broker.sent[-1]
+    assert type(sell).__name__ == "OptionSellToCloseOrder" and sell.execution.limit_price == D("0.14")
+    mirror.tick()
+    assert mirror.e["option_round_trip"] == "passed" and reader.option_held["good"] == "0"
+    record = mirror.ledger.events(["option_round_trip"])[-1]
+    assert record["passed"] is True and D(record["net"]) == D("-1")
+    assert any(c.happened == "live option round trip passed" for c in seen)
+    mirror.tick()
+    assert len(mirror.broker.sent) == 4                 # once only
+
+
+def test_a_dry_option_round_trip_picks_its_contract_and_sends_nothing(tmp_path, config):
+    reader = Reader()
+    mirror, seen, clock = build(tmp_path, config, reader, broker=None)
+    clock.now = T0 + timedelta(days=1)
+    reader.add_contract("good", "SPY261106C00780000", "0.14", "0.15")
+    mirror.start()
+    mirror.e.update(phase="mirroring", starting_equity="1100", paper_offset=0)
+    mirror.tick()
+    would = mirror.ledger.events(["would_option_round_trip"])
+    assert would and would[-1]["occ"] == "SPY261106C00780000" and seen == []
+
+
+def test_an_option_the_mirror_does_not_track_blocks_entries(tmp_path, config):
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    reader.add_contract("zz", "F261113C00045000", "0.05", "0.06")
+    reader.option_held["zz"] = "1"
+    paper(tmp_path, opened("a", "F"), filled("a", price="40"))
+    mirror.tick()
+    assert len(mirror.broker.sent) == 2 and "does not track" in mirror.ledger.events(["skip"])[-1]["why"]
+    assert any(c.status == cards.ACTION and "option" in c.happened for c in seen)
+
+
+def test_a_restart_holding_a_native_option_can_still_sell_it(tmp_path, config):
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    reader.add_contract("f41", CHEAP, "0.14", "0.15")
+    mirror.e["option_round_trip"] = "passed"
+    paper(tmp_path, option_opened("a", "F", CHEAP), filled("a", price="0.15", qty="1", mult=100))
+    mirror.tick()
+    mirror.tick()
+    again = restarted(tmp_path, config, reader, clock, seen)
+    again.tick()
+    assert again.gate.state.positions[("option", CHEAP)].quantity == 1
+    paper(tmp_path, {"event": "position_closed", "pid": "a", "reason": "stop", "at": T0.isoformat()})
+    again.tick()
+    assert type(again.broker.sent[-1]).__name__ == "OptionSellToCloseOrder"

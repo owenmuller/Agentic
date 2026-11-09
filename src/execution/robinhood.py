@@ -27,6 +27,7 @@ import logging
 import os
 import time
 import uuid
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Optional
@@ -269,6 +270,70 @@ class RobinhoodMcp:
     def equity_orders(self, **filters: str) -> list[dict]:
         return _rows(self.call("get_equity_orders", {"account_number": self.account_number, **filters}), "orders")
 
+    # -- option reads (temporary option ruling 2026-11-09) ------------------------------
+
+    def option_instruments(self, underlying: str, expiration: date, right: str,
+                           strike: Optional[Decimal] = None) -> list[dict]:
+        """Every tradable contract on one expiry and side (all pages), or the
+        one at ``strike``."""
+        args: dict[str, Any] = {"chain_symbol": underlying.upper(), "expiration_dates": expiration.isoformat(),
+                                "type": right, "state": "active"}
+        if strike is not None:
+            args["strike_price"] = f"{Decimal(strike):.4f}"
+        rows: list[dict] = []
+        while True:
+            data = self.call("get_option_instruments", args)
+            data = data.get("data", data) if isinstance(data, dict) else {}
+            rows += [r for r in data.get("instruments") or [] if isinstance(r, dict)]
+            cursor = data.get("next")
+            if not cursor:
+                return [r for r in rows if r.get("tradability", "tradable") == "tradable"]
+            args["cursor"] = cursor
+
+    def option_quotes(self, instrument_ids: list[str]) -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        for start in range(0, len(instrument_ids), 20):
+            chunk = instrument_ids[start:start + 20]
+            for row in _rows(self.call("get_option_quotes", {"instrument_ids": chunk}), "results"):
+                quote = row.get("quote") if isinstance(row, dict) else None
+                if isinstance(quote, dict) and quote.get("instrument_id"):
+                    out[str(quote["instrument_id"])] = quote
+        return out
+
+    def option_positions(self) -> list[dict]:
+        return _rows(self.call("get_option_positions", {"account_number": self.account_number, "nonzero": True}),
+                     "positions")
+
+    def option_orders(self, **filters: str) -> list[dict]:
+        return _rows(self.call("get_option_orders", {"account_number": self.account_number, **filters}), "orders")
+
+
+def occ_parts(occ: str) -> tuple[str, date, str, Decimal]:
+    """(underlying, expiration, 'call'|'put', strike) from an OCC symbol such
+    as ``MRNA261113C00260000``."""
+    text = occ.strip().upper()
+    root, stamp, flag, strike = text[:-15], text[-15:-9], text[-9], text[-8:]
+    expiration = date(2000 + int(stamp[:2]), int(stamp[2:4]), int(stamp[4:6]))
+    return root, expiration, "call" if flag == "C" else "put", Decimal(strike) / 1000
+
+
+def option_tick(instrument: dict, price: Decimal) -> Decimal:
+    """The contract's price increment at ``price`` (its min_ticks)."""
+    ticks = instrument.get("min_ticks") or {}
+    cutoff = _d(ticks.get("cutoff_price"))
+    above, below = _d(ticks.get("above_tick")) or Decimal("0.05"), _d(ticks.get("below_tick")) or Decimal("0.01")
+    return above if cutoff > 0 and price >= cutoff else below
+
+
+def option_position_id(row: dict) -> str:
+    """The instrument UUID of an option position row, whichever way the
+    server spells it (an id field, or the instrument URL)."""
+    for key in ("option_id", "instrument_id"):
+        if row.get(key):
+            return str(row[key])
+    url = str(row.get("option") or row.get("option_instrument") or "")
+    return url.rstrip("/").rsplit("/", 1)[-1]
+
 
 def _rows(payload: Any, key: str) -> list[dict]:
     data = payload.get("data", payload) if isinstance(payload, dict) else payload
@@ -288,9 +353,11 @@ def _d(value: Any) -> Decimal:
 
 
 class RobinhoodAgenticAdapter(BrokerAdapter):
-    """The live mirror's broker (GO LIVE ruling 2026-11-04). Equities only:
-    an option never reaches it (the mirror skips options until a live option
-    round trip has proved that path).
+    """The live mirror's broker (GO LIVE ruling 2026-11-04). Equities, and
+    since the temporary option ruling of 2026-11-09 single-leg LONG options:
+    buy to open and sell to close, nothing else (the schema has no writing
+    order). The option leg is resolved to Robinhood's instrument id from the
+    order's own contract fields.
 
     It cannot be built in paper: there is no Robinhood paper mode, so the
     process must resolve LIVE under Constraint #4 (both human-set variables)
@@ -334,13 +401,38 @@ class RobinhoodAgenticAdapter(BrokerAdapter):
             payload.update(type="market", time_in_force="gfd")
         return payload
 
+    def _option_payload(self, order) -> tuple[dict, str]:
+        """A single long leg: buy to open, or sell to close a held long. Limits
+        only (the mirror prices them on the contract's own tick)."""
+        from risk_gate.schema import OptionBuyToOpenOrder
+
+        rows = self._mcp.option_instruments(order.underlying, order.expiration, order.right, order.strike)
+        if len(rows) != 1:
+            raise BrokerError(f"{order.symbol}: {len(rows)} tradable contracts match at Robinhood, not one", 404, "")
+        if order.execution.style != "limit":
+            raise RobinhoodError("the live mirror sends option orders as limits only")
+        option_id = str(rows[0]["id"])
+        buy = isinstance(order, OptionBuyToOpenOrder)
+        payload = {"account_number": self._mcp.account_number, "type": "limit", "time_in_force": "gfd",
+                   "market_hours": "regular_hours", "quantity": str(int(order.contracts)),
+                   "price": format(order.execution.limit_price.normalize(), "f"),
+                   "legs": [{"option_id": option_id, "side": "buy" if buy else "sell",
+                             "position_effect": "open" if buy else "close", "ratio_quantity": 1}]}
+        return payload, option_id
+
     def submit_order(self, approved: ApprovedOrder, client_reference: Optional[str] = None) -> OrderReceipt:
         approved = self._require_approved(approved)
-        payload = self._payload(approved.order)
+        option = _is_option_order(approved.order)
+        if option:
+            payload, option_id = self._option_payload(approved.order)
+            review_tool, place_tool = "review_option_order", "place_option_order"
+        else:
+            payload, option_id = self._payload(approved.order), None
+            review_tool, place_tool = "review_equity_order", "place_equity_order"
         if self._mcp.approvals_required():
             raise BrokerError("trade approvals are ON for the Agentic account (the human's app setting): an order "
                               "would wait for a tap, so none is placed", 409, "human_must_approve_trades")
-        review = self._mcp.call("review_equity_order", payload)
+        review = self._mcp.call(review_tool, payload)
         review = review.get("data", review) if isinstance(review, dict) else {}
         self.last_review = review
         checks = review.get("order_checks") or {}
@@ -351,20 +443,29 @@ class RobinhoodAgenticAdapter(BrokerAdapter):
             raise BrokerError("the review says the customer must approve this order: not placed", 409,
                               "customer_approval_required")
         ref_id = client_reference or str(uuid.uuid4())
+        if option:
+            # Robinhood places an option order under its own approval id, so the
+            # placed order does not carry ref_id: the durable reference is the
+            # contract, side, size and the time it was sent.
+            leg = payload["legs"][0]
+            lookup = (f"opt:{option_id}:{leg['side']}:{payload['quantity']}:"
+                      f"{(datetime.now(timezone.utc) - timedelta(seconds=5)).strftime('%Y-%m-%dT%H:%M:%SZ')}")
+        else:
+            lookup = ref_id
         try:
-            placed = self._mcp.call("place_equity_order", {**payload, "ref_id": ref_id})
+            placed = self._mcp.call(place_tool, {**payload, "ref_id": ref_id})
         except RobinhoodTransient as error:
             # the server may have acted: never re-send blind - find it by its reference
-            found = self._reconcile(ref_id)
+            found = self._reconcile(lookup)
             if found is None:
-                raise OrderOutcomeUnknown(ref_id, f"place_equity_order: {error}; no order carries ref {ref_id} "
+                raise OrderOutcomeUnknown(lookup, f"{place_tool}: {error}; no order matches {lookup} "
                                                   f"yet") from error
             order = found
         except RobinhoodError as error:
             if "409" in str(error) or "unique" in str(error).lower():
-                found = self._by_ref(ref_id)     # the first attempt registered (spike part 2)
+                found = self._by_ref(lookup)     # the first attempt registered (spike part 2)
                 if found is None:
-                    raise BrokerError(f"place refused and no order carries ref {ref_id}", 409, str(error)) from error
+                    raise BrokerError(f"place refused and no order matches {lookup}", 409, str(error)) from error
                 order = found
             else:
                 raise BrokerError(str(error), 400, str(error)) from error
@@ -372,9 +473,18 @@ class RobinhoodAgenticAdapter(BrokerAdapter):
             order = ((placed.get("data") or {}).get("order") if isinstance(placed, dict) else None) or {}
         if not order.get("id"):
             raise BrokerError("place returned no order id", 502, json.dumps(order)[:300])
+        if option:
+            self._option_ids.add(str(order["id"]))
         return OrderReceipt(broker_order_id=str(order["id"]), status=str(order.get("state", "")),
-                            symbol=approved.order.symbol, quantity=approved.order.quantity,
-                            limit_price=approved.order.execution.price_bound, client_order_id=ref_id)
+                            symbol=approved.order.symbol,
+                            quantity=approved.order.contracts if option else approved.order.quantity,
+                            limit_price=approved.order.execution.price_bound, client_order_id=lookup)
+
+    @property
+    def _option_ids(self) -> set:
+        if not hasattr(self, "_known_option_ids"):
+            self._known_option_ids: set = set()
+        return self._known_option_ids
 
     def _reconcile(self, ref_id: str) -> Optional[dict]:
         """After a transient failure on the place call: the order by its
@@ -390,32 +500,67 @@ class RobinhoodAgenticAdapter(BrokerAdapter):
         return None
 
     def _by_ref(self, ref_id: str) -> Optional[dict]:
+        if ref_id.startswith("opt:"):
+            return self._option_match(ref_id)
         for order in self._mcp.equity_orders():
             if order.get("ref_id") == ref_id:
                 return order
         return None
 
+    def _option_match(self, lookup: str) -> Optional[dict]:
+        """The option order sent under ``lookup`` (opt:<id>:<side>:<qty>:<since>):
+        the newest on that contract, side and size created since then. The
+        mirror keeps one working order, so a match is that order."""
+        _, option_id, side, quantity, since = lookup.split(":", 4)
+        for order in self._mcp.option_orders(created_at_gte=since):
+            legs = order.get("legs") or []
+            if len(legs) != 1 or _d(order.get("quantity")) != _d(quantity):
+                continue
+            if option_position_id(legs[0]) == option_id and legs[0].get("side") == side:
+                self._option_ids.add(str(order.get("id")))
+                return order
+        return None
+
+    def _is_option_id(self, broker_order_id: str) -> bool:
+        if broker_order_id in self._option_ids:
+            return True
+        if self._mcp.option_orders(order_id=broker_order_id):
+            self._option_ids.add(broker_order_id)
+            return True
+        return False
+
     def get_order(self, broker_order_id: str) -> OrderStatus:
+        if broker_order_id in self._option_ids:
+            orders = self._mcp.option_orders(order_id=broker_order_id)
+            if orders:
+                return _option_status(orders[0])
         orders = self._mcp.equity_orders(order_id=broker_order_id)
-        if not orders:
-            raise BrokerError(f"no order {broker_order_id} on the Agentic account", 404, "")
-        return _status(orders[0])
+        if orders:
+            return _status(orders[0])
+        orders = self._mcp.option_orders(order_id=broker_order_id)
+        if orders:
+            self._option_ids.add(broker_order_id)
+            return _option_status(orders[0])
+        raise BrokerError(f"no order {broker_order_id} on the Agentic account", 404, "")
 
     def get_order_by_client_reference(self, client_reference: str) -> Optional[OrderStatus]:
         found = self._by_ref(client_reference)
-        return _status(found) if found else None
+        if not found:
+            return None
+        return _option_status(found) if client_reference.startswith("opt:") else _status(found)
 
     def cancel_order(self, broker_order_id: str) -> None:
+        tool = "cancel_option_order" if self._is_option_id(broker_order_id) else "cancel_equity_order"
         try:
-            self._mcp.call("cancel_equity_order", {"account_number": self._mcp.account_number,
-                                                   "order_id": broker_order_id})
+            self._mcp.call(tool, {"account_number": self._mcp.account_number, "order_id": broker_order_id})
         except RobinhoodError as error:
             if "cannot be cancelled" not in str(error).lower():   # terminal already: idempotent
                 raise BrokerError(str(error), 400, str(error)) from error
 
     def open_orders(self) -> list[str]:
-        return [str(o["id"]) for o in self._mcp.equity_orders()
-                if o.get("id") and not _status(o).is_terminal]
+        return ([str(o["id"]) for o in self._mcp.equity_orders() if o.get("id") and not _status(o).is_terminal]
+                + [str(o["id"]) for o in self._mcp.option_orders()
+                   if o.get("id") and not _option_status(o).is_terminal])
 
     # -- the account ----------------------------------------------------------------
 
@@ -461,3 +606,33 @@ def _status(order: dict) -> OrderStatus:
     price = order.get("average_price")   # never "price": that is a limit order's limit
     return OrderStatus(broker_order_id=str(order.get("id", "")), status=_TERMINAL.get(state, state),
                        filled_quantity=filled, filled_avg_price=_d(price) if filled > 0 and price else None)
+
+
+def _is_option_order(order) -> bool:
+    from risk_gate.schema import OptionBuyToOpenOrder, OptionSellToCloseOrder
+
+    return isinstance(order, (OptionBuyToOpenOrder, OptionSellToCloseOrder))
+
+
+def _option_status(order: dict) -> OrderStatus:
+    """An option order's state, contracts filled and average price PER SHARE
+    (the quote's unit; a contract is 100 of it). The fill price comes from the
+    leg executions, else the order's average, else its processed premium; with
+    none of them a fill has no price and is reported as unknown, never the
+    limit."""
+    state = str(order.get("state", ""))
+    legs = order.get("legs") or []
+    executions = [x for leg in legs for x in (leg.get("executions") or []) if isinstance(x, dict)]
+    filled = _d(order.get("processed_quantity")) or _d(order.get("cumulative_quantity")) \
+        or sum((_d(x.get("quantity")) for x in executions), Decimal("0"))
+    price: Optional[Decimal] = None
+    if executions:
+        units = sum((_d(x.get("quantity")) for x in executions), Decimal("0"))
+        if units > 0:
+            price = sum((_d(x.get("price")) * _d(x.get("quantity")) for x in executions), Decimal("0")) / units
+    if price is None and _d(order.get("average_price")) > 0:
+        price = _d(order.get("average_price"))
+    if price is None and filled > 0 and _d(order.get("processed_premium")) > 0:
+        price = _d(order.get("processed_premium")) / (filled * 100)
+    return OrderStatus(broker_order_id=str(order.get("id", "")), status=_TERMINAL.get(state, state),
+                       filled_quantity=filled, filled_avg_price=price if filled > 0 else None)

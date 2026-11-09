@@ -12,9 +12,15 @@ The rules (the ruling's items 2-3; every Inviolable Constraint applies):
   * every order passes this account's own RiskGate (cash-secured, settled
     funds only: the gate's cash is the broker's settled cash and its
     aggressive path refuses today's unsettled sale proceeds);
-  * stocks and plain ETFs only: a leveraged or inverse ETF is skipped and
-    logged; an option is skipped unless one contract fits the premium cap,
-    and even then skipped until a live option round trip proves that path;
+  * stocks and plain ETFs: a leveraged or inverse ETF is skipped and logged;
+  * options (TEMPORARY ruling 2026-11-09, while the account is too small for
+    typical contracts): a paper option whose contract fits the premium cap
+    (2% of live equity) is copied as the option itself once the live option
+    round trip has passed; a CALL that does not fit is copied as its
+    underlying stock (the proxy: the same 2% at risk to the paper option's
+    own underlying stop, its underlying target, its horizon; out on the paper
+    close or that stop or target), OFF until the human approves the method;
+    a PUT that does not fit is skipped;
   * whole shares as day limits when at least one share fits, else a
     fractional market buy (the venue takes fractions only as market orders
     in regular hours; the gate reserves at the ask + 5% and the order
@@ -43,9 +49,11 @@ from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from execution import BrokerError, OrderOutcomeUnknown, cards
+from execution.robinhood import occ_parts, option_position_id, option_tick
 from risk_gate.gate import RiskGate
 from risk_gate.schema import (
     EquityBuyOrder, EquitySellToCloseOrder, LimitExecution, MarketBuyExecution, MarketSellExecution,
+    OptionBuyToOpenOrder, OptionSellToCloseOrder,
 )
 from risk_gate.state import AccountState, AccountType, Sleeve
 
@@ -54,6 +62,8 @@ ZERO = Decimal("0")
 CENTS = Decimal("0.01")
 SHARE_STEP = Decimal("0.000001")
 SLEEVE = Sleeve.AGGRESSIVE
+#: The live option round trip's position (temporary option ruling 2026-11-09).
+OPTION_RT_PID = "option-round-trip"
 MARKET_BUY_WHY = ("fractional quantity: Robinhood accepts fractional shares only as market orders in regular hours "
                   "(GO LIVE ruling 2026-11-04, whole shares first)")
 MARKET_SELL_WHY = ("closing a fractional holding: Robinhood sells fractional shares only as market orders in "
@@ -79,6 +89,10 @@ class Snapshot:
     #: The broker's raw cash (it includes early access to deposits in transit):
     #: what the cash-flow reconciliation compares.
     cash: Decimal = ZERO
+    #: Long option contracts held, by Robinhood instrument id, and a readable
+    #: name for each (the temporary option ruling, 2026-11-09).
+    options: Optional[dict] = None
+    option_names: Optional[dict] = None
 
     @property
     def tradeable_equity(self) -> Decimal:
@@ -158,10 +172,20 @@ class LiveMirror:
             quantity = _d(position.get("quantity"))
             if quantity > 0:
                 held[str(position.get("symbol", "")).upper()] = quantity
+        options, names = {}, {}
+        for position in self.reader.option_positions():
+            quantity = _d(position.get("quantity"))
+            if quantity > 0:   # a short is never tracked, so it is flagged as unwatched
+                option_id = option_position_id(position)
+                options[option_id] = quantity
+                names[option_id] = " ".join(str(position.get(k)) for k in
+                                            ("type", "chain_symbol", "expiration_date", "strike_price", "option_type")
+                                            if position.get(k)) or option_id
         unsettled, pending = _d(row.get("unsettled_funds")), _d(portfolio.get("pending_deposits"))
         cash = _d(portfolio.get("cash"))
         return Snapshot(equity=_d(portfolio.get("total_value")), settled_cash=max(ZERO, cash - unsettled - pending),
-                        unsettled=unsettled, pending_deposits=pending, held=held, cash=cash)
+                        unsettled=unsettled, pending_deposits=pending, held=held, cash=cash, options=options,
+                        option_names=names)
 
     # -- cash flows (ruling 2026-11-04, second: deposits are flows, never P&L) -----------
 
@@ -226,6 +250,22 @@ class LiveMirror:
             position.quantity = quantity
             position.cost_basis = quantity * (cost or mark)
             position.market_value = quantity * mark
+        natives = {p["option_id"]: p for p in self.e.get("positions", {}).values()
+                   if p.get("copy") == "native" and p.get("option_id") in (snap.options or {})}
+        quotes = self.reader.option_quotes(list(natives)) if natives else {}
+        for option_id, mirrored in natives.items():
+            # a held contract the gate must know, so its sell to close is covered
+            expiry = date.fromisoformat(mirrored["expiry"]) if mirrored.get("expiry") else None
+            position = account.ensure_position(("option", mirrored["symbol"]), Sleeve.EQUITY,
+                                               int(mirrored.get("multiplier") or 100), True, expiration=expiry)
+            quote = quotes.get(option_id, {})
+            bid, ask = _d(quote.get("bid_price")), _d(quote.get("ask_price"))
+            mark = (bid + ask) / 2 if bid > 0 and ask >= bid else _d(mirrored["entry_price"])
+            contracts = snap.options[option_id]
+            multiplier = int(mirrored.get("multiplier") or 100)
+            position.quantity = contracts
+            position.cost_basis = contracts * _d(mirrored["entry_price"]) * multiplier
+            position.market_value = contracts * mark * multiplier
         account.day_trades = [date.fromisoformat(d) for d in self.e.get("day_trades", [])]
         recorded = _d(self.state.high_water_mark)
         account.high_water_mark = max(recorded, account.nav)
@@ -296,10 +336,18 @@ class LiveMirror:
         """Every holding must be a tracked position (or the working order's
         symbol): anything else has no stop watching it. It blocks new
         entries and is carded once a symbol a day; it is never sold blind."""
-        known = {p["symbol"] for p in self.e.get("positions", {}).values()}
+        positions = self.e.get("positions", {}).values()
+        known = {p["symbol"] for p in positions if p.get("copy") != "native"}
+        known_options = {p.get("option_id") for p in positions if p.get("copy") == "native"}
         if self._working is not None:
             known.add(self._working["symbol"])
-        unwatched = sorted(s for s in snap.held if s not in known)
+            known_options.add((self._working.get("extra") or {}).get("option_id"))
+        held = dict(snap.held)
+        for option_id, contracts in (snap.options or {}).items():
+            if option_id not in known_options:
+                held[f"option {(snap.option_names or {}).get(option_id, option_id)}"] = contracts
+        unwatched = sorted(s for s in held if s not in known and not s.startswith("option ")) \
+            + sorted(s for s in held if s.startswith("option "))
         if unwatched:
             self.e["unwatched"] = unwatched
         else:
@@ -309,9 +357,9 @@ class LiveMirror:
             if noted.get(symbol) == today:
                 continue
             noted[symbol] = today
-            self.ledger.append("unwatched_position", symbol=symbol, quantity=snap.held[symbol])
+            self.ledger.append("unwatched_position", symbol=symbol, quantity=held[symbol])
             self._card(f"the live account holds {symbol} that the mirror does not track", cards.ACTION, [
-                f"{snap.held[symbol]} {symbol} is held with no mirrored position behind it, so no stop watches it.",
+                f"{held[symbol]} {symbol} is held with no mirrored position behind it, so no stop watches it.",
                 "New live entries are blocked until it is closed or explained; exits of tracked positions keep "
                 "running."], what_to_do=cards._ask(f"Show me the untracked live {symbol} holding and how it got there."))
 
@@ -450,7 +498,8 @@ class LiveMirror:
             self._card(f"Robinhood refused a live {order.symbol} order", cards.LOOK,
                        [f"{kind.replace('_', ' ')}: {cards.plain(str(error))}"], look_at="what the broker refused")
             return None
-        self.ledger.append("order", kind=kind, symbol=order.symbol, quantity=order.quantity,
+        self.ledger.append("order", kind=kind, symbol=order.symbol,
+                           quantity=getattr(order, "quantity", None) or getattr(order, "contracts", None),
                            style=order.execution.style, bound=order.execution.price_bound,
                            order_id=receipt.broker_order_id, ref=receipt.client_order_id,
                            review=getattr(self.broker, "last_review", None) and
@@ -535,16 +584,24 @@ class LiveMirror:
         if not status.is_terminal:
             return None
         filled, price = status.filled_quantity, status.filled_avg_price
-        fees = ZERO
+        order = working["decision"].order
+        option = isinstance(order, (OptionBuyToOpenOrder, OptionSellToCloseOrder))
+        fees, raw = ZERO, None
         try:
-            orders = self.reader.equity_orders(order_id=working["order_id"])
-            fees = _d(orders[0].get("fees")) if orders else ZERO
+            rows = (self.reader.option_orders if option else self.reader.equity_orders)(order_id=working["order_id"])
+            raw = rows[0] if rows else None
+            fees = _order_fees(raw) if raw else ZERO
         except Exception:  # noqa: BLE001 - fees are reported, never guessed
             pass
+        if option and raw is not None:
+            # the first live option orders: the venue's own record, kept whole
+            self.ledger.append("option_order_raw", order_id=working["order_id"], kind=working["kind"], raw=raw)
+        if option and filled > 0 and price is not None:
+            price = self._option_price(order, price)
         if filled > 0 and price is not None:
             self.gate.record_fill(working["decision"], price, filled_units=filled)
-            side = "buy" if type(working["decision"].order).__name__ == "EquityBuyOrder" else "sell"
-            self._expect(side, filled * price, fees)
+            side = "buy" if isinstance(order, (EquityBuyOrder, OptionBuyToOpenOrder)) else "sell"
+            self._expect(side, filled * price * (order.multiplier if option else 1), fees)
         else:
             self.gate.cancel(working["decision"])
         result = {"order_id": working["order_id"], "status": status.status, "filled": filled,
@@ -553,6 +610,20 @@ class LiveMirror:
                            **working.get("extra", {}))
         self._save()
         return result
+
+    def _option_price(self, order, price: Decimal) -> Decimal:
+        """An option fill's price PER SHARE (the quote's unit). A buy cannot
+        fill above its limit, so a price above it that is the limit's unit
+        times the multiplier was reported per contract: it is converted and
+        the conversion is recorded (the first live option orders, 2026-11-09)."""
+        limit, multiplier = order.execution.price_bound, Decimal(order.multiplier)
+        buy = isinstance(order, OptionBuyToOpenOrder)
+        if (buy and price > limit * Decimal("1.01") and price / multiplier <= limit * Decimal("1.01")) or (
+                not buy and price > limit * 50 and price / multiplier <= limit * 5):
+            self.ledger.append("option_price_unit", symbol=order.symbol, reported=price,
+                               per_share=price / multiplier, limit=limit)
+            return price / multiplier
+        return price
 
     # -- mirroring (item 5c) -------------------------------------------------------------
 
@@ -577,8 +648,11 @@ class LiveMirror:
         for event in self._paper_events():
             kind, pid = event.get("event"), event.get("pid")
             if kind == "position_opened" and pid:
+                # an option's stop and target are UNDERLYING prices in the paper
+                # engine (anchor mid at the stated distances): kept as levels
                 plans[pid] = {k: event.get(k) for k in ("symbol", "instrument", "stop_pct", "target_pct", "horizon",
-                                                        "tag", "leverage", "occ", "multiplier", "confidence")}
+                                                        "tag", "leverage", "occ", "multiplier", "confidence",
+                                                        "stop", "target", "anchor_mid", "expiry")}
             elif kind == "settled" and event.get("side") == "buy" and event.get("reason") == "entry" \
                     and pid in plans and _d(event.get("filled_qty")) > 0:
                 self._queue.append({"pid": pid, "at": self.clock().isoformat(), "paper_price": event.get("avg_price"),
@@ -602,28 +676,176 @@ class LiveMirror:
         if self._exit_one(snap):
             return
         self._enter_one(snap)
+        if self._working is None and self._option_round_trip_due(snap):
+            self._option_round_trip(snap)
+
+    # -- the live option round trip (temporary option ruling 2026-11-09, item 3) ---------
+
+    def _option_round_trip_due(self, snap: Snapshot) -> bool:
+        if not self.config.option_round_trip_enabled or \
+                self.e.get("option_round_trip") in ("passed", "failed", "dry"):
+            return False
+        if OPTION_RT_PID in self.e.get("positions", {}) or self._entries_blocked(snap):
+            return False
+        local = self.clock().astimezone(NY)
+        start, end = (_clock_time(t) for t in self.config.option_round_trip_window)
+        return local.weekday() < 5 and start <= local.time() <= end
+
+    def _option_round_trip(self, snap: Snapshot) -> None:
+        """Buy one cheap, liquid call that fits the premium cap through the
+        gate; the next tick sells it through the native exit path. Native
+        option copies wait for it to pass."""
+        attempts, today = int(self.e.get("option_rt_attempts", 0)), self._today().isoformat()
+        if attempts >= self.config.option_round_trip_attempts:
+            self.e["option_round_trip"] = "failed"
+            self.ledger.append("option_round_trip", passed=False, attempts=attempts)
+            self._card("the live option round trip failed", cards.ACTION,
+                       [f"{attempts} attempts to buy one cheap {self.config.option_round_trip_symbol} call did not fill.",
+                        "Native option copies stay off; calls that do not fit follow the proxy rule."],
+                       what_to_do=cards._ask("Show me the live option round trip's attempts and the account."))
+            self._save()
+            return
+        budget = (snap.tradeable_equity * self.config.risk_fraction).quantize(CENTS, ROUND_DOWN)
+        pick = self._cheap_contract(budget)
+        if pick is None:
+            if self.e.get("option_rt_none_noted") != today:
+                self.e["option_rt_none_noted"] = today
+                self.ledger.append("option_round_trip_no_contract", budget=budget)
+                self._save()
+            return
+        row, quote, limit = pick
+        underlying, right = str(row["chain_symbol"]).upper(), str(row["type"])
+        expiration, strike = date.fromisoformat(row["expiration_date"]), _d(row["strike_price"])
+        occ = _occ(underlying, expiration, right, strike)
+        order = OptionBuyToOpenOrder(symbol=occ, underlying=underlying, right=right, expiration=expiration,
+                                     strike=strike, contracts=1, execution=LimitExecution(limit_price=limit))
+        meta = {"copy": "native", "option_id": str(row["id"]), "multiplier": 100,
+                "min_ticks": row.get("min_ticks") or {}, "underlying": underlying, "expiry": expiration.isoformat(),
+                "stop": "0", "target": "0", "paper_closed": "the option round trip's sell",
+                "quote_bid": str(_d(quote.get("bid_price"))), "quote_ask": str(_d(quote.get("ask_price")))}
+        self.e.setdefault("plans", {})[OPTION_RT_PID] = {"symbol": underlying, "instrument": right, "occ": occ,
+                                                          "horizon": "intraday", "multiplier": 100}
+        if self.dry:
+            self.e["option_round_trip"] = "dry"
+            self.ledger.append("would_option_round_trip", occ=occ, limit=limit, budget=budget,
+                               bid=meta["quote_bid"], ask=meta["quote_ask"],
+                               open_interest=quote.get("open_interest"), delta=quote.get("delta"))
+            self._save()
+            return
+        self.e["option_rt_attempts"] = attempts + 1
+        self.ledger.append("option_round_trip_start", occ=occ, limit=limit, attempt=attempts + 1,
+                           bid=meta["quote_bid"], ask=meta["quote_ask"], open_interest=quote.get("open_interest"))
+        self._save()
+        self._send(order, "entry", extra={"pid": OPTION_RT_PID, "ref": f"mirror-option-rt-{attempts + 1}", **meta})
+
+    def _cheap_contract(self, budget: Decimal):
+        """The round trip's contract: a call on the round-trip symbol at the
+        nearest expiry after today, struck above the market, with a bid, a
+        spread at most ``option_round_trip_max_spread``, open interest of at
+        least 500, a premium of at least 5 cents and one contract inside the
+        premium cap; the dearest such (the nearest the money, the most liquid)."""
+        symbol = self.config.option_round_trip_symbol
+        _, spot, _ = self._quote(symbol)
+        if spot <= 0:
+            return None
+        day = self._today()
+        for _ in range(7):
+            day += timedelta(days=1)
+            if day.weekday() >= 5:
+                continue
+            rows = [r for r in self.reader.option_instruments(symbol, day, "call")
+                    if spot < _d(r.get("strike_price")) <= spot * Decimal("1.05")]
+            if not rows:
+                continue
+            quotes = self.reader.option_quotes([str(r["id"]) for r in rows])
+            best = None
+            for row in rows:
+                quote = quotes.get(str(row["id"]), {})
+                bid, ask = _d(quote.get("bid_price")), _d(quote.get("ask_price"))
+                if bid <= 0 or ask < bid or ask - bid > self.config.option_round_trip_max_spread:
+                    continue
+                if quote.get("open_interest") is not None and int(quote["open_interest"]) < 500:
+                    continue
+                tick = option_tick(row, ask)
+                limit = (ask / tick).to_integral_value(rounding=ROUND_UP) * tick
+                if limit < Decimal("0.05") or limit * 100 > budget:
+                    continue
+                if best is None or limit > best[2]:
+                    best = (row, quote, limit)
+            if best is not None:
+                return best
+        return None
+
+    def _option_round_trip_done(self, held: dict, done: dict) -> None:
+        buy, sell = _d(held.get("entry_price")), done["price"]
+        contracts = done["filled"]
+        fees = _d(held.get("entry_fees")) + done["fees"]
+        net = (sell - buy) * contracts * 100 - fees
+        bid, ask = _d(held.get("quote_bid")), _d(held.get("quote_ask"))
+        mid = (bid + ask) / 2 if bid > 0 and ask > 0 else ZERO
+        record = {"occ": held.get("symbol"), "contracts": contracts, "buy": buy, "sell": sell, "fees": fees,
+                  "net": net, "quote_bid": bid, "quote_ask": ask, "passed": True,
+                  "buy_vs_mid": (buy - mid) if mid else None}
+        self.e["option_round_trip"] = "passed"
+        self.ledger.append("option_round_trip", **record)
+        self._card("live option round trip passed", cards.GOOD, [
+            f"Bought and sold {contracts} {held.get('symbol')} through the gate: in at {buy}, out at {sell} a share "
+            f"of premium; {cards.usd(float(net), signed=True)} after {_fees(fees)}.",
+            f"Quote at entry {bid} x {ask}.",
+            "Native option copies are on: a paper option whose contract fits the 2% premium cap is now copied as "
+            "the option itself."])
+        self._save()
 
     def _after_fill(self, working: dict, done: dict) -> None:
         extra, pid = working["extra"], working["extra"].get("pid")
         if working["kind"] == "entry" and done["filled"] > 0:
             plan = self.e["plans"].get(pid, {})
-            price = done["price"]
-            stop = (price * (1 - _d(plan.get("stop_pct")) / 100)).quantize(CENTS)
-            target = (price * (1 + _d(plan.get("target_pct")) / 100)).quantize(CENTS)
-            self.e["positions"][pid] = {"symbol": working["symbol"], "quantity": str(done["filled"]),
-                                        "entry_price": str(price), "stop": str(stop), "target": str(target),
-                                        "horizon": plan.get("horizon"), "opened": self._today().isoformat()}
+            price, copy = done["price"], extra.get("copy", "stock")
+            multiplier = int(extra.get("multiplier") or 1)
+            if copy in ("native", "proxy"):
+                # the paper option's own UNDERLYING levels (0 = none: the paper close and the backstops exit it)
+                stop, target = _d(extra.get("stop")), _d(extra.get("target"))
+            else:
+                stop = (price * (1 - _d(plan.get("stop_pct")) / 100)).quantize(CENTS)
+                target = (price * (1 + _d(plan.get("target_pct")) / 100)).quantize(CENTS)
+            position = {"symbol": working["symbol"], "quantity": str(done["filled"]), "entry_price": str(price),
+                        "stop": str(stop), "target": str(target), "horizon": plan.get("horizon"),
+                        "opened": self._today().isoformat(), "copy": copy, "entry_fees": str(done["fees"]),
+                        "cost": str(done["filled"] * price * multiplier)}
+            if copy in ("native", "proxy"):
+                position.update(instrument=plan.get("instrument"), underlying=extra.get("underlying"),
+                                paper_occ=plan.get("occ"), expiry=extra.get("expiry"))
+            if copy == "native":
+                position.update(option_id=extra.get("option_id"), multiplier=multiplier,
+                                min_ticks=extra.get("min_ticks") or {}, quote_bid=extra.get("quote_bid"),
+                                quote_ask=extra.get("quote_ask"))
+            if extra.get("paper_closed"):
+                position["paper_closed"] = extra["paper_closed"]
+            self.e["positions"][pid] = position
+            self.e.setdefault("copies_today", []).append({"pid": pid, "copy": copy, "symbol": working["symbol"]})
+            unit = "a contract" if copy == "native" else "a share"
+            what = {"native": "the paper option itself",
+                    "proxy": f"a proxy for the paper's {plan.get('occ')} call (the option does not fit the premium cap)",
+                    "stock": "the paper AI trader"}[copy]
+            levels = (f"underlying stop {stop}, target {target}" if copy in ("native", "proxy") and stop > 0
+                      else "exits with the paper option" if copy == "native" else f"stop {stop}, target {target}")
             self._card(f"bought {working['symbol']}", cards.GOOD, [
-                f"Mirrored the paper AI trader: {done['filled']} {working['symbol']} at {price} a share "
-                f"({cards.usd(float(done['filled'] * price))}).",
-                f"Stop {stop}, target {target}, horizon {plan.get('horizon')}; {_fees(done['fees'])}."])
+                f"Mirrored {what}: {done['filled']} {working['symbol']} at {price} {unit}"
+                f"{' of premium a share' if copy == 'native' else ''} "
+                f"({cards.usd(float(done['filled'] * price * multiplier))}).",
+                f"{levels[0].upper() + levels[1:]}, horizon {plan.get('horizon')}; {_fees(done['fees'])}."])
         elif working["kind"] == "exit" and done["filled"] > 0:
             held = self.e["positions"].pop(pid, None) or {}
-            pnl = done["filled"] * (done["price"] - _d(held.get("entry_price"))) - done["fees"]
-            self.e.setdefault("closed_today", []).append({"pid": pid, "pnl": str(pnl), "fees": str(done["fees"])})
+            multiplier = int(held.get("multiplier") or 1)
+            pnl = done["filled"] * (done["price"] - _d(held.get("entry_price"))) * multiplier - done["fees"]
+            closed = {"pid": pid, "pnl": str(pnl), "fees": str(done["fees"]), "copy": held.get("copy", "stock"),
+                      "symbol": working["symbol"], "cost": held.get("cost"), "paper_occ": held.get("paper_occ")}
+            self.e.setdefault("closed_today", []).append(closed)
             self._card(f"sold {working['symbol']}", cards.GOOD, [
                 f"Closed {done['filled']} {working['symbol']} at {done['price']} a share ({extra.get('why')}).",
                 f"Result {cards.usd(float(pnl), signed=True)} after {_fees(done['fees'])}."])
+            if pid == OPTION_RT_PID:
+                self._option_round_trip_done(held, done)
         elif done["status"] == "not_placed":
             self._card(f"a live {working['symbol']} order was never placed", cards.LOOK,
                        [f"{working['kind']}: Robinhood's order list never showed it in "
@@ -643,6 +865,11 @@ class LiveMirror:
         now_local = self.clock().astimezone(NY)
         marks = {}
         for pid, pos in list(self.e["positions"].items()):
+            if pos.get("copy") == "native":
+                if self._native_exit(pid, pos, snap, now_local):
+                    self._mark(marks)
+                    return True
+                continue
             symbol, quantity = pos["symbol"], _d(pos["quantity"])
             held = snap.held.get(symbol, ZERO)
             if held <= 0:
@@ -683,6 +910,86 @@ class LiveMirror:
             return True
         self._mark(marks)
         return False
+
+    def _native_exit(self, pid: str, pos: dict, snap: Snapshot, now_local: datetime) -> bool:
+        """A natively copied option: out on the paper close, on the paper's own
+        UNDERLYING stop or target (a call's on the bid or last trade, never the
+        ask; a put's on the mid of a tight quote, else the last trade), at the
+        option's expiry close or past its horizon (backstops: the paper close
+        should come first). Sold as a limit at the contract's bid."""
+        option_id = pos.get("option_id")
+        held = (snap.options or {}).get(option_id, ZERO)
+        if held <= 0:
+            self.e["positions"].pop(pid)
+            self.ledger.append("position_gone", pid=pid, symbol=pos["symbol"])
+            return False
+        contracts = min(_d(pos["quantity"]), held)
+        why = None
+        if pos.get("paper_closed"):
+            why = f"the paper AI trader closed it ({pos['paper_closed']})"
+        stop, target = _d(pos.get("stop")), _d(pos.get("target"))
+        if why is None and pos.get("underlying") and (stop > 0 or target > 0):
+            bid, ask, last = self._quote(pos["underlying"])
+            if pos.get("instrument") == "put":
+                tight = bid > 0 and ask >= bid and (ask - bid) / ((ask + bid) / 2) <= Decimal("0.02")
+                price = (bid + ask) / 2 if tight else last
+                if price > 0 and stop > 0 and price >= stop:
+                    why = f"the underlying stop {stop} ({pos['underlying']} at {price})"
+                elif price > 0 and target > 0 and price <= target:
+                    why = f"the underlying target {target} ({pos['underlying']} at {price})"
+            else:
+                price = bid if bid > 0 else last
+                if price > 0 and stop > 0 and price <= stop:
+                    why = f"the underlying stop {stop} ({pos['underlying']} bid or last {price})"
+                elif price > 0 and target > 0 and price >= target:
+                    why = f"the underlying target {target} ({pos['underlying']} bid or last {price})"
+        if why is None and self._option_close_due(pos, now_local):
+            why = "the option's expiry close"
+        if why is None and pos.get("horizon") == "intraday" and now_local.time() >= _clock_time(self.ai.intraday_close):
+            why = "the intraday close"
+        if why is None and self._past_horizon(pos):
+            why = "past its horizon"
+        if why is None:
+            return False
+        quote = self.reader.option_quotes([option_id]).get(option_id, {})
+        bid = _d(quote.get("bid_price"))
+        if bid <= 0:
+            # nothing to sell into; the most it can lose is the premium paid
+            noted, today = self.e.setdefault("no_bid_noted", {}), self._today().isoformat()
+            if noted.get(pid) != today:
+                noted[pid] = today
+                self.ledger.append("no_option_bid", pid=pid, symbol=pos["symbol"], why=why)
+                self._card(f"no bid to close {pos['symbol']}", cards.LOOK,
+                           [f"The live contract is due out ({why}) but has no bid; it is retried every tick.",
+                            "The most it can lose is the premium paid."], look_at="a live option with no bid")
+                self._save()
+            return False
+        tick = option_tick({"min_ticks": pos.get("min_ticks") or {}}, bid)
+        limit = max(tick, (bid / tick).to_integral_value(rounding=ROUND_DOWN) * tick)
+        underlying, expiration, right, strike = occ_parts(pos["symbol"])
+        order = OptionSellToCloseOrder(symbol=pos["symbol"], underlying=underlying, right=right,
+                                       expiration=expiration, strike=strike, contracts=contracts,
+                                       execution=LimitExecution(limit_price=limit))
+        if self.dry:
+            self.ledger.append("would_exit", pid=pid, symbol=pos["symbol"], quantity=contracts, why=why, limit=limit)
+            self.e["positions"].pop(pid)
+            return True
+        self._send(order, "exit", extra={"pid": pid, "why": why, "option_id": option_id, "quote_bid": str(bid),
+                                         "quote_ask": quote.get("ask_price")})
+        return True
+
+    def _option_close_due(self, pos: dict, now_local: datetime) -> bool:
+        """The paper engine's rule: a same-day contract at the expiry-close
+        time on expiry day, any other on the session before expiry."""
+        if not pos.get("expiry"):
+            return False
+        expiry, opened, today = date.fromisoformat(pos["expiry"]), date.fromisoformat(pos["opened"]), self._today()
+        close_day = expiry
+        if expiry > opened:
+            close_day = expiry - timedelta(days=1)
+            while close_day.weekday() >= 5:
+                close_day -= timedelta(days=1)
+        return today > close_day or (today == close_day and now_local.time() >= _clock_time(self.ai.options.expiry_close))
 
     def _mark(self, marks: dict) -> None:
         if marks and self.gate is not None:
@@ -735,6 +1042,8 @@ class LiveMirror:
 
     def _skip(self, item: dict, plan: dict, why: str) -> None:
         self.e.setdefault("skipped_today", []).append(item["pid"])
+        self.e.setdefault("skips_today", []).append({"pid": item["pid"], "symbol": plan.get("symbol"),
+                                                     "instrument": plan.get("instrument"), "why": why})
         self.ledger.append("skip", pid=item["pid"], symbol=plan.get("symbol"), instrument=plan.get("instrument"),
                            why=why)
         self._card(f"skipped {plan.get('symbol')}", cards.LOOK,
@@ -754,36 +1063,45 @@ class LiveMirror:
             if blocked:
                 self._skip(item, plan, blocked)
                 continue
-            order, why = self._size(item, plan, snap)
+            order, why, meta = self._size(item, plan, snap)
             if order is None:
                 self._skip(item, plan, why)
                 continue
+            extra = {"pid": item["pid"], "ref": f"mirror-{item['pid']}", **meta}
             if self.dry:
-                self.ledger.append("would_enter", pid=item["pid"], symbol=order.symbol, quantity=order.quantity,
-                                   style=order.execution.style, bound=order.execution.price_bound)
+                self.ledger.append("would_enter", pid=item["pid"], symbol=order.symbol,
+                                   quantity=getattr(order, "quantity", None) or getattr(order, "contracts", None),
+                                   style=order.execution.style, bound=order.execution.price_bound,
+                                   **{k: v for k, v in meta.items() if k != "min_ticks"})
                 return
-            self._send(order, "entry", extra={"pid": item["pid"], "ref": f"mirror-{item['pid']}"})
+            self._send(order, "entry", extra=extra)
             return
 
     def _size(self, item: dict, plan: dict, snap: Snapshot):
+        """(order, why it is skipped, what the entry carries). An option goes
+        native when one contract fits, as its stock when it is a call that does
+        not (the proxy), and is skipped otherwise (the temporary option ruling,
+        2026-11-09)."""
         instrument, symbol = plan.get("instrument"), str(plan.get("symbol") or "").upper()
         equity = snap.tradeable_equity   # live equity, less deposits still in transit
         budget = (equity * self.config.risk_fraction).quantize(CENTS, ROUND_DOWN)
         if instrument in ("call", "put"):
-            contract = _d(item.get("paper_price")) * _d(item.get("multiplier") or 100)
-            if contract > budget:
-                return None, (f"one contract costs about {cards.usd(float(contract))}, above the "
-                              f"{cards.usd(float(budget))} premium cap")
-            return None, "one contract fits the premium cap, but the live option path has no round trip yet"
-        factor = _d(plan.get("leverage") or "1")
-        if plan.get("tag") in ("leveraged_etf", "inverse_etf") or factor != 1 \
-                or symbol in {s.upper() for s in self.ai.leverage_factors}:
-            return None, "leveraged and inverse ETFs are not allowed in the live account"
+            return self._size_option(item, plan, equity, budget)
+        if self._leveraged(plan, symbol):
+            return None, "leveraged and inverse ETFs are not allowed in the live account", {}
         bid, ask, _ = self._quote(symbol)
         stop_fraction = _d(plan.get("stop_pct")) / 100
         if ask <= 0 or stop_fraction <= 0:
-            return None, "no live quote or no stop distance"
-        shares = budget / (ask * stop_fraction)
+            return None, "no live quote or no stop distance", {}
+        order, why = self._equity_buy(symbol, ask, budget / (ask * stop_fraction), equity)
+        return order, why, {"copy": "stock"}
+
+    def _leveraged(self, plan: dict, symbol: str) -> bool:
+        factor = _d(plan.get("leverage") or "1")
+        return plan.get("tag") in ("leveraged_etf", "inverse_etf") or factor != 1 \
+            or symbol in {s.upper() for s in self.ai.leverage_factors}
+
+    def _equity_buy(self, symbol: str, ask: Decimal, shares: Decimal, equity: Decimal):
         # the cap is checked against what the GATE reserves (the limit, or a
         # market buy's ask + 5%), 1% inside it for the gap between the
         # broker's equity and the gate's marked NAV
@@ -799,6 +1117,70 @@ class LiveMirror:
             return None, f"the size is under the {cards.usd(float(self.config.min_notional_usd))} minimum"
         return EquityBuyOrder(symbol=symbol, quantity=fraction, sleeve=SLEEVE,
                               execution=MarketBuyExecution(justification=MARKET_BUY_WHY, max_price=bound)), ""
+
+    def _size_option(self, item: dict, plan: dict, equity: Decimal, budget: Decimal):
+        occ = str(plan.get("occ") or "")
+        if not occ:
+            return None, "the paper option names no contract", {}
+        underlying, expiration, right, strike = occ_parts(occ)
+        multiplier = int(_d(item.get("multiplier") or plan.get("multiplier") or 100))
+        contract = live = None
+        rows = self.reader.option_instruments(underlying, expiration, right, strike)
+        if len(rows) == 1:
+            quote = self.reader.option_quotes([str(rows[0]["id"])]).get(str(rows[0]["id"]), {})
+            ask = _d(quote.get("ask_price"))
+            if ask > 0:
+                tick = option_tick(rows[0], ask)
+                limit = (ask / tick).to_integral_value(rounding=ROUND_UP) * tick
+                live = {"row": rows[0], "limit": limit, "ask": ask, "bid": _d(quote.get("bid_price"))}
+                contract = limit * multiplier
+        if contract is None:   # no live quote: the paper's own price says whether it could fit
+            contract = _d(item.get("paper_price")) * multiplier
+        cost = f"one contract costs about {cards.usd(float(contract))}"
+        if contract <= budget:
+            if live is None:
+                return None, f"{cost}, within the {cards.usd(float(budget))} premium cap, but it has no live quote", {}
+            if self.e.get("option_round_trip") != "passed":
+                return None, (f"{cost}, within the {cards.usd(float(budget))} premium cap, but the live option "
+                              f"round trip has not passed yet"), {}
+            contracts = int((budget / contract).to_integral_value(rounding=ROUND_DOWN))
+            order = OptionBuyToOpenOrder(symbol=occ, underlying=underlying, right=right, expiration=expiration,
+                                         strike=strike, contracts=contracts, multiplier=multiplier,
+                                         execution=LimitExecution(limit_price=live["limit"]))
+            return order, "", {"copy": "native", "option_id": str(live["row"]["id"]), "multiplier": multiplier,
+                               "min_ticks": live["row"].get("min_ticks") or {}, "underlying": underlying,
+                               "expiry": expiration.isoformat(), "stop": str(_d(plan.get("stop"))),
+                               "target": str(_d(plan.get("target"))), "quote_bid": str(live["bid"]),
+                               "quote_ask": str(live["ask"])}
+        over = f"{cost}, above the {cards.usd(float(budget))} premium cap"
+        if right == "put":
+            return None, f"{over}; a put that does not fit is skipped (no shorting, no inverse ETFs live)", {}
+        if not self.config.option_proxy_enabled:
+            return None, f"{over}; the call proxy is off until its method is approved", {}
+        return self._size_proxy(plan, underlying, expiration, over, equity, budget)
+
+    def _size_proxy(self, plan: dict, underlying: str, expiration: date, over: str, equity: Decimal,
+                    budget: Decimal):
+        """A call too dear for the account, bought as its underlying stock: the
+        same 2% of equity at risk to the paper option's own UNDERLYING stop,
+        the paper's underlying target, the same horizon. Out when the paper
+        option closes or on that stop or target, whichever first."""
+        if self._leveraged(plan, underlying):
+            return None, f"{over}; its underlying is a leveraged or inverse ETF, not allowed live", {}
+        bid, ask, _ = self._quote(underlying)
+        if ask <= 0:
+            return None, f"{over}; no live quote for {underlying} to proxy it", {}
+        stop = _d(plan.get("stop")) or (ask * (1 - _d(plan.get("stop_pct")) / 100)).quantize(CENTS, ROUND_DOWN)
+        target = _d(plan.get("target")) or (ask * (1 + _d(plan.get("target_pct")) / 100)).quantize(CENTS, ROUND_UP)
+        if stop <= 0 or ask <= stop:
+            return None, f"{over}; {underlying} at {ask} is already at or below the paper option's stop {stop}", {}
+        if ask >= target:
+            return None, f"{over}; {underlying} at {ask} is already at or above the paper option's target {target}", {}
+        order, why = self._equity_buy(underlying, ask, budget / (ask - stop), equity)
+        if order is None:
+            return None, f"{over}; as a proxy, {why}", {}
+        return order, "", {"copy": "proxy", "underlying": underlying, "expiry": expiration.isoformat(),
+                           "stop": str(stop), "target": str(target)}
 
     # -- the day's card (item 6) -----------------------------------------------------------
 
@@ -822,6 +1204,40 @@ class LiveMirror:
         pnl = equity - day_start - self._flows_today()
         base = day_start + weighted
         return pnl, base, (pnl / base if base > 0 else None)
+
+    def _copy_rows(self) -> list[str]:
+        """The day by kind of copy (temporary option ruling 2026-11-09, item 4):
+        stock and ETF copies, native options and call proxies on their own
+        rows, each closed proxy against the paper option it stood in for, and
+        the skips with their reasons."""
+        copies = self.e.get("copies_today", [])
+        closed = self.e.get("closed_today", [])
+        labels = {"stock": "Stock and ETF copies", "native": "Native option copies", "proxy": "Call proxies"}
+        rows = []
+        for kind, label in labels.items():
+            opened = [c["symbol"] for c in copies if c.get("copy") == kind]
+            shut = [c for c in closed if c.get("copy", "stock") == kind and c.get("pid") != OPTION_RT_PID]
+            pnl = sum((_d(c["pnl"]) for c in shut), ZERO)
+            rows.append(f"{label}: {len(opened)} opened" + (f" ({', '.join(opened)})" if opened else "")
+                        + f", {len(shut)} closed" + (f" for {cards.usd(float(pnl), signed=True)}" if shut else "") + ".")
+        for c in closed:
+            if c.get("copy") != "proxy":
+                continue
+            cost, proceeds, done = _paper_trade(self.paper_ledger, c["pid"])
+            live_cost = _d(c.get("cost"))
+            live = (f"Proxy {c['symbol']} for {c.get('paper_occ')}: {cards.usd(float(_d(c['pnl'])), signed=True)}"
+                    + (f" ({cards.pct(float(_d(c['pnl']) / live_cost))} on {cards.usd(float(live_cost))})"
+                       if live_cost > 0 else ""))
+            if done and cost > 0:
+                paper = (f"the paper option {cards.usd(float(proceeds - cost), signed=True)} "
+                         f"({cards.pct(float((proceeds - cost) / cost))} on {cards.usd(float(cost))})")
+            else:
+                paper = "the paper option is still open"
+            rows.append(f"{live}, against {paper}.")
+        skips = self.e.get("skips_today", [])
+        rows.append(f"Skips: {len(skips)}" + (": " + "; ".join(f"{s['symbol']} {s.get('instrument')}: {s['why']}"
+                                                             for s in skips) if skips else "") + ".")
+        return rows
 
     def daily_card(self) -> Optional[cards.Card]:
         snap = self.snapshot()
@@ -853,7 +1269,9 @@ class LiveMirror:
                   f"fees {cards.usd(float(-fees), signed=True)}, fills and timing {cards.usd(float(fills), signed=True)}."
                   if gap is not None else "Gap: n/a."),
                  f"Open live positions: {len(self.e.get('positions', {}))}; skipped today: {len(skipped)}."]
+        lines += self._copy_rows()
         self.e["closed_today"], self.e["skipped_today"] = [], []
+        self.e["copies_today"], self.e["skips_today"] = [], []
         self._save()
         return cards.Card("Live mirror", "the day against the paper AI trader", cards.GOOD, tuple(lines),
                           channel=cards.URGENT if self._urgent() else cards.DAILY)
@@ -867,6 +1285,16 @@ def _fees(value: Decimal) -> str:
     if value < 1:
         return f"{int((value * 100).to_integral_value(rounding=ROUND_UP))} cents of fees"
     return f"{cards.usd(float(value))} of fees"
+
+
+def _occ(underlying: str, expiration: date, right: str, strike: Decimal) -> str:
+    return f"{underlying.upper()}{expiration:%y%m%d}{'C' if right == 'call' else 'P'}{int(_d(strike) * 1000):08d}"
+
+
+def _order_fees(order: dict) -> Decimal:
+    """The fees on one order: an equity order's ``fees``; an option order's
+    ``fees`` or, failing that, its ``regulatory_fees``."""
+    return _d(order.get("fees")) or _d(order.get("regulatory_fees"))
 
 
 def _clock_time(text: str) -> dtime:
@@ -890,6 +1318,30 @@ def _paper_day(path: Path, day: date) -> tuple[Optional[Decimal], Optional[Decim
             elif stamp == day:
                 latest = _d(event.get("equity"))
     return before, latest
+
+
+def _paper_trade(path: Path, pid: str) -> tuple[Decimal, Decimal, bool]:
+    """One paper position's (cost, proceeds, closed): every fill of it."""
+    cost = proceeds = ZERO
+    closed = False
+    if not path.exists():
+        return cost, proceeds, closed
+    with open(path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            if pid not in line:
+                continue
+            event = json.loads(line)
+            if event.get("pid") != pid:
+                continue
+            if event.get("event") == "position_closed":
+                closed = True
+            elif event.get("event") == "settled":
+                value = _d(event.get("filled_qty")) * _d(event.get("avg_price")) * _d(event.get("multiplier") or 1)
+                if event.get("side") == "sell":
+                    proceeds += value
+                else:
+                    cost += value
+    return cost, proceeds, closed
 
 
 def _paper_pnl(path: Path, day: date, pids: set) -> Decimal:

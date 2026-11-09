@@ -4167,6 +4167,43 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-09 (later) — LIVE MIRROR options, TEMPORARY ruling: built; proxy method proposed
+
+- **Ruling (human, 2026-11-09):** per trade, a paper option whose contract fits the live premium cap (2% of live equity) is copied natively; a CALL that does not fit is copied as its underlying stock (the proxy); a PUT that does not fit is skipped. It reverts to native by itself as equity grows. Proxy: same 2% risk, same horizon, stop and target translated to the underlying; method and examples first, then enabling. One live option round trip now. Daily card rows by kind. A read-only dry run before enabling. No other limit changes.
+- **Account:** cash, `option_level_2`, so long calls and puts are allowed.
+  - MCP tools used: `review_option_order` / `place_option_order` (single leg; `legs` with `option_id`, side, position_effect; a limit `price` per share), `get_option_instruments` (paged, key `instruments`, `min_ticks`), `get_option_quotes` (bid/ask/delta/OI), `get_option_positions`, `get_option_orders`, `cancel_option_order`.
+  - **Found:** an option order is placed under its own approval id, so it does not carry our `ref_id`. The adapter finds it by contract, side, size and time (`opt:` lookups).
+- **Built:**
+  - Adapter: option legs, `_option_status` (price per share from executions, else average, else processed premium).
+  - Mirror:
+    - native copies, gated on the round trip;
+    - the proxy, `option_proxy_enabled: false`;
+    - put skips;
+    - native exits on the underlying levels, the expiry close and the horizon;
+    - option holdings in the gate (keyed `("option", occ)`) and in the untracked check;
+    - the round trip as a one-shot (`option_round_trip_enabled: true`);
+    - daily card rows; raw option orders logged; a per-contract price is converted when a buy reports above its limit.
+  - 13 new tests; full suite green.
+- **Round trip NOT run today:** the live flags exist only in the live unit (Constraint #4), and the unit cannot be restarted from this account (no sudo). It runs at the next session, from 09:45 ET.
+- **Proxy method (proposed):** the paper option's stop and target are already UNDERLYING levels (anchor mid × (1 ∓ pct)), so no translation is needed.
+  - Shares = 2% of equity / (ask − paper stop), through the stock path's 18.75% cap, whole shares first, then fractional.
+  - Exits on the paper option's close or the underlying stop or target on the bid, whichever first; horizon backstop.
+- **Worked examples at $1,050 (budget $21, cap $194.91):**
+
+  | Paper call | Proxy | At risk | Result: proxy vs paper option |
+  |---|---|---|---|
+  | MRNA 11-06 | 0.690 sh ($186) | $11.14 | +$3.25 (+1.7%) vs +$145 (+7.4%), still open |
+  | AMD 11-06 | 0.418 sh ($186) | $13.92 | +$29.53 (+15.9%) vs +$4,745 (+299%), still open |
+  | UPS 10-28 | 1 sh ($105) | $4.73 | +$3.99 (+3.8%) vs +$1,638 (+85%), horizon end |
+  | AMD 11-04 | 0.381 sh ($186) | $13.00 | −$13.99 (−7.5%) vs −$1,350 (−86%), stopped on a gap at the open |
+
+  The cap binds in every case, so the proxy risks about 0.5–1.3% of equity, not 2%: it follows the paper's direction at a small fraction of the option's leverage.
+- **Dry run against the real account** (new code, read-only, no broker, proxy on in memory only, clock 2026-11-10 10:00 ET, current quotes):
+  - MRNA proxy: 0.678194 sh fractional buy;
+  - AMD proxy: 0.203075 sh, bound by the 2% risk, near its target;
+  - round-trip pick `SPY261111C00770000` 0.16 × 0.17, OI 6,663;
+  - a native copy of that contract: 1 at 0.17 with its real instrument id.
+
 ### 2026-11-09 — LIVE MIRROR zero trades since 2026-11-06 (Discord #urgent), investigated
 
 - **The failure card:** the only live-mirror failure card is still the 2026-11-05 13:40 ET 502 (fixed in a2bf6e4); none since.
