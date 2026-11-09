@@ -33,6 +33,11 @@ written down rather than assumed:
   unknown / no answer   left alone, loudly. "Cannot tell" must never be
                         recorded as "did not fill"; the next startup asks
                         again, and until then it shows as pending settlement.
+  definitively absent   (an entry only, 2026-11-09) the broker answers that it
+                        has no order under the reference, 15+ minutes after
+                        the decision: the submit died before the broker took
+                        it, so the execution rejection ``not_placed`` is
+                        written. Only a definitive answer counts.
 
 Runs before the account state is seeded, so the sleeve attribution and every
 audit-derived replay see a complete log.
@@ -42,6 +47,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -52,6 +58,8 @@ from risk_gate.schema import parse_order
 from risk_gate.state import unit_multiplier, units_of
 
 ZERO = Decimal("0")
+#: How long after its decision a definitive not-found means "never placed".
+NOT_PLACED_AFTER = timedelta(minutes=15)
 
 logger = logging.getLogger("orchestrator.recovery")
 
@@ -165,7 +173,7 @@ def pending_settlement(audit: AuditLog) -> list[PendingSettlement]:
 
 
 def recover_unsettled_orders(
-    audit: AuditLog, adapter: BrokerAdapter
+    audit: AuditLog, adapter: BrokerAdapter, now: Optional[datetime] = None
 ) -> list[str]:
     """Ask the broker about every order the log left unfinished, and write down
     the answer. Returns operator-readable lines describing what was recovered.
@@ -174,11 +182,12 @@ def recover_unsettled_orders(
     a startup that cannot recover is still a startup that can trade.
     """
     recovered: list[str] = []
+    now = now or datetime.now(timezone.utc)
     for trail in audit.trails():
         decision = trail.decision
         try:
             if _entry_needs_settlement(trail):
-                line = _recover_entry(audit, adapter, trail)
+                line = _recover_entry(audit, adapter, trail, now)
                 if line:
                     recovered.append(line)
             for exit_record in _unsettled_exits(trail):
@@ -205,12 +214,39 @@ def _status_for(adapter: BrokerAdapter, reference: str, by_id: bool):
         return None
 
 
+def _never_placed(adapter: BrokerAdapter, decision, now: datetime) -> bool:
+    """A definitive not-found, asked long enough after the decision that an
+    order still in flight cannot be the reason (2026-11-09: SN's momentum buy
+    timed out on 2026-11-05 before Alpaca took it, and every startup after
+    re-carded it as pending)."""
+    if now - decision.recorded_at < NOT_PLACED_AFTER:
+        return False
+    check = getattr(adapter, "has_no_order_for", None)
+    return bool(check and check(decision.decision_id))
+
+
 def _recover_entry(
-    audit: AuditLog, adapter: BrokerAdapter, trail: AuditTrail
+    audit: AuditLog, adapter: BrokerAdapter, trail: AuditTrail, now: datetime
 ) -> Optional[str]:
     decision = trail.decision
     status = _status_for(adapter, decision.decision_id, by_id=False)
     if status is None:
+        if _never_placed(adapter, decision, now):
+            audit.record_stage_rejection(
+                decision.decision_id,
+                RejectedStage.EXECUTION,
+                "not_placed",
+                "recovered at startup: the broker has no order under this "
+                "decision's reference (a definitive not-found) — the submit "
+                "failed before the broker took it; nothing was held and no "
+                "reservation survived the process that submitted it",
+                signal_snapshot=decision.signal,
+            )
+            symbol = str((decision.gate.order or {}).get("symbol", "?"))
+            return (
+                f"{decision.decision_id} {symbol}: never placed (the broker has "
+                f"no such order) — release recorded"
+            )
         logger.info(
             "no broker answer for entry %s; left pending", decision.decision_id
         )

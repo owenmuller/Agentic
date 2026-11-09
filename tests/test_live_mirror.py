@@ -483,3 +483,39 @@ def test_a_holding_the_mirror_does_not_track_blocks_entries_and_is_carded(tmp_pa
     del reader.held["XYZ"]
     mirror.tick()
     assert not mirror.e.get("unwatched")
+
+
+def restarted(tmp_path, config, reader, clock, seen):
+    """A new process on the saved state, the same broker (its orders and holdings)."""
+    live = config.live_mirror
+    broker = Broker(reader)
+    mirror = LiveMirror(config=live, ai_config=config.ai_trader, reader=reader, broker=broker,
+                        paper_ledger=tmp_path / "paper.jsonl", ledger=Ledger(tmp_path / "ledger.jsonl", clock),
+                        state=LabState.load(tmp_path / "state.json"), state_path=tmp_path / "state.json",
+                        limits=account_limits(AccountConfig(enabled=True, label="LIVE", sleeve="live_mirror",
+                                                            limits_overrides=live.limits_overrides)),
+                        notify=seen.append, clock=clock, halt_path=tmp_path / "HALT")
+    return mirror
+
+
+@pytest.mark.parametrize("gap_minutes, copied", [(1, True), (10, False)])
+def test_a_paper_entry_read_before_a_restart_is_copied_or_carded_never_lost(tmp_path, config, gap_minutes, copied):
+    """2026-11-09: the paper offset is saved the moment an entry is read; a
+    queue kept only in memory lost the entry on a restart with no card."""
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    paper(tmp_path, opened("a", "F"), filled("a", price="40"))
+    mirror._enter_one = lambda snap: None              # the process dies after reading, before copying
+    mirror.tick()
+    assert [q["pid"] for q in json.loads((tmp_path / "state.json").read_text())["engine"]["queue"]] == ["a"]
+
+    clock.now = clock.now + timedelta(minutes=gap_minutes)
+    again = restarted(tmp_path, config, reader, clock, seen)
+    again.tick()                                       # the session start
+    again.tick()
+    if copied:
+        assert [o.symbol for o in again.broker.sent] == ["F"] and "a" in again.e["positions"]
+    else:
+        assert again.broker.sent == []
+        assert "seconds late" in again.ledger.events(["skip"])[-1]["why"]
+        assert any("skipped F" in c.happened for c in seen)
+    assert again.e["queue"] == []

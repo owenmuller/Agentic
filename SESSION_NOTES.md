@@ -4167,6 +4167,41 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-09 — LIVE MIRROR zero trades since 2026-11-06 (Discord #urgent), investigated
+
+- **The failure card:** the only live-mirror failure card is still the 2026-11-05 13:40 ET 502 (fixed in a2bf6e4); none since.
+  - The card that repeats in #urgent (2026-11-05, 11-06, 11-09) is the MAIN book's "1 order still unresolved after a restart".
+  - On 2026-11-05 at 17:29 UTC, the momentum sleeve's SN buy (0.0327 sh, limit 220.12, paper) timed out mid-submit, and the session died.
+  - Alpaca answers HTTP 404 for `agentic-5cc9f2c833d4451d`: never placed. Recovery read "not found" as "cannot ask" and left it pending forever.
+  - It is unrelated to the mirror.
+- **The mirror is running live and mirroring:**
+  - 11-05: waiting_funds, then the deposit, the round trip, armed.
+  - 11-06 09:30 ET: mirroring_started at paper offset 956.
+  - 11-09: session_start in mirroring, `dry: false`. Its paper offset equals the paper ledger's length.
+- **Every paper AI-trader entry since 2026-11-06:**
+  - 09:46 ET NET call: its paper order was cancelled unfilled. Paper never held it, so there was nothing to copy, and no card (by design).
+  - 12:02 ET MRNA call (1 contract, $19.50): skipped, "one contract costs about $1,950, above the $21 premium cap". Carded, #urgent, delivered.
+  - 12:02 ET AMD call (1 contract, $15.85): skipped, "about $1,585, above the $21 premium cap". Carded, delivered.
+  - Every other paper order since then was an exit of a position opened before mirroring: GLD, TAN, BMY, COP.
+  - 2026-11-09: 5 ideas, all calls. The paper trader rejected all 5 itself: 3 had no contract clearing its floors, and 2 hit its own aggregate premium cap.
+- **Account (read-only, grant 69.9 h):**
+  - Cash $1,050, buying power $1,050, pending deposits 0. The mirror's snapshot shows settled $1,050.
+  - No positions, no open equity or option orders.
+- **Which rule skips most:** the option rule, at 2 of 2.
+  - Over the AI trader's history (from 2026-10-13), 14 of 40 filled entries were options.
+  - Their contract costs ran from $61 to $1,950 (median $850). 0 fit the $21 cap, 1 fits under $100, 4 under $500.
+  - Options rose from 3 of 14 fills (week of 10-12) to 5 of 10 (week of 11-02), and 16 of 21 ideas since 11-02.
+  - Even a contract that fits is skipped, because the live option path has no round trip.
+  - Stocks and ETFs would copy at about $195 each (the 18.75% cap binds before the 2% risk).
+- **Fixed** (no sizing, limit or live-flag change):
+  1. **Main book recovery:** a definitive not-found (`has_no_order_for`: Alpaca's 404 only; a timeout, 5xx or other answer is "cannot tell") asked 15+ minutes after the decision writes the execution rejection `not_placed`. SN's pending entry resolves at the next startup.
+  2. **Mirror:** the copy queue is saved with the state (`engine.queue`). A paper entry read just before a restart had been lost with no card.
+- **Tests:** 4 new; full suite green.
+- **Dry cycle** (new code, real account read-only, no broker; scratch state rewound to offset 956 plus one synthetic F stock entry):
+  - MRNA and AMD skipped with the same reasons as 11-06;
+  - F → would_enter 15 sh limit 12.55;
+  - a restart between read and copy saved the entry and copied it after.
+
 ### 2026-11-05 — LIVE MIRROR tick failure (Discord #urgent), investigated and fixed
 
 - **What:** one tick at 13:40:40 ET failed with `RobinhoodError: MCP HTTP 502 on initialize`. Robinhood's MCP gateway returned Bad Gateway on the session handshake.

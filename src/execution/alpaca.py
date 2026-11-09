@@ -308,6 +308,22 @@ class AlpacaAdapter(BrokerAdapter):
             ),
         )
 
+    def has_no_order_for(self, client_reference: str) -> bool:
+        """Only Alpaca's own 404 on the by-client-id lookup counts: client
+        order ids are unique per account across time, so a 404 is "never
+        placed". A timeout, a 5xx or any other answer is "cannot tell"."""
+        try:
+            self._request(
+                "GET",
+                "/v2/orders:by_client_order_id",
+                params={"client_order_id": _client_order_id(client_reference)},
+            )
+        except BrokerRejected as error:
+            return error.status_code == 404
+        except Exception:  # noqa: BLE001 - cannot tell is never "not placed"
+            return False
+        return False
+
     def get_order(self, broker_order_id: str) -> OrderStatus:
         data = self._request("GET", f"/v2/orders/{broker_order_id}")
         raw_price = data.get("filled_avg_price")

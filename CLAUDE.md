@@ -284,6 +284,8 @@ Software-only books on two of Quiver's published strategies (quiverquant.com/str
     - A place call that fails mid-request is found by its reference, or held as working until Robinhood's own order list has not shown it for 120 s.
     - The working order survives a restart, and a restart cancels one still open.
     - A holding the mirror does not track blocks new entries and is carded red; it is never sold blind.
+    - A paper entry read but not yet copied is saved with the state (2026-11-09): after a restart it is copied, or skipped with a card when more than 5 minutes late, never lost.
+  - **Options are not mirrored yet:** a contract above the 2% premium cap is skipped, and one that fits is skipped too, because the live option path has no round trip. At $1,050 the cap is $21; no paper contract has cost under $61. Since mirroring began (2026-11-06) every paper entry has been an option (report 2026-11-09).
   - **Deposits and withdrawals are cash flows, never P&L (human ruling 2026-11-04, second).** The Agentic MCP has no transfer records, so a flow is a change in the broker's cash that the mirror's own fills and fees do not explain. It is reconciled only with no order working and 60 seconds after a fill.
     - Each flow moves the kill-switch baseline (starting equity plus net flows), today's loss-limit baseline and the gate's high-water mark; a withdrawal also leaves the gate's cash at once. Each one is carded.
     - Returns are Modified Dietz by day, chained into a time-weighted return since mirroring began.

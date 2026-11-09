@@ -265,6 +265,14 @@ class BrokerAdapter(ABC):
         """
         return None
 
+    def has_no_order_for(self, client_reference: str) -> bool:
+        """True only when the venue answers DEFINITIVELY that it holds no order
+        under ``client_reference`` (2026-11-09: a submit that timed out before
+        the broker took it was otherwise "pending settlement" forever). False
+        when it has one, or cannot be asked — "cannot tell" is never "not
+        placed". Default False = unsupported."""
+        return False
+
     @staticmethod
     def _require_approved(candidate: object) -> ApprovedOrder:
         """Runtime backstop for the type signature.

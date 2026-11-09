@@ -657,3 +657,25 @@ def test_a_whole_decimal_quantity_is_not_fractional(gate):
     )
     adapter.submit_order(approved)
     assert recorder.last_payload["qty"] == "10"
+
+
+# ================================================================================
+# A definitive not-found (2026-11-09)
+# ================================================================================
+
+
+def test_only_alpacas_404_means_no_order_under_a_reference():
+    """SN's momentum buy timed out before Alpaca took it; startup recovery
+    asked by its reference forever. Only the 404 says "never placed"."""
+    absent, recorder = adapter_with(httpx.Response(404, json={"code": 40410000}))
+    assert absent.has_no_order_for("5cc9f2c833d4451d") is True
+    assert recorder.requests[-1].url.params["client_order_id"] == "agentic-5cc9f2c833d4451d"
+    for answer in (httpx.Response(200, json={"id": "x", "status": "filled"}),
+                   httpx.Response(500, text="boom"), httpx.Response(403, text="no")):
+        assert adapter_with(answer)[0].has_no_order_for("5cc9f2c833d4451d") is False
+
+    def times_out(request):
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    client = httpx.Client(base_url=PAPER_BASE_URL, transport=httpx.MockTransport(times_out))
+    assert AlpacaAdapter(client=client).has_no_order_for("5cc9f2c833d4451d") is False

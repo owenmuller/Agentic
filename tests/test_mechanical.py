@@ -863,3 +863,47 @@ def test_the_judged_entries_switch_stops_dispatch_without_buying_research(
         "trump_posts",
         rejection.signal.external_id,
     ) not in started.audit.researched_external_ids()
+
+
+class AbsentBroker(SilentBroker):
+    """A venue that answers definitively: no order under that reference."""
+
+    def has_no_order_for(self, client_reference):
+        return True
+
+
+def test_an_entry_the_broker_never_took_is_released_not_pending_forever(
+    tmp_path, signals_config
+):
+    """2026-11-09: a submit that timed out before the broker took it was
+    re-carded as pending settlement at every startup. A definitive not-found,
+    15+ minutes after the decision, records it as never placed — and nothing
+    sooner, when an order could still be in flight."""
+    from orchestrator.recovery import pending_settlement, recover_unsettled_orders
+
+    broker = FakeBroker(fill="new")
+    started = build_mechanical(
+        tmp_path,
+        signals_config,
+        items=[disclosure_item("row-1", "NUE", "$100,001 - $250,000", "2026-08-17")],
+        broker=broker,
+    )
+    started.loop.tick()
+    decision = started.audit.mechanical_trails()[0].decision
+    started.loop.mechanical._working.clear()
+
+    soon = decision.recorded_at + timedelta(minutes=5)
+    assert recover_unsettled_orders(started.audit, AbsentBroker(), now=soon) == []
+    assert [p.decision_id for p in pending_settlement(started.audit)] == [decision.decision_id]
+    # an unanswerable venue, however late, still leaves it pending
+    late = decision.recorded_at + timedelta(hours=20)
+    assert recover_unsettled_orders(started.audit, SilentBroker(), now=late) == []
+
+    lines = recover_unsettled_orders(started.audit, AbsentBroker(), now=late)
+    assert len(lines) == 1 and "never placed" in lines[0] and "NUE" in lines[0]
+    trail = started.audit.trail(decision.decision_id)
+    assert trail.fills == ()
+    assert [r.code for r in trail.stage_rejections if r.stage == RejectedStage.EXECUTION] == ["not_placed"]
+    assert pending_settlement(started.audit) == []
+    # asked again at the next startup: already accounted for, nothing written twice
+    assert recover_unsettled_orders(started.audit, AbsentBroker(), now=late) == []

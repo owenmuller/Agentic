@@ -104,13 +104,19 @@ class LiveMirror:
         self.halt_path = halt_path
         self.gate: Optional[RiskGate] = None
         self._working: Optional[dict] = None
-        self._queue: list[dict] = []
 
     # -- state ------------------------------------------------------------------------
 
     @property
     def e(self) -> dict:
         return self.state.engine
+
+    @property
+    def _queue(self) -> list[dict]:
+        """Paper entries read but not yet copied or skipped. Saved with the
+        state (2026-11-09): the paper offset is saved as soon as an entry is
+        read, so a queue kept only in memory lost it on a restart, uncarded."""
+        return self.e.setdefault("queue", [])
 
     def _save(self) -> None:
         if self.gate is not None:
