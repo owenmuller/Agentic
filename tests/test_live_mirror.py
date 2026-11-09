@@ -576,9 +576,9 @@ def option_opened(pid, symbol, occ, right="call", stop="38.00", target="44.00"):
             "stop": stop, "target": target}
 
 
-def with_proxy(config):
+def with_proxy(config, on=True):
     return config.model_copy(update={"live_mirror": config.live_mirror.model_copy(
-        update={"option_proxy_enabled": True})})
+        update={"option_proxy_enabled": on})})
 
 
 def test_an_option_that_fits_is_copied_natively_once_the_option_round_trip_has_passed(tmp_path, config):
@@ -627,7 +627,7 @@ def test_a_native_option_exits_on_the_underlying_stop_on_the_bid(tmp_path, confi
 
 
 def test_a_dear_call_is_skipped_while_the_proxy_is_off_and_a_dear_put_always(tmp_path, config):
-    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    mirror, seen, clock, reader = mirroring(tmp_path, with_proxy(config, on=False))
     reader.add_contract("unh400", DEAR, "11.90", "12.00")
     paper(tmp_path, option_opened("a", "UNH", DEAR, stop="380.00", target="440.00"),
           filled("a", price="12.00", qty="1", mult=100))
@@ -741,3 +741,19 @@ def test_a_restart_holding_a_native_option_can_still_sell_it(tmp_path, config):
     paper(tmp_path, {"event": "position_closed", "pid": "a", "reason": "stop", "at": T0.isoformat()})
     again.tick()
     assert type(again.broker.sent[-1]).__name__ == "OptionSellToCloseOrder"
+
+
+def test_the_proxy_is_on_by_the_approved_config():
+    assert LabConfig.load().live_mirror.option_proxy_enabled is True
+
+
+def test_a_round_trip_window_that_closes_undone_is_carded_once(tmp_path, config):
+    mirror, seen, clock, reader = mirroring(tmp_path, config)   # no SPY call qualifies all day
+    mirror.tick()
+    assert not any("option round trip" in c.happened for c in seen)
+    clock.now = clock.now.replace(hour=20, minute=30)            # 15:30 ET, past the window
+    mirror.tick()
+    mirror.tick()
+    late = [c for c in seen if c.happened == "the live option round trip did not run today"]
+    assert len(late) == 1 and late[0].status == cards.LOOK and "no SPY call qualified" in late[0].lines[0]
+    assert mirror.ledger.events(["option_round_trip_pending"])[-1]["no_contract"] is True

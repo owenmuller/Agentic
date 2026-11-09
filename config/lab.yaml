@@ -248,9 +248,9 @@ live_mirror:
   # TEMPORARY option ruling 2026-11-09 (CLAUDE.md § Live Mirror): a paper
   # option whose contract fits the 2% premium cap is copied natively once the
   # live option round trip has passed; a call that does not fit is copied as
-  # its underlying stock (the proxy, OFF until the human approves its method);
+  # its underlying stock (the proxy, approved by the human 2026-11-09);
   # a put that does not fit is skipped.
-  option_proxy_enabled: false
+  option_proxy_enabled: true   # approved by the human 2026-11-09 (later), from the next session start
   option_round_trip_enabled: true
   option_round_trip_symbol: SPY
   # The same cap table as the paper AI trader: stocks on the AGGRESSIVE path

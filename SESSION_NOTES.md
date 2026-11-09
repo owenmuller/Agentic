@@ -4167,6 +4167,13 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-09 (evening) — LIVE MIRROR options: approvals (human ruling)
+
+1. **Call proxy ON** from the next session start (2026-11-10), as proposed below: `option_proxy_enabled: true`.
+2. **Put stops** on the underlying's mid of a tight quote, else the last trade: approved.
+3. **The live option round trip** runs at the 2026-11-10 session as planned and is reported; native copies of contracts that fit then begin by themselves.
+- **Added (no silent gap):** a round-trip window that closes without the round trip done is carded once that day (yellow: no contract qualified, or the attempts did not complete). It had been a ledger note only. Tested.
+
 ### 2026-11-09 (later) — LIVE MIRROR options, TEMPORARY ruling: built; proxy method proposed
 
 - **Ruling (human, 2026-11-09):** per trade, a paper option whose contract fits the live premium cap (2% of live equity) is copied natively; a CALL that does not fit is copied as its underlying stock (the proxy); a PUT that does not fit is skipped. It reverts to native by itself as equity grows. Proxy: same 2% risk, same horizon, stop and target translated to the underlying; method and examples first, then enabling. One live option round trip now. Daily card rows by kind. A read-only dry run before enabling. No other limit changes.

@@ -678,6 +678,7 @@ class LiveMirror:
         self._enter_one(snap)
         if self._working is None and self._option_round_trip_due(snap):
             self._option_round_trip(snap)
+        self._option_round_trip_overdue()
 
     # -- the live option round trip (temporary option ruling 2026-11-09, item 3) ---------
 
@@ -737,6 +738,35 @@ class LiveMirror:
                            bid=meta["quote_bid"], ask=meta["quote_ask"], open_interest=quote.get("open_interest"))
         self._save()
         self._send(order, "entry", extra={"pid": OPTION_RT_PID, "ref": f"mirror-option-rt-{attempts + 1}", **meta})
+
+    def _option_round_trip_overdue(self) -> None:
+        """No silent gap: a session whose round-trip window closes without the
+        round trip done is carded once (no contract qualified, or the buy did
+        not fill); it tries again at the next session."""
+        if not self.config.option_round_trip_enabled or \
+                self.e.get("option_round_trip") in ("passed", "failed", "dry"):
+            return
+        if OPTION_RT_PID in self.e.get("positions", {}) or self._working is not None:
+            return   # bought and selling: it finishes on its own
+        local, today = self.clock().astimezone(NY), self._today().isoformat()
+        if local.weekday() >= 5 or local.time() <= _clock_time(self.config.option_round_trip_window[1]):
+            return
+        if self.e.get("option_rt_overdue_noted") == today:
+            return
+        self.e["option_rt_overdue_noted"] = today
+        no_contract = self.e.get("option_rt_none_noted") == today
+        attempts = int(self.e.get("option_rt_attempts", 0))
+        self.ledger.append("option_round_trip_pending", attempts=attempts, no_contract=no_contract)
+        why = (f"no {self.config.option_round_trip_symbol} call qualified (a spread of "
+               f"{self.config.option_round_trip_max_spread} or less, open interest 500 or more, one contract "
+               f"inside the premium cap)" if no_contract and attempts == 0
+               else f"{attempts} of {self.config.option_round_trip_attempts} attempts so far did not complete")
+        self._card("the live option round trip did not run today", cards.LOOK,
+                   [f"By {self.config.option_round_trip_window[1]} ET: {why}.",
+                    "It tries again at the next session from "
+                    f"{self.config.option_round_trip_window[0]} ET; native option copies wait for it."],
+                   look_at="the live option round trip")
+        self._save()
 
     def _cheap_contract(self, budget: Decimal):
         """The round trip's contract: a call on the round-trip symbol at the
