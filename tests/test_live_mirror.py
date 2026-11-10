@@ -94,12 +94,13 @@ class Broker:
     """Fills every order at the quote's ask (buys) or bid (sells)."""
 
     def __init__(self, reader):
-        self.reader, self.orders, self.sent = reader, {}, []
+        self.reader, self.orders, self.sent, self.refs = reader, {}, [], []
         self.last_review = {"order_checks": {}}
 
     def submit_order(self, approved, client_reference=None):
         order = approved.order
         self.sent.append(order)
+        self.refs.append(client_reference)
         oid = f"o{len(self.sent)}"
         if hasattr(order, "contracts"):                  # a long option: fills at the option's ask or bid
             [row] = self.reader.option_instruments(order.underlying, order.expiration, order.right, order.strike)
@@ -694,6 +695,8 @@ def test_the_option_round_trip_buys_and_sells_one_cheap_call_then_native_copies_
     buy = mirror.broker.sent[-1]
     assert type(buy).__name__ == "OptionBuyToOpenOrder" and buy.symbol == "SPY261106C00780000"
     assert buy.contracts == 1 and buy.execution.limit_price == D("0.15")
+    # one reference per day and attempt: Robinhood dedups on the key, so a reused one would collide
+    assert mirror.broker.refs[-1] == f"mirror-option-rt-{mirror._today().isoformat()}-1"
     mirror.tick()                                       # the buy settles; the sell goes out
     sell = mirror.broker.sent[-1]
     assert type(sell).__name__ == "OptionSellToCloseOrder" and sell.execution.limit_price == D("0.14")

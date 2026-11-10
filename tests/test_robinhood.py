@@ -151,15 +151,29 @@ def test_an_order_tool_is_never_resent_and_an_unopened_session_sends_nothing(tmp
     assert all(b.get("method") == "initialize" for b in seen)
 
 
+def server_checks_ref(arguments):
+    """Robinhood's own validation of a place call's ref_id (2026-11-10: every
+    live order sent as ``mirror-<pid>`` was refused with exactly this)."""
+    import uuid
+
+    ref = arguments.get("ref_id")
+    try:
+        uuid.UUID(str(ref))
+    except ValueError:
+        raise robinhood.RobinhoodError(f'place refused by the server: ref_id must be a UUID (got "{ref}")')
+    return ref
+
+
 class FlakyPlace:
     """The adapter's MCP: the place call fails mid-request; ``acted`` says
-    whether the server took the order anyway."""
+    whether the server took the order anyway. As at Robinhood, the placed
+    order carries the server's approval id as its ref_id, never ours."""
 
     account_number = PINNED
 
     def __init__(self, acted, visible_after=0):
         self.acted, self.visible_after, self.lookups, self.places = acted, visible_after, 0, 0
-        self.ref = None
+        self.ref, self.filters = None, []
 
     def sleep(self, seconds):
         pass
@@ -171,14 +185,19 @@ class FlakyPlace:
         if tool == "review_equity_order":
             return {"data": {}}
         assert tool == "place_equity_order"
+        self.ref = server_checks_ref(arguments)
         self.places += 1
-        self.ref = arguments["ref_id"]
         raise robinhood.RobinhoodTransient("MCP HTTP 502 on tools/call")
 
     def equity_orders(self, **filters):
         self.lookups += 1
-        if self.acted and self.lookups > self.visible_after:
-            return [{"id": "rh-1", "ref_id": self.ref, "state": "queued"}]
+        self.filters.append(filters)
+        if self.acted and self.lookups > self.visible_after and filters.get("symbol") == "SPY" and \
+                filters.get("created_at_gte"):
+            return [{"id": "rh-0", "ref_id": "01a1ac21-0000-7000-8000-000000000000", "symbol": "SPY",
+                     "side": "sell", "quantity": "1.000000", "state": "filled"},     # another order: no match
+                    {"id": "rh-1", "ref_id": "01a1ac21-a11c-795b-b545-6bde1823bd85", "symbol": "SPY",
+                     "side": "buy", "quantity": "1.000000", "state": "queued"}]
         return []
 
 
@@ -188,25 +207,96 @@ def adapter_over(mcp):
     adapter = object.__new__(robinhood.RobinhoodAgenticAdapter)   # no live process in a test
     adapter._mcp = mcp
     adapter._require_approved = lambda approved: approved
-    adapter._payload = lambda order: {"account_number": PINNED, "symbol": order.symbol}
+    adapter._payload = lambda order: {"account_number": PINNED, "symbol": order.symbol, "side": "buy",
+                                      "quantity": "1"}
     approved = SimpleNamespace(order=SimpleNamespace(symbol="SPY", quantity=1,
                                                      execution=SimpleNamespace(price_bound=1)))
     return adapter, approved
 
 
-def test_a_place_that_fails_mid_request_is_found_by_its_reference_never_resent(tmp_path):
+def test_a_place_that_fails_mid_request_is_found_by_symbol_side_size_and_time_never_resent(tmp_path):
     from execution.base import OrderOutcomeUnknown
 
     mcp = FlakyPlace(acted=True, visible_after=1)          # shows up on the second lookup
     adapter, approved = adapter_over(mcp)
-    receipt = adapter.submit_order(approved, client_reference="ref-a")
-    assert receipt.broker_order_id == "rh-1" and receipt.client_order_id == "ref-a" and mcp.places == 1
+    receipt = adapter.submit_order(approved, client_reference="mirror-a")
+    assert receipt.broker_order_id == "rh-1" and mcp.places == 1
+    assert receipt.client_order_id.startswith("eq:SPY:buy:1:") and mcp.filters[-1]["created_at_gte"]
+    assert mcp.ref == robinhood.idempotency_key("mirror-a")
     mcp = FlakyPlace(acted=False)
     adapter, approved = adapter_over(mcp)
     with pytest.raises(OrderOutcomeUnknown) as raised:
-        adapter.submit_order(approved, client_reference="ref-b")
-    assert raised.value.client_reference == "ref-b" and mcp.places == 1
+        adapter.submit_order(approved, client_reference="mirror-b")
+    assert raised.value.client_reference.startswith("eq:SPY:buy:1:") and mcp.places == 1
     assert mcp.lookups == len(robinhood.RECONCILE_PAUSES)
+    assert adapter.get_order_by_client_reference(raised.value.client_reference) is None
+    mcp.acted = True                                    # it shows up later
+    found = adapter.get_order_by_client_reference(raised.value.client_reference)
+    assert found.broker_order_id == "rh-1"
+
+
+def test_every_ref_id_sent_is_a_uuid_and_one_reference_always_sends_the_same_key():
+    import uuid
+
+    key = robinhood.idempotency_key("mirror-3666c3e68f52")
+    assert uuid.UUID(key).version == 4 and key == robinhood.idempotency_key("mirror-3666c3e68f52")
+    assert key != robinhood.idempotency_key("mirror-e9ebdcc566f4")
+    given = "42fa85ca-a321-4de9-b9d0-e5f79d887c99"
+    assert robinhood.idempotency_key(given) == given
+    fresh = robinhood.idempotency_key(None)
+    assert uuid.UUID(fresh).version == 4 and fresh != robinhood.idempotency_key(None)
+
+
+def test_an_upstream_failure_inside_a_tool_result_is_transient_retried_on_a_read_never_on_an_order(tmp_path):
+    """2026-11-10 09:55 ET: ``get_equity_positions`` came back HTTP 200 with
+    ``API error 503: upstream connect error`` inside, and failed the tick."""
+    calls: list[str] = []
+    store, _ = store_at(tmp_path, expires_ms=10**13, calls=calls)
+    failures = {"left": 1}
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if body.get("method") != "tools/call":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body.get("id"), "result": {}})
+        seen.append(body["params"]["name"])
+        if failures["left"]:
+            failures["left"] -= 1
+            result = {"isError": True, "content": [{"type": "text", "text": "API error 503: upstream connect "
+                                                    "error or disconnect/reset before headers."}]}
+        else:
+            result = {"structuredContent": {"data": {"positions": []}}}
+        return httpx.Response(200, text=f"data: {json.dumps({'jsonrpc': '2.0', 'id': body['id'], 'result': result})}\n\n")
+    pauses: list[float] = []
+    client = robinhood.RobinhoodMcp(store, PINNED, allow_orders=True, sleep=pauses.append,
+                                    http=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert client.call("get_equity_positions", {"account_number": PINNED}) == {"data": {"positions": []}}
+    assert seen == ["get_equity_positions"] * 2 and pauses == [robinhood.READ_RETRY_PAUSES[0]]
+    failures["left"], seen[:] = 1, []
+    with pytest.raises(robinhood.RobinhoodTransient, match="upstream"):
+        client.call("place_equity_order", {"account_number": PINNED, "ref_id": robinhood.idempotency_key("x")})
+    assert seen == ["place_equity_order"]
+    # a plain refusal stays a refusal
+    failures["left"] = 0
+    client2, _ = mcp_with(tmp_path, {"isError": True, "content": [{"type": "text", "text": "ref_id must be a UUID"}]})
+    with pytest.raises(robinhood.RobinhoodError) as raised:
+        client2.call("get_portfolio", {"account_number": PINNED})
+    assert not isinstance(raised.value, robinhood.RobinhoodTransient)
+
+
+def test_a_failure_before_the_place_call_is_a_definite_not_placed():
+    from execution.base import BrokerError, OrderOutcomeUnknown
+
+    class ReviewFails(FlakyPlace):
+        def call(self, tool, arguments=None):
+            if tool == "review_equity_order":
+                raise robinhood.RobinhoodUpstream("review_equity_order: the server's upstream failed")
+            return super().call(tool, arguments)
+    mcp = ReviewFails(acted=False)
+    adapter, approved = adapter_over(mcp)
+    with pytest.raises(BrokerError, match="not placed") as raised:
+        adapter.submit_order(approved, client_reference="mirror-c")
+    assert not isinstance(raised.value, OrderOutcomeUnknown) and mcp.places == 0
 
 
 # ================================================================================
@@ -244,6 +334,7 @@ class OptionMcp:
         if tool == "review_option_order":
             return {"data": {}}
         if tool == "place_option_order":
+            server_checks_ref(arguments)
             self.places += 1
             if self.flaky:
                 raise robinhood.RobinhoodTransient("MCP HTTP 502 on tools/call")

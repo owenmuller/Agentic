@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -57,6 +58,11 @@ TRANSIENT_STATUS = frozenset({500, 502, 503, 504})
 #: After a transient failure on the place call, look the order up by its
 #: reference after these pauses (seconds) before handing back "unknown".
 RECONCILE_PAUSES = (1.0, 2.0, 4.0)
+#: A tool result whose error text is the server's own upstream failing: the
+#: MCP answered HTTP 200 but the call behind it did not complete.
+UPSTREAM_FAILURE = re.compile(r"API error 5\d\d|upstream connect error", re.IGNORECASE)
+#: Namespace for the deterministic idempotency key of a caller's reference.
+REF_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, "live-mirror.agentic")
 
 
 class RobinhoodError(RuntimeError):
@@ -67,6 +73,29 @@ class RobinhoodTransient(RobinhoodError):
     """A 5xx, a timeout or a dropped connection: the server may or may not
     have acted. Origin: an HTTP 502 on ``initialize`` failed a live-mirror
     tick on 2026-11-05 13:40 ET."""
+
+
+class RobinhoodUpstream(RobinhoodTransient):
+    """The MCP answered, but its tool result says the service behind it
+    failed (``API error 503: upstream connect error``). Transient: a read is
+    retried, an order is looked up, never re-sent. Origin: a 503 inside a
+    ``get_equity_positions`` result failed a live-mirror tick on 2026-11-10
+    09:55 ET."""
+
+
+def idempotency_key(client_reference: Optional[str]) -> str:
+    """Robinhood's ``ref_id`` must be a UUID: the server refuses anything else
+    (every live order on 2026-11-10 was refused for ``mirror-<pid>``). A
+    caller's reference maps to ONE deterministic UUID, so the same logical
+    order always sends the same key; no reference gets a fresh one. The key
+    is shaped as a version-4 UUID, the form the server accepted on 2026-11-05."""
+    if not client_reference:
+        return str(uuid.uuid4())
+    try:
+        return str(uuid.UUID(client_reference))
+    except ValueError:
+        digest = uuid.uuid5(REF_NAMESPACE, client_reference).bytes
+        return str(uuid.UUID(bytes=digest, version=4))
 
 
 def _strip_guides(value: Any) -> Any:
@@ -220,12 +249,29 @@ class RobinhoodMcp:
             self._open()
         except RobinhoodTransient as error:   # the call itself was never sent: a definite "no"
             raise RobinhoodError(f"{tool} not sent: the MCP session could not be opened ({error})") from error
+        # the transport retries an HTTP 5xx on a read; this retries the server's
+        # upstream failing inside a 200 (a read only: an order is never re-sent)
+        pauses = READ_RETRY_PAUSES if tool.startswith("get_") else ()
+        for attempt in range(len(pauses) + 1):
+            try:
+                return self._call_once(tool, arguments)
+            except RobinhoodUpstream as error:
+                if attempt >= len(pauses):
+                    raise
+                logger.warning("Robinhood %s; retrying in %.0fs (a read: safe to send again)", error,
+                               pauses[attempt])
+                self.sleep(pauses[attempt])
+        raise AssertionError("unreachable")
+
+    def _call_once(self, tool: str, arguments: dict) -> Any:
         self._next_id += 1
         message = self._post({"jsonrpc": "2.0", "id": self._next_id, "method": "tools/call",
                               "params": {"name": tool, "arguments": arguments}}) or {}
         result = message.get("result") or {}
         if message.get("error") or result.get("isError"):
             detail = json.dumps(_strip_guides(message.get("error") or result.get("content")))[:300]
+            if UPSTREAM_FAILURE.search(detail):
+                raise RobinhoodUpstream(f"{tool}: the server's upstream failed: {detail}")
             raise RobinhoodError(f"{tool} refused by the server: {detail}")
         content = result.get("structuredContent")
         if content is None:
@@ -423,16 +469,20 @@ class RobinhoodAgenticAdapter(BrokerAdapter):
     def submit_order(self, approved: ApprovedOrder, client_reference: Optional[str] = None) -> OrderReceipt:
         approved = self._require_approved(approved)
         option = _is_option_order(approved.order)
-        if option:
-            payload, option_id = self._option_payload(approved.order)
-            review_tool, place_tool = "review_option_order", "place_option_order"
-        else:
-            payload, option_id = self._payload(approved.order), None
-            review_tool, place_tool = "review_equity_order", "place_equity_order"
-        if self._mcp.approvals_required():
-            raise BrokerError("trade approvals are ON for the Agentic account (the human's app setting): an order "
-                              "would wait for a tap, so none is placed", 409, "human_must_approve_trades")
-        review = self._mcp.call(review_tool, payload)
+        try:
+            # nothing before the place call can place an order: any failure here is a definite "not placed"
+            if option:
+                payload, option_id = self._option_payload(approved.order)
+                review_tool, place_tool = "review_option_order", "place_option_order"
+            else:
+                payload, option_id = self._payload(approved.order), None
+                review_tool, place_tool = "review_equity_order", "place_equity_order"
+            if self._mcp.approvals_required():
+                raise BrokerError("trade approvals are ON for the Agentic account (the human's app setting): an "
+                                  "order would wait for a tap, so none is placed", 409, "human_must_approve_trades")
+            review = self._mcp.call(review_tool, payload)
+        except RobinhoodError as error:
+            raise BrokerError(f"not placed (before the place call): {error}", 400, str(error)) from error
         review = review.get("data", review) if isinstance(review, dict) else {}
         self.last_review = review
         checks = review.get("order_checks") or {}
@@ -442,16 +492,17 @@ class RobinhoodAgenticAdapter(BrokerAdapter):
         if review.get("customer_approval_required"):
             raise BrokerError("the review says the customer must approve this order: not placed", 409,
                               "customer_approval_required")
-        ref_id = client_reference or str(uuid.uuid4())
+        ref_id = idempotency_key(client_reference)
+        # Robinhood places every order under its own approval id, so the placed
+        # order never carries ref_id (the tool's own schema says so; the Nov 5
+        # round trip sent 42fa85ca-... and the order shows 01a1ac21-...): the
+        # durable reference is the instrument, side, size and the time it was sent.
+        since = (datetime.now(timezone.utc) - timedelta(seconds=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
         if option:
-            # Robinhood places an option order under its own approval id, so the
-            # placed order does not carry ref_id: the durable reference is the
-            # contract, side, size and the time it was sent.
             leg = payload["legs"][0]
-            lookup = (f"opt:{option_id}:{leg['side']}:{payload['quantity']}:"
-                      f"{(datetime.now(timezone.utc) - timedelta(seconds=5)).strftime('%Y-%m-%dT%H:%M:%SZ')}")
+            lookup = f"opt:{option_id}:{leg['side']}:{payload['quantity']}:{since}"
         else:
-            lookup = ref_id
+            lookup = f"eq:{payload['symbol']}:{payload['side']}:{payload['quantity']}:{since}"
         try:
             placed = self._mcp.call(place_tool, {**payload, "ref_id": ref_id})
         except RobinhoodTransient as error:
@@ -502,8 +553,21 @@ class RobinhoodAgenticAdapter(BrokerAdapter):
     def _by_ref(self, ref_id: str) -> Optional[dict]:
         if ref_id.startswith("opt:"):
             return self._option_match(ref_id)
-        for order in self._mcp.equity_orders():
+        if ref_id.startswith("eq:"):
+            return self._equity_match(ref_id)
+        for order in self._mcp.equity_orders():   # a reference from before 2026-11-10
             if order.get("ref_id") == ref_id:
+                return order
+        return None
+
+    def _equity_match(self, lookup: str) -> Optional[dict]:
+        """The equity order sent under ``lookup`` (eq:<symbol>:<side>:<qty>:<since>):
+        the newest on that symbol, side and size created since then. The mirror
+        keeps one working order, so a match is that order."""
+        _, symbol, side, quantity, since = lookup.split(":", 4)
+        for order in self._mcp.equity_orders(symbol=symbol, created_at_gte=since):
+            if order.get("side") == side and _d(order.get("quantity")) == _d(quantity) and \
+                    str(order.get("symbol", symbol)).upper() == symbol.upper():
                 return order
         return None
 

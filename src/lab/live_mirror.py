@@ -701,7 +701,8 @@ class LiveMirror:
             self.e["option_round_trip"] = "failed"
             self.ledger.append("option_round_trip", passed=False, attempts=attempts)
             self._card("the live option round trip failed", cards.ACTION,
-                       [f"{attempts} attempts to buy one cheap {self.config.option_round_trip_symbol} call did not fill.",
+                       [f"{attempts} attempts to buy one cheap {self.config.option_round_trip_symbol} call did not "
+                        "complete (unfilled or refused; the ledger has each one).",
                         "Native option copies stay off; calls that do not fit follow the proxy rule."],
                        what_to_do=cards._ask("Show me the live option round trip's attempts and the account."))
             self._save()
@@ -737,7 +738,8 @@ class LiveMirror:
         self.ledger.append("option_round_trip_start", occ=occ, limit=limit, attempt=attempts + 1,
                            bid=meta["quote_bid"], ask=meta["quote_ask"], open_interest=quote.get("open_interest"))
         self._save()
-        self._send(order, "entry", extra={"pid": OPTION_RT_PID, "ref": f"mirror-option-rt-{attempts + 1}", **meta})
+        self._send(order, "entry", extra={"pid": OPTION_RT_PID, "ref": f"mirror-option-rt-{today}-{attempts + 1}",
+                                          **meta})
 
     def _option_round_trip_overdue(self) -> None:
         """No silent gap: a session whose round-trip window closes without the

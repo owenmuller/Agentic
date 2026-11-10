@@ -4167,6 +4167,34 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-10 — LIVE MIRROR: every live order refused (ref_id must be a UUID); HALTED, fixed
+
+- **What failed:** every live order today was refused at validation with a 400: `ref_id must be a UUID (got "mirror-…")`. That was the option round trip (3 attempts, 09:45 ET, SPY261111C00762000 at 0.18–0.20, then "failed") and the TTWO call proxy and STLD stock copies at 10:46 ET. Six cards in total.
+  - **Root cause:** the mirror sent its own readable reference as Robinhood's idempotency key. This was latent since the build: no entry had reached the broker before today, since every earlier one was skipped by the cap, and the fakes accepted any key. The Nov 5 round trip passed only because it sent no reference (the adapter made a uuid4).
+- **Second latent defect, same cause:** Robinhood places every order under its own approval id. The Nov 5 buy was sent as 42fa85ca-… and shows as 01a1ac21-…, and the tool schema says so. So the equity lookup after a failed place matched on a `ref_id` that never appears.
+- **Third:** a 503 inside a 200 tool result (`get_equity_positions`, 09:55 ET, once) was read as a refusal and failed the tick. Also, a failure in the review call was not a `BrokerError` and would have escaped `_send`.
+- **Account (read-only, 11:55 ET):**
+  - cash $1,050, all settled;
+  - no positions and no open orders;
+  - no option order ever. Nothing reached Robinhood.
+- **Action:** a HALT marker was written at 11:54 ET on the operator instruction. Entries are blocked; exits keep running (none are held). Resume is the human's `python -m lab resume live-mirror --ack NAME`.
+- **Fix:**
+  - `idempotency_key` gives each reference one deterministic UUID, in v4 form (the form accepted 2026-11-05);
+  - the round-trip key is unique per day and attempt;
+  - equity lookups match by symbol, side, size and time;
+  - `RobinhoodUpstream` (an "API error 5xx" inside a result) is transient: reads retry, orders are looked up;
+  - any failure before the place call is a definite "not placed".
+  - The fakes now enforce Robinhood's validation and its approval-id `ref_id`. Suite green.
+- **Dry run (read-only, uncommitted code):**
+  - the lookup found both real Nov 5 SPY orders and nothing where nothing should match;
+  - halted and unhalted cycles ran clean.
+- **Not provable read-only:** that the server accepts the new key. The first live order proves it.
+- **Other cards since 09:00 ET (not linked):**
+  - main book: form_13f, an EDGAR full-text search HTTP 500 at 09:32 ET, once, retried once inside the fetch;
+  - three quote-quality notes at the open;
+  - MSB with no usable IEX quote for 15 minutes (thin name).
+  - The paper AI trader had no faults.
+
 ### 2026-11-09 (evening) — LIVE MIRROR options: approvals (human ruling)
 
 1. **Call proxy ON** from the next session start (2026-11-10), as proposed below: `option_proxy_enabled: true`.
