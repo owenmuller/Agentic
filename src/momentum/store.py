@@ -302,6 +302,17 @@ def _fallback_caps(store: Store, finnhub, stats: dict, log: Callable[[str], None
     stats["fallback_wanted"] = len(wanted)
     stats["fallback_found"] = found
     stats["fallback_failures"] = len(finnhub.failures)
+    refused = getattr(finnhub, "refused", None)
+    if refused:
+        # the plan goes on (ruling 2026-11-10): names with a current SEC count
+        # rank as usual; the ones that needed Finnhub stay unranked, never guessed
+        stats["fallback_refused"] = refused
+        stats["fallback_excluded"] = len(wanted) - found
+        log(f"market-cap fallback unavailable ({refused}): {len(wanted) - found} companies left unranked")
+        datahealth.report("momentum Finnhub caps", f"{refused}: {len(wanted) - found} current filers with no current "
+                                                   f"SEC share count (period end within 18 months) have no market "
+                                                   f"cap and are left out of this build's universe; every company "
+                                                   f"with a current SEC count ranks as usual")
     if finnhub.failures:
         datahealth.report("momentum Finnhub caps", f"{len(finnhub.failures)} Finnhub market-cap fetches failed; those "
                                                    f"companies are unranked this build: {', '.join(finnhub.failures[:8])}")

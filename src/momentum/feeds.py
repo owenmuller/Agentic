@@ -238,15 +238,22 @@ class Finnhub:
     the universe's fallback where the SEC has no current share count (human
     ruling 2026-10-14; universe version 2, from the 2026-11-02 rebalance).
     Free tier: 60 calls a minute. Cached per build folder as
-    ``{"cap": dollars or None, "fetched": ...}``; None = no profile."""
+    ``{"cap": dollars or None, "fetched": ...}``; None = no profile.
+
+    A missing key or a refused one (401/403) does NOT abort the plan (human
+    ruling 2026-11-10): ``refused`` says why, no further call is made, and
+    every company that needed the fallback stays unranked this build (a
+    smaller universe, never a guessed share count; Constraint #6). Companies
+    with a current SEC count never needed it and rank as usual. The refusal
+    is never cached: the next build asks again."""
 
     URL = "https://finnhub.io/api/v1/stock/profile2"
 
     def __init__(self, cache: Cache, api_key: Optional[str] = None, min_interval: float = 1.05) -> None:
         load_environment()
         self._key = api_key or os.environ.get("FINNHUB_API_KEY", "")
-        if not self._key:
-            raise RuntimeError("FINNHUB_API_KEY is not set: the market-cap fallback cannot run")
+        #: why the fallback is unavailable this build (None = it is available)
+        self.refused: Optional[str] = None if self._key else "FINNHUB_API_KEY is not set"
         self.cache = cache
         self._client = httpx.Client(timeout=20)
         self._interval = min_interval
@@ -259,6 +266,8 @@ class Finnhub:
         cached = self.cache.get(key)
         if cached is not None:
             return cached.get("cap")
+        if self.refused:
+            return None
         for attempt in range(4):
             wait = self._interval - (time.monotonic() - self._last)
             if wait > 0:
@@ -278,7 +287,8 @@ class Finnhub:
                 self.cache.put(key, {"cap": value, "fetched": datetime.now(timezone.utc).isoformat()})
                 return value
             if r.status_code in (401, 403):
-                raise RuntimeError(f"Finnhub refused the key (HTTP {r.status_code})")
+                self.refused = f"Finnhub refused the key (HTTP {r.status_code})"
+                return None
             time.sleep(30 if r.status_code == 429 else 5 * (attempt + 1))
         self.failures.append(symbol)
         return None

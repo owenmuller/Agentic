@@ -247,3 +247,57 @@ def test_bar_requests_never_ask_for_the_last_fifteen_minutes(monkeypatch):
     assert timedelta(minutes=15) < datetime.now(timezone.utc) - cap < timedelta(minutes=18)
     alpaca.bars(["SPY"], "2026-10-01T00:00:00Z", "2026-10-02T23:59:00Z", "all")
     assert seen[1] == "2026-10-02T23:59:00Z"  # a past end is left alone
+
+
+# -- a refused Finnhub key does not abort the plan (human ruling 2026-11-10) ---------
+
+class _FinnhubClient:
+    def __init__(self, statuses: list) -> None:
+        self.statuses, self.calls = statuses, 0
+
+    def get(self, url, params=None):
+        self.calls += 1
+        return _Response(self.statuses.pop(0), {"marketCapitalization": 1000.0})
+
+
+def test_a_refused_or_missing_finnhub_key_is_a_state_not_an_abort(tmp_path, monkeypatch):
+    monkeypatch.setattr(feeds.time, "sleep", lambda s: None)
+    monkeypatch.setattr(feeds, "load_environment", lambda: None)
+    monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
+    missing = feeds.Finnhub(feeds.Cache(tmp_path / "m"))
+    assert missing.refused == "FINNHUB_API_KEY is not set" and missing.market_cap("A") is None
+    hub = feeds.Finnhub(feeds.Cache(tmp_path / "c"), api_key="k", min_interval=0)
+    hub._client = _FinnhubClient([401])
+    assert hub.market_cap("A") is None and "HTTP 401" in hub.refused
+    assert hub.market_cap("B") is None and hub._client.calls == 1      # no further call once refused
+    assert hub.cache.get("finnhub_cap_A") is None and not hub.failures   # never cached; not a "failure"
+    fresh = feeds.Finnhub(feeds.Cache(tmp_path / "c"), api_key="k", min_interval=0)
+    fresh._client = _FinnhubClient([200])                                 # the next build asks again
+    assert fresh.market_cap("A") == 1000.0 * 1e6 and fresh.refused is None
+
+
+def test_a_build_whose_finnhub_is_refused_ranks_the_sec_names_and_cards_the_rest(tmp_path, monkeypatch):
+    import datahealth
+
+    reports = []
+    monkeypatch.setattr(datahealth, "report", lambda source, message: reports.append((source, message)))
+
+    class Refused:
+        def __init__(self, cache) -> None:
+            self.failures: list[str] = []
+            self.refused = "Finnhub refused the key (HTTP 403)"
+
+        def market_cap(self, symbol):
+            return None
+
+    monkeypatch.setattr(feeds, "Alpaca", FakeAlpaca)
+    monkeypatch.setattr(feeds, "Sec", FakeSec)
+    monkeypatch.setattr(feeds, "Finnhub", Refused)
+    store, stats = build(tmp_path / "r", start="2017-01-01", end=LIVE_END, log=lambda m: None, benchmarks=(),
+                         universe_version=2)
+    view = engine.live_view(store, DAYS[DAYS.index(LIVE_END) + 1])
+    # A ranks on its current SEC count; B, C (needed the fallback) and D are left out, never guessed
+    assert [s for s, _ in ranked(view, len(view.calendar) - 1)] == ["A"]
+    assert stats["fallback_refused"].endswith("(HTTP 403)") and stats["fallback_excluded"] == 3
+    cards = [m for s, m in reports if s == "momentum Finnhub caps"]
+    assert len(cards) == 1 and "3 current filers" in cards[0] and "ranks as usual" in cards[0]

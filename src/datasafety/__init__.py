@@ -333,6 +333,21 @@ def resolve_data_dir(repo_data: Path) -> Path:
     return scratch_data_dir()
 
 
+def resolve_cache_dir(production: Path, name: str) -> Path:
+    """A market-data cache's directory (sweep 2026-11-10). Production's own,
+    MARKED on first use, for a production unit; a scratch cache for every
+    other process (``<scratch>/../cache/<name>``), so a hand run can neither
+    write production's cache nor prune the folder production builds from.
+    Origin: ``~/agentic-cache/momentum`` carried no marker, and a shell run of
+    ``momentum-prep`` would have pruned it to its own last two folders. A dry
+    run that wants production's data copies a folder into the scratch cache
+    (a read of production, a write of scratch)."""
+    if writes_production():
+        ensure_marker(production)
+        return production
+    return scratch_data_dir().parent / "cache" / name
+
+
 def scratch_data_dir() -> Path:
     configured = os.environ.get("AGENTIC_SCRATCH_DATA_DIR")
     return Path(configured) if configured else Path.home() / "agentic-scratch" / "data"
