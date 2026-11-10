@@ -636,6 +636,17 @@ def momentum_prep_failed_card(when: str, what: str, detail: str = "", sample: bo
         detail=detail or what, detail_name="momentum-prep.txt", channel=URGENT, sample=sample)
 
 
+def momentum_plan_rejected_card(when: str, what: str, sample: bool = False) -> Card:
+    """The session refused the month's plan (a broken prep: a cap, a field,
+    the sector cap; 2026-11-10: it had been a log line only)."""
+    return Card("Momentum", "the monthly plan was refused", ACTION, (
+        f"When: {when}.",
+        f"What: {plain(what)}",
+        "Nothing in the plan is traded; held names stay as they are until a valid plan is written.",
+    ), what_to_do=_ask(f"The momentum plan was refused at {when}: find out why the prep wrote it, fix it and "
+                       f"rerun momentum-prep."), detail=what, channel=URGENT, sample=sample)
+
+
 @dataclass(frozen=True)
 class BoardLine:
     """One account's line on the weekly scoreboard card."""

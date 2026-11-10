@@ -336,6 +336,8 @@ def session_observer(alerter: Alerter):
         elif event == "MECH" and (detail.startswith("MOMENTUM short of cash")
                                   or "with work left undone" in detail):
             alerter.card(f"MOMENTUM:{detail[:40]}", cards.momentum_funding_card(when, detail))
+        elif event == "MECH" and detail.startswith("MOMENTUM plan rejected"):
+            alerter.card(f"MOMENTUM-plan:{detail[:60]}", cards.momentum_plan_rejected_card(when, detail))
         elif event == "HALT":
             alerter.card("operator_halt_loop", cards.halt_card("Main book", detail))
         elif "EXEC-TEST daily " in detail:
@@ -2328,8 +2330,11 @@ def momentum_prep() -> int:
     if "--rebalance-date" in args:
         wanted = args[args.index("--rebalance-date") + 1]
     config = OrchestratorConfig.load().momentum_prep
-    cache_root = Path(os.path.expanduser(config.cache_dir))
+    # production's cache (marked) only in the production unit; a hand run gets a
+    # scratch cache it may write and prune (sweep 2026-11-10)
+    cache_root = datasafety.resolve_cache_dir(Path(os.path.expanduser(config.cache_dir)), "momentum")
     directory = default_data_dir() / "momentum"
+    log.info("momentum prep: market-data cache %s", cache_root)
     now = datetime.now(timezone.utc)
     when = now.astimezone(_NY).strftime("%Y-%m-%d %H:%M ET")
     # .env first: the alerter reads its webhooks from the environment, and a
@@ -2436,6 +2441,10 @@ def momentum_prep() -> int:
             if stats.get(what):
                 result.problems.append(f"{stats[what]} {label} failed after retries; those companies may be "
                                        f"missing from the universe this month")
+        if stats.get("fallback_refused"):
+            result.problems.append(f"the Finnhub market-cap fallback was unavailable ({stats['fallback_refused']}): "
+                                   f"{stats.get('fallback_excluded', 0)} current filers with no current SEC share "
+                                   f"count are left out of the universe this month")
         if reviewer is not None:
             result.detail["review_spend_usd"] = str(reviewer.spent)
             result.detail["review_passes"] = reviewer.passes

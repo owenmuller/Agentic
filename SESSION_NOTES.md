@@ -4167,6 +4167,20 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-10 (evening) — momentum month-end fixes (human ruling, sweep item 2; before Nov 30)
+
+- **Cache marker:** `datasafety.resolve_cache_dir`. The prep unit marks `~/agentic-cache/momentum` on first use (unowned: the main book's units). A hand run uses `~/agentic-scratch/cache/momentum`, and a prune of production's folder is refused by the guard. No operator step: the unit's next run writes the marker.
+- **Finnhub:** a missing key or a 401/403 sets `Finnhub.refused`; no further call is made, and the plan goes on.
+  - The companies that needed the fallback (no current SEC count) are unranked: one yellow card, a plan problem line, and `fallback_refused` / `fallback_excluded` in the stats.
+  - "Fresh" is the existing 18-month SEC rule (`FILER_WINDOW_DAYS` 548). Nothing new is defined.
+- **One sell per departing name:** `_Working.lot_ids` and `MomentumSleeve._relieve_fifo`.
+  - Each lot gets its own exit record (same broker order id), its FIFO share as a fill, and its outcome when flat. A lot a partial fill did not reach gets `record_unfilled_order` against the order.
+  - `recovery._recover_shared_exit` asks once and allocates FIFO by each trail's open quantity. Pending settlement shows the order once.
+  - SN's 22 lots would now be one sell.
+- **Sector re-check:** `load_plan` refuses a plan with any sector over `max_sector_exposure` (30%, with 1e-6 float slack like the weights check). Blank labels are grouped together (the stricter reading).
+  - A refused plan is now a MECH note, which the session observer cards red (`cards.momentum_plan_rejected_card`); it had been a log line only.
+  - Not changed, noted: "MOMENTUM has no usable plan" (days 1-7) is still a run-log note without a card.
+
 ### 2026-11-10 (afternoon) — SWEEP of untested paths (items 1-7)
 
 - **1 Live order paths:** the matrix is in the reply to the human. Never run live:

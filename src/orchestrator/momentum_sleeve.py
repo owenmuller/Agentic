@@ -163,6 +163,19 @@ def load_plan(path: Path, limits: MomentumSleeveLimits) -> Plan:
             )
     if sum((t.weight for t in targets), ZERO) > Decimal("1.000001"):
         raise PlanError(f"{path.name}: weights sum past 1")
+    # the sector cap, checked again here (2026-11-10): the prep enforces it, and
+    # a plan that breaks it is a broken prep, refused whole. Labels are the
+    # plan's own (the prep's FF12 names); blank labels count as one sector.
+    by_sector: dict[str, Decimal] = {}
+    for target in targets:
+        label = target.sector.strip().lower() or "(no sector)"
+        by_sector[label] = by_sector.get(label, ZERO) + target.weight
+    for label, weight in sorted(by_sector.items()):
+        if weight > limits.max_sector_exposure + Decimal("0.000001"):
+            raise PlanError(
+                f"{path.name}: sector {label} holds {weight:.1%} of the sleeve, past the "
+                f"{limits.max_sector_exposure:.0%} sector cap"
+            )
     if not (ZERO <= plan.exposure <= Decimal("1")):
         raise PlanError(f"{path.name}: exposure {plan.exposure} outside [0, 1]")
     return plan
@@ -191,6 +204,9 @@ class _Working:
     symbol: str
     placed_at: datetime
     cancel_requested: bool = False
+    #: A departing name's one sell order covers all its lots (2026-11-10):
+    #: oldest first; the fill is relieved FIFO across them. Empty: one lot.
+    lot_ids: tuple = ()
 
 
 @dataclass(slots=True)
@@ -441,10 +457,15 @@ class MomentumSleeve:
                 continue
             limit = self._sell_limit(symbol, quote)
             lot = lots[0]
+            covered = [lot]
             if target <= 0:
-                quantity = lot.quantity
+                # ONE order for every lot of a departing name (2026-11-10: SN's 22
+                # lots were 22 sells); the fill is relieved oldest lot first
+                covered = lots
+                quantity = min(sum((item.quantity for item in lots), ZERO), position.quantity)
                 why = plan.sold.get(symbol, "not in this month's book")
-                detail = f"{symbol} left v1's book ({why}): selling {quantity} at limit {limit}"
+                detail = (f"{symbol} left v1's book ({why}): selling {quantity} at limit {limit}"
+                          + (f" (one order for {len(lots)} lots)" if len(lots) > 1 else ""))
             else:
                 step = self._adapter.equity_quantity_step
                 wanted = ((position.market_value - target) / limit).quantize(step, rounding=ROUND_DOWN)
@@ -475,19 +496,21 @@ class MomentumSleeve:
                         side="sell",
                         symbol=symbol,
                         placed_at=now,
+                        lot_ids=tuple(item.decision_id for item in covered) if len(covered) > 1 else (),
                     )
                 except BrokerError as error:
                     self._gate.cancel(decision)
                     broker_error = str(error)
-            self._audit.record_exit(
-                lot.decision_id,
-                ExitReason.MOMENTUM_REBALANCE,
-                f"momentum rebalance {plan.month}: {detail}",
-                decision,
-                submitted=submitted,
-                broker_order_id=broker_order_id,
-                broker_error=broker_error,
-            )
+            for item in covered:   # each lot's trail says why it was sold, and by which order
+                self._audit.record_exit(
+                    item.decision_id,
+                    ExitReason.MOMENTUM_REBALANCE,
+                    f"momentum rebalance {plan.month}: {detail}",
+                    decision,
+                    submitted=submitted,
+                    broker_order_id=broker_order_id,
+                    broker_error=broker_error,
+                )
             if submitted:
                 return True, owed
             if not decision.is_approved:
@@ -640,15 +663,19 @@ class MomentumSleeve:
         price = status.filled_avg_price
         if filled <= 0 or price is None:
             self._gate.cancel(working.approved)
-            self._audit.record_unfilled_order(
-                working.decision_id,
-                order_id,
-                status.status,
-                f"momentum {working.side} {working.symbol} order {order_id} terminated "
-                f"{status.status} without filling; reservation released, re-priced next pass",
-            )
+            for decision_id in working.lot_ids or (working.decision_id,):
+                self._audit.record_unfilled_order(
+                    decision_id,
+                    order_id,
+                    status.status,
+                    f"momentum {working.side} {working.symbol} order {order_id} terminated "
+                    f"{status.status} without filling; reservation released, re-priced next pass",
+                )
             return
         self._gate.record_fill(working.approved, price, filled_units=filled)
+        if working.lot_ids:
+            self._relieve_fifo(order_id, working, status.status, filled, price, now)
+            return
         value = filled * price
         self._audit.record_fill(
             working.decision_id,
@@ -681,6 +708,43 @@ class MomentumSleeve:
                 note="momentum lot sold flat (monthly rebalance)",
             )
             del self._lots[working.decision_id]
+
+    def _relieve_fifo(self, order_id: str, working: _Working, status: str, filled: Decimal, price: Decimal,
+                      now: datetime) -> None:
+        """A departing name's one sell order: its fill relieves the lots oldest
+        first, each lot's share written as its own fill (attribution and tax
+        lots exactly as one order per lot wrote them). A lot sold flat writes
+        its outcome; a lot the fill did not reach (a partial fill) is released
+        against this order, so a later startup never counts the fill again."""
+        left = filled
+        for decision_id in working.lot_ids:
+            lot = self._lots.get(decision_id)
+            take = min(lot.quantity, left) if lot is not None else ZERO
+            if take <= 0:
+                self._audit.record_unfilled_order(
+                    decision_id,
+                    order_id,
+                    status,
+                    f"momentum sell {working.symbol} order {order_id} filled {filled} for the older lots; "
+                    f"none of it reached this lot (oldest first), which is still held",
+                )
+                continue
+            left -= take
+            value = take * price
+            self._audit.record_fill(decision_id, order_id, take, price, filled_value=value, side="sell")
+            lot.quantity -= take
+            lot.proceeds += value
+            if lot.quantity <= 0:
+                self._audit.record_outcome(
+                    decision_id,
+                    lot.proceeds - lot.entry_cost,
+                    closed_at=now,
+                    note="momentum lot sold flat (monthly rebalance)",
+                )
+                del self._lots[decision_id]
+        if left > 0:
+            logger.warning("momentum sell %s order %s filled %s more than its lots held; the broker is "
+                           "authoritative", working.symbol, order_id, left)
 
     def cancel_working(self) -> list[str]:
         """Shutdown or halt: cancel and account for outstanding orders."""
@@ -719,7 +783,9 @@ class MomentumSleeve:
                 try:
                     self._plan = load_plan(path, self._limits)
                 except PlanError as error:
-                    logger.error("MOMENTUM plan rejected, nothing traded: %s", error)
+                    # a red card, once per version of the file (2026-11-10: it was a log line only)
+                    self._warn_once(f"rejected:{path.name}:{stamp}",
+                                    f"MOMENTUM plan rejected, nothing traded: {error}", error=True)
         if self._plan is None:
             # Owed only when the sleeve can act: entries on, or names held.
             if today.day <= 7 and (self._limits.entries_enabled or self.held()):

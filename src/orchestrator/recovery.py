@@ -140,6 +140,7 @@ def pending_settlement(audit: AuditLog) -> list[PendingSettlement]:
     not be asked about. Distinct from unmanaged exposure, which is a position
     with no audit trail at all."""
     pending: list[PendingSettlement] = []
+    shown: set[str] = set()   # one sell order covering several lots is one pending line
     for trail in audit.trails():
         decision = trail.decision
         order_payload = decision.gate.order or {}
@@ -156,6 +157,9 @@ def pending_settlement(audit: AuditLog) -> list[PendingSettlement]:
                 )
             )
         for exit_record in _unsettled_exits(trail):
+            if exit_record.broker_order_id in shown:
+                continue
+            shown.add(exit_record.broker_order_id)
             # The quantity the sell-to-close ASKED for (2026-09-08: this used to
             # be hard-coded zero, and health rendered a 40-unit unsweep as
             # "sell 0 SGOV").
@@ -183,7 +187,15 @@ def recover_unsettled_orders(
     """
     recovered: list[str] = []
     now = now or datetime.now(timezone.utc)
-    for trail in audit.trails():
+    trails = list(audit.trails())
+    # one sell order recorded on several trails: a momentum name leaving the
+    # book sells all its lots in one order (2026-11-10)
+    by_order: dict[str, list] = {}
+    for trail in trails:
+        for exit_record in _unsettled_exits(trail):
+            by_order.setdefault(exit_record.broker_order_id, []).append((trail, exit_record))
+    done: set[str] = set()
+    for trail in trails:
         decision = trail.decision
         try:
             if _entry_needs_settlement(trail):
@@ -191,7 +203,14 @@ def recover_unsettled_orders(
                 if line:
                     recovered.append(line)
             for exit_record in _unsettled_exits(trail):
-                line = _recover_exit(audit, adapter, trail, exit_record)
+                group = by_order.get(exit_record.broker_order_id, [])
+                if len(group) > 1:
+                    if exit_record.broker_order_id in done:
+                        continue
+                    done.add(exit_record.broker_order_id)
+                    line = _recover_shared_exit(audit, adapter, group)
+                else:
+                    line = _recover_exit(audit, adapter, trail, exit_record)
                 if line:
                     recovered.append(line)
         except Exception as error:  # noqa: BLE001 - recovery must not block startup
@@ -335,3 +354,45 @@ def _recover_exit(
         f"{decision.decision_id} {getattr(order, 'symbol', '?')}: recovered an "
         f"exit fill of {status.filled_quantity} at {status.filled_avg_price}"
     )
+
+
+def _open_quantity(trail: AuditTrail) -> Decimal:
+    bought = sum((fill.filled_quantity for fill in trail.fills if fill.side == "buy"), ZERO)
+    sold = sum((fill.filled_quantity for fill in trail.fills if fill.side == "sell"), ZERO)
+    return bought - sold
+
+
+def _recover_shared_exit(audit: AuditLog, adapter: BrokerAdapter, group: list) -> Optional[str]:
+    """One sell order recorded on several lots' trails (a momentum name leaving
+    the book, 2026-11-10): asked about once; its fill is relieved oldest lot
+    first by each lot's open quantity, the way the engine relieves it, and a
+    lot it did not reach is released against the order - never the whole fill
+    on every lot."""
+    order_id = group[0][1].broker_order_id
+    status = _status_for(adapter, order_id, by_id=True)
+    if status is None or not status.is_terminal:
+        return None
+    ordered = sorted(group, key=lambda pair: pair[0].decision.recorded_at)
+    symbol = str((ordered[0][0].decision.gate.order or {}).get("symbol", "?"))
+    price = status.filled_avg_price
+    left = status.filled_quantity if price is not None else ZERO
+    reached = 0
+    for trail, _ in ordered:
+        decision = trail.decision
+        take = min(_open_quantity(trail), left)
+        if take <= 0:
+            audit.record_unfilled_order(
+                decision.decision_id, order_id, status.status,
+                f"recovered at startup: shared exit order {order_id} terminated {status.status}; none of its fill "
+                f"reached this lot (oldest first), which is still held and still tracked",
+            )
+            continue
+        left -= take
+        reached += 1
+        multiplier = unit_multiplier(parse_order(decision.gate.order))
+        audit.record_fill(decision.decision_id, order_id, take, price, filled_value=take * price * multiplier,
+                          side="sell")
+    if left > 0:
+        logger.warning("shared exit order %s filled %s more than its lots held open", order_id, left)
+    return (f"{symbol}: shared exit order {order_id} ({len(ordered)} lots) recovered at startup - "
+            f"{status.filled_quantity} filled, relieved across {reached} lot(s) oldest first")

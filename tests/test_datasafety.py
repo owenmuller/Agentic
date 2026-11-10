@@ -249,3 +249,42 @@ def test_every_entry_point_imports_the_guard(path):
     entry point must import the guard or a package that installs it."""
     guarded_by = _imports(path) & (set(PACKAGES) | {"datasafety"})
     assert guarded_by, f"{path.relative_to(ROOT)} imports no project package: the guard is never installed"
+
+
+# ------------------------------------------- market-data caches (sweep 2026-11-10)
+
+def test_a_hand_run_gets_a_scratch_cache_and_cannot_prune_productions(trees):
+    """~/agentic-cache/momentum carried no marker: a shell run of momentum-prep
+    would have pruned it to its own last two folders."""
+    (trees / "agentic-cache").mkdir()
+    (trees / "agentic-cache" / "2026-10-30").mkdir()
+    (trees / "agentic-cache" / datasafety.MARKER).write_text("test production cache\n")
+    result = _run(
+        r'''
+        import shutil
+        from pathlib import Path
+        import datasafety
+        production = Path("agentic-cache")
+        got = datasafety.resolve_cache_dir(production, "momentum")
+        assert got == datasafety.scratch_data_dir().parent / "cache" / "momentum", got
+        assert not datasafety.in_production_tree(got)
+        try:
+            shutil.rmtree(production / "2026-10-30")
+        except datasafety.ProductionDataWriteRefused:
+            print("PRUNE REFUSED")
+        ''',
+        trees,
+    )
+    assert result.returncode == 0 and "PRUNE REFUSED" in result.stdout, result.stdout + result.stderr
+    assert (trees / "agentic-cache" / "2026-10-30").is_dir()
+
+
+def test_the_production_unit_marks_its_cache_on_first_use(tmp_path, monkeypatch):
+    monkeypatch.setattr(datasafety, "production_process", lambda cgroup_text=None: True)
+    cache = tmp_path / "agentic-cache" / "momentum"
+    assert datasafety.resolve_cache_dir(cache, "momentum") == cache
+    assert (cache / datasafety.MARKER).is_file()
+    assert "owner=" not in (cache / datasafety.MARKER).read_text()   # unowned: the main book's units
+    assert not datasafety.write_permitted(cache / "2026-11-30" / "bars.json", None)
+    assert datasafety.write_permitted(cache / "2026-11-30" / "bars.json", "agentic-momentum")
+    assert not datasafety.write_permitted(cache / "x", "agentic-lab-ai-trader")

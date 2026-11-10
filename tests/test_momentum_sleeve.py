@@ -460,3 +460,102 @@ def test_a_rejected_plan_is_re_read_when_the_file_changes(tmp_path, limits, capl
     os.utime(path, ns=(time.time_ns() + 10**9, time.time_ns() + 10**9))
     rig.run(4)
     assert rig.held("AAPL") == 7
+
+
+# ================================================================================
+# Month-end fixes (human ruling 2026-11-10)
+# ================================================================================
+
+
+def test_a_plan_past_the_sector_cap_is_refused_and_carded(tmp_path, limits):
+    cap = limits.momentum_sleeve.max_sector_exposure
+    assert cap == D("0.30")
+    # four names at 10% in one sector: 40%, past the 30% cap
+    crowded = [(s, "0.1", i) for i, s in enumerate(("AAPL", "MSFT", "NVDA", "AMD"), start=1)]
+    with pytest.raises(PlanError, match="sector x holds 40.0%"):
+        load_plan(write_plan(tmp_path, targets=crowded), limits.momentum_sleeve)
+    # three at 10% is exactly the cap: allowed
+    load_plan(write_plan(tmp_path / "ok", targets=crowded[:3]), limits.momentum_sleeve)
+    rig = Rig(tmp_path / "rig", limits)
+    write_plan(rig.plans, targets=crowded)
+    rig.run(3)
+    assert rig.broker.submitted == []
+    rejected = [n for n in rig.notes if n.startswith("MOMENTUM plan rejected")]
+    assert len(rejected) == 1 and "sector x" in rejected[0]       # the session's observer cards this note
+
+
+def lots_of_aapl(tmp_path, limits, **rig_args):
+    """AAPL bought in four lots (2, 2, 2, 1 shares): spendable 500 a buy."""
+    rig = Rig(tmp_path, limits, spendable=lambda: D("500"), **rig_args)
+    write_plan(rig.plans, targets=[("AAPL", "0.1", 1)])
+    rig.run(10)
+    assert rig.held("AAPL") == 7 and [lot.quantity for lot in rig.engine.lots] == [2, 2, 2, 1]
+    rig.clock.now = datetime(2026, 12, 1, 15, 30, tzinfo=timezone.utc)
+    write_plan(rig.plans, month="2026-12", day="2026-12-01", targets=[("MSFT", "0.1", 1)],
+               sold={"AAPL": "fell to rank 41, past 30"})
+    return rig
+
+
+def aapl_trails(rig):
+    return sorted((t for t in rig.audit.trails() if (t.decision.gate.order or {}).get("symbol") == "AAPL"),
+                  key=lambda t: t.decision.recorded_at)
+
+
+def test_a_departing_name_sells_all_its_lots_in_one_order(tmp_path, limits):
+    rig = lots_of_aapl(tmp_path, limits)
+    before = len(rig.broker.submitted)
+    assert rig.engine.tick(rig.clock()) == 1
+    sell = rig.broker.payloads[-1]
+    assert sell["symbol"] == "AAPL" and sell["qty"] == 7             # one order, every lot
+    rig.run(2)
+    assert rig.held("AAPL") == 0 and all(lot.symbol != "AAPL" for lot in rig.engine.lots)
+    sells = [r for r in rig.broker.payloads[before:] if r["symbol"] == "AAPL"]
+    assert len(sells) == 1
+    trails = aapl_trails(rig)
+    # each lot's trail: its own exit record (same order), its own FIFO share of the fill, its outcome
+    assert [sum(f.filled_quantity for f in t.fills if f.side == "sell") for t in trails] == [2, 2, 2, 1]
+    assert len({t.exits[-1].broker_order_id for t in trails}) == 1
+    assert all("one order for 4 lots" in t.exits[-1].detail for t in trails)
+    assert all(t.outcome is not None for t in trails)
+
+
+def test_a_partial_fill_relieves_the_oldest_lots_first(tmp_path, limits):
+    from execution.base import OrderStatus
+
+    rig = lots_of_aapl(tmp_path, limits)
+    rig.broker.fill = None                                           # the sell does not fill by itself
+    assert rig.engine.tick(rig.clock()) == 1
+    order_id = rig.broker.submitted[-1].broker_order_id
+    price = rig.broker.payloads[-1]["limit_price"]
+    rig.broker.set_status(order_id, OrderStatus(order_id, "canceled", D("3"), price))   # 3 of 7, then cancelled
+    rig.engine._reconcile(rig.clock())                               # settle it (a tick would also place the next)
+    assert rig.held("AAPL") == 4
+    assert [lot.quantity for lot in rig.engine.lots if lot.symbol == "AAPL"] == [1, 2, 1]
+    trails = aapl_trails(rig)
+    assert [sum(f.filled_quantity for f in t.fills if f.side == "sell") for t in trails] == [2, 1, 0, 0]
+    assert trails[0].outcome is not None and all(t.outcome is None for t in trails[1:])
+    # the lots the fill did not reach are released against this order: no later startup counts it again
+    from orchestrator.recovery import _unsettled_exits
+    assert all(not _unsettled_exits(t) for t in trails)
+    rig.broker.fill = "filled"
+    rig.clock.advance(seconds=30)
+    assert rig.engine.tick(rig.clock()) == 1                         # the rest, again in one order
+    assert rig.broker.payloads[-1]["qty"] == 4
+
+
+def test_startup_recovery_relieves_a_shared_exit_order_fifo_never_the_whole_fill_on_every_lot(tmp_path, limits):
+    from execution.base import OrderStatus
+    from orchestrator.recovery import pending_settlement, recover_unsettled_orders
+
+    rig = lots_of_aapl(tmp_path, limits)
+    rig.broker.fill = None
+    assert rig.engine.tick(rig.clock()) == 1                         # the process dies with it working
+    order_id = rig.broker.submitted[-1].broker_order_id
+    price = rig.broker.payloads[-1]["limit_price"]
+    assert len([p for p in pending_settlement(rig.audit) if p.broker_order_id == order_id]) == 1
+    rig.broker.set_status(order_id, OrderStatus(order_id, "filled", D("5"), price))
+    lines = recover_unsettled_orders(rig.audit, rig.broker)
+    assert len([line for line in lines if order_id in line]) == 1
+    trails = aapl_trails(rig)
+    assert [sum(f.filled_quantity for f in t.fills if f.side == "sell") for t in trails] == [2, 2, 1, 0]
+    assert recover_unsettled_orders(rig.audit, rig.broker) == []     # a second startup counts nothing again
