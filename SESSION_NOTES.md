@@ -4167,6 +4167,12 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-10 (night) — learning cache guarded; a missing momentum plan cards any day (human ruling)
+
+- `learning_run` resolves its cache through `datasafety.resolve_cache_dir(..., "learning")`: the momentum prep unit's evening run marks `~/agentic-cache/learning` at its next run (18:30 ET); a hand run uses `~/agentic-scratch/cache/learning`. That cache is never pruned; the risk was a hand run writing into it.
+- `MomentumSleeve._current_plan`: the `today.day <= 7` limit is gone. Any session day in the trade window, with the month not done and the sleeve able to act, notes "MOMENTUM has no usable plan for <month> (<file> missing|refused); nothing traded" once a day. The session observer cards it red on #urgent (`cards.momentum_no_plan_card`, key carries the day). A refused plan still gets its own "plan was refused" card once per file version; the no-plan card is the daily reminder after it.
+- Tests: any-day note once a day, the observer's card, the card sample, and a source check that both caches resolve through the guard. Status checks the same evening: swap still 0B (`free -h`); no failed system or user units; path tests pending in the live mirror's state (`path_tests` unset), the option round-trip retry marker in place.
+
 ### 2026-11-10 (late afternoon) — sweep rulings applied (items 1, 3, 4, 5; item 2 on a branch)
 
 - **1 Live path tests T1–T4:** built as a one-time sequence in the live mirror (`path_tests_enabled: true`). They run from 09:31 ET at the 2026-11-11 session, before the 09:45 scan and the option round trip: T1, T4, T2, T3 (CLAUDE.md § Live Mirror, step d).

@@ -339,6 +339,9 @@ def session_observer(alerter: Alerter):
             alerter.card(f"MOMENTUM:{detail[:40]}", cards.momentum_funding_card(when, detail))
         elif event == "MECH" and detail.startswith("MOMENTUM plan rejected"):
             alerter.card(f"MOMENTUM-plan:{detail[:60]}", cards.momentum_plan_rejected_card(when, detail))
+        elif event == "MECH" and detail.startswith("MOMENTUM has no usable plan"):
+            # the engine notes it once a session day; the key carries the day
+            alerter.card(f"MOMENTUM-noplan:{datetime.now(_NY).date()}", cards.momentum_no_plan_card(when, detail))
         elif event == "HALT":
             alerter.card("operator_halt_loop", cards.halt_card("Main book", detail))
         elif "EXEC-TEST daily " in detail:
@@ -625,7 +628,8 @@ def learning_run(data_dir: Path, config, *, limit: int, accounts=("ai-trader", "
     from research.config import ResearchConfig
     from signals.config import SignalsConfig
 
-    cache_root = Path(os.path.expanduser(config.cache_dir))
+    # production's cache, marked, for the prep unit; a scratch cache for a hand run (ruling 2026-11-10)
+    cache_root = datasafety.resolve_cache_dir(Path(os.path.expanduser(config.cache_dir)), "learning")
     cases = learning_cases(data_dir, cache_root, log, accounts)
     journal = Journal(data_dir / config.journal_file)
     done = journal.ids()

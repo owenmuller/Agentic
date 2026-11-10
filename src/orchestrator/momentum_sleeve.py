@@ -788,11 +788,14 @@ class MomentumSleeve:
                                     f"MOMENTUM plan rejected, nothing traded: {error}", error=True)
         if self._plan is None:
             # Owed only when the sleeve can act: entries on, or names held.
-            if today.day <= 7 and (self._limits.entries_enabled or self.held()):
+            # Any session day the month is not done, a red card once a day
+            # (ruling 2026-11-10: it was days 1-7 only, and a log line).
+            if self._limits.entries_enabled or self.held():
+                why = "refused" if path.exists() else "missing"
                 self._warn_once(
                     f"noplan:{today.isoformat()}",
                     f"MOMENTUM has no usable plan for {month} "
-                    f"({plan_path(self._plan_dir, month).name}); nothing traded",
+                    f"({path.name} {why}); nothing traded",
                     error=True,
                 )
             return None

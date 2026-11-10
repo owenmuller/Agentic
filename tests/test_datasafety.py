@@ -288,3 +288,14 @@ def test_the_production_unit_marks_its_cache_on_first_use(tmp_path, monkeypatch)
     assert not datasafety.write_permitted(cache / "2026-11-30" / "bars.json", None)
     assert datasafety.write_permitted(cache / "2026-11-30" / "bars.json", "agentic-momentum")
     assert not datasafety.write_permitted(cache / "x", "agentic-lab-ai-trader")
+
+
+def test_both_market_data_caches_resolve_through_the_guard():
+    # ruling 2026-11-10: the learning cache is protected the same way as momentum's
+    import inspect
+
+    from orchestrator import __main__ as entry
+
+    assert 'resolve_cache_dir(Path(os.path.expanduser(config.cache_dir)), "learning")' in inspect.getsource(entry.learning_run)
+    assert 'resolve_cache_dir(Path(os.path.expanduser(config.cache_dir)), "momentum")' in inspect.getsource(entry)
+    assert "Path(os.path.expanduser(config.cache_dir))\n" not in inspect.getsource(entry)

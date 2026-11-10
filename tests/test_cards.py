@@ -37,6 +37,8 @@ ALL = {
     "momentum_plan_rejected": cards.momentum_plan_rejected_card(
         "Dec 1, 10:00 ET", "MOMENTUM plan rejected, nothing traded: plan-2026-12.json: sector business equipment "
                            "holds 33.3% of the sleeve, past the 30% sector cap"),
+    "momentum_no_plan": cards.momentum_no_plan_card(
+        "Nov 18, 10:00 ET", "MOMENTUM has no usable plan for 2026-11 (plan-2026-11.json missing); nothing traded"),
     "exits": cards.exits_card(2, 1),
     "first": cards.first_entry_card("judged", 1),
     "close": cards.close_card(100334.2, 0.0012, 0.0031, 0.004, 34, 6.2, False, "detail"),

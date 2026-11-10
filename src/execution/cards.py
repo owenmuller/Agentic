@@ -647,6 +647,18 @@ def momentum_plan_rejected_card(when: str, what: str, sample: bool = False) -> C
                        f"rerun momentum-prep."), detail=what, channel=URGENT, sample=sample)
 
 
+def momentum_no_plan_card(when: str, what: str, sample: bool = False) -> Card:
+    """A session day with no usable plan for the month while the sleeve can
+    act (ruling 2026-11-10: any session day, once a day; it was days 1-7 and
+    a log line only)."""
+    return Card("Momentum", "no usable plan this month", ACTION, (
+        f"When: {when}.",
+        f"What: {plain(what)}",
+        "The month's rebalance does not run; held names stay as they are until a valid plan is written.",
+    ), what_to_do=_ask(f"Momentum had no usable plan at {when}: check the momentum prep unit's last run, fix it "
+                       f"and rerun momentum-prep."), detail=what, channel=URGENT, sample=sample)
+
+
 @dataclass(frozen=True)
 class BoardLine:
     """One account's line on the weekly scoreboard card."""

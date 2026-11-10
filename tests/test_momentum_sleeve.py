@@ -22,6 +22,7 @@ import pytest
 
 from audit.log import AuditLog
 from audit.records import ExitReason
+from execution import cards
 from execution.base import BrokerPosition
 from execution.environment import LIVE_CONFIRMATION_VARIABLE
 from orchestrator.config import MomentumSleeveConfig
@@ -329,6 +330,32 @@ def test_a_missing_plan_is_an_error_once_a_day(tmp_path, limits, caplog):
         rig.run(5)
     assert sum("no usable plan" in r.message for r in caplog.records) == 1
     assert not rig.engine.month_state.done
+
+
+def test_a_missing_plan_is_noted_on_any_session_day_once_a_day(tmp_path, limits):
+    # ruling 2026-11-10: days 1-7 only had left a mid-month gap uncarded
+    rig = Rig(tmp_path, limits, clock=FakeClock(datetime(2026, 11, 18, 15, 30, tzinfo=timezone.utc)))
+    rig.run(4)
+    noted = [n for n in rig.notes if n.startswith("MOMENTUM has no usable plan")]
+    assert len(noted) == 1 and "plan-2026-11.json missing" in noted[0]   # the observer cards this note
+    rig.clock.now = datetime(2026, 11, 19, 15, 30, tzinfo=timezone.utc)
+    rig.run(2)
+    assert len([n for n in rig.notes if n.startswith("MOMENTUM has no usable plan")]) == 2
+
+
+def test_the_observer_cards_a_missing_plan_red():
+    from orchestrator.__main__ import session_observer
+
+    sent = []
+
+    class FakeAlerter:
+        def card(self, key, card):
+            sent.append((key, card))
+
+    session_observer(FakeAlerter())("MECH", "MOMENTUM has no usable plan for 2026-11 (plan-2026-11.json missing); "
+                                            "nothing traded")
+    assert len(sent) == 1 and sent[0][0].startswith("MOMENTUM-noplan:")
+    assert sent[0][1].status == cards.ACTION and sent[0][1].channel == cards.URGENT
 
 
 def test_lots_and_the_month_survive_a_restart(tmp_path, limits):
