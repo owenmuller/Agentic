@@ -56,3 +56,47 @@ def test_the_scheduler_sets_no_trading_variable():
     assert "OnCalendar=" in script and "America/New_York" in script and "Persistent=true" in script
     assert ".config/systemd/user" in script and "systemctl --user enable --now" in script
     assert "systemd-run" not in script
+
+
+def _remove(tmp_path, name):
+    """Run ``schedule_check.sh --remove`` in a fake HOME with a stub systemctl."""
+    import os
+    import subprocess
+
+    stub = tmp_path / "stub"
+    stub.mkdir(exist_ok=True)
+    (stub / "systemctl").write_text("#!/bin/sh\nexit 0\n")
+    (stub / "systemctl").chmod(0o755)
+    env = {**os.environ, "HOME": str(tmp_path), "PATH": f"{stub}:{os.environ['PATH']}"}
+    return subprocess.run(["bash", str(ROOT / "ops" / "vps" / "schedule_check.sh"), "--remove", name],
+                          env=env, capture_output=True, text=True)
+
+
+def _install(tmp_path, name):
+    units, bin_ = tmp_path / ".config" / "systemd" / "user", tmp_path / "checks" / "bin"
+    units.mkdir(parents=True, exist_ok=True)
+    bin_.mkdir(parents=True, exist_ok=True)
+    for path in (units / f"check-{name}.timer", units / f"check-{name}.service", bin_ / f"{name}.sh"):
+        path.write_text("x\n")
+    return units, bin_
+
+
+def test_remove_takes_the_bare_or_the_prefixed_name_and_fails_on_nothing(tmp_path):
+    # 2026-11-10: "--remove check-deploy-b5735af" printed "removed" and removed nothing
+    units, bin_ = _install(tmp_path, "deploy-b5735af")
+    result = _remove(tmp_path, "check-deploy-b5735af")
+    assert result.returncode == 0 and "removed check-deploy-b5735af" in result.stdout, result.stderr
+    assert not any(units.iterdir()) and not any(bin_.iterdir())
+    _install(tmp_path, "momentum-step2")
+    assert _remove(tmp_path, "momentum-step2").returncode == 0 and not any(units.iterdir())
+    missing = _remove(tmp_path, "momentum-step2")
+    assert missing.returncode == 1 and "no check named momentum-step2" in missing.stderr
+    assert _remove(tmp_path, "check-nothing").returncode == 1
+
+
+def test_remove_refuses_an_ambiguous_name(tmp_path):
+    units, _ = _install(tmp_path, "check-x")      # a check whose own name starts with check-
+    _install(tmp_path, "x")
+    result = _remove(tmp_path, "check-x")
+    assert result.returncode == 1 and "ambiguous" in result.stderr
+    assert len(list(units.iterdir())) == 4        # nothing removed
