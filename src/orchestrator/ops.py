@@ -224,6 +224,17 @@ class RunLog:
 # ================================================================================
 
 
+#: The exchange calendar the session gates on (sweep 2026-11-10: the Nov 26
+#: closure and the Nov 27 13:00 close). Installed by the session entry point;
+#: None: weekdays 09:30-16:00, as before.
+_CALENDAR = None
+
+
+def install_calendar(calendar) -> None:
+    global _CALENDAR
+    _CALENDAR = calendar
+
+
 def session_bounds(now: datetime) -> tuple[datetime, datetime]:
     """Today's regular-session open and close as UTC instants.
 
@@ -231,8 +242,14 @@ def session_bounds(now: datetime) -> tuple[datetime, datetime]:
     scheduled task safe to trigger from any machine timezone: the trigger only has to
     be *early enough*, and the run gates itself on these bounds. Reuses the scanner
     module's market constants so there is exactly one definition of the session.
+    With a calendar installed, an early close ends the session early; a calendar
+    that cannot be read (an assumed session) keeps the regular day, so exits stay
+    watched to the regular close.
     """
     local = now.astimezone(MARKET_TIMEZONE)
+    session = _CALENDAR.session(local.date()) if _CALENDAR is not None else None
+    if session is not None and not session.assumed:
+        return session.open.astimezone(timezone.utc), session.close.astimezone(timezone.utc)
     open_local = local.replace(
         hour=MARKET_OPEN.hour, minute=MARKET_OPEN.minute, second=0, microsecond=0
     )
@@ -246,9 +263,11 @@ def session_bounds(now: datetime) -> tuple[datetime, datetime]:
 
 
 def is_trading_weekday(now: datetime) -> bool:
-    """Weekdays only. No holiday calendar — a holiday run polls quiet feeds and
-    rests orders on a closed book, wasting requests and risking nothing (the same
-    posture as ``signals.scanners.is_market_hours``)."""
+    """A session day: the exchange calendar when one is installed (a holiday
+    is no session: no research spend, no quote-gap cards, no close card;
+    sweep 2026-11-10), else weekdays only."""
+    if _CALENDAR is not None:
+        return _CALENDAR.is_session(now.astimezone(MARKET_TIMEZONE).date())
     return now.astimezone(MARKET_TIMEZONE).weekday() < 5
 
 

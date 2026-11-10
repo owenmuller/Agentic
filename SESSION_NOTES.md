@@ -4167,6 +4167,37 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-10 (afternoon) — SWEEP of untested paths (items 1-7)
+
+- **1 Live order paths:** the matrix is in the reply to the human. Never run live:
+  - the whole-share limit buy and sell;
+  - both cancels;
+  - the option place and sell (the review ran today and was refused only on its ref_id);
+  - the equity and option lookups after a failed place;
+  - any exit.
+
+  Payloads are validated against the server's schemas. Open question: the option `price` is "per contract for one leg" in the schema, while its example is "1.50"; we send the quoted per-share price. Tiny live tests are proposed and wait for approval.
+- **2 OAuth:** the production `TokenStore` refresh had never run; the Aug 27 PASS was `ops/rh_refresh_check.py`, the same request. The current grant expires 2026-11-12 10:22 ET, so the first production refresh would have come mid-session on Nov 11 from 10:22 ET. It is tested tonight with the unit stopped (result below, if appended).
+  - Built: a refused refresh is `RobinhoodAuthLost`. It writes HALT and sends one red card naming what is held, and passes through the adapter, never as a broker refusal.
+  - A 5xx or a timeout on the refresh is transient.
+  - An order tool whose refresh fails is "not sent".
+- **3 Calendar:** `execution/market_calendar.py` (Alpaca `/v2/calendar`).
+  - Configured times are offsets from the day's close, used by the AI trader, the live mirror, the main book's session and quote-gap window, and momentum's `trade_before`.
+  - A holiday is no session. An intraday position from an earlier session closes at the first tick.
+  - An unreadable calendar is a yellow card and assumes a 13:00 close for cutoffs, while sessions keep the regular day.
+  - Not changed: the AI trader's prompt (it says 16:00).
+  - LOW, left as findings: overreaction and earnings treat weekdays as sessions; judged-option T-1 is on calendar days.
+- **4 DST:** every timer is in America/New_York and fired at the right ET time across Nov 1; there are no UTC offsets in code.
+- **5 Month-end:** the Nov 30 18:30 ET run builds `plan-2026-12` (Dec 1 07:30 is the retry).
+  - The dry run reproduced November's plan exactly. The Finnhub fallback raised its yellow card. The Dec 1 rebalance held T+1 and the 90% carry.
+  - Fixed: a shortlist that was not written or built now raises a yellow card (it only logged).
+  - Open: the `~/agentic-cache/momentum` pruning has no production marker; a Finnhub 401/403 aborts the month; one sell order per lot; `load_plan` does not re-check the sector cap.
+  - **Incident:** the fork's dry run shared the main paper data key and drew 429s on production quotes for about 2 s at 12:49 ET. No card, no order affected.
+- **6 Safety switches (simulated):** the daily loss limit (yellow), the kill switch (red; exits still ran), an untracked holding (red, entries blocked), and a deposit and a withdrawal (baselines moved) all carded correctly. Cosmetic: the withdrawal card repeats the dividend sentence.
+- **7 Housekeeping:**
+  - Disk at 38%. Backups nightly at about 17 MB (off-box: the DigitalOcean panel, the human's check). No unit failures in 7 days.
+  - Open: `orchestrator.log` 199 MB with no rotation (about 3 MB/day); the journal is noisy with httpx INFO lines (about 45k/day); no swap on 961 MB of RAM; `agentic-contracts.timer` is not installed; two stale failed user checks from 10-15.
+
 ### 2026-11-10 (later) — halt lifted by the human; option round trip retry
 
 - The human lifted the halt at 12:12 ET (`kill_switch_reset`, ack Owen). The running unit keeps the old code until 16:05 ET, so an entry before then is refused with the same 400; nothing reaches the account.

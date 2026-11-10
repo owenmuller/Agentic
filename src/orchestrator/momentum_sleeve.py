@@ -335,6 +335,17 @@ class MomentumSleeve:
 
     # -- one pass ----------------------------------------------------------------------
 
+    def _trade_before(self, now: datetime) -> datetime:
+        """``trade_before`` (configured for a 16:00 close) on today's own
+        session: 12:30 for 15:30 on a 13:00 early close (sweep 2026-11-10)."""
+        from orchestrator.ops import session_bounds  # local: ops imports bootstrap imports loop
+
+        local = now.astimezone(NY)
+        _, close = session_bounds(now)
+        regular = datetime.combine(local.date(), time(16, 0), NY)
+        configured = datetime.combine(local.date(), _clock_time(self._config.trade_before), NY)
+        return close.astimezone(NY) - (regular - configured)
+
     def tick(self, now: datetime) -> int:
         """Settle, mark, and - on a rebalance day inside the window - place at
         most one order of the plan. Returns orders placed (0 or 1)."""
@@ -350,7 +361,7 @@ class MomentumSleeve:
             return 0  # one working order at a time
         if self._state.month == month and self._state.done:
             return 0
-        if not (_clock_time(self._config.trade_after) <= local.time() < _clock_time(self._config.trade_before)):
+        if not (_clock_time(self._config.trade_after) <= local.time() and local < self._trade_before(now)):
             return 0
         plan = self._current_plan(month, local.date())
         if plan is None:

@@ -287,6 +287,7 @@ Software-only books on two of Quiver's published strategies (quiverquant.com/str
     - A paper entry read but not yet copied is saved with the state (2026-11-09): after a restart it is copied, or skipped with a card when more than 5 minutes late, never lost.
     - **Order keys (2026-11-10, after every live order that day was refused):** Robinhood's `ref_id` must be a UUID. The mirror's own reference maps to one deterministic UUID, so a logical order always sends the same key; the round trip's key is unique per day and attempt. The placed order carries Robinhood's approval id, never our key (the tool's schema says so), so an order is found by instrument, side, size and the time it was sent, equities as options already were.
     - An upstream failure inside a tool result (`API error 503`) is transient: a read is retried; an order is looked up, never re-sent. A failure before the place call is a definite "not placed".
+    - **OAuth (2026-11-10):** a refused refresh (a 4xx) means the single grant is lost. The mirror writes the HALT marker and sends one red card naming what is held; nothing, exits included, can trade until a human re-consents and resumes. A 5xx or a dropped connection on the refresh is transient and is retried at the next call. An order tool whose refresh fails is "not sent".
   - **Options, TEMPORARY (human ruling 2026-11-09, while the account is too small for typical contracts; it reverts to native options by itself as equity grows, no further ruling needed).** Decided per trade, against the live premium cap (2% of live equity, $21 at $1,050; one contract's live limit × 100):
     - **Fits:** the option itself is copied (one leg, buy to open, a limit on the contract's own tick, whole contracts within the cap). Native copies start only after the live option round trip has passed. It exits on the paper close; on the paper option's UNDERLYING stop or target (a call's on the bid or last trade, never the ask; a put's on the mid of a tight quote, else the last trade, approved by the human 2026-11-09); at the option's expiry close; or past its horizon. It is sold as a limit at the contract's bid.
     - **A call that does not fit: the proxy**, its underlying stock. The same 2% of live equity at risk to the paper option's own underlying stop, its underlying target and its horizon, through the stock path's cap, whole shares first, then fractional. Out on the paper option's close or that stop or target, whichever first. A leveraged or inverse underlying is skipped. **ON from the 2026-11-10 session (`option_proxy_enabled: true`; method approved by the human 2026-11-09, later, after the worked examples in SESSION_NOTES).** At this size the 18.75% cap binds, so a proxy risks about 0.5–1.3% of equity, not 2%.
@@ -311,6 +312,19 @@ Software-only books on two of Quiver's published strategies (quiverquant.com/str
 
 - **Any approved strategy goes live at the next trading session once its checks pass. Never wait for a calendar boundary.** Rebalance cadence controls how often holdings are re-ranked, not when a strategy starts. (First applied: the momentum sleeve's v1.1 started with an off-cycle plan for 2026-10-15 instead of waiting for 2026-11-02; Nov 2 stays its first regular rebalance, applying the buffer rule to the holdings it then has.)
 - **Performance and every shadow are tracked daily from inception**, reported as **daily, week-to-date and since-start** against SPY and SPMO (and any other named benchmark). For the momentum sleeve: the session's end-of-day card (`orchestrator/momentum_report.py`; today and week-to-date from the prior close, since-start from the first trade) and the Friday weekly.
+
+## Market Calendar (sweep 2026-11-10)
+
+- Session days and close times come from the exchange calendar (Alpaca `/v2/calendar`, `execution/market_calendar.py`), never from a weekday and a fixed clock.
+  - Users: the main book's session gate and quote-gap window, the AI trader, the live mirror. Momentum and the ladder already read it.
+- **A configured time is an offset from the close.** A rule written for a 16:00 day (15:50, 15:45, 15:30, 15:15, the round trip's 15:00, the mirror's 16:05) moves with the day's own close: 12:50 for 15:50 on a 13:00 early close. Normal days are unchanged.
+- A holiday is no session: no ticks, no research spend, no quote-gap cards, no day card.
+- An intraday position left from an earlier session closes at the first tick.
+- **If the calendar cannot be read:**
+  - a yellow card; the failure is never cached;
+  - every weekday is assumed a session closing at 13:00, so entries stop and intraday positions close earlier (Constraint #6);
+  - the main book's and the mirror's sessions still run to the regular close, so exits stay watched.
+- Not changed: the AI trader's prompt still says the market closes at 16:00 (a prompt change needs a golden replay); its validation enforces the early cutoffs.
 
 ## No Silent Data Gaps (GLOBAL RULE, human ruling 2026-10-15)
 

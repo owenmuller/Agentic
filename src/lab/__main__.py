@@ -304,7 +304,8 @@ def run_session(name: str) -> int:
             float(config.ai_trader.leverage_alert_above), float(config.ai_trader.leverage_alert_rearm_below)))
 
     trader = AiTrader(account, config.ai_trader, llm=llm, quotes=quotes, chain=chain, alert=kill_switch,
-                      leverage_alert=leverage_watch, brief=brief_renderer(config.ai_trader))
+                      leverage_alert=leverage_watch, brief=brief_renderer(config.ai_trader),
+                      calendar=_calendar(account.api_key, account.api_secret, f"{label} calendar"))
     holder["trader"] = trader
     try:
         clock = account.adapter.market_clock()
@@ -585,6 +586,16 @@ def live_check() -> int:
     return 0
 
 
+def _calendar(api_key: str, api_secret: str, source: str):
+    """The exchange calendar from Alpaca's paper trading API (sweep
+    2026-11-10): holidays and early closes for every session rule."""
+    from execution import PAPER_BASE_URL
+    from execution.market_calendar import MarketCalendar, alpaca_fetch
+
+    return MarketCalendar(alpaca_fetch(PAPER_BASE_URL, api_key, api_secret),
+                          lambda: datetime.now(timezone.utc), source=source)
+
+
 def live_session() -> int:
     """The live mirror's session, inside agentic-lab-live-mirror only."""
     import time as _time
@@ -593,6 +604,7 @@ def live_session() -> int:
     from lab.live_mirror import LiveMirror, NY, _clock_time
 
     from execution import load_environment
+    from execution.robinhood import RobinhoodAuthLost
 
     load_environment()   # refuses a .env that carries a live flag (ruling 2026-11-04)
     lab_config = LabConfig.load()
@@ -614,6 +626,12 @@ def live_session() -> int:
               file=sys.stderr)
         return 3
     alerter = Alerter(status_path=directory / "alerts_status.json")
+    import os
+
+    from lab.account import key_variables
+
+    key_name, secret_name = key_variables(config.paper_account)   # read-only: the exchange calendar
+    calendar = _calendar(os.environ.get(key_name, ""), os.environ.get(secret_name, ""), "Live mirror calendar")
     limits = account_limits(AccountConfig(enabled=True, label="LIVE MIRROR", sleeve="live_mirror",
                                           live_eligible=True, limits_overrides=config.limits_overrides))
     mirror = LiveMirror(
@@ -621,13 +639,17 @@ def live_session() -> int:
         paper_ledger=datasafety.lab_production_dir(config.paper_account) / "ledger.jsonl",
         ledger=Ledger(directory / "ledger.jsonl", clock), state=state, state_path=directory / "state.json",
         limits=limits, notify=lambda card: alerter.card(f"live-{card.happened}-{clock():%Y%m%dT%H%M%S%f}", card),
-        clock=clock, halt_path=directory / "HALT")
+        clock=clock, halt_path=directory / "HALT", calendar=calendar)
     local = clock().astimezone(NY)
-    if local.weekday() >= 5:
-        print("LIVE mirror: no session on a weekend")
+    session = calendar.session(local.date())
+    if session is None:
+        print(f"LIVE mirror: no session on {local.date()} (exchange calendar)")
         return 0
     start = datetime.combine(local.date(), _clock_time(config.session_start), NY)
-    end = datetime.combine(local.date(), _clock_time(config.session_end), NY)
+    # an early close ends the session early; a calendar that cannot be read
+    # (assumed session) keeps the full day, so exits stay watched
+    end = (datetime.combine(local.date(), _clock_time(config.session_end), NY) if session.assumed
+           else session.at(config.session_end))
     print(f"LIVE mirror: {'LIVE' if broker is not None else 'DRY (paper process: nothing is sent)'}; "
           f"session {start:%H:%M}-{end:%H:%M} ET")
     if clock() < start:
@@ -637,6 +659,10 @@ def live_session() -> int:
     while clock() < end:
         try:
             mirror.tick()
+        except RobinhoodAuthLost as error:   # the grant is gone: halt entries, one red card
+            logging.getLogger("lab").error("live mirror: the Robinhood grant was refused: %s", error)
+            mirror.ledger.append("fault", message=f"tick failed: {type(error).__name__}: {error}")
+            mirror.grant_lost(error)
         except Exception as error:  # noqa: BLE001 - one bad tick must not end the session
             logging.getLogger("lab").exception("live mirror tick failed")
             mirror.ledger.append("fault", message=f"tick failed: {type(error).__name__}: {error}")

@@ -797,3 +797,49 @@ def test_a_retry_leaves_a_passed_round_trip_alone(tmp_path, config):
     mirror.tick()
     assert mirror.e["option_round_trip"] == "passed" and not (tmp_path / RETRY_OPTION_RT).exists()
     assert mirror.ledger.events(["option_round_trip_retry"])[-1]["applied"] is False
+
+
+def test_a_lost_grant_halts_entries_and_sends_one_red_card_naming_what_is_held(tmp_path, config):
+    from execution.robinhood import RobinhoodAuthLost
+
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    mirror.e["positions"] = {"p1": {"symbol": "TTWO", "quantity": "0.5", "stop": "1", "target": "999"}}
+    error = RobinhoodAuthLost("the OAuth refresh was refused (HTTP 400)")
+    mirror.grant_lost(error)
+    mirror.grant_lost(error)                             # every later tick: no second card
+    red = [c for c in seen if c.happened == "the Robinhood sign-in was refused"]
+    assert len(red) == 1 and red[0].status == cards.ACTION and "TTWO" in " ".join(red[0].lines)
+    assert (tmp_path / "HALT").exists() and "OAuth" in (tmp_path / "HALT").read_text()
+    assert mirror._entries_blocked(mirror.snapshot()) == "halted by an operator (HALT marker)"
+    assert mirror.ledger.events(["grant_lost"])[-1]["held"] == ["TTWO"]
+
+
+def test_on_an_early_close_the_mirror_closes_intraday_and_options_before_it(tmp_path, config):
+    """2026-11-27 closes at 13:00: the 15:50 intraday close is 12:50, the
+    option round trip's window ends at 12:00, and a held option expiring that
+    day closes at 12:45 - never into a closed market."""
+    from datetime import date
+
+    import test_lab_ai
+    from lab.live_mirror import NY
+
+    calendar = test_lab_ai.thanksgiving()
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    mirror.calendar = calendar
+    clock.now = datetime(2026, 11, 27, 12, 49, tzinfo=NY).astimezone(timezone.utc)
+    assert mirror._cut(config.ai_trader.intraday_close) == datetime(2026, 11, 27, 12, 50, tzinfo=NY)
+    pos = {"opened": "2026-11-27", "horizon": "intraday"}
+    assert not mirror._intraday_due(pos, clock.now.astimezone(NY))
+    assert mirror._intraday_due(pos, (clock.now + timedelta(minutes=1)).astimezone(NY))
+    assert mirror._intraday_due({"opened": "2026-11-25", "horizon": "intraday"}, clock.now.astimezone(NY))
+    zero = {"expiry": "2026-11-27", "opened": "2026-11-27"}
+    assert not mirror._option_close_due(zero, datetime(2026, 11, 27, 12, 44, tzinfo=NY))
+    assert mirror._option_close_due(zero, datetime(2026, 11, 27, 12, 45, tzinfo=NY))
+    friday = {"expiry": "2026-11-27", "opened": "2026-11-23"}
+    clock.now = datetime(2026, 11, 25, 15, 45, tzinfo=NY).astimezone(timezone.utc)
+    assert mirror._option_close_due(friday, clock.now.astimezone(NY))            # Nov 26 is closed
+    clock.now = datetime(2026, 11, 27, 12, 1, tzinfo=NY).astimezone(timezone.utc)
+    mirror.e.pop("option_round_trip", None)
+    assert not mirror._option_round_trip_due(mirror.snapshot())                    # its window ended 12:00
+    clock.now = datetime(2026, 11, 26, 10, 0, tzinfo=NY).astimezone(timezone.utc)
+    assert not mirror._option_round_trip_due(mirror.snapshot()) and not calendar.is_session(date(2026, 11, 26))

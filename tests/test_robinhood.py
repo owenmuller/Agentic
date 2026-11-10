@@ -426,3 +426,63 @@ def test_occ_symbols_and_ticks():
     assert robinhood.occ_parts("SPY261110P00752500") == ("SPY", date(2026, 11, 10), "put", D("752.5"))
     ticks = {"min_ticks": {"above_tick": "0.05", "below_tick": "0.01", "cutoff_price": "3.00"}}
     assert robinhood.option_tick(ticks, D("0.15")) == D("0.01") and robinhood.option_tick(ticks, D("3.20")) == D("0.05")
+
+
+def test_a_refused_refresh_is_auth_lost_and_an_upstream_one_is_transient(tmp_path):
+    """The grant rotates and has one holder: a 4xx means a human must consent
+    again (RobinhoodAuthLost); a 5xx or a dropped connection is transient and
+    is tried again at the next call, never reported as a lost grant."""
+    path = tmp_path / "rh_oauth.json"
+
+    def store(answer):
+        path.write_text(json.dumps({"accessToken": "a", "refreshToken": "r", "clientId": "c", "expiresAt": 0}))
+
+        def token(request):
+            if answer == "drop":
+                raise httpx.ConnectTimeout("timed out", request=request)
+            return httpx.Response(answer, json={"error": "invalid_grant"})
+        return robinhood.TokenStore(path, http=httpx.Client(transport=httpx.MockTransport(token)),
+                                    clock=lambda: 1_000_000.0)
+    with pytest.raises(robinhood.RobinhoodAuthLost, match="consent"):
+        store(400).access_token()
+    for answer in (503, "drop"):
+        with pytest.raises(robinhood.RobinhoodTransient) as raised:
+            store(answer).access_token()
+        assert not isinstance(raised.value, robinhood.RobinhoodAuthLost)
+    assert json.loads(path.read_text())["refreshToken"] == "r"      # nothing rotated, nothing lost
+
+
+def test_a_lost_grant_passes_through_the_adapter_never_as_a_broker_refusal():
+    class GrantGone(FlakyPlace):
+        def call(self, tool, arguments=None):
+            raise robinhood.RobinhoodAuthLost("the OAuth refresh was refused (HTTP 400)")
+
+        def option_orders(self, **filters):
+            return self.call("get_option_orders")
+    adapter, approved = adapter_over(GrantGone(acted=False))
+    with pytest.raises(robinhood.RobinhoodAuthLost):
+        adapter.submit_order(approved, client_reference="mirror-d")
+    with pytest.raises(robinhood.RobinhoodAuthLost):
+        adapter.cancel_order("rh-1")
+
+
+def test_an_order_tool_whose_token_refresh_fails_is_not_sent(tmp_path):
+    calls: list[str] = []
+    path = tmp_path / "rh_oauth.json"
+    path.write_text(json.dumps({"accessToken": "a", "refreshToken": "r", "clientId": "c", "expiresAt": 10**13}))
+    store = robinhood.TokenStore(path, http=httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(503))), clock=lambda: 1_000_000.0)
+    seen: list[str] = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        seen.append(body.get("method"))
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": body.get("id"), "result": {}})
+    client = robinhood.RobinhoodMcp(store, PINNED, allow_orders=True, sleep=lambda s: None,
+                                    http=httpx.Client(transport=httpx.MockTransport(handler)))
+    client._open()                                              # the session opened while the token was good
+    path.write_text(json.dumps({"accessToken": "a", "refreshToken": "r", "clientId": "c", "expiresAt": 0}))
+    with pytest.raises(robinhood.RobinhoodError, match="not sent") as raised:
+        client.call("place_equity_order", {"account_number": PINNED, "ref_id": robinhood.idempotency_key("x")})
+    assert not isinstance(raised.value, robinhood.RobinhoodTransient)
+    assert "tools/call" not in seen

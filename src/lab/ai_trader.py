@@ -61,6 +61,7 @@ from zoneinfo import ZoneInfo
 import datahealth
 from execution import BrokerError
 from execution.base import OrderStatus
+from execution.market_calendar import MarketCalendar
 from lab.account import LabAccount
 from lab.ai_prompts import HORIZONS, INSTRUMENTS, HeldView, build_user, report_tool, system_prompt
 from lab.brief import BEGIN as BRIEF_BEGIN, END as BRIEF_END, Brief
@@ -98,13 +99,9 @@ def at(day: date, hhmm: str) -> datetime:
 
 def sessions_between(start: date, end: date) -> int:
     """Weekday sessions from ``start`` to ``end`` inclusive (holidays count as
-    sessions: a horizon then ends a session EARLY - the less-risk error)."""
-    days, current = 0, start
-    while current <= end:
-        if current.weekday() < 5:
-            days += 1
-        current += timedelta(days=1)
-    return days
+    sessions: a horizon then ends a session EARLY - the less-risk error).
+    The trader itself counts on its calendar (``AiTrader.cut``)."""
+    return MarketCalendar.weekdays().sessions_between(start, end)
 
 
 @dataclass
@@ -200,8 +197,12 @@ class AiTrader:
         leverage_alert: Optional[Callable[[Decimal, Decimal, list], None]] = None,
         brief: Optional[Callable[[], Brief]] = None,
         coin: Callable[[], float] = random.random,
+        calendar: Optional[MarketCalendar] = None,
     ) -> None:
         self.account = account
+        #: Sessions and closes (sweep 2026-11-10): every cutoff below moves with
+        #: the day's own close. None: every weekday a regular session (tests).
+        self.calendar = calendar or MarketCalendar.weekdays()
         #: The research brief's renderer (ruling 2026-10-15); used only while
         #: ``config.brief_mode`` is not "off"; ``coin`` draws the A/B arm.
         self._brief = brief
@@ -362,7 +363,12 @@ class AiTrader:
         local = now.astimezone(NY)
         day = local.date().isoformat()
         done = self.account.state.engine.setdefault("scans", {}).get(day, [])
-        passed = [t for t in self.config.scan_times if local.time() >= dtime.fromisoformat(t)]
+        session = self.calendar.session(local.date())
+        if session is None:
+            return None
+        # a scan time at or after an early close is not a scan that day
+        passed = [t for t in self.config.scan_times
+                  if local.time() >= dtime.fromisoformat(t) and at(local.date(), t) < session.close]
         if not passed or passed[-1] in done:
             return None
         return passed[-1]
@@ -377,6 +383,13 @@ class AiTrader:
 
     # -- exits ---------------------------------------------------------------
 
+    def cut(self, day: date, hhmm: str) -> datetime:
+        """A time configured for a regular 16:00 close (15:50, 15:45 ...) on
+        ``day``'s own session: 12:50 for 15:50 on a 13:00 early close. A closed
+        day has no time left at all."""
+        session = self.calendar.session(day)
+        return session.at(hhmm) if session is not None else datetime.combine(day, dtime.min, NY)
+
     def exit_reason(self, position: Position, now: datetime) -> Optional[str]:
         local = now.astimezone(NY)
         today = local.date()
@@ -385,17 +398,18 @@ class AiTrader:
             close_day = position.expiry
             if position.expiry > position.opened_day:
                 # a multi-day contract closes on the session before expiry
-                close_day = position.expiry - timedelta(days=1)
-                while close_day.weekday() >= 5:
-                    close_day -= timedelta(days=1)
-            if today > close_day or (today == close_day and local >= at(today, cfg.options.expiry_close)):
+                close_day = self.calendar.previous_session(position.expiry)
+            if today > close_day or (today == close_day and local >= self.cut(today, cfg.options.expiry_close)):
                 return "option_expiry_close"
-        if position.horizon == "intraday" and local >= at(today, cfg.intraday_close):
+        # an intraday position from an EARLIER session (a crash, an early close
+        # passed by) is overdue: it closes at the first tick
+        if position.horizon == "intraday" and (position.opened_day < today or
+                                               local >= self.cut(today, cfg.intraday_close)):
             return "intraday_close"
         if position.horizon in cfg.horizon_sessions:
-            held = sessions_between(position.opened_day, today)
+            held = self.calendar.sessions_between(position.opened_day, today)
             if held > cfg.horizon_sessions[position.horizon] or (
-                held == cfg.horizon_sessions[position.horizon] and local >= at(today, cfg.intraday_close)
+                held == cfg.horizon_sessions[position.horizon] and local >= self.cut(today, cfg.intraday_close)
             ):
                 return "horizon_end"
         quote = self._quotes(position.symbol)
@@ -460,7 +474,7 @@ class AiTrader:
             self._mark_scan(now, label)
         gate = self.gate
         held = list(self.positions().values())
-        entries_open = (now.astimezone(NY) < at(day, cfg.no_entries_after)
+        entries_open = (now.astimezone(NY) < self.cut(day, cfg.no_entries_after)
                         and not (gate is not None and gate.kill_switch_tripped))
         if not dry_run:
             if not entries_open:
@@ -579,8 +593,8 @@ class AiTrader:
         return build_user(
             now, held=views, traded_today=self.traded_today(day), max_positions=cfg.max_positions,
             max_ideas=cfg.max_ideas_per_scan,
-            entries_open=local < at(day, cfg.no_entries_after),
-            intraday_open=local < at(day, cfg.no_intraday_entries_after),
+            entries_open=local < self.cut(day, cfg.no_entries_after),
+            intraday_open=local < self.cut(day, cfg.no_intraday_entries_after),
             brief=brief.text if brief is not None else None,
         )
 
@@ -606,10 +620,11 @@ class AiTrader:
             return Verdict(False, "no free slot")
         if symbol in {t.upper() for t in taken}:
             return Verdict(False, "already held or traded today")
-        if local >= at(day, cfg.no_entries_after):
-            return Verdict(False, f"no new entries after {cfg.no_entries_after} ET")
-        if horizon == "intraday" and local >= at(day, cfg.no_intraday_entries_after):
-            return Verdict(False, f"no intraday entries after {cfg.no_intraday_entries_after} ET")
+        if local >= self.cut(day, cfg.no_entries_after):
+            return Verdict(False, f"no new entries after {self.cut(day, cfg.no_entries_after):%H:%M} ET")
+        if horizon == "intraday" and local >= self.cut(day, cfg.no_intraday_entries_after):
+            return Verdict(False, f"no intraday entries after "
+                                  f"{self.cut(day, cfg.no_intraday_entries_after):%H:%M} ET")
         try:
             confidence = int(idea.get("confidence"))
             stop_fraction = Decimal(str(idea.get("stop_pct"))) / 100

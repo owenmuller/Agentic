@@ -49,6 +49,7 @@ from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from execution import BrokerError, OrderOutcomeUnknown, cards
+from execution.market_calendar import MarketCalendar
 from execution.robinhood import occ_parts, option_position_id, option_tick
 from risk_gate.gate import RiskGate
 from risk_gate.schema import (
@@ -106,8 +107,10 @@ class Snapshot:
 class LiveMirror:
     def __init__(self, *, config, ai_config, reader, broker, paper_ledger: Path, ledger, state, state_path: Path,
                  limits, notify: Callable[[cards.Card], None], clock: Callable[[], datetime],
-                 halt_path: Optional[Path] = None) -> None:
+                 halt_path: Optional[Path] = None, calendar: Optional[MarketCalendar] = None) -> None:
         self.config = config
+        #: sessions and closes (sweep 2026-11-10): None, every weekday a regular session (tests)
+        self.calendar = calendar or MarketCalendar.weekdays(clock)
         self.ai = ai_config
         self.reader = reader                 # the read-only client: account, quotes, orders
         self.broker = broker                 # RobinhoodAgenticAdapter, or None: DRY
@@ -686,6 +689,28 @@ class LiveMirror:
 
     # -- the live option round trip (temporary option ruling 2026-11-09, item 3) ---------
 
+    def grant_lost(self, error: Exception) -> None:
+        """The OAuth refresh was refused: the single grant is gone. New entries
+        halt by the operator's HALT marker (a human's ``lab resume`` lifts it
+        after re-consenting); one red card says what is held, since nothing,
+        exits included, can trade until the grant is back."""
+        first = self.halt_path is not None and not self.halt_path.exists()
+        if first:
+            self.halt_path.write_text(f"Robinhood OAuth grant refused at {self.clock().isoformat(timespec='seconds')}: "
+                                      f"{error} (written by the live mirror)\n", encoding="utf-8")
+        if self.e.get("grant_lost_noted") == self._today().isoformat() and not first:
+            return
+        self.e["grant_lost_noted"] = self._today().isoformat()
+        held = sorted({p.get("symbol", pid) for pid, p in (self.e.get("positions") or {}).items()})
+        self.ledger.append("grant_lost", error=str(error), held=held, halt_written=first)
+        self._card("the Robinhood sign-in was refused", cards.ACTION, [
+            "The OAuth refresh was refused, so the live mirror can neither read nor trade the account.",
+            ("Held, and NOT protected by the mirror's stops until it is back: " + ", ".join(held)) if held
+            else "Nothing is held.",
+            "New entries are halted (HALT marker); exits resume as soon as the grant works again."],
+            what_to_do=cards._ask("Re-consent the Robinhood Agentic grant on the droplet, then resume the live mirror."))
+        self._save()
+
     def _retry_option_round_trip(self) -> None:
         """The operator's ``python -m lab retry-option-round-trip`` marker: a
         round trip that is not passed starts over with its full attempts at
@@ -715,8 +740,8 @@ class LiveMirror:
         if OPTION_RT_PID in self.e.get("positions", {}) or self._entries_blocked(snap):
             return False
         local = self.clock().astimezone(NY)
-        start, end = (_clock_time(t) for t in self.config.option_round_trip_window)
-        return local.weekday() < 5 and start <= local.time() <= end
+        start = _clock_time(self.config.option_round_trip_window[0])
+        return start <= local.time() and local <= self._cut(self.config.option_round_trip_window[1])
 
     def _option_round_trip(self, snap: Snapshot) -> None:
         """Buy one cheap, liquid call that fits the premium cap through the
@@ -777,7 +802,7 @@ class LiveMirror:
         if OPTION_RT_PID in self.e.get("positions", {}) or self._working is not None:
             return   # bought and selling: it finishes on its own
         local, today = self.clock().astimezone(NY), self._today().isoformat()
-        if local.weekday() >= 5 or local.time() <= _clock_time(self.config.option_round_trip_window[1]):
+        if not self.calendar.is_session(self._today()) or local <= self._cut(self.config.option_round_trip_window[1]):
             return
         if self.e.get("option_rt_overdue_noted") == today:
             return
@@ -790,7 +815,7 @@ class LiveMirror:
                f"inside the premium cap)" if no_contract and attempts == 0
                else f"{attempts} of {self.config.option_round_trip_attempts} attempts so far did not complete")
         self._card("the live option round trip did not run today", cards.LOOK,
-                   [f"By {self.config.option_round_trip_window[1]} ET: {why}.",
+                   [f"By {self._cut(self.config.option_round_trip_window[1]):%H:%M} ET: {why}.",
                     "It tries again at the next session from "
                     f"{self.config.option_round_trip_window[0]} ET; native option copies wait for it."],
                    look_at="the live option round trip")
@@ -946,7 +971,7 @@ class LiveMirror:
                 why = f"the live stop {pos['stop']} (bid or last {trigger})"
             elif trigger > 0 and trigger >= _d(pos["target"]):
                 why = f"the live target {pos['target']} (bid or last {trigger})"
-            elif pos.get("horizon") == "intraday" and now_local.time() >= _clock_time(self.ai.intraday_close):
+            elif pos.get("horizon") == "intraday" and self._intraday_due(pos, now_local):
                 why = "the intraday close"
             elif self._past_horizon(pos):
                 why = "past its horizon"
@@ -1003,7 +1028,7 @@ class LiveMirror:
                     why = f"the underlying target {target} ({pos['underlying']} bid or last {price})"
         if why is None and self._option_close_due(pos, now_local):
             why = "the option's expiry close"
-        if why is None and pos.get("horizon") == "intraday" and now_local.time() >= _clock_time(self.ai.intraday_close):
+        if why is None and pos.get("horizon") == "intraday" and self._intraday_due(pos, now_local):
             why = "the intraday close"
         if why is None and self._past_horizon(pos):
             why = "past its horizon"
@@ -1042,12 +1067,22 @@ class LiveMirror:
         if not pos.get("expiry"):
             return False
         expiry, opened, today = date.fromisoformat(pos["expiry"]), date.fromisoformat(pos["opened"]), self._today()
-        close_day = expiry
-        if expiry > opened:
-            close_day = expiry - timedelta(days=1)
-            while close_day.weekday() >= 5:
-                close_day -= timedelta(days=1)
-        return today > close_day or (today == close_day and now_local.time() >= _clock_time(self.ai.options.expiry_close))
+        close_day = self.calendar.previous_session(expiry) if expiry > opened else expiry
+        return today > close_day or (today == close_day and now_local >= self._cut(self.ai.options.expiry_close))
+
+    def _cut(self, hhmm: str) -> datetime:
+        """A time configured for a regular 16:00 close, on TODAY's own session
+        (15:50 is 12:50 on a 13:00 early close); a closed day has none left."""
+        today = self._today()
+        session = self.calendar.session(today)
+        return session.at(hhmm) if session is not None else datetime.combine(today, dtime.min, NY)
+
+    def _intraday_due(self, pos: dict, now_local: datetime) -> bool:
+        """The intraday close, or an intraday position from an EARLIER session
+        (a restart, an early close passed by): overdue, out at the first tick."""
+        opened = pos.get("opened")
+        return now_local >= self._cut(self.ai.intraday_close) or (
+            opened is not None and date.fromisoformat(opened) < self._today())
 
     def _mark(self, marks: dict) -> None:
         if marks and self.gate is not None:
@@ -1059,9 +1094,8 @@ class LiveMirror:
         if not sessions:
             return False
         opened = date.fromisoformat(pos["opened"])
-        weekdays = sum(1 for i in range(1, (self._today() - opened).days + 1)
-                       if (opened + timedelta(days=i)).weekday() < 5)
-        return weekdays > sessions + 1      # the paper close should come first; this is the backstop
+        held = self.calendar.sessions_between(opened + timedelta(days=1), self._today())
+        return held > sessions + 1      # the paper close should come first; this is the backstop
 
     def _entries_blocked(self, snap: Snapshot) -> Optional[str]:
         if self.halt_path is not None and self.halt_path.exists():

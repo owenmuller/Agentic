@@ -75,6 +75,12 @@ class RobinhoodTransient(RobinhoodError):
     tick on 2026-11-05 13:40 ET."""
 
 
+class RobinhoodAuthLost(RobinhoodError):
+    """The OAuth refresh was REFUSED (a 4xx): the single grant is gone and only
+    a human's consent in the browser restores it. Nothing can be read or
+    traded until then, exits included."""
+
+
 class RobinhoodUpstream(RobinhoodTransient):
     """The MCP answered, but its tool result says the service behind it
     failed (``API error 503: upstream connect error``). Transient: a read is
@@ -132,12 +138,17 @@ class TokenStore:
         entry = self._load()
         if self._clock() * 1000 < entry["expiresAt"] - REFRESH_MARGIN_SECONDS * 1000:
             return entry["accessToken"]
-        response = self._http.post(TOKEN_URL, data={
-            "grant_type": "refresh_token", "refresh_token": entry["refreshToken"], "client_id": entry["clientId"],
-        }, headers={"Accept": "application/json"})
+        try:
+            response = self._http.post(TOKEN_URL, data={
+                "grant_type": "refresh_token", "refresh_token": entry["refreshToken"], "client_id": entry["clientId"],
+            }, headers={"Accept": "application/json"})
+        except httpx.TransportError as error:   # the next call tries again; a consumed token then reads as refused
+            raise RobinhoodTransient(f"the OAuth refresh did not complete ({type(error).__name__})") from error
+        if response.status_code in TRANSIENT_STATUS:
+            raise RobinhoodTransient(f"the OAuth refresh failed upstream (HTTP {response.status_code})")
         if response.status_code != 200:
-            raise RobinhoodError(f"the OAuth refresh was refused (HTTP {response.status_code}); the grant needs a "
-                                 f"human's consent again")
+            raise RobinhoodAuthLost(f"the OAuth refresh was refused (HTTP {response.status_code}); the grant needs a "
+                                    f"human's consent again")
         token = response.json()
         entry["accessToken"] = token["access_token"]
         if token.get("refresh_token"):
@@ -249,6 +260,12 @@ class RobinhoodMcp:
             self._open()
         except RobinhoodTransient as error:   # the call itself was never sent: a definite "no"
             raise RobinhoodError(f"{tool} not sent: the MCP session could not be opened ({error})") from error
+        if not tool.startswith("get_"):
+            # the token first, so a refresh that fails is a definite "not sent", never an unknown order
+            try:
+                self._store.access_token()
+            except RobinhoodTransient as error:
+                raise RobinhoodError(f"{tool} not sent: {error}") from error
         # the transport retries an HTTP 5xx on a read; this retries the server's
         # upstream failing inside a 200 (a read only: an order is never re-sent)
         pauses = READ_RETRY_PAUSES if tool.startswith("get_") else ()
@@ -481,6 +498,8 @@ class RobinhoodAgenticAdapter(BrokerAdapter):
                 raise BrokerError("trade approvals are ON for the Agentic account (the human's app setting): an "
                                   "order would wait for a tap, so none is placed", 409, "human_must_approve_trades")
             review = self._mcp.call(review_tool, payload)
+        except RobinhoodAuthLost:
+            raise   # the grant is gone: the session's own handler halts entries and cards it
         except RobinhoodError as error:
             raise BrokerError(f"not placed (before the place call): {error}", 400, str(error)) from error
         review = review.get("data", review) if isinstance(review, dict) else {}
@@ -512,6 +531,8 @@ class RobinhoodAgenticAdapter(BrokerAdapter):
                 raise OrderOutcomeUnknown(lookup, f"{place_tool}: {error}; no order matches {lookup} "
                                                   f"yet") from error
             order = found
+        except RobinhoodAuthLost:
+            raise
         except RobinhoodError as error:
             if "409" in str(error) or "unique" in str(error).lower():
                 found = self._by_ref(lookup)     # the first attempt registered (spike part 2)
@@ -617,6 +638,8 @@ class RobinhoodAgenticAdapter(BrokerAdapter):
         tool = "cancel_option_order" if self._is_option_id(broker_order_id) else "cancel_equity_order"
         try:
             self._mcp.call(tool, {"account_number": self._mcp.account_number, "order_id": broker_order_id})
+        except RobinhoodAuthLost:
+            raise
         except RobinhoodError as error:
             if "cannot be cancelled" not in str(error).lower():   # terminal already: idempotent
                 raise BrokerError(str(error), 400, str(error)) from error

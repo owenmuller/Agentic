@@ -383,6 +383,8 @@ def _momentum_brief_files(directory: Path, cache_root: Path, config, latest: Opt
             if not folder.is_dir():
                 log.warning("momentum prep: no market data for the %s plan (%s); shortlist not written",
                             latest["month"], folder)
+                datahealth.report("Momentum shortlist", f"no market data for the {latest['month']} plan; "
+                                                        f"not written")
             else:
                 first = _date.fromisoformat(latest["data_through"]).replace(day=1)
                 store, _ = build(folder, start=first.replace(year=first.year - config.history_years).isoformat(),
@@ -395,6 +397,8 @@ def _momentum_brief_files(directory: Path, cache_root: Path, config, latest: Opt
                 del store
         except Exception as error:  # noqa: BLE001
             log.warning("momentum prep: shortlist not written (%s: %s)", type(error).__name__, error)
+            datahealth.report("Momentum shortlist", f"not written ({type(error).__name__}: {error}); the AI "
+                                                    f"trader's brief keeps the previous one")
     if latest is None:
         return
     try:
@@ -932,6 +936,7 @@ def _weekly_shortlist(directory: Path, cache_root: Path, config, today, alpaca, 
         ahead = alpaca.sessions((today + timedelta(days=1)).isoformat(), (today + timedelta(days=14)).isoformat())
         if not past or not ahead:
             log.warning("momentum prep: no sessions around %s; weekly shortlist not built", today)
+            datahealth.report("Momentum shortlist", f"no sessions around {today}; the weekly shortlist was not built")
             return
         data_through, next_day = past[-1], ahead[0]
         if prep_module.shortlist_covers(directory, data_through):
@@ -944,6 +949,8 @@ def _weekly_shortlist(directory: Path, cache_root: Path, config, today, alpaca, 
         if store.calendar[-1] != data_through:
             log.warning("momentum prep: data ends %s, not %s; weekly shortlist not built", store.calendar[-1],
                         data_through)
+            datahealth.report("Momentum shortlist", f"data ends {store.calendar[-1]}, not {data_through}; "
+                                                    f"the weekly shortlist was not built")
             return
         names = {a["symbol"]: a.get("name") or "" for a in feeds.Cache(folder).get("alpaca_assets") or []}
         prep_module.write_json(directory / prep_module.SHORTLIST_FILE,
@@ -954,6 +961,8 @@ def _weekly_shortlist(directory: Path, cache_root: Path, config, today, alpaca, 
             shutil.rmtree(old, ignore_errors=True)
     except Exception as error:  # noqa: BLE001 - reference data, never a failed prep
         log.warning("momentum prep: weekly shortlist not built (%s: %s)", type(error).__name__, error)
+        datahealth.report("Momentum shortlist", f"the weekly shortlist was not built ({type(error).__name__}: "
+                                                f"{error})")
 
 
 def weekly() -> int:
@@ -1585,6 +1594,16 @@ def run() -> int:
         return 1
 
     run_log.note("STARTED", f"pid={os.getpid()}")
+    # the exchange calendar (sweep 2026-11-10): holidays are no session, an
+    # early close ends the session early; an unreadable calendar is a yellow card
+    from execution import PAPER_BASE_URL
+    from execution.market_calendar import MarketCalendar, alpaca_fetch
+    from orchestrator.ops import install_calendar
+
+    calendar = MarketCalendar(alpaca_fetch(PAPER_BASE_URL, os.environ.get("ALPACA_API_KEY", ""),
+                                           os.environ.get("ALPACA_API_SECRET", "")),
+                              lambda: datetime.now(timezone.utc), source="Main book calendar")
+    install_calendar(calendar)
     now = datetime.now(timezone.utc)
     loop = None
     edgar = None
@@ -1597,7 +1616,7 @@ def run() -> int:
     options_chain = None
     try:
         if not is_trading_weekday(now):
-            run_log.note("STOPPED", "not a trading weekday; nothing to do")
+            run_log.note("STOPPED", "not a session day (the exchange calendar); nothing to do")
             return 0
         open_utc, close_utc = session_bounds(now)
         if now >= close_utc:
@@ -1762,6 +1781,7 @@ def run() -> int:
             max_quote_age_seconds=(
                 checks.orchestrator_config.market_data.max_quote_age_seconds
             ),
+            calendar=calendar,
         )
         daily_bars = AlpacaDailyBars(unserved=_unserved_memo())
         context_builder = MarketContextBuilder(daily_bars)
@@ -2426,6 +2446,8 @@ def momentum_prep() -> int:
                 store, target.rebalance_day, names=names))
         except Exception as error:  # noqa: BLE001
             log.warning("momentum prep: shortlist not written (%s: %s)", type(error).__name__, error)
+            datahealth.report("Momentum shortlist", f"not written ({type(error).__name__}: {error}); the AI "
+                                                    f"trader's brief keeps the previous one")
         for problem in result.problems:
             log.warning("momentum prep: %s", problem)
         # keep this run's market data and the one before it

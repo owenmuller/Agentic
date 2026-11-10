@@ -322,14 +322,14 @@ def test_horizons_end_after_their_sessions():
     position = Position(pid="p", symbol="AAPL", instrument="stock", horizon="days", stop=D(1), target=D(1000),
                         thesis="", opened_at=et(12, "10:00").isoformat())
     assert sessions_between(date(2026, 10, 12), date(2026, 10, 16)) == 5
-    trader = SimpleNamespace(config=CFG, _quotes=lambda s: (D(100), D(100)))
+    trader = bare_trader()
     assert AiTrader.exit_reason(trader, position, et(16, "15:49")) is None
     assert AiTrader.exit_reason(trader, position, et(16, "15:50")) == "horizon_end"
     assert AiTrader.exit_reason(trader, position, et(19, "09:31")) == "horizon_end"
 
 
 def test_options_close_before_expiry():
-    trader = SimpleNamespace(config=CFG, _quotes=lambda s: (D(100), D(100)))
+    trader = bare_trader()
     zero = Position(pid="p", symbol="SPY", instrument="call", horizon="intraday", stop=D(1), target=D(1000),
                     thesis="", opened_at=et(12, "10:00").isoformat(), occ="SPY261012C00660000",
                     expiry=date(2026, 10, 12))
@@ -756,3 +756,76 @@ def test_golden_grades_the_brief_fields_when_it_is_sent(idea, passed):
     result = golden_replay.run_case({"name": "x", "time": "10:00", "held": [], "expect": {}}, always, FakeLLM([idea]),
                                     date(2026, 10, 16), brief=None)
     assert result.passed is passed, result.failures
+
+
+# -------------------------------------------------- the exchange calendar (sweep 2026-11-10)
+
+def bare_trader(calendar=None):
+    """The exit and validation rules alone: no account, no model."""
+    from execution.market_calendar import MarketCalendar
+
+    trader = object.__new__(AiTrader)
+    trader.config, trader._quotes = CFG, (lambda s: (D(100), D(100)))
+    trader.calendar = calendar or MarketCalendar.weekdays()
+    return trader
+
+
+def thanksgiving():
+    """Alpaca's rows for the week: no Nov 26, Nov 27 closes at 13:00."""
+    from execution.market_calendar import MarketCalendar
+
+    rows = [{"date": f"2026-11-{d:02d}", "open": "09:30", "close": "16:00"} for d in (23, 24, 25, 30)]
+    rows += [{"date": "2026-11-27", "open": "09:30", "close": "13:00"}]
+    rows += [{"date": f"2026-12-{d:02d}", "open": "09:30", "close": "16:00"} for d in (1, 2, 3, 4)]
+    return MarketCalendar(lambda start, end: rows, lambda: et(27, "09:00", month=11))
+
+
+def test_on_an_early_close_options_and_intraday_positions_close_before_it():
+    trader = bare_trader(thanksgiving())
+    zero = Position(pid="p", symbol="SPY", instrument="call", horizon="intraday", stop=D(1), target=D(1000),
+                    thesis="", opened_at=et(27, "10:00", 11).isoformat(), occ="SPY261127C00660000",
+                    expiry=date(2026, 11, 27))
+    assert trader.exit_reason(zero, et(27, "12:44", 11)) is None
+    assert trader.exit_reason(zero, et(27, "12:45", 11)) == "option_expiry_close"       # 15:45 on a 16:00 day
+    stock = Position(pid="s", symbol="AAPL", instrument="stock", horizon="intraday", stop=D(1), target=D(1000),
+                     thesis="", opened_at=et(27, "10:00", 11).isoformat())
+    assert trader.exit_reason(stock, et(27, "12:49", 11)) is None
+    assert trader.exit_reason(stock, et(27, "12:50", 11)) == "intraday_close"            # 15:50 on a 16:00 day
+    # a contract expiring Monday Nov 30 closes on the session before it: Friday, before ITS early close
+    monday = Position(pid="m", symbol="SPY", instrument="call", horizon="days", stop=D(1), target=D(1000),
+                      thesis="", opened_at=et(24, "10:00", 11).isoformat(), occ="SPY261130C00660000",
+                      expiry=date(2026, 11, 30))
+    assert trader.exit_reason(monday, et(27, "12:44", 11)) is None
+    assert trader.exit_reason(monday, et(27, "12:45", 11)) == "option_expiry_close"
+    # a Friday-expiry contract closes on the session before it: Wednesday, since Nov 26 is closed
+    friday = Position(pid="f", symbol="SPY", instrument="call", horizon="days", stop=D(1), target=D(1000),
+                      thesis="", opened_at=et(23, "10:00", 11).isoformat(), occ="SPY261127C00670000",
+                      expiry=date(2026, 11, 27))
+    assert trader.exit_reason(friday, et(25, "15:45", 11)) == "option_expiry_close"       # Nov 26 is no session
+
+
+def test_an_intraday_position_left_from_an_earlier_session_closes_at_the_first_tick():
+    trader = bare_trader()
+    stale = Position(pid="p", symbol="AAPL", instrument="stock", horizon="intraday", stop=D(1), target=D(1000),
+                     thesis="", opened_at=et(12, "10:00").isoformat())
+    assert trader.exit_reason(stale, et(13, "09:31")) == "intraday_close"
+
+
+def test_the_holiday_is_not_a_session_for_horizons():
+    trader = bare_trader(thanksgiving())
+    days = Position(pid="d", symbol="AAPL", instrument="stock", horizon="days", stop=D(1), target=D(1000),
+                    thesis="", opened_at=et(23, "10:00", 11).isoformat())
+    sessions = CFG.horizon_sessions["days"]
+    held = trader.calendar.sessions_between(date(2026, 11, 23), date(2026, 11, 30))
+    assert held == 5                                         # Nov 26 is not counted
+    assert sessions == 5 and trader.exit_reason(days, et(30, "15:49", 11)) is None
+    assert trader.exit_reason(days, et(30, "15:50", 11)) == "horizon_end"
+
+
+def test_entry_cutoffs_move_with_an_early_close():
+    trader = bare_trader(thanksgiving())
+    day = date(2026, 11, 27)
+    assert trader.cut(day, CFG.no_entries_after) == datetime(2026, 11, 27, 12, 30, tzinfo=NY)
+    assert trader.cut(day, CFG.no_intraday_entries_after) == datetime(2026, 11, 27, 12, 15, tzinfo=NY)
+    assert trader.cut(date(2026, 11, 25), CFG.no_entries_after) == datetime(2026, 11, 25, 15, 30, tzinfo=NY)
+    assert trader.cut(date(2026, 11, 26), CFG.no_entries_after) == datetime(2026, 11, 26, 0, 0, tzinfo=NY)

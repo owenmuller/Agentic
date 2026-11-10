@@ -77,7 +77,11 @@ class AlpacaPriceSource:
         max_quote_age_seconds: int = 300,
         timeout: float = 5.0,
         clock: Optional[Callable[[], datetime]] = None,
+        calendar: Optional[Any] = None,
     ) -> None:
+        #: the exchange calendar (``execution.market_calendar``, duck-typed: this
+        #: module stays importable without it); None: weekdays 09:30-16:00
+        self.calendar = calendar
         if max_quote_age_seconds <= 0:
             raise ValueError(
                 f"max_quote_age_seconds must be positive, got {max_quote_age_seconds}"
@@ -182,7 +186,14 @@ class AlpacaPriceSource:
             gaps.pop(symbol, None)
             return body
         local = now.astimezone(_NEW_YORK)
-        if local.weekday() >= 5 or not (dtime(9, 35) <= local.time() <= dtime(15, 55)):
+        calendar = getattr(self, "calendar", None)
+        if calendar is not None:
+            session = calendar.session(local.date())
+            # a closed day, or outside the session's own hours (an early close ends them early)
+            if session is None or not (session.open + timedelta(minutes=5) <= local
+                                       <= session.close - timedelta(minutes=5)):
+                return None
+        elif local.weekday() >= 5 or not (dtime(9, 35) <= local.time() <= dtime(15, 55)):
             return None
         first, reported = gaps.get(symbol, (now, False))
         # once a symbol a day (2026-11-04 triage: MSB, a thin IEX name, re-armed
