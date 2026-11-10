@@ -218,6 +218,19 @@ class LiveMirrorConfig(_Strict):
     #: A round-trip contract's spread may be at most this wide (dollars a share).
     option_round_trip_max_spread: Decimal = Field(default=Decimal("0.02"), gt=ZERO, le=Decimal("0.05"))
     option_round_trip_attempts: int = Field(default=3, ge=1, le=5)
+    #: The one-time live path tests (human ruling 2026-11-10, sweep item 1):
+    #: T1/T4 a far-from-market limit buy (stock, option) placed, found and
+    #: cancelled; T2 a whole share out on its stop with a cancel and re-price;
+    #: T3 a fraction out on its target. Entries and the round trip wait for them.
+    path_tests_enabled: bool = False
+    path_tests_start: str = "09:31"
+    #: configured for a 16:00 close (moves with an early one)
+    path_tests_end: str = "11:00"
+    path_test_symbol: str = "F"
+    path_test_fraction_symbol: str = "SPY"
+    path_test_fraction: Decimal = Field(default=Decimal("0.05"), gt=ZERO, le=Decimal("0.1"))
+    #: a T2/T3 position not closed by then fails the test (its exit keeps running)
+    path_test_exit_minutes: int = Field(default=10, ge=3, le=60)
     #: The live account's own cap table on top of risk_limits.yaml.
     limits_overrides: dict[str, Any] = Field(default_factory=dict)
 

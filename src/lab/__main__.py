@@ -685,6 +685,9 @@ def date_from(text: str):
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # one INFO line per HTTP request (the mirror's MCP polling: ~45k a day) drowned
+    # the journal (human ruling 2026-11-10)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     # DATA HEALTH (global rule 2026-10-15): an expected fetch empty or failed is a yellow card
     datahealth.set_sink(data_sink("Paper lab"))
     parser = argparse.ArgumentParser(prog="python -m lab")

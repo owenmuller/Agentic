@@ -40,6 +40,8 @@ Claude Code reads this file every session. These rules govern all code written i
 
 **MEASUREMENT-ONLY SOURCES (human ruling 2026-10-14, applied at once, superseding the 10-15 / 10-27 review dates): Form 4 insiders, congressional disclosures (all bands) and Form 8-K have research cap 0.** Every filing is still recorded and forward-graded (`stage_rejection` code `measurement_only`, never held in the dispatch pool); no LLM pass is spent on them; the congressional mechanical control arm keeps copying; existing judged positions run to their exits. Government contract awards keep their research passes (measurement-only sizing until the 2b unlock). Saving measured over the prior 11 trading days: about $2.60 a trading day (8-K $1.26, Form 4 $1.26, congressional $0.07). The judged sleeve (15%) is not reallocated; the Friday weekly reports its idle cash until a ruling after momentum's first month.
 
+**Contract awards evening one-shot RETIRED (human ruling 2026-11-10):** `agentic-contracts.timer` (weekdays 17:05 ET, never installed) was removed from the repo. The session's morning fetch reads the DoD digest itself and covers contract awards; the `contracts-evening` command stays in code, unscheduled.
+
 Three classes. Scan cadence is matched to signal decay speed so options and buy/sell decisions are never delayed by slow polling.
 
 ### Class 1 — Real-time, event-driven (poll every 60–120 seconds during market hours)
@@ -306,6 +308,13 @@ Software-only books on two of Quiver's published strategies (quiverquant.com/str
   - (a) read-only connection check: DONE 2026-11-04;
   - (b) one tiny live round trip (a fractional SPY buy and sell) once the $1,000 has settled;
   - (c) mirroring from the next AI trader session after (b).
+  - (d) **one-time live path tests (human ruling 2026-11-10, after the sweep found the exit, cancel and limit paths never run live):** from 09:31 ET at the 2026-11-11 session start, before the first scan and the option round trip (`path_tests_enabled`):
+    - T1: 1 F limit buy at half the bid, placed, found by the adapter's lookup and cancelled;
+    - T4: 1 SPY call limit buy at $0.01, placed, found and cancelled;
+    - T2: 1 F bought at the ask and sold by the mirror's own stop exit, first tried above the market so the cancel and the re-price at the bid both run;
+    - T3: 0.05 SPY bought and sold by its target exit, a fractional market sell.
+
+    Entries and the round trip wait for them (a paper entry waits in the copy queue). Any failure writes HALT with a red card; exits keep running. They do not run again once passed or failed.
   A report follows each step.
 
 ## Go Live at the Next Session (STANDING RULE, human ruling 2026-10-14)

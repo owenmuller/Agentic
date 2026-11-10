@@ -4167,6 +4167,17 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-10 (late afternoon) — sweep rulings applied (items 1, 3, 4, 5; item 2 on a branch)
+
+- **1 Live path tests T1–T4:** built as a one-time sequence in the live mirror (`path_tests_enabled: true`). They run from 09:31 ET at the 2026-11-11 session, before the 09:45 scan and the option round trip: T1, T4, T2, T3 (CLAUDE.md § Live Mirror, step d).
+  - A failure writes HALT and sends a red card; exits keep running.
+  - Read-only picks on the real account: F 12.24 × 12.25 → T1 limit 6.12; T4 SPY 757 call 0.16 × 0.17 (tick 0.01); T2 about $12.25; T3 0.05 SPY about $37.
+  - T2 and T3 tie up about $50 of sale proceeds until T+1. Tested with a resting-order fake, including the cancel and re-price, a failure and the queue wait.
+- **3:** the withdrawal card no longer carries the dividend sentence.
+- **4:** `orchestrator.log` is a `RotatingFileHandler` (50 MB × 5; the existing 199 MB file rolls to `.1` at the first write). httpx is set to WARNING in the orchestrator and lab entry points. The two stale Oct 15 checks are removed and reset. The human is adding the swapfile.
+- **5:** `agentic-contracts.{service,timer}` removed (retired; the morning fetch covers contract awards).
+- **2 (month-end):** implemented by a parallel worker on branch `momentum-monthend-fixes`, merged after review (below, if appended).
+
 ### 2026-11-10 (afternoon) — SWEEP of untested paths (items 1-7)
 
 - **1 Live order paths:** the matrix is in the reply to the human. Never run live:

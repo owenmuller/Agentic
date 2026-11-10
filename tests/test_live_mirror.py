@@ -147,6 +147,7 @@ def build(tmp_path, config, reader, broker="live", clock=None):
                         state=LabState(), state_path=tmp_path / "state.json", limits=limits, notify=seen.append,
                         clock=clock, halt_path=tmp_path / "HALT")
     mirror.config_sleep = lambda: None
+    mirror.e.setdefault("path_tests", {"result": "passed"})   # the one-time path tests: their own tests below
     return mirror, seen, clock
 
 
@@ -415,6 +416,8 @@ def test_a_withdrawal_lowers_the_baselines_and_the_gates_cash_and_fills_are_not_
     mirror.tick()
     flow = mirror.ledger.events(["cash_flow"])[-1]
     assert flow["kind"] == "withdrawal" and D(flow["amount"]) == D("-200")
+    card = next(c for c in seen if c.happened == "a withdrawal of $200")
+    assert not any("dividend" in line for line in card.lines)          # deposits only (ruling 2026-11-10)
     assert mirror.gate.state.cash == gate_cash - 200
 
 
@@ -843,3 +846,131 @@ def test_on_an_early_close_the_mirror_closes_intraday_and_options_before_it(tmp_
     assert not mirror._option_round_trip_due(mirror.snapshot())                    # its window ended 12:00
     clock.now = datetime(2026, 11, 26, 10, 0, tzinfo=NY).astimezone(timezone.utc)
     assert not mirror._option_round_trip_due(mirror.snapshot()) and not calendar.is_session(date(2026, 11, 26))
+
+
+# ================================================================================
+# The one-time live path tests (human ruling 2026-11-10, sweep item 1)
+# ================================================================================
+
+
+class RestingBroker(Broker):
+    """A limit away from the market rests until cancelled; a marketable one
+    fills at once. Lookups by our reference, as the adapter's are."""
+
+    def __init__(self, reader):
+        super().__init__(reader)
+        self.by_ref, self.cancels = {}, []
+
+    def submit_order(self, approved, client_reference=None):
+        order = approved.order
+        execution = order.execution
+        if execution.style == "limit":
+            buy = type(order).__name__ in ("EquityBuyOrder", "OptionBuyToOpenOrder")
+            if hasattr(order, "contracts"):
+                [row] = self.reader.option_instruments(order.underlying, order.expiration, order.right, order.strike)
+                bid, ask, _ = self.reader.option_book[row["id"]]
+            else:
+                bid, ask, _ = self.reader.book[order.symbol]
+            resting = execution.limit_price < D(ask) if buy else execution.limit_price > D(bid)
+            if resting:
+                self.sent.append(order)
+                self.refs.append(client_reference)
+                oid = f"o{len(self.sent)}"
+                units = getattr(order, "contracts", None) or order.quantity
+                self.orders[oid] = OrderStatus(oid, "queued", ZERO_D, None)
+                self.by_ref[f"lookup-{oid}"] = oid
+                return OrderReceipt(oid, "queued", order.symbol, units, execution.price_bound, f"lookup-{oid}")
+        receipt = super().submit_order(approved, client_reference)
+        self.by_ref[f"lookup-{receipt.broker_order_id}"] = receipt.broker_order_id
+        return OrderReceipt(receipt.broker_order_id, receipt.status, receipt.symbol, receipt.quantity,
+                            receipt.limit_price, f"lookup-{receipt.broker_order_id}")
+
+    def get_order_by_client_reference(self, ref):
+        oid = self.by_ref.get(ref)
+        return self.orders[oid] if oid else None
+
+    def cancel_order(self, oid):
+        self.cancels.append(oid)
+        status = self.orders[oid]
+        if not status.is_terminal:
+            self.orders[oid] = OrderStatus(oid, "cancelled", status.filled_quantity, None)
+
+
+ZERO_D = D("0")
+
+
+def path_testing(tmp_path, config):
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    mirror.broker = RestingBroker(reader)
+    mirror.e["path_tests"] = {}
+    reader.add_contract("good", "SPY261106C00780000", "0.14", "0.15")
+    reader.book["F"] = ("11.95", "11.96", "11.95")
+    return mirror, seen, clock, reader
+
+
+def test_the_path_tests_run_in_order_through_the_real_paths_then_entries_go_ahead(tmp_path, config):
+    mirror, seen, clock, reader = path_testing(tmp_path, config)
+    mirror.tick()                                       # T1: placed at half the bid, found, cancelled
+    t1 = mirror.e["path_tests"]["t1"]
+    assert t1["status"] == "passed" and t1["found_by_lookup"] and t1["final"] == "cancelled"
+    assert mirror.broker.sent[0].execution.limit_price == D("5.97") and mirror.broker.cancels == ["o1"]
+    mirror.tick()                                       # T4: one SPY call at 0.01, found, cancelled
+    t4 = mirror.e["path_tests"]["t4"]
+    assert t4["status"] == "passed" and mirror.broker.sent[1].execution.limit_price == D("0.01")
+    mirror.tick()                                       # T2: one F bought at the ask
+    mirror.tick()                                       # filled; its stop fires: the first try above the market
+    sell = mirror.broker.sent[-1]
+    assert type(sell).__name__ == "EquitySellToCloseOrder" and sell.execution.limit_price > D("11.96")
+    clock.now += timedelta(seconds=config.live_mirror.fill_wait_seconds + 1)
+    mirror.tick()                                       # not filled: cancelled
+    mirror.tick()                                       # settled unfilled; re-priced at the bid
+    mirror.tick()
+    t2 = mirror.e["path_tests"]["t2"]
+    assert t2["status"] == "passed" and t2["cancelled_attempts"] == 1 and t2["at"]
+    f_sells = [o for o in mirror.broker.sent if o.symbol == "F" and type(o).__name__ == "EquitySellToCloseOrder"]
+    assert [o.execution.limit_price for o in f_sells][-1] == D("11.95") and len(f_sells) == 2
+    for _ in range(3):                                  # T3: 0.05 SPY in, out on its target (fractional market)
+        mirror.tick()
+    t3 = mirror.e["path_tests"]["t3"]
+    assert t3["status"] == "passed", mirror.e["path_tests"]
+    assert any(o.symbol == "SPY" and type(o.execution).__name__ == "MarketSellExecution" for o in mirror.broker.sent)
+    mirror.tick()
+    assert mirror.e["path_tests"]["result"] == "passed"
+    assert any(c.happened == "the live path tests passed" for c in seen)
+    assert not (tmp_path / "HALT").exists() and not any(p.startswith("path-") for p in mirror.e["positions"])
+    paper(tmp_path, opened("a", "UNH"), filled("a", price="400"))     # entries go ahead now
+    mirror.tick()
+    assert mirror.broker.sent[-1].symbol == "UNH"
+
+
+def test_a_paper_entry_waits_in_the_queue_while_the_path_tests_run(tmp_path, config):
+    mirror, seen, clock, reader = path_testing(tmp_path, config)
+    paper(tmp_path, opened("a", "UNH"), filled("a", price="400"))
+    mirror.tick()
+    assert [q["pid"] for q in mirror._queue] == ["a"] and all(o.symbol != "UNH" for o in mirror.broker.sent)
+
+
+def test_a_failed_path_test_halts_entries_and_cards_it(tmp_path, config):
+    mirror, seen, clock, reader = path_testing(tmp_path, config)
+
+    def refused(approved, client_reference=None):
+        from execution.base import BrokerError
+        raise BrokerError("place_equity_order refused by the server: ref_id must be a UUID", 400, "")
+    mirror.broker.submit_order = refused
+    mirror.tick()
+    assert mirror.e["path_tests"]["result"] == "failed" and mirror.e["path_tests"]["t1"]["status"] == "failed"
+    assert (tmp_path / "HALT").exists()
+    red = [c for c in seen if c.happened.startswith("a live path test failed")]
+    assert len(red) == 1 and red[0].status == cards.ACTION
+    assert mirror._entries_blocked(mirror.snapshot()) == "halted by an operator (HALT marker)"
+
+
+def test_the_path_tests_wait_for_their_start_and_never_run_twice(tmp_path, config):
+    mirror, seen, clock, reader = path_testing(tmp_path, config)
+    clock.now = clock.now.replace(hour=14, minute=30)       # 09:30 ET: before 09:31
+    mirror.tick()
+    assert mirror.broker.sent == []
+    mirror.e["path_tests"] = {"result": "passed"}
+    clock.now = clock.now.replace(hour=15)
+    mirror.tick()
+    assert not any(o.symbol == "F" or o.execution.price_bound == D("0.01") for o in mirror.broker.sent)

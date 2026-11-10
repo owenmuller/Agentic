@@ -232,9 +232,11 @@ class LiveMirror:
             f"{kind}, not as gain or loss.",
             "The kill switch's baseline, today's loss-limit baseline and the gate's high-water mark moved by the "
             "same amount." + (f" Kill-switch baseline now {cards.usd(float(_d(self.e['starting_equity'])))}."
-                              if self.e.get("starting_equity") else ""),
-            "A dividend or interest credit looks the same and is treated the same way: it moves the baselines "
-            "and is never counted as gain (accepted at this account's size, ruling 2026-11-04, third)."])
+                              if self.e.get("starting_equity") else "")]
+            # deposits only (human ruling 2026-11-10): a withdrawal cannot be a dividend
+            + (["A dividend or interest credit looks the same and is treated the same way: it moves the baselines "
+                "and is never counted as gain (accepted at this account's size, ruling 2026-11-04, third)."]
+               if amount > 0 else []))
         self._save()
 
     def _expect(self, side: str, value: Decimal, fees: Decimal) -> None:
@@ -682,12 +684,238 @@ class LiveMirror:
             self._release()
         if self._exit_one(snap):
             return
+        if self._path_tests(snap):
+            return
         self._enter_one(snap)
         if self._working is None and self._option_round_trip_due(snap):
             self._option_round_trip(snap)
         self._option_round_trip_overdue()
 
     # -- the live option round trip (temporary option ruling 2026-11-09, item 3) ---------
+
+    # -- the one-time live path tests (human ruling 2026-11-10, sweep item 1) -------------
+
+    PATH_TESTS = ("t1", "t4", "t2", "t3")
+    PATH_LABELS = {"t1": "T1 whole-share limit buy: placed, found, cancelled",
+                   "t4": "T4 option limit buy: placed, found, cancelled",
+                   "t2": "T2 whole share out on its stop, cancelled and re-priced",
+                   "t3": "T3 fraction out on its target"}
+
+    def _path_tests_pending(self) -> bool:
+        return (self.config.path_tests_enabled and not self.dry
+                and self.e.get("path_tests", {}).get("result") not in ("passed", "failed"))
+
+    def _path_tests(self, snap: Snapshot) -> bool:
+        """One step of the sequence; True while it holds the tick. T1 and T4
+        run inside one tick each; T2 and T3 enter and exit through the
+        mirror's own entry and exit paths over the next ticks."""
+        if not self._path_tests_pending():
+            return False
+        st = self.e.setdefault("path_tests", {})
+        local, today = self.clock().astimezone(NY), self._today()
+        if not self.calendar.is_session(today) or local.time() < _clock_time(self.config.path_tests_start):
+            return False
+        if self._working is not None:
+            return True
+        if local >= self._cut(self.config.path_tests_end):
+            if st.get("late_noted") != today.isoformat():
+                st["late_noted"] = today.isoformat()
+                self.ledger.append("path_tests_pending", done={n: (st.get(n) or {}).get("status") for n in self.PATH_TESTS})
+                self._card("the live path tests did not finish today", cards.LOOK, [
+                    f"By {self._cut(self.config.path_tests_end):%H:%M} ET: " + "; ".join(
+                        f"{self.PATH_LABELS[n]}: {(st.get(n) or {}).get('status') or 'not run'}" for n in self.PATH_TESTS),
+                    "New live entries and the option round trip wait for them; they continue at the next session."],
+                    look_at="the live path tests")
+                self._save()
+            return False
+        held = [pid for pid in self.e.get("positions", {}) if pid.startswith("path-")]
+        if held:
+            name = held[0][len("path-"):]
+            started = datetime.fromisoformat((st.get(name) or {}).get("at") or self.clock().isoformat())
+            if (self.clock() - started).total_seconds() > self.config.path_test_exit_minutes * 60:
+                self._path_failed(name, f"its position was not closed in {self.config.path_test_exit_minutes} "
+                                        "minutes (the exit keeps trying)")
+            return True
+        for name in self.PATH_TESTS:
+            status = (st.get(name) or {}).get("status")
+            if status == "running":
+                # no working order and no position left: a restart interrupted it (_stray cancelled it)
+                self._path_failed(name, "it was interrupted (a restart); the earlier run's order was settled at "
+                                        "the restart")
+                return True
+            if status is None:
+                getattr(self, f"_path_{name}")(snap, st)
+                self._save()
+                return True
+        st["result"] = "passed"
+        self.ledger.append("path_tests", passed=True, tests={n: st[n] for n in self.PATH_TESTS})
+        self._card("the live path tests passed", cards.GOOD,
+                   [f"{self.PATH_LABELS[n]}: passed." for n in self.PATH_TESTS] +
+                   ["New live entries and the option round trip go ahead."])
+        self._save()
+        return False
+
+    def _path_ref(self, name: str) -> str:
+        return f"mirror-path-{name}-{self._today().isoformat()}"
+
+    def _path_started(self, name: str, **record) -> None:
+        self.e["path_tests"][name] = {"status": "running", "at": self.clock().isoformat(), **record}
+
+    def _path_passed(self, name: str, **record) -> None:
+        st = self.e["path_tests"]
+        st[name] = {**(st.get(name) or {}), **record, "status": "passed", "done_at": self.clock().isoformat()}
+        self.e.get("plans", {}).pop(f"path-{name}", None)
+        self.ledger.append("path_test", test=name, passed=True, **st[name])
+        self._card(f"live path test passed: {self.PATH_LABELS[name]}", cards.GOOD,
+                   [", ".join(f"{k} {v}" for k, v in record.items())])
+        self._save()
+
+    def _path_failed(self, name: str, why: str, **record) -> None:
+        """Any failure halts new live entries (the HALT marker; a human's
+        ``lab resume`` lifts it); exits keep running."""
+        st = self.e["path_tests"]
+        st[name] = {**(st.get(name) or {}), **record, "status": "failed", "why": why}
+        st["result"] = "failed"
+        if self.halt_path is not None and not self.halt_path.exists():
+            self.halt_path.write_text(f"live path test {name} failed at {self.clock().isoformat(timespec='seconds')}: "
+                                      f"{why} (written by the live mirror)\n", encoding="utf-8")
+        self.ledger.append("path_test", test=name, passed=False, **st[name])
+        self._card(f"a live path test failed: {self.PATH_LABELS[name]}", cards.ACTION,
+                   [why, "New live entries are halted (HALT marker); exits keep running."],
+                   detail=json.dumps(st[name], default=str),
+                   what_to_do=cards._ask("Show me the failed live path test and what the account holds."))
+        self._save()
+
+    def _path_place_find_cancel(self, name: str, order) -> None:
+        """T1 / T4: placed far from the market, found by the adapter's own
+        lookup (instrument, side, size, time), cancelled, confirmed cancelled."""
+        self._path_started(name, symbol=order.symbol, limit=str(order.execution.price_bound))
+        decision = self.gate.submit(order)
+        if not decision.is_approved:
+            return self._path_failed(name, f"the gate refused it: {decision.message}")
+        try:
+            receipt = self.broker.submit_order(decision, client_reference=self._path_ref(name))
+        except OrderOutcomeUnknown as error:
+            self._hold({"decision": decision, "order_id": None, "ref": error.client_reference, "kind": "path_test",
+                        "symbol": order.symbol, "placed": self.clock(), "extra": {"pid": f"path-{name}"}})
+            return self._path_failed(name, f"Robinhood's answer was lost ({error}); the order is watched by its "
+                                           "reference")
+        except BrokerError as error:
+            self.gate.cancel(decision)
+            return self._path_failed(name, f"Robinhood refused it: {error}")
+        working = {"decision": decision, "order_id": receipt.broker_order_id, "kind": "path_test",
+                   "symbol": order.symbol, "placed": self.clock(), "extra": {"pid": f"path-{name}"}}
+        self._hold(working)
+        self.ledger.append("order", kind="path_test", test=name, symbol=order.symbol, order_id=receipt.broker_order_id,
+                           ref=receipt.client_order_id, bound=order.execution.price_bound)
+        found = None
+        for _ in range(4):
+            found = self.broker.get_order_by_client_reference(receipt.client_order_id)
+            if found is not None:
+                break
+            self.config_sleep()
+        opened = self.broker.get_order(receipt.broker_order_id)
+        self._cancel(working)
+        done = None
+        for _ in range(15):
+            done = self._settle(working)
+            if done is not None:
+                break
+            self.config_sleep()
+        if done is None:
+            return self._path_failed(name, "the cancel did not land in 30 seconds; the order stays watched")
+        self._release()
+        record = {"order_id": receipt.broker_order_id, "status_when_open": opened.status,
+                  "found_by_lookup": found is not None and found.broker_order_id == receipt.broker_order_id,
+                  "final": done["status"], "filled": str(done["filled"])}
+        if done["filled"] > 0:
+            return self._path_failed(name, "it FILLED, which a limit that far from the market should not: the "
+                                           "holding is left for a human (the untracked-holding check cards it)", **record)
+        if not record["found_by_lookup"]:
+            return self._path_failed(name, "placed and cancelled, but the lookup by instrument, side, size and "
+                                           "time did not find it", **record)
+        if str(done["status"]).lower() not in ("cancelled", "canceled"):
+            return self._path_failed(name, f"it ended {done['status']}, not cancelled", **record)
+        self._path_passed(name, **record)
+
+    def _path_t1(self, snap: Snapshot, st: dict) -> None:
+        bid, _, _ = self._quote(self.config.path_test_symbol)
+        if bid <= 0:
+            return            # no quote yet: the next tick
+        limit = max(CENTS, (bid / 2).quantize(CENTS, ROUND_DOWN))
+        self._path_place_find_cancel("t1", EquityBuyOrder(
+            symbol=self.config.path_test_symbol, quantity=Decimal(1), sleeve=SLEEVE,
+            execution=LimitExecution(limit_price=limit)))
+
+    def _path_t4(self, snap: Snapshot, st: dict) -> None:
+        budget = (snap.tradeable_equity * self.config.risk_fraction).quantize(CENTS, ROUND_DOWN)
+        pick = self._cheap_contract(budget)
+        if pick is None:
+            return            # no contract qualifies yet: the next tick (the late card if never)
+        row, _, _ = pick
+        underlying, right = str(row["chain_symbol"]).upper(), str(row["type"])
+        expiration, strike = date.fromisoformat(row["expiration_date"]), _d(row["strike_price"])
+        self._path_place_find_cancel("t4", OptionBuyToOpenOrder(
+            symbol=_occ(underlying, expiration, right, strike), underlying=underlying, right=right,
+            expiration=expiration, strike=strike, contracts=1, execution=LimitExecution(limit_price=CENTS)))
+
+    def _path_t2(self, snap: Snapshot, st: dict) -> None:
+        """One whole share bought at the ask; its stop sits above the bid, so
+        the mirror's own exit fires at once - first above the market (it does
+        not fill, is cancelled), then re-priced at the bid."""
+        symbol = self.config.path_test_symbol
+        _, ask, _ = self._quote(symbol)
+        if ask <= 0:
+            return
+        self._path_entry("t2", symbol, Decimal(1), LimitExecution(limit_price=ask.quantize(CENTS, ROUND_UP)),
+                         stop_pct="-1", target_pct="100")
+
+    def _path_t3(self, snap: Snapshot, st: dict) -> None:
+        """A fraction bought at the market; its target sits below the bid, so
+        the mirror's own exit sells it as a fractional market order."""
+        symbol = self.config.path_test_fraction_symbol
+        _, ask, _ = self._quote(symbol)
+        if ask <= 0:
+            return
+        self._path_entry("t3", symbol, self.config.path_test_fraction,
+                         MarketBuyExecution(justification=MARKET_BUY_WHY,
+                                            max_price=(ask * Decimal("1.05")).quantize(CENTS, ROUND_UP)),
+                         stop_pct="50", target_pct="-1")
+
+    def _path_entry(self, name: str, symbol: str, quantity: Decimal, execution, *, stop_pct: str,
+                    target_pct: str) -> None:
+        pid = f"path-{name}"
+        self.e.setdefault("plans", {})[pid] = {"symbol": symbol, "instrument": "stock", "horizon": "intraday",
+                                               "stop_pct": stop_pct, "target_pct": target_pct}
+        self._path_started(name, symbol=symbol, quantity=str(quantity), cancelled_attempts=0)
+        sent = self._send(EquityBuyOrder(symbol=symbol, quantity=quantity, sleeve=SLEEVE, execution=execution),
+                          "entry", extra={"pid": pid, "ref": self._path_ref(name), "copy": "stock"})
+        if sent is None and self._working is None:
+            self._path_failed(name, "its entry was refused (the card before this one says why)")
+
+    def _path_after_fill(self, working: dict, done: dict) -> None:
+        """T2 / T3 bookkeeping, from ``_after_fill``."""
+        pid = working["extra"].get("pid") or ""
+        name = pid[len("path-"):]
+        st = self.e.get("path_tests", {})
+        if working["kind"] == "entry":
+            if done["filled"] <= 0:
+                self._path_failed(name, f"its entry did not fill ({done['status']})")
+            elif name == "t2" and pid in self.e["positions"]:
+                self.e["positions"][pid]["path_reprice"] = True
+        elif working["kind"] == "exit":
+            if done["filled"] <= 0:
+                st.setdefault(name, {})["cancelled_attempts"] = int(st.get(name, {}).get("cancelled_attempts", 0)) + 1
+                self.ledger.append("path_test_step", test=name, step="exit not filled, cancelled; re-priced next",
+                                   status=done["status"])
+            elif pid not in self.e["positions"]:
+                attempts = int(st.get(name, {}).get("cancelled_attempts", 0))
+                if name == "t2" and attempts < 1:
+                    self._path_failed(name, "the first exit filled above the market, so the cancel and re-price "
+                                            "were not exercised", sold_at=str(done["price"]))
+                else:
+                    self._path_passed(name, sold=str(done["filled"]), at=str(done["price"]),
+                                      cancelled_attempts=attempts, why=working["extra"].get("why"))
 
     def grant_lost(self, error: Exception) -> None:
         """The OAuth refresh was refused: the single grant is gone. New entries
@@ -929,6 +1157,8 @@ class LiveMirror:
                 f"Result {cards.usd(float(pnl), signed=True)} after {_fees(done['fees'])}."])
             if pid == OPTION_RT_PID:
                 self._option_round_trip_done(held, done)
+        elif str(pid).startswith("path-") and done["filled"] == 0:
+            pass               # the path test reports it (below)
         elif done["status"] == "not_placed":
             self._card(f"a live {working['symbol']} order was never placed", cards.LOOK,
                        [f"{working['kind']}: Robinhood's order list never showed it in "
@@ -938,6 +1168,8 @@ class LiveMirror:
             self._card(f"a live {working['symbol']} order did not fill", cards.LOOK,
                        [f"{working['kind']}: {done['status']} after {self.config.fill_wait_seconds} seconds."],
                        look_at="an unfilled live order")
+        if str(pid).startswith("path-"):
+            self._path_after_fill(working, done)
         self._save()
 
     def _quote(self, symbol: str) -> tuple[Decimal, Decimal, Decimal]:
@@ -984,6 +1216,11 @@ class LiveMirror:
             execution = (LimitExecution(limit_price=bid.quantize(CENTS, ROUND_DOWN)) if whole and bid > 0 else
                          MarketSellExecution(justification=MARKET_SELL_WHY,
                                              min_price=((bid if bid > 0 else trigger) * Decimal("0.95")).quantize(CENTS, ROUND_DOWN)))
+            if pos.pop("path_reprice", False) and whole and ask > 0:
+                # path test T2 (ruling 2026-11-10): the first try above the market, so
+                # the cancel after fill_wait_seconds and the re-price at the bid both run
+                execution = LimitExecution(limit_price=(ask * Decimal("1.02")).quantize(CENTS, ROUND_UP))
+                self._save()
             order = EquitySellToCloseOrder(symbol=symbol, quantity=quantity, execution=execution, sleeve=SLEEVE)
             if self.dry:
                 self.ledger.append("would_exit", pid=pid, symbol=symbol, quantity=quantity, why=why)
@@ -1100,6 +1337,8 @@ class LiveMirror:
     def _entries_blocked(self, snap: Snapshot) -> Optional[str]:
         if self.halt_path is not None and self.halt_path.exists():
             return "halted by an operator (HALT marker)"
+        if self._path_tests_pending():
+            return "the one-time live path tests have not finished"
         if self.e.get("unwatched"):
             return f"the account holds {', '.join(self.e['unwatched'])}, which the mirror does not track"
         start = _d(self.e.get("starting_equity"))

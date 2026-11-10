@@ -253,6 +253,13 @@ live_mirror:
   option_proxy_enabled: true   # approved by the human 2026-11-09 (later), from the next session start
   option_round_trip_enabled: true
   option_round_trip_symbol: SPY
+  # One-time live path tests, approved by the human 2026-11-10: from 09:31 ET,
+  # before the first scan and the option round trip. T1 1 F limit buy at half
+  # the bid, found and cancelled; T4 1 SPY call limit buy at 0.01, found and
+  # cancelled; T2 1 F bought, out on its stop (first try above the market,
+  # cancelled, re-priced at the bid); T3 0.05 SPY bought, out on its target
+  # (fractional market sell). A failure halts entries (HALT) with a red card.
+  path_tests_enabled: true
   # The same cap table as the paper AI trader: stocks on the AGGRESSIVE path
   # (18.75% of NAV a name, 5 names, T+1 on today's sale proceeds); options on
   # the EQUITY path (premium at risk within the equity sleeve's caps).

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 import os
 import sys
 from decimal import Decimal, InvalidOperation
@@ -1563,7 +1564,9 @@ def run() -> int:
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(data_dir / "orchestrator.log", encoding="utf-8"),
+            # rotated (human ruling 2026-11-10): ~50 MB a file, the last 5 kept
+            logging.handlers.RotatingFileHandler(data_dir / "orchestrator.log", maxBytes=50 * 1024 * 1024,
+                                                 backupCount=5, encoding="utf-8"),
         ],
     )
     # Alerting (ruling 2026-09-02): urgent/daily email tiers over Gmail SMTP.
@@ -2694,6 +2697,8 @@ def _data_safety(command: str) -> Optional[int]:
 
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "check"
+    # one INFO line per HTTP request drowned the journal (human ruling 2026-11-10)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     stop = _data_safety(command)
     if stop is not None:
         return stop
