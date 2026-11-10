@@ -4167,6 +4167,11 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-10 (later) — halt lifted by the human; option round trip retry
+
+- The human lifted the halt at 12:12 ET (`kill_switch_reset`, ack Owen). The running unit keeps the old code until 16:05 ET, so an entry before then is refused with the same 400; nothing reaches the account.
+- **Retry:** asked for by the human. The running unit saves its own state, so an edit to `state.json` would be overwritten. A marker (`RETRY_OPTION_ROUND_TRIP`, written by the operator command `python -m lab retry-option-round-trip --reason ...`) is consumed at the next session start. A round trip not yet passed starts over with its 3 attempts; one still held or working is left to finish. Written for the 2026-11-11 session (09:45 ET window). Tested.
+
 ### 2026-11-10 — LIVE MIRROR: every live order refused (ref_id must be a UUID); HALTED, fixed
 
 - **What failed:** every live order today was refused at validation with a 400: `ref_id must be a UUID (got "mirror-…")`. That was the option round trip (3 attempts, 09:45 ET, SPY261111C00762000 at 0.18–0.20, then "failed") and the TTWO call proxy and STLD stock copies at 10:46 ET. Six cards in total.

@@ -43,7 +43,7 @@ from execution.market_data import BenchmarkMoves
 from lab import reports
 from lab.ladder import LadderEngine
 
-OPERATOR_COMMANDS = frozenset({"halt", "resume"})
+OPERATOR_COMMANDS = frozenset({"halt", "resume", "retry-option-round-trip"})
 #: How each account is named on a card (ruling 2026-10-12).
 DISPLAY = {"ladder": "Leverage ladder", "ai-trader": "AI trader"}
 
@@ -185,6 +185,23 @@ def halt(name: str, reason: str) -> int:
     (directory / "HALT").write_text(f"{reason.strip()} (halted_at={now})\n", encoding="utf-8")
     print(f"LAB {name}: halt marker written; its next run trips its kill switch and freezes the account. "
           f"Resuming is a human's `python -m lab resume {name} --ack ...`.")
+    return 0
+
+
+def retry_option_round_trip(reason: str) -> int:
+    """The live mirror's failed option round trip starts over at its next
+    session start (a marker beside HALT; the running session never races it)."""
+    from lab.live_mirror import RETRY_OPTION_RT
+
+    if not reason.strip():
+        print("a retry needs --reason", file=sys.stderr)
+        return 2
+    directory = datasafety.resolve_lab_data_dir("live-mirror")
+    directory.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    (directory / RETRY_OPTION_RT).write_text(f"{reason.strip()} (requested_at={now})\n", encoding="utf-8")
+    print("LIVE mirror: retry marker written; the option round trip starts over at the next session start "
+          "(from its window, with its full attempts).")
     return 0
 
 
@@ -664,6 +681,8 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("account")
         if name == "golden":
             p.add_argument("--with-brief", action="store_true")
+    p = sub.add_parser("retry-option-round-trip")
+    p.add_argument("--reason", required=True)
     sub.add_parser("live-check")
     sub.add_parser("live-mirror")
     args = parser.parse_args(argv)
@@ -682,6 +701,8 @@ def main(argv: list[str] | None = None) -> int:
         return status(args.accounts)
     if args.command == "halt":
         return halt(args.account, args.reason)
+    if args.command == "retry-option-round-trip":
+        return retry_option_round_trip(args.reason)
     if args.command == "run":
         return run_session(args.account)
     if args.command == "scoreboard":

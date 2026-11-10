@@ -64,6 +64,9 @@ SHARE_STEP = Decimal("0.000001")
 SLEEVE = Sleeve.AGGRESSIVE
 #: The live option round trip's position (temporary option ruling 2026-11-09).
 OPTION_RT_PID = "option-round-trip"
+#: An operator's retry of a failed live option round trip, beside the HALT
+#: marker; read at session start, so a running session never races it.
+RETRY_OPTION_RT = "RETRY_OPTION_ROUND_TRIP"
 MARKET_BUY_WHY = ("fractional quantity: Robinhood accepts fractional shares only as market orders in regular hours "
                   "(GO LIVE ruling 2026-11-04, whole shares first)")
 MARKET_SELL_WHY = ("closing a fractional holding: Robinhood sells fractional shares only as market orders in "
@@ -287,6 +290,7 @@ class LiveMirror:
             self.e.pop("daily_halt", None)
         self.e.setdefault("phase", "waiting_funds")
         self.e.setdefault("positions", {})
+        self._retry_option_round_trip()
         self.gate = self._build_gate(snap)
         if not self.dry and self.reader.approvals_required():
             self.e["approvals_on"] = True
@@ -681,6 +685,28 @@ class LiveMirror:
         self._option_round_trip_overdue()
 
     # -- the live option round trip (temporary option ruling 2026-11-09, item 3) ---------
+
+    def _retry_option_round_trip(self) -> None:
+        """The operator's ``python -m lab retry-option-round-trip`` marker: a
+        round trip that is not passed starts over with its full attempts at
+        this session. One still held or working is left to finish."""
+        marker = self.halt_path.with_name(RETRY_OPTION_RT) if self.halt_path is not None else None
+        if marker is None or not marker.exists():
+            return
+        reason = marker.read_text(encoding="utf-8").strip()
+        was = self.e.get("option_round_trip")
+        if OPTION_RT_PID in self.e.get("positions", {}) or self._working is not None:
+            self.ledger.append("option_round_trip_retry", applied=False, was=was, reason=reason,
+                               why="a round-trip position or a working order is still open; retried next session")
+            return
+        if was != "passed":
+            for key in ("option_round_trip", "option_rt_attempts", "option_rt_none_noted", "option_rt_overdue_noted"):
+                self.e.pop(key, None)
+            self.e.get("plans", {}).pop(OPTION_RT_PID, None)
+        self.ledger.append("option_round_trip_retry", applied=was != "passed", was=was, reason=reason)
+        if not self.dry:
+            marker.unlink()
+        self._save()
 
     def _option_round_trip_due(self, snap: Snapshot) -> bool:
         if not self.config.option_round_trip_enabled or \

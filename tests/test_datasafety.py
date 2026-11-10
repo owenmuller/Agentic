@@ -221,7 +221,7 @@ def test_only_the_operator_commands_may_declare_production_writes(trees):
         assert "if command in OPERATOR_COMMANDS:" in (SRC / cli / "__main__.py").read_text(encoding="utf-8")
     from lab.__main__ import OPERATOR_COMMANDS as LAB_OPERATOR_COMMANDS
 
-    assert LAB_OPERATOR_COMMANDS == {"halt", "resume"}
+    assert LAB_OPERATOR_COMMANDS == {"halt", "resume", "retry-option-round-trip"}
 
 
 # ------------------------------------------- every entry point imports it

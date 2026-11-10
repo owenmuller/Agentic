@@ -760,3 +760,40 @@ def test_a_round_trip_window_that_closes_undone_is_carded_once(tmp_path, config)
     late = [c for c in seen if c.happened == "the live option round trip did not run today"]
     assert len(late) == 1 and late[0].status == cards.LOOK and "no SPY call qualified" in late[0].lines[0]
     assert mirror.ledger.events(["option_round_trip_pending"])[-1]["no_contract"] is True
+
+
+def test_an_operator_retry_restarts_a_failed_option_round_trip_at_the_next_session_start(tmp_path, config):
+    """2026-11-10: three attempts refused (ref_id), then "failed"; the human
+    asked for a retry. The marker is read only at session start, so the
+    running session (which saves its own state) never races it."""
+    from lab.live_mirror import RETRY_OPTION_RT
+
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    mirror.e.update(option_round_trip="failed", option_rt_attempts=3)
+    reader.add_contract("good", "SPY261109C00780000", "0.14", "0.15")
+    marker = tmp_path / RETRY_OPTION_RT
+    marker.write_text("human asked for a retry (requested_at=x)\n", encoding="utf-8")
+    mirror.tick()                                       # mid-session: not consumed, nothing sent
+    assert marker.exists() and mirror.e["option_round_trip"] == "failed"
+    assert not any(type(o).__name__ == "OptionBuyToOpenOrder" for o in mirror.broker.sent)
+    clock.now = clock.now + timedelta(days=1)
+    mirror.gate = None                                  # the next session
+    mirror.tick()
+    assert not marker.exists()
+    retry = mirror.ledger.events(["option_round_trip_retry"])[-1]
+    assert retry["applied"] is True and retry["was"] == "failed"
+    buy = mirror.broker.sent[-1]
+    assert type(buy).__name__ == "OptionBuyToOpenOrder" and mirror.e["option_rt_attempts"] == 1
+    assert mirror.broker.refs[-1] == f"mirror-option-rt-{mirror._today().isoformat()}-1"
+
+
+def test_a_retry_leaves_a_passed_round_trip_alone(tmp_path, config):
+    from lab.live_mirror import RETRY_OPTION_RT
+
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    mirror.e["option_round_trip"] = "passed"
+    (tmp_path / RETRY_OPTION_RT).write_text("again\n", encoding="utf-8")
+    mirror.gate = None
+    mirror.tick()
+    assert mirror.e["option_round_trip"] == "passed" and not (tmp_path / RETRY_OPTION_RT).exists()
+    assert mirror.ledger.events(["option_round_trip_retry"])[-1]["applied"] is False
