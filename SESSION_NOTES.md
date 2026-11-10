@@ -4167,6 +4167,12 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-10 (after the close) — Robinhood OAuth refresh PASSED through the production TokenStore
+
+- First refresh ever run by the production code (`execution.robinhood.TokenStore.access_token`; the Aug 27 one used `ops/rh_refresh_check.py`). Run by hand with the live unit stopped (after 16:05 ET), the margin forced so it refreshed at once.
+- The refresh token and access token both rotated; the new pair was stored atomically before use (file mode 0600); expiry moved 2026-11-12 10:22 ET to 2026-11-13 10:36 ET; an authenticated read with the new token returned the cash account, cash 1050. Hashes only were printed.
+- The next production refresh: the first live-mirror call after 2026-11-12 10:36 ET (24 h margin), inside that session. A refused refresh halts entries with one red card (tests, 2026-11-10).
+
 ### 2026-11-10 (night, later) — schedule_check.sh --remove fails on no match (human ruling)
 
 - `--remove check-deploy-b5735af` printed "removed check-check-deploy-b5735af" and removed nothing: the script adds the prefix itself and never checked that anything existed. It now takes the bare name or `check-NAME`, exits 1 with "no check named ... is installed; nothing removed" when neither has a timer, service or script, and refuses an ambiguous name (both `check-check-x` and `check-x` installed). Tests run the script in a fake HOME with a stub systemctl.
