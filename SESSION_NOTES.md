@@ -4167,6 +4167,19 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-11 — LIVE PATH TESTS T1-T4 PASSED; option round trip PASSED; first live stock and proxy orders filled
+
+- Path tests (09:31-09:34 ET), all passed, no HALT:
+  - T1: 1 F limit buy at 6.10 (half the bid), confirmed open, found by the `eq:` lookup, cancelled, nothing filled.
+  - T4: 1 SPY 2026-11-12 768 call limit buy at 0.01, found by the `opt:` lookup, cancelled.
+  - T2: 1 F bought at 12.23 (limit 12.27); the stop exit first priced above the market at 12.47, not filled, cancelled, re-priced at the bid 12.21, filled 12.2101. Cost $0.02.
+  - T3: 0.05 SPY fractional market buy (reserve bound 795.61) filled 757.70; target exit as a fractional market sell filled 757.33. Cost about $0.02.
+  - Record defect: the `path_test` result rows for T2 and T3 carry the fill price in the `at` field (12.2101, 757.3324) instead of a timestamp; `done_at` is right. The tests do not run again; noted, not fixed.
+- Option round trip (09:45 ET, attempt 1, after the operator retry): SPY 2026-11-12 767 call bought 0.16 (bid 0.15 / ask 0.16, OI 1,315), sold at the bid 0.13 a second later in the paper close path. Net -$3.00, no fees. PASSED: native option copies are now allowed.
+- **Option price unit settled:** Robinhood reads `price` per SHARE: price 0.16 came back as premium 16.00 for one contract (0.13 -> 13.00; T4 0.01 -> 1.00). What we send is right.
+- First live stock order under the new UUID key: CPAY 0.401402 fractional market buy at 09:46 ET, filled 460.735; out at 09:49 on the paper AI trader's stop, filled 459.2701 (-$0.59).
+- First live proxies (12:01-12:02 ET), all filled: NVDA 1 share limit 176.72 (stop 167.77, expiry 2026-11-13); TER 0.68164 fractional at 271.37 (stop 253.03, 2026-11-20); GLW 1 share at 122.35 (stop 117.93, 2026-11-13). About $484 deployed of $1,050.
+
 ### 2026-11-10 (after the close) — Robinhood OAuth refresh PASSED through the production TokenStore
 
 - First refresh ever run by the production code (`execution.robinhood.TokenStore.access_token`; the Aug 27 one used `ops/rh_refresh_check.py`). Run by hand with the live unit stopped (after 16:05 ET), the margin forced so it refreshed at once.
