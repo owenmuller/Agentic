@@ -284,7 +284,19 @@ class XRecentSearchFetcher:
     # -- plumbing --------------------------------------------------------------------------
 
     def _get(self, url: str, params: dict) -> httpx.Response:
-        response = self._request_once(url, params)
+        try:
+            response = self._request_once(url, params)
+        except httpx.TransportError as exc:
+            # a dropped connection is a blip like a 5xx: one retry, then the poll
+            # fails loudly (2026-11-11: "Server disconnected" carded an error the
+            # next poll had already healed). since_id has not moved, so a retry
+            # reads the same posts, never past them.
+            logger.warning(
+                "X request failed (%s: %s); retrying once after %.0fs",
+                type(exc).__name__, exc, self._RETRY_PAUSE_SECONDS,
+            )
+            self._sleep(self._RETRY_PAUSE_SECONDS)
+            return self._request_once(url, params)
         if response.status_code in self._RETRY_STATUSES:
             logger.warning(
                 "X returned HTTP %d; retrying once after %.0fs",

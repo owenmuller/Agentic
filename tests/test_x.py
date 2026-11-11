@@ -85,7 +85,10 @@ class XRecorder:
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         index = min(len(self.requests) - 1, len(self._responses) - 1)
-        return self._responses[index]
+        reply = self._responses[index]
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
 
 
 def fetcher_with(
@@ -353,6 +356,32 @@ def test_a_transient_blip_is_retried_once(source):
         ]
     )
     assert len(fetcher(source)) == 1
+    assert len(recorder.requests) == 2
+
+
+def test_a_dropped_connection_is_retried_once_from_the_same_since_id(source):
+    # 2026-11-11 10:30 ET: "Server disconnected without sending a response"
+    fetcher, recorder = fetcher_with(
+        [search_response(post("600", PURE_FORWARD_CALL)), search_response(post("700", PURE_FORWARD_CALL))]
+    )
+    fetcher(source)
+    recorder._responses = [
+        httpx.RemoteProtocolError("Server disconnected without sending a response."),
+        search_response(post("700", PURE_FORWARD_CALL)),
+    ]
+    recorder.requests.clear()
+
+    items = fetcher(source)
+
+    assert [item.external_id for item in items] == ["700"]
+    assert len(recorder.requests) == 2
+    assert {r.url.params["since_id"] for r in recorder.requests} == {"600"}
+
+
+def test_a_connection_that_drops_twice_fails_the_poll(source):
+    fetcher, recorder = fetcher_with([httpx.ConnectError("refused")])
+    with pytest.raises(httpx.ConnectError):
+        fetcher(source)
     assert len(recorder.requests) == 2
 
 

@@ -4167,6 +4167,14 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-11 (afternoon, later) — the 10:30 ET error card: one dropped X connection; the X fetcher now retries it once
+
+- The card: main book, #urgent, "source unusual_whales failed to fetch: RemoteProtocolError: Server disconnected without sending a response" (run log 15:30:09 UTC). The X API closed the connection on one recent-search poll. Once only; the next poll (15:33:46 UTC) read the account normally (1 post, forward_call). since_id never moved on the failure, so no post was missed.
+- Not the live mirror, the paper AI trader or momentum: the main book's Class 1 X scanner only. Nothing to do with the order key, OAuth or exit pricing (those are Robinhood paths; this was X).
+- Live account read-only at 14:13 ET: cash account, active, cash 562.24 (settled 314.86, unsettled 247.38), total 1,043.14, approvals off; NVDA 1, TER 0.68164, GLW 1, matching the mirror's positions and their stops (167.77, 253.03, 117.93); no open equity or option orders, no option positions; mirror state written each tick, queue empty, no unwatched holding, no HALT, no mirror errors today. No halt was needed.
+- History: X fetch failures before today only in the 2026-10-19 network outage (ConnectError/ConnectTimeout).
+- Fix: `XRecentSearchFetcher._get` retries an `httpx.TransportError` once after the 2 s pause, as it already did a 5xx; a second failure still fails the poll and cards. Two tests (a drop then a read from the same since_id; two drops fail). A dropped request that X billed would bill those few posts again on the retry; accepted.
+
 ### 2026-11-11 (afternoon) — exit pricing checked; the T2 above-market hook scoped to path-t2 (human request)
 
 - The human asked why T2's first stop sell went at 12.47 against a bid near 12.21. Cause: the T2 test's own hook (ask × 1.02), which the 2026-11-10 ruling needed so the cancel and the re-price would both run. It is not the exit logic.
