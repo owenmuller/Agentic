@@ -974,3 +974,94 @@ def test_the_path_tests_wait_for_their_start_and_never_run_twice(tmp_path, confi
     clock.now = clock.now.replace(hour=15)
     mirror.tick()
     assert not any(o.symbol == "F" or o.execution.price_bound == D("0.01") for o in mirror.broker.sent)
+
+
+# ================================================================================
+# Every exit's FIRST order sells at the live bid read at send time (2026-11-11:
+# T2's first sell was priced above the market by its own test hook)
+# ================================================================================
+
+
+def _held_f(tmp_path, config, horizon="days"):
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    paper(tmp_path, opened("a", "F", horizon=horizon), filled("a", price="40"))
+    mirror.tick()
+    mirror.tick()                                       # bought and settled: 5 F, stop 39.00, target 42.60
+    position = mirror.e["positions"]["a"]
+    assert (position["quantity"], position["stop"], position["target"]) == ("5", "39.00", "42.60"), position
+    reader.book["F"] = ("39.80", "39.90", "39.85")      # inside the band: nothing due
+    mirror.tick()
+    assert type(mirror.broker.sent[-1]).__name__ == "EquityBuyOrder"
+    return mirror, reader
+
+
+@pytest.mark.parametrize("reason, quote, expect, why", [
+    ("stop", ("38.975", "39.20", "39.00"), "38.97", "the live stop"),       # a sub-cent bid rounds DOWN
+    ("target", ("42.71", "42.80", "42.75"), "42.71", "the live target"),
+    ("paper close", ("39.53", "39.60", "39.55"), "39.53", "the paper AI trader closed it"),
+    ("intraday close", ("39.53", "39.60", "39.55"), "39.53", "the intraday close"),
+    ("past horizon", ("39.53", "39.60", "39.55"), "39.53", "past its horizon"),
+])
+def test_every_stock_exit_sells_whole_shares_at_the_bid_read_at_send_time(tmp_path, config, reason, quote, expect, why):
+    mirror, reader = _held_f(tmp_path, config, horizon="intraday" if reason == "intraday close" else "days")
+    if reason == "paper close":
+        paper(tmp_path, {"event": "position_closed", "pid": "a", "reason": "target", "at": T0.isoformat()})
+    elif reason == "intraday close":
+        mirror._intraday_due = lambda pos, now: True
+    elif reason == "past horizon":
+        mirror._past_horizon = lambda pos: True
+    reader.book["F"] = quote                            # the bid moves just before the tick that sends
+    mirror.tick()
+    sell = mirror.broker.sent[-1]
+    assert type(sell).__name__ == "EquitySellToCloseOrder" and type(sell.execution).__name__ == "LimitExecution"
+    assert sell.execution.limit_price == D(expect) <= D(quote[0])
+    assert mirror.ledger.events(["order"])[-1]["why"].startswith(why)
+
+
+def test_a_fractional_exit_is_a_market_sell_floored_off_the_bid_at_send_time(tmp_path, config):
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    paper(tmp_path, opened("s", "SPY"), filled("s", price="770"))
+    mirror.tick()
+    mirror.tick()
+    position = mirror.e["positions"]["s"]
+    assert D(position["quantity"]) != D(position["quantity"]).to_integral_value()    # a fraction
+    reader.book["SPY"] = ("750.10", "750.40", "750.20")                             # the bid under the stop 750.75
+    mirror.tick()
+    sell = mirror.broker.sent[-1]
+    assert type(sell).__name__ == "EquitySellToCloseOrder" and type(sell.execution).__name__ == "MarketSellExecution"
+    assert sell.execution.min_price == D("712.59")                                  # 750.10 x 0.95, rounded down
+
+
+@pytest.mark.parametrize("reason", ["paper close", "underlying stop", "expiry close", "intraday close", "past horizon"])
+def test_every_native_option_exit_sells_at_the_contracts_bid_read_at_send_time(tmp_path, config, reason):
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    reader.add_contract("f41", CHEAP, "0.14", "0.15")
+    mirror.e["option_round_trip"] = "passed"
+    paper(tmp_path, option_opened("a", "F", CHEAP), filled("a", price="0.15", qty="1", mult=100))
+    mirror.tick()
+    mirror.tick()
+    assert mirror.e["positions"]["a"]["copy"] == "native"
+    if reason == "paper close":
+        paper(tmp_path, {"event": "position_closed", "pid": "a", "reason": "target", "at": T0.isoformat()})
+    elif reason == "underlying stop":
+        reader.book["F"] = ("37.99", "38.30", "38.10")
+    elif reason == "expiry close":
+        mirror._option_close_due = lambda pos, now: True
+    elif reason == "intraday close":
+        mirror.e["positions"]["a"]["horizon"] = "intraday"
+        mirror._intraday_due = lambda pos, now: True
+    else:
+        mirror._past_horizon = lambda pos: True
+    reader.option_book["f41"] = ("0.11", "0.13", 1000)  # the contract's bid moves just before the send
+    mirror.tick()
+    sell = mirror.broker.sent[-1]
+    assert type(sell).__name__ == "OptionSellToCloseOrder" and sell.execution.limit_price == D("0.11")
+
+
+def test_the_t2_above_market_hook_never_reaches_a_real_position(tmp_path, config):
+    mirror, reader = _held_f(tmp_path, config)
+    mirror.e["positions"]["a"]["path_reprice"] = True   # as if the flag leaked onto a mirrored copy
+    reader.book["F"] = ("38.97", "39.20", "39.00")
+    mirror.tick()
+    sell = mirror.broker.sent[-1]
+    assert type(sell).__name__ == "EquitySellToCloseOrder" and sell.execution.limit_price == D("38.97")

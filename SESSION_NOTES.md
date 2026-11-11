@@ -4167,6 +4167,13 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-11 (afternoon) — exit pricing checked; the T2 above-market hook scoped to path-t2 (human request)
+
+- The human asked why T2's first stop sell went at 12.47 against a bid near 12.21. Cause: the T2 test's own hook (ask × 1.02), which the 2026-11-10 ruling needed so the cancel and the re-price would both run. It is not the exit logic.
+- Every real exit (stop, target, paper close, intraday close, past-horizon backstop; stocks, proxies and native options) reads a fresh quote in the sending tick. Whole shares go as a limit at the bid rounded down to the cent; a fraction, or a whole lot with no bid, goes as a market sell floored at 95% of the bid (or of the last trade). An option goes as a limit at the contract's bid rounded down to its tick; with no bid it is carded and retried each tick, never sold blind.
+- Hardening: the hook required only the `path_reprice` flag, which `_path_after_fill` sets for T2 alone. It now also requires `pid == "path-t2"`, so a flag on any real position is ignored and that exit goes at the bid.
+- 12 tests: each exit path with the bid moved just before the sending tick (five stock reasons, a fraction, five option reasons) and the flag on a real position.
+
 ### 2026-11-11 — LIVE PATH TESTS T1-T4 PASSED; option round trip PASSED; first live stock and proxy orders filled
 
 - Path tests (09:31-09:34 ET), all passed, no HALT:

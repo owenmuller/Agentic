@@ -1216,9 +1216,12 @@ class LiveMirror:
             execution = (LimitExecution(limit_price=bid.quantize(CENTS, ROUND_DOWN)) if whole and bid > 0 else
                          MarketSellExecution(justification=MARKET_SELL_WHY,
                                              min_price=((bid if bid > 0 else trigger) * Decimal("0.95")).quantize(CENTS, ROUND_DOWN)))
-            if pos.pop("path_reprice", False) and whole and ask > 0:
-                # path test T2 (ruling 2026-11-10): the first try above the market, so
-                # the cancel after fill_wait_seconds and the re-price at the bid both run
+            # Every first exit order sells at the live bid read just above (a limit
+            # for whole shares, a market sell with a 5% floor for a fraction). The one
+            # exception is path test T2's own position (ruling 2026-11-10): its first
+            # try sits above the market so the cancel and the re-price at the bid both
+            # run. A flag on any other position is ignored (2026-11-11).
+            if pos.pop("path_reprice", False) and pid == "path-t2" and whole and ask > 0:
                 execution = LimitExecution(limit_price=(ask * Decimal("1.02")).quantize(CENTS, ROUND_UP))
                 self._save()
             order = EquitySellToCloseOrder(symbol=symbol, quantity=quantity, execution=execution, sleeve=SLEEVE)
