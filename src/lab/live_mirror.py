@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, time as dtime, timedelta
 from decimal import ROUND_DOWN, ROUND_UP, Decimal
@@ -81,6 +82,21 @@ def _d(value: Any) -> Decimal:
         return Decimal(str(value)) if value not in (None, "") else ZERO
     except Exception:  # noqa: BLE001
         return ZERO
+
+
+_FRACTION = re.compile(r"(\.\d{6})\d+")
+
+
+def _ny_date(value: Any) -> Optional[str]:
+    """The New York date of a broker timestamp (Robinhood's carry
+    nanoseconds), or None."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(_FRACTION.sub(r"\1", str(value)).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.astimezone(NY).date().isoformat() if parsed.tzinfo else None
 
 
 @dataclass
@@ -290,7 +306,9 @@ class LiveMirror:
         self._flows(snap)   # an overnight deposit moves the baselines BEFORE the day rolls
         if self.e.get("day") != today.isoformat():
             self.e["day"] = today.isoformat()
-            self.e["day_start_equity"] = str(snap.equity)
+            baseline, basis = self._prior_close_equity(snap, today)
+            self.e["day_start_equity"] = str(baseline)
+            self.e["day_start_basis"] = basis
             self.e["flows_today"] = []
             self.e.pop("daily_halt", None)
         self.e.setdefault("phase", "waiting_funds")
@@ -307,8 +325,54 @@ class LiveMirror:
             self.e.pop("approvals_on", None)
         self.ledger.append("session_start", dry=self.dry, equity=snap.equity, settled_cash=snap.settled_cash,
                            unsettled=snap.unsettled, pending_deposits=snap.pending_deposits, phase=self.e["phase"],
-                           held={k: str(v) for k, v in snap.held.items()})
+                           held={k: str(v) for k, v in snap.held.items()},
+                           day_start_equity=self.e.get("day_start_equity"), day_start_basis=self.e.get("day_start_basis"))
         self._save()
+
+    def _prior_close_equity(self, snap: Snapshot, today: date) -> tuple[Decimal, str]:
+        """Today's loss-limit baseline: the PRIOR SESSION'S CLOSE equity (human
+        ruling 2026-11-12, item 5, the less-risk reading; before it the
+        broker's equity read at session start, which on 2026-11-12 already
+        held part of the overnight gap). The broker's cash plus each holding
+        at its prior regular close - Robinhood's split-adjusted previous
+        close when its date is the prior session, else that session's last
+        regular trade, else (a yellow card) the current price."""
+        prior = self.calendar.previous_session(today).isoformat()
+        total, fallbacks = snap.cash, []
+        quotes = self.reader.quotes(list(snap.held)) if snap.held else {}
+        for symbol, quantity in snap.held.items():
+            quote = quotes.get(symbol, {})
+            price = ZERO
+            if quote.get("previous_close_date") == prior:
+                price = _d(quote.get("adjusted_previous_close") or quote.get("previous_close"))
+            if price <= 0 and _ny_date(quote.get("venue_last_trade_time")) == prior:
+                price = _d(quote.get("last_trade_price"))
+            if price <= 0:
+                bid, ask, last = _d(quote.get("bid_price")), _d(quote.get("ask_price")), _d(quote.get("last_trade_price"))
+                price = (bid + ask) / 2 if bid > 0 and ask >= bid else last
+                fallbacks.append(symbol)
+            total += quantity * price
+        options = snap.options or {}
+        natives = {p["option_id"]: p for p in self.e.get("positions", {}).values()
+                   if p.get("copy") == "native" and p.get("option_id") in options}
+        option_quotes = self.reader.option_quotes(list(options)) if options else {}
+        for option_id, contracts in options.items():
+            quote = option_quotes.get(option_id, {})
+            price = _d(quote.get("previous_close_price")) if quote.get("previous_close_date") == prior else ZERO
+            if price <= 0:
+                bid, ask = _d(quote.get("bid_price")), _d(quote.get("ask_price"))
+                price = (bid + ask) / 2 if bid > 0 and ask >= bid else ZERO
+                fallbacks.append((snap.option_names or {}).get(option_id, option_id))
+            total += contracts * price * int((natives.get(option_id) or {}).get("multiplier") or 100)
+        if fallbacks:
+            self.ledger.append("day_start_fallback", prior_session=prior, held=[str(f) for f in fallbacks])
+            self._card("today's loss-limit baseline used a current price", cards.LOOK,
+                       [f"No prior close from {prior} for {', '.join(str(f) for f in fallbacks)}: valued at its "
+                        f"current price in today's baseline of {cards.usd(float(total))}.",
+                        "The 4% daily loss limit is measured from the prior session's close (ruling 2026-11-12)."],
+                       look_at="the live account's holdings at the open")
+            return total, "prior_close_with_fallback"
+        return total, "prior_close"
 
     def _stray(self) -> None:
         """A working order an earlier process left in the state file. Its gate
@@ -1367,8 +1431,8 @@ class LiveMirror:
                 self.e["daily_halt"] = self._today().isoformat()
                 self.ledger.append("daily_loss_limit", equity=snap.equity, day_start=day_start)
                 self._card("the live daily loss limit was hit", cards.LOOK,
-                           [f"Equity {cards.usd(float(snap.equity))} is 4% or more below today's start of "
-                            f"{cards.usd(float(day_start))}.", "No new live entries today; exits keep running."],
+                           [f"Equity {cards.usd(float(snap.equity))} is 4% or more below the prior session's "
+                            f"close of {cards.usd(float(day_start))}.", "No new live entries today; exits keep running."],
                            look_at="the live account's losses today")
                 self._save()
             return "the daily loss limit (4%)"

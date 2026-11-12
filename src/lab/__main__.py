@@ -239,15 +239,34 @@ def _ai_parts(account: LabAccount, config: LabConfig):
     from lab.llm import LabLLM
 
     prices = AlpacaPriceSource(api_key=account.api_key, api_secret=account.api_secret)
-
-    def quotes(symbol: str):
-        ask, bid = prices(symbol), prices.bid(symbol)
-        if ask is None or bid is None or bid <= 0 or ask < bid:
-            return None
-        return bid, ask
-
+    # (bid, ask) of ONE quote (2026-11-12: two reads could pair one quote's
+    # ask with another's bid), for pricing the orders themselves
+    quotes = prices.sides
     chain = AlpacaOptionsChain(api_key=account.api_key, api_secret=account.api_secret)
     return quotes, chain, LabLLM(config.ai_trader)
+
+
+def _ai_reader(quotes, account: LabAccount):
+    """The quote rule for stops, targets and levels (human ruling 2026-11-12,
+    item 1): the main book's reader over one quote and the last trade."""
+    from execution import AlpacaPriceSource
+    from execution.quotes import QuoteReader
+
+    prices = AlpacaPriceSource(api_key=account.api_key, api_secret=account.api_secret)
+    return QuoteReader(lambda symbol: None, sides=quotes, last_trade=prices.last_trade, engine="AI trader")
+
+
+def _catalyst_clock(account: LabAccount, config: LabConfig, calendar):
+    """Move since public (ruling 2026-11-12, item 4), logged only: the news
+    and bars on Alpaca's data host, with this account's own keys."""
+    import httpx
+
+    from execution.market_data import DATA_BASE_URL
+    from lab.catalyst_clock import CatalystClock
+
+    client = httpx.Client(base_url=DATA_BASE_URL, timeout=15.0, headers={
+        "APCA-API-KEY-ID": account.api_key, "APCA-API-SECRET-KEY": account.api_secret})
+    return CatalystClock(config.ai_trader.move_since_public, client, calendar=calendar)
 
 
 def brief_renderer(ai_config):
@@ -303,9 +322,11 @@ def run_session(name: str) -> int:
             label, float(adjusted), float(face), [(s, float(f), float(share)) for s, f, share in contributors],
             float(config.ai_trader.leverage_alert_above), float(config.ai_trader.leverage_alert_rearm_below)))
 
+    calendar = _calendar(account.api_key, account.api_secret, f"{label} calendar")
     trader = AiTrader(account, config.ai_trader, llm=llm, quotes=quotes, chain=chain, alert=kill_switch,
                       leverage_alert=leverage_watch, brief=brief_renderer(config.ai_trader),
-                      calendar=_calendar(account.api_key, account.api_secret, f"{label} calendar"))
+                      calendar=calendar, reader=_ai_reader(quotes, account),
+                      catalyst_clock=_catalyst_clock(account, config, calendar))
     holder["trader"] = trader
     try:
         clock = account.adapter.market_clock()

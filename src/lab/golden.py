@@ -13,9 +13,11 @@ Graded HARD (the prompt states these as rules): the report tool is called;
 no more ideas than the case allows; no held or traded symbol; no forbidden
 horizon; every idea gives its stop and target as positive percentage
 distances (ruling 2026-10-10: levels come from the live quote, never from a
-price the model cites). REPORTED, not graded: the rules engine's acceptance
-of each idea (reward:risk, stop band, confidence floor), each idea's
-price_seen, and the pass cost.
+price the model cites); every idea carries a theme from the configured list
+(ruling 2026-11-12, item 2: the concentration cap reads it). REPORTED, not
+graded: the rules engine's acceptance of each idea (reward:risk, stop band,
+confidence floor, one bet per sector or theme), each idea's price_seen, and
+the pass cost.
 """
 from __future__ import annotations
 
@@ -88,7 +90,7 @@ def run_case(case: dict, config: AiTraderConfig, llm: Any, day: date, brief: Any
             pid = f"held{i}"
             account.ledger.append("position_opened", pid=pid, symbol=held["symbol"], instrument=held["instrument"],
                                   horizon=held["horizon"], stop=held["stop"], target=held["target"],
-                                  thesis=held.get("thesis", ""))
+                                  thesis=held.get("thesis", ""), theme=held.get("theme"))
             account.ledger.append("settled", order_id=f"g{i}", pid=pid, side="buy", filled_qty="1", avg_price="1")
         for i, symbol in enumerate(case.get("traded_today") or []):
             pid = f"traded{i}"
@@ -124,6 +126,8 @@ def run_case(case: dict, config: AiTraderConfig, llm: Any, day: date, brief: Any
         if not valid:
             failures.append(f"{symbol}: stop_pct/target_pct are not positive percentage distances "
                             f"({idea.get('stop_pct')!r} / {idea.get('target_pct')!r})")
+        if idea.get("theme") not in config.concentration.themes:
+            failures.append(f"{symbol}: theme {idea.get('theme')!r} is not one of the configured themes")
         # with the brief on (ruling 2026-10-15) the prompt makes these rules:
         # every idea says how it used the brief, and a use names its items
         if outcome.brief_arm == "brief":
@@ -153,6 +157,7 @@ def render(results: list[CaseResult], day: date) -> str:
             lines.append(f"        engine rejected {symbol}: {reason}")
         for idea in r.ideas:
             lines.append(f"        idea {idea.get('symbol')} {idea.get('instrument')} {idea.get('horizon')} "
+                         f"theme {idea.get('theme')} "
                          f"stop {idea.get('stop_pct')}% target {idea.get('target_pct')}% seen {idea.get('price_seen')} "
                          f"conf {idea.get('confidence')}: {str(idea.get('thesis', ''))[:140]}")
             if "brief_use" in idea:

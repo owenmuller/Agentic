@@ -42,6 +42,7 @@ class Reader:
         self.contracts: dict[str, dict] = {}       # option instrument id -> its row
         self.option_book: dict[str, tuple] = {}    # option instrument id -> (bid, ask)
         self.option_held: dict[str, str] = {}      # option instrument id -> contracts
+        self.closes: dict[str, dict] = {}          # symbol -> previous_close fields of its quote
 
     def add_contract(self, option_id, occ, bid, ask, open_interest=1000):
         from execution.robinhood import occ_parts
@@ -81,7 +82,7 @@ class Reader:
 
     def quotes(self, symbols):
         return {s: {"symbol": s, "bid_price": self.book[s][0], "ask_price": self.book[s][1],
-                    "last_trade_price": self.book[s][2]} for s in symbols if s in self.book}
+                    "last_trade_price": self.book[s][2], **self.closes.get(s, {})} for s in symbols if s in self.book}
 
     def approvals_required(self):
         return self.approvals
@@ -280,6 +281,47 @@ def test_the_kill_switch_on_starting_equity_and_the_daily_loss_limit_block_entri
     mirror.tick()
     assert mirror.state.kill_switch_tripped and "kill switch" in mirror.ledger.events(["skip"])[-1]["why"]
     assert any(c.status == cards.ACTION and "kill switch" in c.happened for c in seen)
+
+
+def _held_overnight(tmp_path, config, closes):
+    """$600 cash and 1 UNH (bid 399.80, ask 400.00, last 399.90) at Wednesday's start."""
+    reader = Reader(cash="600", total="999.90")
+    reader.held = {"UNH": "1"}
+    reader.closes = {"UNH": closes}
+    mirror, seen, clock = build(tmp_path, config, reader)
+    mirror.start()
+    return mirror, seen, reader
+
+
+def test_the_daily_loss_baseline_is_the_prior_sessions_close(tmp_path, config):
+    """Human ruling 2026-11-12, item 5: on 11-12 the start-of-session read
+    ($1,028.44) already held part of the overnight gap; the prior close
+    ($1,037.60) is the less-risk baseline."""
+    mirror, seen, reader = _held_overnight(tmp_path, config, {
+        "previous_close": "420.00", "adjusted_previous_close": "420.00", "previous_close_date": "2026-11-03"})
+    assert D(mirror.e["day_start_equity"]) == D("1020.00") and mirror.e["day_start_basis"] == "prior_close"
+    assert mirror.ledger.events(["session_start"])[-1]["day_start_basis"] == "prior_close"
+    assert mirror._entries_blocked(mirror.snapshot()) is None          # 999.90: 2.0% under the close
+    assert not seen                                                    # a full baseline: no card
+    reader.total = "979.10"                                            # 4.01% under 1,020.00
+    assert mirror._entries_blocked(mirror.snapshot()) == "the daily loss limit (4%)"
+    assert "prior session's close of $1,020" in " ".join(seen[-1].lines)
+
+
+def test_a_stale_prior_close_falls_back_to_that_sessions_last_regular_trade(tmp_path, config):
+    mirror, seen, _ = _held_overnight(tmp_path, config, {
+        "previous_close": "390.00", "previous_close_date": "2026-11-02",           # Monday's: stale
+        "last_trade_price": "415.00", "venue_last_trade_time": "2026-11-03T20:59:59.993031392Z"})
+    assert D(mirror.e["day_start_equity"]) == D("1015.00") and mirror.e["day_start_basis"] == "prior_close"
+    assert not seen
+
+
+def test_with_no_prior_close_the_current_price_stands_in_and_a_card_says_so(tmp_path, config):
+    mirror, seen, _ = _held_overnight(tmp_path, config, {})
+    assert D(mirror.e["day_start_equity"]) == D("999.90")              # 600 + the mid 399.90
+    assert mirror.e["day_start_basis"] == "prior_close_with_fallback"
+    assert [c.happened for c in seen] == ["today's loss-limit baseline used a current price"]
+    assert mirror.ledger.events(["day_start_fallback"])[-1]["held"] == ["UNH"]
 
 
 def test_a_late_copy_is_skipped_not_chased(tmp_path, config):

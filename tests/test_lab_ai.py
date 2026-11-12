@@ -14,7 +14,7 @@ import pytest
 from execution.base import BrokerPosition, OrderReceipt, OrderStatus
 from lab import golden as golden_replay
 from lab.account import open_account, parse_occ
-from lab.ai_prompts import TOOL, HeldView, build_user, system_prompt
+from lab.ai_prompts import TOOL, HeldView, build_user, report_tool, system_prompt
 from lab.ai_trader import NY, AiTrader, Position, replay_positions, select_contract, sessions_between
 from lab.config import LabConfig
 from lab.llm import PassResult
@@ -70,7 +70,7 @@ def test_the_prompt_never_carries_pnl_nav_or_prices_of_held_positions():
     """CLAUDE.md § Standards: the model is never told performance. A held
     position renders without any current price, cost or P&L."""
     assert {f for f in HeldView.__dataclass_fields__} == {
-        "symbol", "instrument", "horizon", "opened", "stop", "target", "thesis"}
+        "symbol", "instrument", "horizon", "opened", "stop", "target", "thesis", "theme"}
     text = build_user(et(12, "10:00"), held=[HeldView("NVDA", "stock", "days", "2026-10-12", "160", "190", "capex")],
                       traded_today=["TSLA"], max_positions=5, max_ideas=3, entries_open=True, intraday_open=True)
     for word in ("P&L", "NAV", "equity", "profit", "return", "drawdown", "performance", "behind", "target return"):
@@ -224,7 +224,7 @@ def trader_for(world, tmp_path, llm=None, clock=None):
                     sleep=lambda s: None, monotonic=lambda: next(ticker))
 
 
-AAPL_LONG = {"symbol": "AAPL", "instrument": "stock", "horizon": "days",
+AAPL_LONG = {"symbol": "AAPL", "instrument": "stock", "horizon": "days", "theme": "software_internet",
              "stop_pct": 3, "target_pct": 7.5, "confidence": 70, "thesis": "t", "source": "s", "invalidation": "i"}
 # live AAPL mid 200.05: stop 200.05 x 0.97 = 194.04 (down), target x 1.075 = 215.06 (up)
 
@@ -711,7 +711,7 @@ def test_the_control_arm_is_byte_identical_to_no_brief_but_still_logs_the_shortl
     trader.tick(et(12, "09:46"))
     off, off_llm = _brief_trader(lab_env / "off", [AAPL_LONG], "off")
     off.tick(et(12, "09:46"))
-    assert llm.tools[0] is TOOL and llm.systems[0] == off_llm.systems[0] and llm.calls[0] == off_llm.calls[0]
+    assert llm.tools[0] == off_llm.tools[0] and "brief_use" not in str(llm.tools[0]) and llm.systems[0] == off_llm.systems[0] and llm.calls[0] == off_llm.calls[0]
     passes = trader.account.ledger.events(["llm_pass"])
     assert passes[0]["brief_arm"] == "control" and passes[0]["brief"]["sent"] is False
     assert passes[0]["ideas_on_shortlist"] == [True]  # measured in both arms
@@ -733,7 +733,7 @@ def test_with_the_brief_off_nothing_is_rendered(lab_env):
     trader = trader_for(world, lab_env, llm)
     trader._brief = lambda: (_ for _ in ()).throw(AssertionError("rendered while off"))
     trader.tick(et(12, "09:46"))
-    assert llm.tools[0] is TOOL and "RESEARCH BRIEF" not in llm.systems[0] and "RESEARCH BRIEF" not in llm.calls[0]
+    assert llm.tools[0] == report_tool(False, list(CFG.concentration.themes)) and "RESEARCH BRIEF" not in llm.systems[0] and "RESEARCH BRIEF" not in llm.calls[0]
     event = trader.account.ledger.events(["llm_pass"])[0]
     assert event["brief"] is None and event["brief_arm"] is None
 
@@ -764,8 +764,12 @@ def bare_trader(calendar=None):
     """The exit and validation rules alone: no account, no model."""
     from execution.market_calendar import MarketCalendar
 
+    from execution.quotes import QuoteReader
+
     trader = object.__new__(AiTrader)
     trader.config, trader._quotes = CFG, (lambda s: (D(100), D(100)))
+    trader._reader = QuoteReader(lambda s: None, sides=trader._quotes)
+    trader._shadowed = set()
     trader.calendar = calendar or MarketCalendar.weekdays()
     return trader
 

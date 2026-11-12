@@ -214,8 +214,13 @@ ai_trader:
   fill_wait_seconds: 90
   options:
     # Long calls/puts only; premium is the whole risk (2% of NAV of premium).
-    # 0DTE allowed for intraday ideas (spec).
-    dte: {intraday: [0, 2], days: [2, 14], weeks: [7, 45]}
+    # 0DTE allowed for intraday ideas (spec). "days" and "weeks" carry at least
+    # 7 days to expiry (human ruling 2026-11-12, item 3; the config refuses
+    # less): the 11-11 calls had 2 and lost 94-99% on a 4-8% move.
+    dte: {intraday: [0, 2], days: [7, 14], weeks: [7, 45]}
+    # The window before that ruling: the contract it would have picked is
+    # priced at entry and at exit beside every such option, logged only.
+    counterfactual_dte: {days: [2, 14]}
     delta_min: 0.40
     delta_max: 0.70
     target_delta: 0.55
@@ -223,6 +228,44 @@ ai_trader:
     max_spread_pct_of_mid: 0.15
     max_iv_percentile: 0.95
     expiry_close: "15:45"
+  # One bet per sector or theme (human ruling 2026-11-12, item 2, a live rule):
+  # no new position whose sector (config/sectors.yaml) or theme (the model's
+  # tag, from this list) is already held or already proposed earlier in the
+  # same pass, and at most one new option per scan. Each refusal is logged
+  # with its reason and the idea's levels, so the shadow can score it.
+  concentration:
+    max_new_options_per_scan: 1
+    themes:
+      ai_semis: "AI, semiconductors, chip equipment, data-center hardware, networking, optical and power built for AI"
+      software_internet: "software, cloud services, internet platforms, digital advertising"
+      consumer: "retail, restaurants, consumer brands, travel, leisure, e-commerce"
+      autos_ev: "automakers, electric vehicles, auto parts"
+      financials: "banks, brokers, insurers, payments, fintech, asset managers"
+      crypto: "crypto assets and crypto-linked stocks and funds"
+      healthcare: "pharma, biotech, medical devices, health insurers and providers"
+      energy: "oil, gas, refiners, oilfield services, pipelines"
+      clean_energy: "solar, wind, batteries, hydrogen, nuclear"
+      materials: "metals, mining, steel, chemicals"
+      precious_metals: "gold, silver and their funds"
+      industrials_defense: "industrials, machinery, aerospace, defense, space, transports"
+      real_estate_housing: "REITs, homebuilders, housing"
+      media_telecom: "media, entertainment, video games, telecom"
+      utilities: "regulated utilities"
+      rates_bonds: "Treasury and bond funds, rate-driven plays"
+      broad_market: "index funds and index options (SPY, QQQ, IWM and their leveraged or inverse funds), market-wide bets"
+      other: "none of the above"
+  # Move since public (human ruling 2026-11-12, item 4): LOGGED ONLY. Each
+  # proposed idea's catalyst is timed from the news feed and the move since
+  # then is measured; the shadow notes "skip if the move > 1 x ATR(14)".
+  move_since_public:
+    enabled: true
+    news_lookback_hours: 96
+    min_word_overlap: 2
+    skip_above_atr: 1.0
+  # The "would exit" shadow (human ruling 2026-11-12, item 1): 10 sessions
+  # from 2026-11-13 (Nov 27 is a holiday), then the full-market replay is
+  # proposed for the wider-stops question (item 6).
+  exit_shadow_until: 2026-11-26
 
 # THE LIVE MIRROR (GO LIVE, human ruling 2026-11-04; CLAUDE.md § Live Mirror).
 # REAL MONEY on the dedicated Robinhood Agentic account. It copies the paper AI

@@ -4167,6 +4167,28 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-12 (evening) — AI trader review (Nov 4-12) and its rulings, built
+
+**The review (report only, read-only scripts in `~/scratch/review/` on the droplet):** paper AI trader -4.65% vs SPY +0.37% over 11-03 close to 11-12 close; 17 closed new entries, 3 won (18%), average win $2,421, average loss $746, net -$3,180 (with carry-ins -$1,382). Live mirror down about 6.9% ($1,050 -> about $977), its trades only on 11-11/12.
+- **Concentration:** the 11-11 12:00 pass bought NVDA, TER and GLW calls (2, 9 and 2 DTE) on one AI-chip theme into the running NVDA CEO story; the 11-12 open stopped all three for -$4,622, about 95% of the week's NAV drop.
+- **Late:** all 20 dated catalysts were released outside market hours; median 5.3% of the move gone at the open, 6.5% at entry; the fixed schedule cost 15 min each, later scans a median 135 min (+1.7 points); after entry a median -0.97 points vs SPY by the close (12 of 20 negative, p 0.25).
+- **Phantom exits (defect):** 9 of 17 stop/target exits fired on a wide IEX quote's mid at a level the SIP tape never traded (CPAY 430.62 x 461.36, TRMK 47.88 x 54.78, OSCR, FIGR, COP, TTWO, GLD, TAN, SHOP); about net zero in dollars that week, but the stop rule was unmeasurable and three live copies closed on them. 5 of 20 anchors sat more than 1.5% off the fill (LUNR: an "8%" stop 14% away).
+- **Variance:** P(3 or fewer wins of 17 at a 37% rate) = 0.076. Since start the trader is +1.05% vs SPY -2.68%; single-name picks -$2,754 (29% win), fund and market bets +$4,195.
+- **Live loss limit:** measured from the 09:30 read ($1,028.44), already into the gap; from the prior close ($1,037.60) TRMK and FIGR (-$5.75) would have been blocked by about $0.41.
+- **Learning loop:** "long after a gap-up" at n = 9 (median -1.48 vs SPY, 2 of 9 beat it), not yet 20; no hypotheses, no playbook. A/B flag: brief arm 0.72 vs control 1.25 ideas a pass.
+
+**Rulings (human, 2026-11-12) and what was built** (CLAUDE.md § 2b "AI trader review rulings" and § Live Mirror):
+1. Quote rule for stops, targets and levels: `QuoteReader` moved to `execution/quotes.py` (the lab may not import the orchestrator; `orchestrator/quotes.py` re-exports it, the main book's engines untouched) with a full `Reading` (bid, ask, value, trigger, last, wide). `lab.ai_trader.price_exit`: a long's stop on the trigger (tight bid, else last trade); everything else on the tight mid, else the last trade; nothing on a wide quote's mid. Levels from the tight mid, else the last trade (`anchor_source` on the plan); neither: the entry is refused. The live trader reads ONE quote for its orders (`prices.sides`, before two reads that could pair different quotes). `exit_shadow` rows through 2026-11-26.
+2. One bet per sector or theme, at most one new option per scan (live rule): the model tags each idea with a `theme` from `lab.yaml ai_trader.concentration.themes` (18 names incl. `other`; the tool requires it, the engine refuses a missing or unlisted one); the sector is the gate's `SectorMap`. Every earlier idea in the pass counts, taken or refused (my stricter reading, flagged). Refusals log `code: concentration` and the levels the idea would have had. Held positions show their theme in the prompt.
+3. `dte.days` [2, 14] -> [7, 14] (weeks was [7, 45]); `AiOptionsConfig` refuses under 7 for days/weeks; the system prompt states it. `expiry_counterfactual` rows: the old window's contract at entry, then marked at our exit or its own expiry close.
+4. `lab/catalyst_clock.py` (logged only): Alpaca news (96 h lookback, 2+ shared significant words, no match = no time), the minute bar for an in-session release else the prior close, move in the idea's direction, ATR(14) from prior sessions, `would_skip` at > 1 x ATR. Runs after the scan's entries; failures are rows plus a data card.
+5. Live mirror: `day_start_equity` = cash + holdings at the prior close (split-adjusted previous close dated the prior session, else its last regular trade, else the current price with a yellow card and a `day_start_fallback` row); `day_start_basis` on the state and the `session_start` row; the loss-limit card names the prior close.
+6. Wider stops deferred until item 1 has run 10 sessions. 7. A/B to 60 sessions; the Friday scoreboard already reports the arms' idea rates.
+
+Tests: `tests/test_lab_ai_review.py` (17), `tests/test_lab_catalyst_clock.py` (6), three live-baseline tests in `tests/test_live_mirror.py`; existing fixtures carry a theme.
+
+Golden replay on the change (production request path, scratch copy with `PYTHONPATH=src`, module path printed): without the brief 5/5 ($0.75), with it 5/5 ($0.83). Every idea carried a listed theme. The engine refused AMAT behind CRWV (both ai_semis) and five second options in a scan (XLE, GLD, MSTR, AMAT, RGLD): the option limit binds often, because most ideas are options.
+
 ### 2026-11-11 (afternoon, later) — the 10:30 ET error card: one dropped X connection; the X fetcher now retries it once
 
 - The card: main book, #urgent, "source unusual_whales failed to fetch: RemoteProtocolError: Server disconnected without sending a response" (run log 15:30:09 UTC). The X API closed the connection on one recent-search poll. Once only; the next poll (15:33:46 UTC) read the account normally (1 post, forward_call). since_id never moved on the failure, so no post was missed.

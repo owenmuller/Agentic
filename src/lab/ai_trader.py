@@ -22,10 +22,17 @@ THE RULES ENGINE (this module) decides everything else, deterministically:
             2026-10-10 until stop slippage is measured); target distance >=
             min_reward_risk x stop distance; an intraday idea arrives before
             15:15 ET; no new entry after 15:30 ET; kill switch and halt clear.
-  levels    stop and target are set from the LIVE mid at order time, at the
-            stated distances; the gap between that mid and any price the model
-            cites (price_seen, $-figures in its thesis) is logged
-            (``anchor_check``), never used.
+  levels    stop and target are set from the LIVE price at order time, at the
+            stated distances; the gap between that price and any price the
+            model cites (price_seen, $-figures in its thesis) is logged
+            (``anchor_check``), never used. The live price is read by the main
+            book's quote rule (human ruling 2026-11-12, item 1;
+            ``execution.quotes``): the mid of a quote no wider than 2%, else
+            the last trade, never a wide quote's mid. Neither: no entry.
+  one bet   no new position whose sector (the gate's map) or theme (the
+            model's tag, from a configured list) is already held or already
+            proposed earlier in the same pass; at most one new option per
+            scan (human ruling 2026-11-12, item 2).
   size      2% of the account's NAV at risk: shares = budget / (limit - stop)
             for a stock or ETF (capped by the gate's single-position cap and
             the cash), contracts = floor(budget / premium) for an option -
@@ -34,10 +41,20 @@ THE RULES ENGINE (this module) decides everything else, deterministically:
             horizon's DTE window (0DTE allowed intraday), |delta| in the band
             closest to the target delta, open interest and spread floors, IV
             percentile ceiling. Never the model's choice of strike.
-  exit      the stop or target touched (underlying mid, every tick); the
-            horizon ended (intraday at 15:50 ET; days/weeks after 5/20
-            sessions, at 15:50); an option on its expiry day or the session
-            before it, at 15:45 ET. Marketable limits, re-priced until filled.
+  exit      the stop or target touched on the underlying, every tick, by the
+            quote rule: a long's stop on the bid of a tight quote, else the
+            last trade; anything else on the mid of a tight quote, else the
+            last trade (human ruling 2026-11-12, item 1: 9 of 17 exits in the
+            review fired on a wide IEX quote's mid at a price that never
+            traded); the horizon ended (intraday at 15:50 ET; days/weeks after
+            5/20 sessions, at 15:50); an option on its expiry day or the
+            session before it, at 15:45 ET. Marketable limits, re-priced
+            until filled. Through ``exit_shadow_until`` the old rule's verdict
+            is logged wherever it disagrees (``exit_shadow``).
+  logged    beside the rules, never deciding (same ruling, items 2-4): the
+            contract the old DTE window would have bought, priced at entry
+            and at exit (``expiry_counterfactual``); each idea's move since
+            its catalyst went public (``move_since_public``).
   refuse    every order passes this account's own RiskGate first.
 
 Spend: every pass is metered (tokens priced from research.yaml + $0.01 per
@@ -62,12 +79,14 @@ import datahealth
 from execution import BrokerError
 from execution.base import OrderStatus
 from execution.market_calendar import MarketCalendar
+from execution.quotes import QuoteReader, Reading
 from lab.account import LabAccount
 from lab.ai_prompts import HORIZONS, INSTRUMENTS, HeldView, build_user, report_tool, system_prompt
 from lab.brief import BEGIN as BRIEF_BEGIN, END as BRIEF_END, Brief
 from lab import leverage
 from lab.config import AiTraderConfig
 from risk_gate.gate import ApprovedOrder, RiskGate
+from risk_gate.sectors import SectorMap
 from risk_gate.schema import (
     EquityBuyOrder,
     EquitySellToCloseOrder,
@@ -121,6 +140,8 @@ class Position:
     right: Optional[str] = None
     strike: Optional[Decimal] = None
     quantity: Decimal = ZERO
+    #: the theme it was opened under (ruling 2026-11-12, item 2); None before
+    theme: Optional[str] = None
 
     @property
     def trade_symbol(self) -> str:
@@ -144,12 +165,49 @@ def replay_positions(events: list[dict]) -> dict[str, Position]:
                 thesis=event.get("thesis", ""), opened_at=event["at"], occ=event.get("occ"),
                 expiry=date.fromisoformat(event["expiry"]) if event.get("expiry") else None,
                 right=event.get("right"), strike=Decimal(event["strike"]) if event.get("strike") else None,
+                theme=event.get("theme"),
             )
         elif kind == "settled" and event.get("pid") in positions:
             filled = Decimal(event["filled_qty"])
             sign = Decimal(1) if event["side"] == "buy" else Decimal(-1)
             positions[event["pid"]].quantity += sign * filled
     return {pid: p for pid, p in positions.items() if p.quantity > ZERO}
+
+
+def price_exit(position: Position, reading: Reading) -> Optional[str]:
+    """The stop or the target by the quote rule (human ruling 2026-11-12,
+    item 1; the main book's rule of 2026-11-04): a long's stop compares the
+    TRIGGER (the bid of a tight quote, else the last trade); everything else
+    compares the mid of a tight quote, else the last trade. A wide quote's
+    mid never counts; with no usable price nothing fires this tick."""
+    price = reading.value if reading.value is not None else reading.last
+    if bullish(position.instrument):
+        if reading.trigger is not None and reading.trigger <= position.stop:
+            return "stop"
+        if price is not None and price >= position.target:
+            return "target"
+    else:
+        if price is not None and price >= position.stop:
+            return "stop"
+        if price is not None and price <= position.target:
+            return "target"
+    return None
+
+
+def old_price_exit(position: Position, reading: Reading) -> Optional[str]:
+    """The rule before 2026-11-12, for the "would exit" shadow only: the mid
+    of any quote, however wide."""
+    if reading.bid is None or reading.ask is None:
+        return None
+    mid = (reading.bid + reading.ask) / 2
+    if bullish(position.instrument):
+        return "stop" if mid <= position.stop else "target" if mid >= position.target else None
+    return "stop" if mid >= position.stop else "target" if mid <= position.target else None
+
+
+def usable_price(reading: Reading) -> Optional[Decimal]:
+    """What a level is set from: the mid of a tight quote, else the last trade."""
+    return reading.value if reading.value is not None else reading.last
 
 
 @dataclass(frozen=True)
@@ -198,8 +256,24 @@ class AiTrader:
         brief: Optional[Callable[[], Brief]] = None,
         coin: Callable[[], float] = random.random,
         calendar: Optional[MarketCalendar] = None,
+        reader: Optional[QuoteReader] = None,
+        sectors: Optional[SectorMap] = None,
+        catalyst_clock: Any = None,
     ) -> None:
         self.account = account
+        #: Prices by the main book's quote rule (human ruling 2026-11-12, item
+        #: 1): stops, targets and the levels. ``quotes`` (raw bid/ask) still
+        #: prices the orders themselves. Default: the rule over ``quotes``
+        #: with no last trade (a wide or missing quote then fires nothing).
+        self._reader = reader or QuoteReader(lambda symbol: None, sides=quotes, engine="AI trader")
+        #: The gate's sector map: the concentration cap's sector (ruling
+        #: 2026-11-12, item 2); an unmapped name is its own sector.
+        self._sectors = sectors or SectorMap.load()
+        #: Move since public (ruling 2026-11-12, item 4), logged only; None: off.
+        self._catalyst_clock = catalyst_clock
+        self._shadowed: set[tuple] = set()
+        self._options_this_scan = 0
+        self._opened_pids: dict[str, str] = {}
         #: Sessions and closes (sweep 2026-11-10): every cutoff below moves with
         #: the day's own close. None: every weekday a regular session (tests).
         self.calendar = calendar or MarketCalendar.weekdays()
@@ -314,6 +388,7 @@ class AiTrader:
             reason = self.exit_reason(position, now)
             if reason:
                 self.close(position, reason, now)
+        self._counterfactual_expiries(now)
         due = self._due_scan(now)
         if due is not None:
             self.scan(now, label=due)
@@ -412,21 +487,33 @@ class AiTrader:
                 held == cfg.horizon_sessions[position.horizon] and local >= self.cut(today, cfg.intraday_close)
             ):
                 return "horizon_end"
-        quote = self._quotes(position.symbol)
-        if quote is None:
-            return None
-        mid = (quote[0] + quote[1]) / 2
-        if bullish(position.instrument):
-            if mid <= position.stop:
-                return "stop"
-            if mid >= position.target:
-                return "target"
-        else:
-            if mid >= position.stop:
-                return "stop"
-            if mid <= position.target:
-                return "target"
-        return None
+        reading = self._reader.quote(position.symbol)
+        reason = price_exit(position, reading)
+        self._exit_shadow(position, reading, reason, local)
+        return reason
+
+    def _exit_shadow(self, position: Position, reading: Reading, new: Optional[str], local: datetime) -> None:
+        """The "would exit" shadow (human ruling 2026-11-12, item 1): through
+        ``exit_shadow_until``, where the OLD rule (a wide quote's mid) and the
+        new one disagree, one row per position, pair and day - what the old
+        rule would have done and the quote that would have done it."""
+        until = self.config.exit_shadow_until
+        if until is None or local.date() > until:
+            return
+        old = old_price_exit(position, reading)
+        if old == new:
+            return
+        key = (position.pid, old, new, local.date())
+        if key in self._shadowed:
+            return
+        self._shadowed.add(key)
+        spread = None
+        if reading.bid is not None and reading.ask is not None and reading.bid + reading.ask > 0:
+            spread = str(round((reading.ask - reading.bid) / ((reading.ask + reading.bid) / 2), 5))
+        self.account.ledger.append(
+            "exit_shadow", pid=position.pid, symbol=position.symbol, instrument=position.instrument,
+            old_rule=old, new_rule=new, bid=reading.bid, ask=reading.ask, spread=spread, value=reading.value,
+            trigger=reading.trigger, last=reading.last, wide=reading.wide, stop=position.stop, target=position.target)
 
     def close(self, position: Position, reason: str, now: datetime) -> None:
         deadline = self._monotonic() + self.config.fill_wait_seconds
@@ -455,6 +542,7 @@ class AiTrader:
             self.account.ledger.append("position_closed", pid=position.pid, symbol=position.trade_symbol,
                                        reason=reason)
             self.notes.append(f"closed {position.trade_symbol} ({reason})")
+            self._counterfactual_mark(position.pid, f"exit: {reason}")
         else:
             self._fault(f"{reason} exit of {position.trade_symbol}: {remaining} left unfilled; retried next tick")
 
@@ -497,7 +585,7 @@ class AiTrader:
         user = self.user_prompt(now, held, brief=brief)
         try:
             result = self.llm.scan(system=system_prompt(cfg, brief=brief is not None), user=user,
-                                   tool=report_tool(brief is not None))
+                                   tool=report_tool(brief is not None, list(cfg.concentration.themes)))
         except Exception as error:  # noqa: BLE001 - a failed pass is a fault, never a trade
             self._fault(f"scan {label}: the model pass failed ({type(error).__name__}: {str(error)[:200]}); "
                         f"nothing traded")
@@ -526,31 +614,54 @@ class AiTrader:
             self._fault(f"scan {label}: the model returned no report ({result.stop_reason}); nothing traded")
             return outcome
         taken: list[str] = [p.symbol for p in held] + self.traded_today(day)
+        # one bet per sector or theme (ruling 2026-11-12, item 2): what is held,
+        # and what earlier ideas in this pass proposed (accepted or not)
+        held_keys: dict[tuple[str, str], str] = {}
+        for position in held:
+            for key in self.concentration_keys(position.symbol, position.theme):
+                held_keys.setdefault(key, position.symbol)
+        pass_keys: dict[tuple[str, str], str] = {}
+        self._options_this_scan = 0
+        self._opened_pids = {}
+        anchors: dict[str, Optional[Decimal]] = {}
         for idea in ideas:
-            if not dry_run:
-                quote = self._quotes(str(idea.get("symbol", "")).upper().strip()) if _SYMBOL.match(
-                    str(idea.get("symbol", "")).upper().strip()) else None
-                if quote is not None:
+            symbol = str(idea.get("symbol", "")).upper().strip()
+            keys = self.concentration_keys(symbol, idea.get("theme")) if _SYMBOL.match(symbol) else set()
+            if not dry_run and _SYMBOL.match(symbol):
+                anchors[symbol] = usable_price(self._reader.quote(symbol))
+                if anchors[symbol] is not None:
                     self.account.ledger.append("anchor_check", scan=label, symbol=idea.get("symbol"),
-                                               **self.anchor_check(idea, (quote[0] + quote[1]) / 2))
+                                               **self.anchor_check(idea, anchors[symbol]))
             verdict = self.validate(idea, now, taken, slots=cfg.max_positions - len(held) - len(outcome.opened),
                                     live=not dry_run)
+            if verdict.ok:
+                verdict = self.concentration(idea, keys, held_keys, pass_keys)
+            for key in keys:    # proposed: it now counts against every later idea in this pass
+                pass_keys.setdefault(key, symbol)
             if not verdict.ok:
                 outcome.rejected.append((str(idea.get("symbol")), verdict.reason))
                 if not dry_run:
+                    extra = {}
+                    if verdict.reason.startswith("concentration"):
+                        # the levels it would have had, so the replay shadow can score it
+                        extra = dict(code="concentration", levels=self._shadow_levels(idea, anchors.get(symbol)))
                     self.account.ledger.append("idea_rejected", scan=label, symbol=idea.get("symbol"),
-                                               reason=verdict.reason, idea=idea)
+                                               reason=verdict.reason, idea=idea, **extra)
                 continue
             if dry_run:
-                outcome.opened.append(str(idea["symbol"]).upper())
-                taken.append(str(idea["symbol"]).upper())
+                outcome.opened.append(symbol)
+                taken.append(symbol)
+                if idea.get("instrument") in OPTIONS:
+                    self._options_this_scan += 1
                 continue
             opened = self._enter(idea, now, label)
             if opened is None:
                 outcome.rejected.append((str(idea.get("symbol")), "entry not filled or refused (see ledger)"))
                 continue
             outcome.opened.append(opened)
-            taken.append(str(idea["symbol"]).upper())
+            taken.append(symbol)
+        if not dry_run:
+            self._log_moves_since_public(ideas, label, now, anchors)
         self.notes.append(
             f"scan {label}: {len(ideas)} idea(s), opened {outcome.opened or 'none'}, rejected "
             f"{[f'{s}: {r}' for s, r in outcome.rejected] or 'none'}; pass cost {result.cost_usd:.3f} "
@@ -588,7 +699,8 @@ class AiTrader:
         cfg = self.config
         day = now.astimezone(NY).date()
         views = [HeldView(p.symbol, p.instrument + (f" {p.occ}" if p.occ else ""), p.horizon,
-                          p.opened_day.isoformat(), str(p.stop), str(p.target), p.thesis[:300]) for p in held]
+                          p.opened_day.isoformat(), str(p.stop), str(p.target), p.thesis[:300],
+                          theme=p.theme or "not recorded") for p in held]
         local = now.astimezone(NY)
         return build_user(
             now, held=views, traded_today=self.traded_today(day), max_positions=cfg.max_positions,
@@ -616,6 +728,9 @@ class AiTrader:
             return Verdict(False, f"malformed symbol {symbol!r}")
         if instrument not in INSTRUMENTS or horizon not in HORIZONS:
             return Verdict(False, f"unknown instrument/horizon {instrument!r}/{horizon!r}")
+        if idea.get("theme") not in cfg.concentration.themes:
+            # the cap reads it (ruling 2026-11-12, item 2): no theme, no entry
+            return Verdict(False, f"theme {idea.get('theme')!r} is not one of the configured themes")
         if slots <= 0:
             return Verdict(False, "no free slot")
         if symbol in {t.upper() for t in taken}:
@@ -645,6 +760,69 @@ class AiTrader:
         if live and self._quotes(symbol) is None:
             return Verdict(False, "no live quote for the underlying")
         return Verdict(True)
+
+    def concentration_keys(self, symbol: str, theme: Any) -> set[tuple[str, str]]:
+        """What an idea or a position occupies: its theme, and its sector when
+        the gate's map knows it (an unmapped name is its own sector, so it can
+        only collide by theme or by symbol)."""
+        keys: set[tuple[str, str]] = set()
+        if isinstance(theme, str) and theme in self.config.concentration.themes:
+            keys.add(("theme", theme))
+        sector = self._sectors.sector_of(symbol)
+        if not sector.startswith("unmapped:"):
+            keys.add(("sector", sector))
+        return keys
+
+    def concentration(self, idea: dict, keys: set[tuple[str, str]], held: dict[tuple[str, str], str],
+                      proposed: dict[tuple[str, str], str]) -> Verdict:
+        """One bet per sector or theme (human ruling 2026-11-12, item 2, a live
+        rule). "Already proposed" counts every EARLIER idea in the pass, taken
+        or refused - the stricter reading (Constraint #6), flagged."""
+        for kind, name in sorted(keys):
+            if (kind, name) in held:
+                return Verdict(False, f"concentration: {kind} {name} already held ({held[(kind, name)]})")
+            if (kind, name) in proposed:
+                return Verdict(False, f"concentration: {kind} {name} already proposed in this pass "
+                                      f"({proposed[(kind, name)]})")
+        limit = self.config.concentration.max_new_options_per_scan
+        if idea.get("instrument") in OPTIONS and self._options_this_scan >= limit:
+            return Verdict(False, f"concentration: at most {limit} new option(s) per scan")
+        return Verdict(True)
+
+    def _shadow_levels(self, idea: dict, anchor: Optional[Decimal]) -> Optional[dict]:
+        """The stop and target a refused idea would have had (for the replay shadow)."""
+        try:
+            stop_fraction = Decimal(str(idea.get("stop_pct"))) / 100
+            target_fraction = Decimal(str(idea.get("target_pct"))) / 100
+        except (ArithmeticError, ValueError, TypeError):
+            return None
+        if anchor is None or not (stop_fraction.is_finite() and target_fraction.is_finite()):
+            return None
+        stop, target = levels(str(idea.get("instrument")), anchor, stop_fraction, target_fraction)
+        return {"anchor": str(anchor), "stop": str(stop), "target": str(target)}
+
+    def _log_moves_since_public(self, ideas: list[dict], label: str, now: datetime,
+                                anchors: dict[str, Optional[Decimal]]) -> None:
+        """Move since public (human ruling 2026-11-12, item 4): one row per
+        proposed idea, taken or not. Logged only - the entries are already
+        placed when this runs, and a failure is a row, never a stopped scan."""
+        if self._catalyst_clock is None or not self.config.move_since_public.enabled:
+            return
+        for idea in ideas:
+            symbol = str(idea.get("symbol", "")).upper().strip()
+            if not _SYMBOL.match(symbol):
+                continue
+            sign = -1 if idea.get("instrument") == "put" else 1
+            row: dict[str, Any] = dict(scan=label, symbol=symbol, instrument=idea.get("instrument"),
+                                       horizon=idea.get("horizon"), pid=self._opened_pids.get(symbol),
+                                       catalyst=str(idea.get("catalyst") or "")[:300])
+            try:
+                row.update(self._catalyst_clock.measure(
+                    symbol, str(idea.get("catalyst") or idea.get("thesis") or ""), sign, now, anchors.get(symbol)))
+            except Exception as error:  # noqa: BLE001 - logged only: never stops the session
+                row.update(status="error", error=f"{type(error).__name__}: {str(error)[:200]}")
+                datahealth.report("AI trader move since public", f"{symbol}: {row['error']}")
+            self.account.ledger.append("move_since_public", **row)
 
     def anchor_check(self, idea: dict, live_mid: Decimal) -> dict:
         """Ruling 2026-10-10: log the gap between the live price and any price
@@ -685,7 +863,8 @@ class AiTrader:
                     stop_pct=str(idea["stop_pct"]), target_pct=str(idea["target_pct"]),
                     thesis=str(idea.get("thesis", ""))[:1000], source=str(idea.get("source", ""))[:1000],
                     catalyst=str(idea.get("catalyst", ""))[:500], invalidation=str(idea.get("invalidation", ""))[:500],
-                    confidence=int(idea["confidence"]), scan=label, risk_budget=budget, nav=nav)
+                    confidence=int(idea["confidence"]), scan=label, risk_budget=budget, nav=nav,
+                    theme=str(idea.get("theme")))
         if self._arm is not None:  # the A/B arm rides on the position (ruling 2026-10-15)
             plan.update(brief_arm=self._arm)
         if "brief_use" in idea:  # the brief's use rides on the position (ruling 2026-10-15)
@@ -695,17 +874,26 @@ class AiTrader:
         # scoreboard and the journal can tell a 3x fund from a stock pick.
         factor = self.leverage_factor(symbol, instrument)
         plan.update(leverage=str(factor), tag=leverage.tag(factor))
-        # The levels come from the LIVE quote at order time (ruling 2026-10-10),
-        # never from a price the model cited.
-        quote = self._quotes(symbol)
-        if quote is None:
+        # The levels come from the LIVE price at order time (ruling 2026-10-10),
+        # never from a price the model cited - read by the quote rule (ruling
+        # 2026-11-12, item 1): the mid of a tight quote, else the last trade,
+        # never a wide quote's mid (LUNR 11-12: an IEX mid 6.8% under the fill
+        # put an "8%" stop 14% away).
+        reading = self._reader.quote(symbol)
+        if reading.bid is None or reading.ask is None:
             plan.update(stop="0", target="0")
             self._reject(plan, "quote vanished before entry")
             return None
-        bid, ask = quote
-        anchor = (bid + ask) / 2
+        anchor = usable_price(reading)
+        if anchor is None:
+            plan.update(stop="0", target="0")
+            self._reject(plan, "no usable price: the quote is wider than 2% of its mid and there is no fresh "
+                               "last trade (a level is never set from a wide quote's mid)")
+            return None
+        bid, ask = reading.bid, reading.ask
         stop, target = levels(instrument, anchor, stop_fraction, target_fraction)
-        plan.update(anchor_mid=str(anchor), stop=str(stop), target=str(target))
+        plan.update(anchor_mid=str(anchor), anchor_source="mid" if reading.value is not None else "last_trade",
+                    stop=str(stop), target=str(target))
         if instrument in OPTIONS:
             return self._enter_option(plan, idea, now, budget)
         if not self.account.adapter.tradeable_equity(symbol):
@@ -724,7 +912,7 @@ class AiTrader:
             return None
         order = EquityBuyOrder(symbol=symbol, quantity=quantity, execution=LimitExecution(limit_price=limit),
                                sleeve="aggressive", confidence=plan["confidence"])
-        return self._open(order, plan, limit, (bid + ask) / 2)
+        return self._open(order, plan, limit, anchor)
 
     def _enter_option(self, plan: dict, idea: dict, now: datetime, budget: Decimal) -> Optional[str]:
         cfg = self.config.options
@@ -747,7 +935,66 @@ class AiTrader:
                                      expiration=pick.expiration, strike=pick.strike, contracts=contracts,
                                      multiplier=pick.multiplier, execution=LimitExecution(limit_price=limit),
                                      confidence=plan["confidence"])
-        return self._open(order, plan, limit, pick.mid)
+        counterfactual = self._expiry_counterfactual(plan, today, budget, pick)
+        opened = self._open(order, plan, limit, pick.mid)
+        if opened is not None and counterfactual is not None:
+            self.account.ledger.append("expiry_counterfactual", phase="entry", **counterfactual)
+            if counterfactual["status"] == "ok" and not counterfactual["same_contract"]:
+                pending = self.account.state.engine.setdefault("expiry_counterfactual", {})
+                pending[plan["pid"]] = {k: counterfactual[k] for k in ("occ", "expiry", "opened_day")}
+                self.account.state.save(self.account.state_path)
+        return opened
+
+    # -- the expiry counterfactual (human ruling 2026-11-12, item 3) ------------------
+
+    def _expiry_counterfactual(self, plan: dict, today: date, budget: Decimal, pick: Any) -> Optional[dict]:
+        """The contract the window before the ruling would have bought, priced
+        now. Logged only; a failed read is a logged gap, never a stopped entry."""
+        window = self.config.options.counterfactual_dte.get(plan["horizon"])
+        if window is None:
+            return None
+        low, high = window
+        try:
+            chain = self.chain.chain_for(plan["symbol"], min_expiry=today + timedelta(days=low),
+                                         max_expiry=today + timedelta(days=high))
+            old, why = select_contract(chain, pick.right, today, self.config.options)
+        except Exception as error:  # noqa: BLE001 - logged only
+            datahealth.report("AI trader expiry counterfactual", f"{plan['symbol']}: {type(error).__name__}: {error}")
+            return {"pid": plan["pid"], "chosen": pick.occ_symbol, "status": "chain_failed"}
+        if old is None:
+            return {"pid": plan["pid"], "chosen": pick.occ_symbol, "status": f"no contract: {why}"}
+        limit = (old.ask * (1 + self.config.limit_buffer)).quantize(CENTS, rounding=ROUND_UP)
+        contracts = int((budget / (limit * old.multiplier)).to_integral_value(rounding=ROUND_DOWN))
+        return {"pid": plan["pid"], "chosen": pick.occ_symbol, "status": "ok",
+                "same_contract": old.occ_symbol == pick.occ_symbol, "occ": old.occ_symbol,
+                "expiry": old.expiration.isoformat(), "strike": str(old.strike), "delta": str(old.delta),
+                "bid": str(old.bid), "ask": str(old.ask), "limit": str(limit), "contracts": contracts,
+                "multiplier": old.multiplier, "opened_day": today.isoformat()}
+
+    def _counterfactual_mark(self, pid: str, when: str) -> None:
+        """Price a pending counterfactual contract once: at our exit, or at its
+        OWN expiry close if that comes first (it would have been closed then)."""
+        pending = self.account.state.engine.get("expiry_counterfactual") or {}
+        entry = pending.pop(pid, None)
+        if entry is None:
+            return
+        quote = None
+        try:
+            quote = self.chain.option_bid_ask(entry["occ"])
+        except Exception as error:  # noqa: BLE001 - logged only
+            datahealth.report("AI trader expiry counterfactual", f"{entry['occ']}: {type(error).__name__}: {error}")
+        self.account.ledger.append("expiry_counterfactual", phase="mark", pid=pid, occ=entry["occ"], when=when,
+                                   bid=str(quote[0]) if quote else None, ask=str(quote[1]) if quote else None)
+        self.account.state.save(self.account.state_path)
+
+    def _counterfactual_expiries(self, now: datetime) -> None:
+        local = now.astimezone(NY)
+        for pid, entry in list((self.account.state.engine.get("expiry_counterfactual") or {}).items()):
+            expiry, opened = date.fromisoformat(entry["expiry"]), date.fromisoformat(entry["opened_day"])
+            close_day = self.calendar.previous_session(expiry) if expiry > opened else expiry
+            if local.date() > close_day or (local.date() == close_day and
+                                            local >= self.cut(close_day, self.config.options.expiry_close)):
+                self._counterfactual_mark(pid, "its own expiry close")
 
     def _open(self, order: Any, plan: dict, limit: Decimal, modelled: Decimal) -> Optional[str]:
         position = Position(pid=plan["pid"], symbol=plan["symbol"], instrument=plan["instrument"],
@@ -781,6 +1028,9 @@ class AiTrader:
         # the plan is on the ledger BEFORE the order, so a crash mid-fill
         # recovers into a position with its stop and target
         self.account.ledger.append("position_opened", **plan)
+        self._opened_pids[plan["symbol"]] = plan["pid"]
+        if plan["instrument"] in OPTIONS:   # one new option per scan (ruling 2026-11-12, item 2)
+            self._options_this_scan += 1
         filled = self._work_approved(decision, position, "buy", limit, modelled, reason="entry",
                                      wait=self.config.fill_wait_seconds)
         if not filled:

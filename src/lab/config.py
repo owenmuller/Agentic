@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import copy
+import re
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -68,8 +70,12 @@ class AiOptionsConfig(_Strict):
     """How the AI trader's rules engine picks a contract for a call/put idea:
     deterministic, never the model's choice of strike."""
 
-    #: Days to expiry allowed by horizon: [min, max]. intraday may be 0DTE.
+    #: Days to expiry allowed by horizon: [min, max]. intraday may be 0DTE;
+    #: "days" and "weeks" need at least 7 (human ruling 2026-11-12, item 3).
     dte: dict[str, tuple[int, int]]
+    #: The window each horizon used BEFORE that ruling: the contract it would
+    #: have picked is priced beside every entry, logged only (same ruling).
+    counterfactual_dte: dict[str, tuple[int, int]] = Field(default_factory=dict)
     delta_min: Decimal = Field(gt=ZERO, lt=ONE)
     delta_max: Decimal = Field(gt=ZERO, le=ONE)
     target_delta: Decimal = Field(gt=ZERO, lt=ONE)
@@ -88,7 +94,54 @@ class AiOptionsConfig(_Strict):
             low, high = self.dte.get(horizon, (-1, -1))
             if low < 0 or high < low:
                 raise ValueError(f"options dte for {horizon!r} must be [min, max] with 0 <= min <= max")
+        for horizon in ("days", "weeks"):
+            if self.dte[horizon][0] < MIN_MULTI_DAY_DTE:
+                raise ValueError(f"options dte for {horizon!r} must start at {MIN_MULTI_DAY_DTE} or more "
+                                 f"(human ruling 2026-11-12, item 3)")
         return self
+
+
+#: Human ruling 2026-11-12, item 3: options on "days" or "weeks" horizons
+#: carry at least 7 days to expiry (the 11-11 calls had 2).
+MIN_MULTI_DAY_DTE = 7
+
+
+class ConcentrationConfig(_Strict):
+    """One bet per sector or theme (human ruling 2026-11-12, item 2, a live
+    rule): no new position whose sector or theme is already held or already
+    proposed earlier in the same pass, and at most this many new options per
+    scan. The sector comes from the gate's map (``config/sectors.yaml``; an
+    unmapped name is its own sector); the theme is the model's tag, one of
+    these names. Origin: three AI-chip calls from one scan lost $4,622 at one
+    open (2026-11-12)."""
+
+    #: name -> what belongs in it; rendered into the prompt and the tool's enum.
+    themes: dict[str, str]
+    max_new_options_per_scan: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _names(self) -> "ConcentrationConfig":
+        if "other" not in self.themes:
+            raise ValueError("the theme list needs 'other' for an idea that fits none")
+        for name in self.themes:
+            if not re.fullmatch(r"[a-z][a-z_]*", name):
+                raise ValueError(f"theme {name!r}: lowercase letters and underscores only")
+        return self
+
+
+class MoveSinceConfig(_Strict):
+    """Move since public (human ruling 2026-11-12, item 4): LOGGED ONLY. At
+    proposal time the catalyst's first public time is looked up in the news
+    feed and the underlying's move since then is measured against its
+    ATR(14); a shadow records "skip if the move exceeds ``skip_above_atr`` x
+    ATR". Nothing here can stop or size a trade."""
+
+    enabled: bool
+    #: How far back the news feed is searched for the catalyst's first headline.
+    news_lookback_hours: int = Field(gt=0, le=168)
+    #: Headline words (4+ letters, stopwords out) it must share with the catalyst.
+    min_word_overlap: int = Field(ge=1)
+    skip_above_atr: Decimal = Field(gt=ZERO)
 
 
 class AiTraderConfig(_Strict):
@@ -155,6 +208,12 @@ class AiTraderConfig(_Strict):
     limit_buffer: Decimal = Field(ge=ZERO, lt=Decimal("0.05"))
     fill_wait_seconds: int = Field(gt=0)
     options: AiOptionsConfig
+    concentration: ConcentrationConfig
+    move_since_public: MoveSinceConfig
+    #: The "would exit" shadow (human ruling 2026-11-12, item 1): through this
+    #: date every tick also computes the OLD exit rule (the mid of any quote,
+    #: however wide) and logs each disagreement with the new one. None: off.
+    exit_shadow_until: Optional[date] = None
 
     @model_validator(mode="after")
     def _sane(self) -> "AiTraderConfig":

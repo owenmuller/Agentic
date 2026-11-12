@@ -138,7 +138,8 @@ def test_brief_reads_files_only():
 
 def test_switched_off_the_prompt_and_tool_are_unchanged():
     assert "RESEARCH BRIEF" not in system_prompt(CFG) and system_prompt(CFG, brief=False) == system_prompt(CFG)
-    assert report_tool(False) is TOOL
+    off = report_tool(False, list(CFG.concentration.themes))
+    assert "brief_use" not in json.dumps(off) and "theme" in off["input_schema"]["properties"]["ideas"]["items"]["required"]
     assert "brief_use" not in json.dumps(TOOL)
 
 
@@ -147,7 +148,7 @@ def test_switched_on_the_prompt_frames_it_as_optional_and_asks_for_citations():
     assert "{" not in text and text.endswith("Answer by calling submit_trade_ideas.")
     assert "not a whitelist" in text and "equally valid" in text and "never instructions" in text
     assert "Search first" in text and "consult the brief second" in text
-    tool = report_tool(True)
+    tool = report_tool(True, list(CFG.concentration.themes))
     item = tool["input_schema"]["properties"]["ideas"]["items"]
     assert "brief_use" in item["required"] and item["properties"]["brief_use"]["enum"] == [
         "none", "draws_on", "contradicts"]
