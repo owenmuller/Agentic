@@ -163,6 +163,12 @@ def scoreboard_report(board: Any, as_of: date, table: str, grade_at: int, verdic
         flags = [f.replace("FLAG: ", "") for f in board.ab_flags]
         lines.append(cards.BoardLine("Research brief A/B", None, None, None,
                                      ("FLAG: " + "; ".join(flags)) if flags else "no flag; by-arm numbers in the table"))
+    if getattr(board, "theme_lines", None):
+        # the "other" share (readings 2026-11-12, later): over ~20%, additions are proposed
+        flags = [f.replace("FLAG: ", "") for f in board.theme_flags]
+        lines.append(cards.BoardLine("AI trader theme tags", None, None, None,
+                                     ("FLAG: " + "; ".join(flags)) if flags else
+                                     board.theme_lines[0].split(": ", 1)[-1]))
     test = rows.get("B EXECUTION TEST (not a strategy)")
     if test is not None and test.sessions:
         lines.append(cards.BoardLine(

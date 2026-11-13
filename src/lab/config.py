@@ -113,11 +113,18 @@ class ConcentrationConfig(_Strict):
     scan. The sector comes from the gate's map (``config/sectors.yaml``; an
     unmapped name is its own sector); the theme is the model's tag, one of
     these names. Origin: three AI-chip calls from one scan lost $4,622 at one
-    open (2026-11-12)."""
+    open (2026-11-12).
+
+    Readings (human ruling 2026-11-12, later): "already proposed" counts only
+    earlier ideas in the pass whose entry order was placed (filled, working
+    or unfilled); a refused idea never blocks a later one. A theme in
+    ``exempt_themes`` ("other") never collides by theme; its sector still does."""
 
     #: name -> what belongs in it; rendered into the prompt and the tool's enum.
     themes: dict[str, str]
     max_new_options_per_scan: int = Field(ge=0)
+    #: themes that never collide by theme (a catch-all is not a shared bet)
+    exempt_themes: tuple[str, ...] = ("other",)
 
     @model_validator(mode="after")
     def _names(self) -> "ConcentrationConfig":
@@ -126,6 +133,9 @@ class ConcentrationConfig(_Strict):
         for name in self.themes:
             if not re.fullmatch(r"[a-z][a-z_]*", name):
                 raise ValueError(f"theme {name!r}: lowercase letters and underscores only")
+        unknown = set(self.exempt_themes) - set(self.themes)
+        if unknown:
+            raise ValueError(f"exempt_themes not in the theme list: {sorted(unknown)}")
         return self
 
 

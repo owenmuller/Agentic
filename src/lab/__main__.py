@@ -699,6 +699,40 @@ def live_session() -> int:
     return 0
 
 
+def review_shadows() -> int:
+    """Read-only: the AI trader review's shadows scored (human rulings
+    2026-11-12) - for the 10-session read after 2026-11-26."""
+    import os
+
+    from execution.market_data import AlpacaMinuteBars
+    from lab import review_shadows as shadows
+    from lab import scoreboard as board_mod
+
+    config = LabConfig.load()
+    if config.ai_trader is None:
+        print("no AI trader configured", file=sys.stderr)
+        return 1
+    path = datasafety.lab_production_dir("ai-trader") / "ledger.jsonl"
+    if not path.exists():
+        # never an empty report from a missing ledger (rule 2026-10-15)
+        print(f"no AI trader ledger at {path}", file=sys.stderr)
+        return 1
+    events = board_mod.read_jsonl(path)
+    minute = AlpacaMinuteBars()       # loads the environment: the main book's data keys
+    calendar = _calendar(os.environ.get("ALPACA_API_KEY", ""), os.environ.get("ALPACA_API_SECRET", ""),
+                         "review shadows calendar")
+    now = datetime.now(timezone.utc)
+    sim = shadows.Simulator(lambda symbol, start, end: minute.bars(symbol, start, end, "sip"), calendar,
+                            intraday_close=config.ai_trader.intraday_close,
+                            horizon_sessions=dict(config.ai_trader.horizon_sessions), now=now,
+                            report=datahealth.report)
+    try:
+        print(shadows.report(events, sim, now.astimezone(shadows.NY).date()), end="")
+    finally:
+        minute.close()
+    return 0
+
+
 def date_from(text: str):
     from datetime import date
 
@@ -735,7 +769,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--reason", required=True)
     sub.add_parser("live-check")
     sub.add_parser("live-mirror")
+    sub.add_parser("review-shadows")
     args = parser.parse_args(argv)
+    if args.command == "review-shadows":
+        return review_shadows()
     if args.command == "live-check":
         return live_check()
     if args.command == "live-mirror":

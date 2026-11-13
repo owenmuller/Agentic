@@ -125,14 +125,45 @@ def test_a_second_idea_in_the_same_theme_is_refused_and_logged_with_its_levels(l
     assert row["levels"] == {"anchor": "50.01", "stop": "48.50", "target": "53.77"}   # never nearer than asked
 
 
-def test_an_earlier_refused_idea_still_counts_as_proposed(lab_env):
+def test_an_earlier_refused_idea_never_blocks_and_the_strict_shadow_logs_it(lab_env):
+    """Readings 2026-11-12, later: only placed ideas count; the stricter
+    reading (every earlier idea) is a logged shadow."""
     world = World()
     world.quotes["ABCD"] = (D("50.00"), D("50.02"))
     trader = _ruled(world, lab_env, [{**AAPL_LONG, "confidence": 40}, {**AAPL_LONG, "symbol": "ABCD"}])
     trader.tick(et(12, "09:46"))
-    assert not trader.positions()
-    reasons = [r["reason"] for r in trader.account.ledger.events(["idea_rejected"])]
-    assert reasons[0].startswith("confidence 40") and reasons[1].startswith("concentration: theme software_internet")
+    assert {p.symbol for p in trader.positions().values()} == {"ABCD"}
+    [refused] = trader.account.ledger.events(["idea_rejected"])
+    assert refused["reason"].startswith("confidence 40")
+    [shadow] = trader.account.ledger.events(["concentration_strict_shadow"])
+    [plan] = trader.account.ledger.events(["position_opened"])
+    assert shadow["symbol"] == "ABCD" and shadow["pid"] == plan["pid"] and shadow["placed"] is True
+    assert shadow["reason"] == "concentration: theme software_internet already proposed in this pass (AAPL)"
+
+
+def test_a_placed_entry_that_did_not_fill_still_counts(lab_env):
+    world = World()
+    world.fill = False
+    world.quotes["ABCD"] = (D("50.00"), D("50.02"))
+    trader = _ruled(world, lab_env, [AAPL_LONG, {**AAPL_LONG, "symbol": "ABCD"}])
+    trader.tick(et(12, "09:46"))
+    assert [p["symbol"] for p in trader.account.ledger.events(["position_opened"])] == ["AAPL"]
+    assert trader.account.ledger.events(["idea_rejected"])[-1]["reason"] == (
+        "concentration: theme software_internet already proposed in this pass (AAPL)")
+    assert trader.account.ledger.events(["concentration_strict_shadow"]) == []
+
+
+def test_other_never_collides_by_theme_but_its_sector_still_does(lab_env):
+    world = World()
+    world.quotes["ABCD"] = (D("50.00"), D("50.02"))      # unmapped: no sector
+    world.quotes["MSFT"] = (D("500.00"), D("500.10"))
+    other = {**AAPL_LONG, "theme": "other"}
+    trader = _ruled(world, lab_env, [{**other, "symbol": "ABCD"}, other, {**other, "symbol": "MSFT"}])
+    trader.tick(et(12, "09:46"))
+    assert [p["symbol"] for p in trader.account.ledger.events(["position_opened"])] == ["ABCD", "AAPL"]
+    assert trader.account.ledger.events(["idea_rejected"])[-1]["reason"] == (
+        "concentration: sector big_tech already proposed in this pass (AAPL)")
+    assert CFG.concentration.exempt_themes == ("other",)
 
 
 def test_a_held_sector_refuses_an_idea_under_another_theme(lab_env):

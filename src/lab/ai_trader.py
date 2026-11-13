@@ -274,6 +274,8 @@ class AiTrader:
         self._shadowed: set[tuple] = set()
         self._options_this_scan = 0
         self._opened_pids: dict[str, str] = {}
+        #: symbols whose entry order reached the broker in this scan
+        self._placed: set[str] = set()
         #: Sessions and closes (sweep 2026-11-10): every cutoff below moves with
         #: the day's own close. None: every weekday a regular session (tests).
         self.calendar = calendar or MarketCalendar.weekdays()
@@ -615,14 +617,18 @@ class AiTrader:
             return outcome
         taken: list[str] = [p.symbol for p in held] + self.traded_today(day)
         # one bet per sector or theme (ruling 2026-11-12, item 2): what is held,
-        # and what earlier ideas in this pass proposed (accepted or not)
+        # and what earlier ideas in this pass PLACED an entry order (readings
+        # 2026-11-12, later: a refused idea never blocks a later one). The
+        # stricter reading - every earlier idea counts - runs as a logged shadow.
         held_keys: dict[tuple[str, str], str] = {}
         for position in held:
             for key in self.concentration_keys(position.symbol, position.theme):
                 held_keys.setdefault(key, position.symbol)
         pass_keys: dict[tuple[str, str], str] = {}
+        strict_keys: dict[tuple[str, str], str] = {}
         self._options_this_scan = 0
         self._opened_pids = {}
+        self._placed = set()
         anchors: dict[str, Optional[Decimal]] = {}
         for idea in ideas:
             symbol = str(idea.get("symbol", "")).upper().strip()
@@ -634,10 +640,13 @@ class AiTrader:
                                                **self.anchor_check(idea, anchors[symbol]))
             verdict = self.validate(idea, now, taken, slots=cfg.max_positions - len(held) - len(outcome.opened),
                                     live=not dry_run)
+            strict: Optional[Verdict] = None
             if verdict.ok:
                 verdict = self.concentration(idea, keys, held_keys, pass_keys)
-            for key in keys:    # proposed: it now counts against every later idea in this pass
-                pass_keys.setdefault(key, symbol)
+                if verdict.ok:
+                    strict = self.concentration(idea, keys, held_keys, strict_keys)
+            for key in keys:    # the strict shadow: every proposed idea counts
+                strict_keys.setdefault(key, symbol)
             if not verdict.ok:
                 outcome.rejected.append((str(idea.get("symbol")), verdict.reason))
                 if not dry_run:
@@ -653,8 +662,19 @@ class AiTrader:
                 taken.append(symbol)
                 if idea.get("instrument") in OPTIONS:
                     self._options_this_scan += 1
+                for key in keys:
+                    pass_keys.setdefault(key, symbol)
                 continue
             opened = self._enter(idea, now, label)
+            if symbol in self._placed:  # placed: it now counts against every later idea
+                for key in keys:
+                    pass_keys.setdefault(key, symbol)
+            if strict is not None and not strict.ok:
+                # the stricter reading would have refused it: logged for the comparison
+                self.account.ledger.append(
+                    "concentration_strict_shadow", scan=label, symbol=symbol, reason=strict.reason,
+                    pid=self._opened_pids.get(symbol), placed=symbol in self._placed, idea=idea,
+                    levels=self._shadow_levels(idea, anchors.get(symbol)))
             if opened is None:
                 outcome.rejected.append((str(idea.get("symbol")), "entry not filled or refused (see ledger)"))
                 continue
@@ -766,7 +786,9 @@ class AiTrader:
         the gate's map knows it (an unmapped name is its own sector, so it can
         only collide by theme or by symbol)."""
         keys: set[tuple[str, str]] = set()
-        if isinstance(theme, str) and theme in self.config.concentration.themes:
+        cfg = self.config.concentration
+        # an exempt theme ("other") is no shared bet: only its sector collides
+        if isinstance(theme, str) and theme in cfg.themes and theme not in cfg.exempt_themes:
             keys.add(("theme", theme))
         sector = self._sectors.sector_of(symbol)
         if not sector.startswith("unmapped:"):
@@ -776,8 +798,9 @@ class AiTrader:
     def concentration(self, idea: dict, keys: set[tuple[str, str]], held: dict[tuple[str, str], str],
                       proposed: dict[tuple[str, str], str]) -> Verdict:
         """One bet per sector or theme (human ruling 2026-11-12, item 2, a live
-        rule). "Already proposed" counts every EARLIER idea in the pass, taken
-        or refused - the stricter reading (Constraint #6), flagged."""
+        rule). ``proposed`` holds what earlier ideas in the pass occupy: in
+        the live rule only those that placed an entry order (readings
+        2026-11-12, later); in the strict shadow every earlier idea."""
         for kind, name in sorted(keys):
             if (kind, name) in held:
                 return Verdict(False, f"concentration: {kind} {name} already held ({held[(kind, name)]})")
@@ -1033,6 +1056,8 @@ class AiTrader:
             self._options_this_scan += 1
         filled = self._work_approved(decision, position, "buy", limit, modelled, reason="entry",
                                      wait=self.config.fill_wait_seconds)
+        if filled is not None:   # the broker took the order (filled or not): it was placed
+            self._placed.add(plan["symbol"])
         if not filled:
             self.account.ledger.append("position_closed", pid=plan["pid"], symbol=position.trade_symbol,
                                        reason="entry_unfilled")

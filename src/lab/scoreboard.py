@@ -82,6 +82,9 @@ class Board:
     #: the research brief's A/B by arm, and its flags (ruling 2026-10-15, second)
     ab_lines: list[str] = field(default_factory=list)
     ab_flags: list[str] = field(default_factory=list)
+    #: the AI trader's theme tags and the "other" share (readings 2026-11-12, later)
+    theme_lines: list[str] = field(default_factory=list)
+    theme_flags: list[str] = field(default_factory=list)
 
 
 def _day(stamp: str) -> date:
@@ -391,7 +394,8 @@ def build(
         "started). vs SPMO likewise against the SPMO ETF (the momentum sleeve's binding comparison).",
     ]
     ab_lines, ab_flags = brief_ab(ai_events)
-    return Board(rows, table, notes, ab_lines, ab_flags)
+    theme_lines, theme_flags = theme_share(ai_events)
+    return Board(rows, table, notes, ab_lines, ab_flags, theme_lines, theme_flags)
 
 
 def stop_floor_note(table: dict[str, tuple[int, Optional[float]]], floor: Optional[float]) -> str:
@@ -445,6 +449,8 @@ def render(board: Board, as_of: date) -> str:
     lines.append("")
     if board.ab_lines:
         lines.extend(board.ab_lines + [""])
+    if board.theme_lines:
+        lines.extend(board.theme_lines + [""])
     lines.extend(board.notes)
     return "\n".join(lines)
 
@@ -543,6 +549,50 @@ def brief_ab(events: list[dict]) -> tuple[list[str], list[str]]:
     if not flags:
         lines.append(f"  no flag (fewer ideas: under {AB_FEWER:.0%} of control's rate at {AB_MIN_PASSES}+ passes "
                      f"each; mostly shortlist: over {AB_SHORTLIST:.0%} at {AB_MIN_IDEAS}+ ideas)")
+    return lines + [f"  {f}" for f in flags], flags
+
+
+#: Theme tags (readings 2026-11-12, later): over about this share of ideas
+#: tagged "other", additions to the theme list are proposed - flagged from
+#: this many tagged ideas (the minimum is my reading, stated on the card).
+OTHER_SHARE = 0.20
+OTHER_MIN_IDEAS = 20
+
+
+def theme_share(events: list[dict]) -> tuple[list[str], list[str]]:
+    """(lines, flags): the AI trader's ideas by theme tag since tagging began
+    (2026-11-13), the share tagged "other" and the names behind it, so the
+    theme list can be extended where the model keeps reaching for none."""
+    counts: dict[str, int] = {}
+    other: dict[str, int] = {}
+    start = None
+    for e in events:
+        if e.get("event") != "llm_pass":
+            continue
+        for idea in e.get("ideas") or []:
+            theme = idea.get("theme")
+            if not theme:
+                continue      # proposed before tagging began
+            start = start or str(e.get("at", ""))[:10]
+            counts[theme] = counts.get(theme, 0) + 1
+            if theme == "other":
+                symbol = str(idea.get("symbol", "")).upper()
+                other[symbol] = other.get(symbol, 0) + 1
+    total = sum(counts.values())
+    if not total:
+        return [], []
+    share = counts.get("other", 0) / total
+    lines = [f"THEME TAGS (since {start}): {total} ideas; tagged 'other' {counts.get('other', 0)} ({share:.0%})",
+             "  " + ", ".join(f"{name} {n}" for name, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))]
+    if other:
+        lines.append("  'other' names: " + ", ".join(
+            f"{s}" + (f" x{n}" if n > 1 else "") for s, n in sorted(other.items(), key=lambda kv: (-kv[1], kv[0]))))
+    flags = []
+    if total >= OTHER_MIN_IDEAS and share > OTHER_SHARE:
+        flags.append(f"FLAG: {share:.0%} of ideas tagged 'other' ({counts['other']} of {total}): "
+                     f"additions to the theme list to be proposed")
+    else:
+        lines.append(f"  no flag (over {OTHER_SHARE:.0%} 'other' at {OTHER_MIN_IDEAS}+ tagged ideas)")
     return lines + [f"  {f}" for f in flags], flags
 
 

@@ -4167,6 +4167,28 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-12 (night) — readings on the review build: the cap counts placed ideas only, "other" exempt by theme, the shadows scored
+
+**Readings (human ruling 2026-11-12, later), recorded in CLAUDE.md § 2b items 2, 5 and 8:**
+1. **Concentration cap:** "already proposed" counts only earlier ideas in the pass whose entry order was placed. A refused idea never blocks a later one.
+   - "Placed" includes an entry that reached the broker and did not fill (my reading, the fewer-trades side).
+   - The stricter reading I first built (every earlier idea counts) is now a logged shadow, `concentration_strict_shadow`: each idea it would have refused, with the position's pid.
+2. **Theme "other":** exempt from the theme check (`concentration.exempt_themes`); its sector still collides.
+   - The Friday scoreboard adds THEME TAGS: ideas by tag since tagging began, the share tagged "other", the names behind it.
+   - It flags over 20% from 20 tagged ideas (the 20 is mine); over that, additions to the 18 themes are proposed.
+   - The prompt is unchanged: it still says "one bet per theme" without the exemptions. No golden replay was needed, and the model is not told how to escape the cap.
+3. One option per scan: kept.
+4. Put stops, the ex-dividend baseline and the wide-quote cards: approved as built.
+5. **Shadow scorers built:** `python -m lab review-shadows` (`lab/review_shadows.py`, read-only). It refuses to run when the ledger file is missing, rather than print an empty report.
+   - **One simulator:** replays an idea on one-minute SIP bars from the minute after entry.
+     - Inside a bar, the stop is checked before the target. A stop gap fills at the open; a target fills at its level.
+     - With neither hit, the position is out at 15:50 of the horizon's last session.
+     - Stop slippage is not charged; it is the same for every group.
+   - **Run over last week's real positions,** it matched every completed exit except COP: it holds COP to its horizon, while the real position was stopped (possibly a wide-quote stop of the kind ruling 1 removes; not checked).
+   - Empty until tomorrow's session logs rows.
+
+Tests: `tests/test_lab_review_shadows.py` (12), plus the updated concentration tests in `tests/test_lab_ai_review.py`. Full suite green.
+
 ### 2026-11-12 (evening) — AI trader review (Nov 4-12) and its rulings, built
 
 **The review (report only, read-only scripts in `~/scratch/review/` on the droplet):** paper AI trader -4.65% vs SPY +0.37% over 11-03 close to 11-12 close; 17 closed new entries, 3 won (18%), average win $2,421, average loss $746, net -$3,180 (with carry-ins -$1,382). Live mirror down about 6.9% ($1,050 -> about $977), its trades only on 11-11/12.

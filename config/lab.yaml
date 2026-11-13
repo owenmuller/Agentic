@@ -235,6 +235,8 @@ ai_trader:
   # with its reason and the idea's levels, so the shadow can score it.
   concentration:
     max_new_options_per_scan: 1
+    # never collide by theme; the sector check still applies (ruling 2026-11-12, later)
+    exempt_themes: [other]
     themes:
       ai_semis: "AI, semiconductors, chip equipment, data-center hardware, networking, optical and power built for AI"
       software_internet: "software, cloud services, internet platforms, digital advertising"
