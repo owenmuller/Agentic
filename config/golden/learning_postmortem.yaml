@@ -1,4 +1,4 @@
-note: Learning journal post-mortem golden set (human ruling 2026-11-04). Facts are this system's own records (AI trader ledger,
+note: Learning journal post-mortem golden set (human ruling 2026-11-04; two refusal cases added 2026-11-13). Facts are this system's own records (AI trader ledger,
   main audit log, forward engine), built by orchestrator.learning_feed on 2026-11-04. Accepted answers were written before
   the first replay; each case states why.
 cases:
@@ -433,3 +433,102 @@ cases:
     - congressional_trade
     catalysts:
     - congressional_trade
+- id: noc_refused_by_gate_ran
+  why: 'refusal (added 2026-11-13): the gate refused a beat-and-raise long that then beat SPY by 6 points on its own move
+    - a good idea lost, so WRONG, decided by the stock'
+  case:
+    decision_id: idea-2026-10-20-13:30-NOC
+    account: ai-trader
+    strategy: ai_trader
+    kind: refusal
+    symbol: NOC
+    opened: '2026-10-20'
+    resolved: '2026-10-26'
+    direction: long
+    thesis: Northrop Grumman beat Q3 2026 EPS ($7.89 vs $7.18 consensus) on revenue of $11.12B, raised full-year EPS guidance
+      by $0.70, and reported a record $110B backlog (+20% YoY). The stock surged ~5-7% on the catalyst. The record backlog provides
+      multi-year revenue visibility and the guidance raise signals management confidence. Defense spending tailwinds remain
+      strong. The macro rotation away from tech into defense/industrials is confirmed on today's tape, providing a supportive
+      backdrop for continued momentum over the next several sessions.
+    expected: 'refused by the rules engine (gate: sleeve_allocation_exceeded: aggressive sleeve would reach 0.8266686977080039280497900593
+      of NAV, above target 0.75 plus drift 0.03): long via shares of NOC, target 8.5% and stop 3.5% from the proposal price,
+      horizon days, confidence 65'
+    actual: NOC moved +5.73% from the price when it was proposed to the close of 2026-10-26 (5 session(s)); the idea, in its
+      own direction, +5.73%
+    return_pct: 5.732710280373832
+    spy_pct: -0.589144668468089
+    excess: 6.321854948841921
+    own_move: 6.321854948841921
+    market_move: -0.589144668468089
+    tags:
+      sector: business equipment
+      regime: calm_uptrend
+      confidence_band: 50-70
+      source: ai_trader
+      instrument: stock
+      entry: long_after_gap_up
+    notes:
+    - 'why it was not traded: gate: sleeve_allocation_exceeded: aggressive sleeve would reach 0.8266686977080039280497900593
+      of NAV, above target 0.75 plus drift 0.03'
+    - 'catalyst named: Q3 2026 earnings beat + full-year EPS guidance raise + record $110B backlog reported pre-market today,
+      2026-10-20.'
+    - graded from the price the engine read when the idea was proposed (SPY at the same minute) to the close of its horizon's
+      last session, without its stop or target; an option on its underlying
+  expect:
+    causes:
+    - reason
+    setups:
+    - earnings_drift
+    - price_momentum
+    - ai_idea
+    catalysts:
+    - earnings
+    - guidance
+- id: entg_refused_no_chain_fell
+  why: 'refusal (added 2026-11-13): a call on a gap-up beat, refused for no option chain; the stock then fell 13.8% on its
+    own - rightly skipped, decided by the stock'
+  case:
+    decision_id: idea-2026-10-29-10:45-ENTG
+    account: ai-trader
+    strategy: ai_trader
+    kind: refusal
+    symbol: ENTG
+    opened: '2026-10-29'
+    resolved: '2026-11-04'
+    direction: long
+    thesis: 'Entegris reported a blowout Q3 2026: revenue of $1.01B beat consensus by ~8.6% (up 24.6% YoY), and adjusted EPS
+      of $1.23 beat estimates of $1.02 by ~20%. Q4 revenue guidance of $1.04B was ~7.9% above consensus. This is the third
+      consecutive quarter of accelerating growth, consistent with an early semiconductor upcycle. Citi raised its price target
+      to $195 (from $170) on Oct 20. The stock is up ~6% on the day but the magnitude of the beat and the raised guide suggest
+      further re-rating over the coming sessions.'
+    expected: 'refused by the rules engine (no contract: no chain data): long via call option on ENTG, target 12.0% and stop
+      5.0% from the proposal price, horizon days, confidence 65'
+    actual: ENTG moved -13.77% from the price when it was proposed to the close of 2026-11-04 (5 session(s)); the idea, in
+      its own direction, -13.77%
+    return_pct: -13.773141168666703
+    spy_pct: -0.3742155117527073
+    excess: -13.398925656913995
+    own_move: -13.398925656913995
+    market_move: -0.3742155117527073
+    tags:
+      sector: manufacturing
+      regime: calm_uptrend
+      confidence_band: 50-70
+      source: ai_trader
+      instrument: option
+      entry: long_after_gap_up
+    notes:
+    - 'why it was not traded: no contract: no chain data'
+    - 'catalyst named: Q3 2026 triple beat (revenue, EPS, Q4 guide) reported today; Citi PT raise to $195 on Oct 20.'
+    - graded from the price the engine read when the idea was proposed (SPY at the same minute) to the close of its horizon's
+      last session, without its stop or target; an option on its underlying
+  expect:
+    causes:
+    - reason
+    setups:
+    - earnings_drift
+    - price_momentum
+    - ai_idea
+    catalysts:
+    - earnings
+    - guidance

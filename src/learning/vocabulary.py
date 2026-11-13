@@ -41,7 +41,10 @@ ENTRIES = (
 )
 #: 2% - my reading, flagged: E1 measured the news gap at a mean of +2.0%.
 GAP_THRESHOLD = 0.02
-KINDS = ("trade", "decline", "veto")
+#: refusal: an AI-trader idea the rules refused, or that was placed and never
+#: filled, or never placed - the trade not made, graded at its own horizon
+#: (human ruling 2026-11-13, item 2)
+KINDS = ("trade", "decline", "veto", "refusal")
 #: Process vs outcome (item 5). *_luck entries are logged and teach nothing:
 #: the miner and the playbook use only the *_reason verdicts.
 PROCESS = ("right_reason", "right_luck", "wrong_reason", "wrong_luck", "unclear")

@@ -1,0 +1,12 @@
+# Weekdays 17:15 ET: the command acts only in a month's first sessions and
+# once a month. Persistent=true replays a run missed while the droplet was
+# down; a late run inside the first five sessions still sends the review.
+[Unit]
+Description=Agentic AI trader monthly review trigger (weekdays 17:15 ET)
+
+[Timer]
+OnCalendar=Mon..Fri 17:15 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

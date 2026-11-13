@@ -423,11 +423,13 @@ def breaker_card(what: str, sample: bool = False) -> Card:
 
 def learning_card(new_entries: int, total: int, spend: float, flagged: Sequence[str], asked: Sequence[str],
                   opened: Sequence[str], ahead: int, behind: int, eligible: Sequence[str],
-                  promoted: Sequence[str], demoted: Sequence[str], detail: str, sample: bool = False) -> Card:
+                  promoted: Sequence[str], demoted: Sequence[str], detail: str, sample: bool = False,
+                  scorecard: Sequence[str] = ()) -> Card:
     """"What we learned this week" (§ Learning Loop, item 8; ruling 2026-11-04):
     green when there is nothing to decide, red when a shadow has earned a
-    promotion vote, yellow when the monthly re-check demoted a lesson."""
-    lines = [f"Journal: {count(new_entries, 'new post-mortem')} this week, {total} in all."]
+    promotion vote, yellow when the monthly re-check demoted a lesson. The
+    intelligence scorecard's lines (ruling 2026-11-13, item 3) come first."""
+    lines = list(scorecard) + [f"Journal: {count(new_entries, 'new post-mortem')} this week, {total} in all."]
     lines.append(f"Patterns flagged: {_joined(list(flagged[:3]))}." if flagged else
                  "Patterns flagged: none yet (a pattern needs 20 cases and an interval clear of zero).")
     lines += [f"Asked: {line}." for line in asked]
@@ -447,6 +449,27 @@ def learning_card(new_entries: int, total: int, spend: float, flagged: Sequence[
         status, look_at = LOOK, "a playbook lesson lost its edge and was demoted"
     return Card("Learning loop", "what we learned this week", status, tuple(lines), what_to_do=what_to_do,
                 look_at=look_at, detail=detail, detail_name="learning-report.txt", sample=sample)
+
+
+def monthly_review_card(month: str, trades_line: str, diagnosis: str, proposals: Sequence[str], spend: Optional[float],
+                        detail: str, dropped: int = 0, sample: bool = False) -> Card:
+    """The AI trader's monthly review (human ruling 2026-11-13, item 1), in
+    #reports. Red while it carries proposals: each waits for a ruling and
+    nothing applies on its own."""
+    lines = [trades_line, f"Diagnosis: {plain(diagnosis)}" if diagnosis else "Diagnosis: none this month."]
+    if proposals:
+        lines.append("Proposals, ranked, each with its evidence and a shadow test: "
+                     + "; ".join(f"{i}. {plain(p)}" for i, p in enumerate(proposals, 1)) + ".")
+    if dropped:
+        lines.append(f"{count(dropped, 'proposal')} dropped for citing no existing fact.")
+    lines.append(f"Model spend: {cents(spend) if spend is not None else 'none (facts only)'}.")
+    if proposals:
+        return Card("AI trader", f"monthly review: {month}", ACTION, tuple(lines),
+                    what_to_do=_ask(f"Read the {month} review and rule on each proposal; nothing changes until you "
+                                    f"do."), detail=detail, detail_name=f"ai-trader-review-{month}.txt",
+                    channel=DAILY, sample=sample)
+    return Card("AI trader", f"monthly review: {month}", GOOD, tuple(lines), detail=detail,
+                detail_name=f"ai-trader-review-{month}.txt", channel=DAILY, sample=sample)
 
 
 def momentum_funding_card(when: str, what: str, sample: bool = False) -> Card:

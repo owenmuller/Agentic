@@ -467,6 +467,12 @@ def _quiver_shadows_step(directory: Path, alpaca, now: datetime, log) -> None:
                                             f"{str(error)[:160]})")
 
 
+#: Every AI-trader idea's grade at its own horizon (ruling 2026-11-13), under
+#: the main data directory: written by the evening learning run, read by the
+#: Friday scorecard.
+IDEA_GRADES_FILE = Path("learning") / "idea_grades.jsonl"
+
+
 def _learning_inputs(data_dir: Path):
     """The raw resolved decisions: the AI trader's ledger events (read as a
     file), the main audit log's trails and rejections, the forward engine's
@@ -561,28 +567,58 @@ def _learning_lookups(symbols: set[str], earliest: date, cache_root: Path, log):
         magnitude = 3.0 if ("3x" in lowered or "ultrapro" in lowered) else (2.0 if ("2x" in lowered or "ultra" in lowered) else 1.0)
         return -magnitude if any(k in lowered for k in ("bear", "inverse", "short")) else magnitude
 
+    # SPY at the minute an AI-trader idea was proposed (ruling 2026-11-13, item
+    # 2): one day of SIP minute bars, fetched once a day it is asked for
+    from datetime import time as dtime
+
+    from execution.market_data import AlpacaMinuteBars
+
+    minute = AlpacaMinuteBars()
+    spy_minutes: dict[date, list[tuple[datetime, float]]] = {}
+
+    def spy_at(when: datetime) -> Optional[float]:
+        day = when.astimezone(_NY).date()
+        if day not in spy_minutes:
+            end = min(datetime.combine(day, dtime(16, 0), _NY), datetime.now(timezone.utc) - timedelta(minutes=16))
+            rows = minute.bars("SPY", datetime.combine(day, dtime(9, 30), _NY), end, "sip")
+            spy_minutes[day] = sorted((datetime.fromisoformat(str(b["t"]).replace("Z", "+00:00")), float(b["c"]))
+                                      for b in rows)
+            if not rows:
+                datahealth.report("Learning journal", f"no SPY minute bars for {day}: that day's AI-trader ideas are "
+                                                      f"graded from the day's close, an intraday one not at all")
+        # the last bar that CLOSED before the instant: no look-ahead inside the minute
+        before = [close for stamp, close in spy_minutes[day] if stamp <= when - timedelta(minutes=1)]
+        return before[-1] if before else None
+
     log(f"learning lookups: bars for {len(bars)} symbols, {len(vix)} VIX closes, {len(names)} asset names")
     return Lookups(bars=lambda s: bars.get(s, {}), sector=sector, regime=regime,
-                   fund=lambda s: AlpacaAdapter.names_a_fund(names.get(s)), leverage=leverage), sec
+                   fund=lambda s: AlpacaAdapter.names_a_fund(names.get(s)), leverage=leverage, spy_at=spy_at), sec
 
 
-def learning_cases(data_dir: Path, cache_root: Path, log, accounts=("ai-trader", "main")):
+def learning_cases(data_dir: Path, cache_root: Path, log, accounts=("ai-trader", "main"), grades_out=None):
     """Every resolved judged decision as a Case, AI trader first (ruling
-    2026-11-04: its closed trades are backfilled first), then the main book's
-    trades, then its declines."""
+    2026-11-04: its closed trades are backfilled first; ruling 2026-11-13: then
+    its ideas not traded), then the main book's trades, then its declines.
+    ``grades_out``, a list, receives every AI-trader idea's grade."""
     from orchestrator import learning_feed
 
     events, trails, rejections, rows = _learning_inputs(data_dir)
     symbols = {e["symbol"] for e in events if e.get("event") == "position_opened"}
+    symbols |= {str(i.get("symbol") or "").upper().strip() for e in events if e.get("event") == "llm_pass"
+                for i in e.get("ideas") or []}
     symbols |= {(t.decision.research.tickers or ["SPY"])[0] for t in trails}
     symbols |= {(r.research.tickers or list(r.signal.tickers) or ["SPY"])[0] for r in rejections}
-    stamps = [datetime.fromisoformat(e["at"]).date() for e in events if e.get("event") == "position_opened"]
+    stamps = [datetime.fromisoformat(e["at"]).date() for e in events if e.get("event") in ("position_opened", "llm_pass")]
     stamps += [r.signal.observed_at.date() for r in rejections] + [t.decision.recorded_at.date() for t in trails]
     look, sec = _learning_lookups({s for s in symbols if learning_feed.is_symbol(s)}, min(stamps or [date.today()]),
                                   cache_root, log)
     cases = []
     if "ai-trader" in accounts:
         cases += learning_feed.ai_trader_cases(events, look)
+        grades = learning_feed.ai_trader_idea_grades(events, look)
+        cases += learning_feed.ai_trader_refusal_cases(grades, look)
+        if grades_out is not None:
+            grades_out.extend(grades)
     if "main" in accounts:
         cases += learning_feed.judged_trade_cases(trails, look)
         cases += learning_feed.decline_cases(rejections, rows, look)
@@ -630,7 +666,8 @@ def learning_run(data_dir: Path, config, *, limit: int, accounts=("ai-trader", "
 
     # production's cache, marked, for the prep unit; a scratch cache for a hand run (ruling 2026-11-10)
     cache_root = datasafety.resolve_cache_dir(Path(os.path.expanduser(config.cache_dir)), "learning")
-    cases = learning_cases(data_dir, cache_root, log, accounts)
+    grades: list = []
+    cases = learning_cases(data_dir, cache_root, log, accounts, grades_out=grades)
     journal = Journal(data_dir / config.journal_file)
     done = journal.ids()
     fresh = [c for c in cases if (c.account, c.decision_id) not in done and writer.side(c) is not None]
@@ -646,6 +683,14 @@ def learning_run(data_dir: Path, config, *, limit: int, accounts=("ai-trader", "
         if fresh:
             lines += ["", "FIRST PROMPT:", writer.user_prompt(fresh[0])]
         return "\n".join(lines), 0
+    if "ai-trader" in accounts:
+        # every idea's grade, rewritten whole each run: the Friday scorecard's
+        # input (ruling 2026-11-13, item 3); derived data, never appended
+        path = data_dir / IDEA_GRADES_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(json.dumps(asdict(g), sort_keys=True) + "\n" for g in grades), encoding="utf-8")
+        lines.append(f"idea grades: {len(grades)} AI-trader ideas ({sum(1 for g in grades if g.excess is not None)} "
+                     f"graded) written to {path.name}")
     research = ResearchConfig.load()
     client = AnthropicResearchClient(research)
 
@@ -798,16 +843,36 @@ def learning_weekly(data_dir: Path, config, today: date, call=None) -> tuple[Opt
                  f"advantage {'n/a' if shadows[h.id].advantage is None else f'{shadows[h.id].advantage:+.2f}'} points"
                  f"{' ELIGIBLE for promotion' if h.id in eligible else ''}" for h in hyps]
     book_lines = [f"  {l['id']} ({l['account']}): {l['lesson']} - {l['evidence']}" for l in playbook.active(book)]
+    score_lines, score_detail = _scorecard(data_dir, entries, today)
     detail = "\n".join([
-        mining.render(entries), "", "HYPOTHESES (shadows scored on cases resolved after each was proposed)",
+        *score_detail, "", mining.render(entries), "",
+        "HYPOTHESES (shadows scored on cases resolved after each was proposed)",
         *(hyp_lines or ["  none yet"]), "", "PLAYBOOK", *(book_lines or ["  no lesson promoted"]),
     ])
     card = cards.learning_card(
         len(this_week), len(entries), spend, flagged, asked,
         [f"{h.id} ({h.rule})" for h in opened], sum(1 for s in shadows.values() if s.ahead),
         sum(1 for s in shadows.values() if s.advantage is not None and not s.ahead), eligible,
-        [], [f"{l['id']} ({l['lesson']})" for l in demoted], detail)
+        [], [f"{l['id']} ({l['lesson']})" for l in demoted], detail, scorecard=score_lines)
     return card, detail
+
+
+def _scorecard(data_dir: Path, entries, today: date) -> tuple[list[str], list[str]]:
+    """The intelligence scorecard (ruling 2026-11-13, item 3) from the idea
+    grades the evening run wrote and the AI trader's ledger (read as a file).
+    Missing grades are a yellow card, never a silent line."""
+    from learning import scorecard
+
+    path = data_dir / IDEA_GRADES_FILE
+    grades = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()] \
+        if path.exists() else []
+    if not grades:
+        datahealth.report("Learning journal", f"no AI-trader idea grades at {path} (the evening learning run writes "
+                                              f"them); the scorecard's idea lines read empty")
+    ledger = datasafety.lab_production_dir("ai-trader") / "ledger.jsonl"
+    moves = [row for row in (json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()
+                             if line.strip()) if row.get("event") == "move_since_public"] if ledger.exists() else []
+    return scorecard.lines(grades, entries, moves, today)
 
 
 def learn_promote() -> int:

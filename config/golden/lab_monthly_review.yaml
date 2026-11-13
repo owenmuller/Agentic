@@ -1,0 +1,164 @@
+note: AI trader monthly review golden set (human ruling 2026-11-13, item 1). One case per real month.
+cases:
+- id: month_2026-10
+  month: 2026-10
+  facts:
+  - - Trades
+    - 'Closed in the month: 25 trade(s), 11 won, mean -6.4% on cost, median -1.4%, -6.1 points a trade against SPY, 11 of
+      25 beat it.'
+  - - Trades
+    - 'By instrument: call: 5 trade(s), 1 won, mean -16.8% on cost, median -14.5%, -17.1 points a trade against SPY, 1 of
+      5 beat it; etf: 9 trade(s), 7 won, mean +2.8% on cost, median +1.8%, +3.5 points a trade against SPY, 7 of 9 beat it;
+      put: 1 trade(s), 0 won, mean -98.4% on cost, median -98.4%, -97.6 points a trade against SPY, 0 of 1 beat it; stock:
+      10 trade(s), 3 won, mean -0.4% on cost, median -1.6%, -0.1 points a trade against SPY, 3 of 10 beat it.'
+  - - Trades
+    - 'By horizon: days: 22 trade(s), 9 won, mean -7.3% on cost, median -1.5%, -7.0 points a trade against SPY, 9 of 22 beat
+      it; intraday: 3 trade(s), 2 won, mean -0.1% on cost, median +5.0%, +0.0 points a trade against SPY, 2 of 3 beat it.'
+  - - Trades
+    - 'By exit reason: horizon_end: 7 trade(s), 6 won, mean +1.6% on cost, median +1.8%, +1.9 points a trade against SPY,
+      6 of 7 beat it; intraday_close: 1 trade(s), 0 won, mean -14.5% on cost, median -14.5%, -15.3 points a trade against
+      SPY, 0 of 1 beat it; option_expiry_close: 3 trade(s), 1 won, mean -32.9% on cost, median -9.5%, -32.8 points a trade
+      against SPY, 1 of 3 beat it; stop: 10 trade(s), 0 won, mean -8.7% on cost, median -2.0%, -8.5 points a trade against
+      SPY, 0 of 10 beat it; target: 4 trade(s), 4 won, mean +7.2% on cost, median +7.0%, +7.9 points a trade against SPY,
+      4 of 4 beat it.'
+  - - Trades
+    - 'By confidence: 50-69: 22 trade(s), 10 won, mean -7.4% on cost, median -1.1%, -7.0 points a trade against SPY, 10 of
+      22 beat it; 70-84: 3 trade(s), 1 won, mean +0.6% on cost, median -1.6%, +0.5 points a trade against SPY, 1 of 3 beat
+      it.'
+  - - Trades
+    - 'By brief arm: brief: 6 trade(s), 2 won, mean -0.9% on cost, median -1.6%, -0.3 points a trade against SPY, 2 of 6 beat
+      it; control: 7 trade(s), 3 won, mean -7.5% on cost, median -0.9%, -7.6 points a trade against SPY, 3 of 7 beat it; none:
+      12 trade(s), 6 won, mean -8.5% on cost, median +0.0%, -8.2 points a trade against SPY, 6 of 12 beat it.'
+  - - Trades
+    - 'Leveraged or inverse funds: 2 trade(s), 1 won, mean -0.0% on cost, median -0.0%, +0.4 points a trade against SPY, 1
+      of 2 beat it.'
+  - - Trades
+    - 'Model passes in the month: 52, ideas proposed 60, positions opened 35 (including entries that never filled).'
+  - - Timing
+    - 'Median move already made in the trade''s favour at entry, since the prior close: +2.2% (n 25); winners +1.7%, losers
+      +2.2%.'
+  - - Timing
+    - 'Entered after a move of 2% or more in their favour: 14 trade(s), 5 won, mean -9.8% on cost, median -1.6%, -9.4 points
+      a trade against SPY, 5 of 14 beat it.'
+  - - Clusters
+    - 'Scans that opened more than one position: 7, holding 15 trades: 15 trade(s), 6 won, mean -5.6% on cost, median -1.6%,
+      -5.1 points a trade against SPY, 6 of 15 beat it. Worst: 2026-10-14 09:45 (BAC put, SQQQ etf; sectors financials, unmapped:SQQQ).'
+  - - Clusters
+    - 'Days with two or more stop-outs: 2026-10-13 (GS, UNH, C); 2026-10-15 (SOXS, TNK); 2026-10-22 (GE, LMT).'
+  - - Clusters
+    - 'Ideas refused by the rules engine: 25 - no option contract in the window 13, risk gate (sleeve_allocation_exceeded)
+      9, option above the premium budget 2, risk gate (max_daily_deployment_exceeded) 1.'
+  - - A/B
+    - 'brief    passes  16  ideas  14 (0.88/pass)  taken   7  off the shortlist 93%  closed 6 (won 2, mean -0.90% on cost)  brief
+      use: contradicts 4, draws_on 4, neither 3, none 3'
+  - - A/B
+    - control  passes  24  ideas  23 (0.96/pass)  taken  12  off the shortlist 91%  closed 7 (won 3, mean -7.52% on cost)
+  - - A/B
+    - 'no flag (fewer ideas: under 75% of control''s rate at 10+ passes each; mostly shortlist: over 50% at 10+ ideas)'
+  - - Learning
+    - 'AI-trader post-mortems resolved in the month: 25 - right reason 11, wrong luck 1, wrong reason 13.'
+  trades: "T1 10-13 09:45 GS stock days conf 74 arm - theme -: closed 10-13 10:04 by stop after 1 session(s); -1.6% on cost,\
+    \ SPY +0.0%, moved +2.2% in its favour since the prior close at entry; catalyst: Q3 2026 earnings beat: EPS $17.01 vs.\
+    \ $12.90 est.; strong equities and investment banking revenue.\nT2 10-13 09:46 UNH stock days conf 72 arm - theme -: closed\
+    \ 10-13 09:49 by stop after 1 session(s); -1.6% on cost, SPY +0.0%, moved +2.2% in its favour since the prior close at\
+    \ entry; catalyst: Q3 2026 earnings beat + raised full-year 2026 profit guidance; Optum margin improvement.\nT3 10-13\
+    \ 09:46 SOXS etf days conf 65 arm - theme -: closed 10-14 14:01 by target after 2 session(s); +9.9% on cost, SPY -1.1%,\
+    \ moved +3.9% in its favour since the prior close at entry; catalyst: Chinese CXMT competition fears triggering global\
+    \ memory chip selloff; Samsung -10%, SK Hynix -8% in Seoul; MU, WDC, SNDK all down 3-5% prema\nT4 10-13 10:46 C call days\
+    \ conf 63 arm - theme -: closed 10-13 11:25 by stop after 1 session(s); -29.8% on cost, SPY +0.0%, moved -1.7% in its\
+    \ favour since the prior close at entry; catalyst: Q3 2026 EPS beat ($2.85 vs $2.66 consensus) reported morning of 2026-10-13;\
+    \ peer financials (GS, JPM) also beating, driving sector-wide re-r\nT5 10-13 12:01 META call intraday conf 65 arm - theme\
+    \ -: closed 10-13 15:45 by option expiry close after 1 session(s); +9.2% on cost, SPY +0.0%, moved +2.4% in its favour\
+    \ since the prior close at entry; catalyst: Analyst upgrade wave + Muse Wonder AI model family launch announced Oct 13,\
+    \ 2026; sector rotation from semis into AI software names.\nT6 10-13 12:01 XLE etf days conf 62 arm - theme -: closed\
+    \ 10-19 15:50 by horizon end after 5 session(s); +1.6% on cost, SPY -1.5%, moved +1.3% in its favour since the prior close\
+    \ at entry; catalyst: BP Q3 results beat + early net-debt target hit (Oct 13 2026); refiner margin strength; ongoing Middle\
+    \ East supply-risk premium; sector rotat\nT7 10-14 09:46 BAC put days conf 68 arm - theme -: closed 10-15 15:45 by option\
+    \ expiry close after 2 session(s); -98.4% on cost, SPY -0.8%, moved +7.4% in its favour since the prior close at entry;\
+    \ catalyst: Q3 2026 earnings miss driven by $1.2B regulatory penalty and deal-flow slowdown, reported 2026-10-14 pre-market;\
+    \ compounded by hot CPI print\nT8 10-14 09:46 SQQQ etf days conf 63 arm - theme -: closed 10-15 09:37 by target after\
+    \ 2 session(s); +9.0% on cost, SPY -0.8%, moved +1.7% in its favour since the prior close at entry; catalyst: Hot CPI\
+    \ print 2026-10-14 (largest monthly increase in ~5 months per consensus), Nasdaq -0.7% at session open, ongoing semi sector\
+    \ selling pr\nT9 10-14 14:48 XLV etf days conf 65 arm - theme -: closed 10-20 15:50 by horizon end after 5 session(s);\
+    \ +3.5% on cost, SPY -1.1%, moved +2.4% in its favour since the prior close at entry; catalyst: Broad defensive rotation\
+    \ driven by hot CPI print (2026-10-14) and ongoing semiconductor/tech sector weakness; healthcare mega-caps surging 3\n\
+    T10 10-15 09:46 SOXS etf days conf 68 arm - theme -: closed 10-15 15:12 by stop after 1 session(s); -5.0% on cost, SPY\
+    \ +0.3%, moved +9.5% in its favour since the prior close at entry; catalyst: Wednesday CPI beat reignited higher-for-longer\
+    \ rate fears; global semiconductor sell-off deepened overnight with South Korea's Kospi -8%, Sa\nT11 10-15 09:46 TNK stock\
+    \ days conf 63 arm - theme -: closed 10-15 10:15 by stop after 1 session(s); -1.6% on cost, SPY +0.3%, moved -1.3% in\
+    \ its favour since the prior close at entry; catalyst: VLCC spot charter rates approaching $1M/day on Strait of Hormuz\
+    \ disruptions; longer voyage routes tightening effective tanker supply; Q3 ear\nT12 10-15 10:45 UNH stock days conf 68\
+    \ arm - theme -: closed 10-21 15:50 by horizon end after 5 session(s); +2.3% on cost, SPY +0.5%, moved +3.1% in its favour\
+    \ since the prior close at entry; catalyst: Q3 2026 earnings beat (reported Oct 13): adjusted EPS $4.69 vs $4.14 est,\
+    \ full-year EPS guidance raised to ≥$20.50; defensive rotation accel\nT13 10-16 09:46 SOXS etf intraday conf 60 arm control\
+    \ theme -: closed 10-16 13:23 by target after 1 session(s); +5.0% on cost, SPY -1.1%, moved +4.5% in its favour since\
+    \ the prior close at entry; catalyst: 8-session SOXX losing streak (longest since Sept 2015); CoreWeave premarket weakness\
+    \ on debt concerns; elevated yields post-CPI sustaining p\nT14 10-16 13:31 NUE stock days conf 62 arm brief theme -: closed\
+    \ 10-20 09:35 by stop after 3 session(s); -1.4% on cost, SPY -0.3%, moved +2.1% in its favour since the prior close at\
+    \ entry; catalyst: September U.S. industrial production beat driving steel demand optimism; Q3 2026 earnings due Oct.\
+    \ 26 as a hard catalyst window; ongoing Sec\nT15 10-19 12:01 DDOG call days conf 68 arm control theme -: closed 10-19\
+    \ 15:47 by stop after 1 session(s); -39.4% on cost, SPY +0.4%, moved +9.8% in its favour since the prior close at entry;\
+    \ catalyst: Triple analyst upgrade on 2026-10-19: Bernstein to Outperform PT $350, Mizuho PT $330, Barclays PT $300; all\
+    \ citing accelerating enterprise \nT16 10-20 09:46 GE stock days conf 62 arm brief theme -: closed 10-22 09:36 by stop\
+    \ after 3 session(s); -2.3% on cost, SPY -0.3%, moved -3.5% in its favour since the prior close at entry; catalyst: Q3\
+    \ 2026 earnings reported this morning (BMO); industrial production data beat released today; sector rotation away from\
+    \ tech/semis into indu\nT17 10-20 09:46 XLI etf days conf 60 arm brief theme -: closed 10-26 15:50 by horizon end after\
+    \ 5 session(s); +0.7% on cost, SPY -0.2%, moved -0.7% in its favour since the prior close at entry; catalyst: US industrial\
+    \ production +0.7% MoM September (released today); manufacturing capacity utilization at 75.9%, highest since early 2024;\
+    \ confir\nT18 10-21 09:46 NOC stock days conf 64 arm brief theme -: closed 10-27 15:50 by horizon end after 5 session(s);\
+    \ +2.0% on cost, SPY +0.1%, moved +1.3% in its favour since the prior close at entry; catalyst: Q3 2026 beat-and-raise\
+    \ earnings (Oct 20 pre-market); multiple analyst upgrades on Oct 21 including Baird to Outperform ($675 PT); record bac\n\
+    T19 10-22 09:46 LMT stock days conf 68 arm brief theme -: closed 10-22 12:29 by stop after 1 session(s); -2.7% on cost,\
+    \ SPY -1.2%, moved +7.3% in its favour since the prior close at entry; catalyst: Q3 2026 earnings beat + FY2026 guidance\
+    \ raise + record $292B backlog + Middle East escalation driving defense demand urgency.\nT20 10-22 09:46 PG stock days\
+    \ conf 62 arm brief theme -: closed 10-23 09:57 by stop after 2 session(s); -1.8% on cost, SPY -1.7%, moved +5.8% in its\
+    \ favour since the prior close at entry; catalyst: Q3 2026 earnings beat (pre-market 2026-10-22) combined with risk-off\
+    \ rotation into defensive consumer staples on Middle East escalation and \nT21 10-22 13:31 XLE etf days conf 65 arm control\
+    \ theme -: closed 10-28 15:50 by horizon end after 5 session(s); +1.8% on cost, SPY -0.1%, moved -1.2% in its favour since\
+    \ the prior close at entry; catalyst: Houthi drone strike on Saudi Aramco Shaybah oil field, Brent crude surging ~$112,\
+    \ geopolitical supply-risk premium expanding — dated 2026-10\nT22 10-22 13:31 TLT etf days conf 63 arm control theme -:\
+    \ closed 10-28 15:50 by horizon end after 5 session(s); -0.9% on cost, SPY -0.1%, moved +1.8% in its favour since the\
+    \ prior close at entry; catalyst: 10-year Treasury yield -14 bps intraday (largest drop since Aug 2025), broad equity\
+    \ risk-off (Nasdaq -2.4%), geopolitical escalation driving\nT23 10-23 10:46 LMT stock days conf 72 arm control theme -:\
+    \ closed 10-26 10:17 by target after 2 session(s); +5.0% on cost, SPY +0.2%, moved -0.1% in its favour since the prior\
+    \ close at entry; catalyst: Q3 2026 earnings beat + guidance raise (reported 2026-10-22); new PAC-3 MSE production framework\
+    \ with Pentagon announced 2026-10-23; sustain\nT24 10-26 14:46 AVGO call intraday conf 62 arm control theme -: closed\
+    \ 10-26 15:50 by intraday close after 1 session(s); -14.5% on cost, SPY +0.7%, moved +2.9% in its favour since the prior\
+    \ close at entry; catalyst: Anthropic public S-1 IPO filing (2026-10-26) disclosing $221B in cloud compute commitments;\
+    \ broad AI infrastructure re-rating; sector moment\nT25 10-27 09:46 SMH call days conf 68 arm control theme -: closed\
+    \ 10-29 15:45 by option expiry close after 3 session(s); -9.5% on cost, SPY +0.6%, moved +1.8% in its favour since the\
+    \ prior close at entry; catalyst: Anthropic IPO filing reported (2026-10-27); Microsoft Q3 2026 EPS beat ($4.74 vs $4.71\
+    \ est.) reported after close 2026-10-26; renewed AI inf"
+  rules: '- 5 scans a session at 09:45, 10:45, 12:00, 13:30, 14:45 ET; up to 3 ideas a scan; at most 5 open positions
+
+    - confidence at least 50; stop 1%-25% from entry; target at least 1.0 x the stop; risk 2% of NAV a trade
+
+    - no intraday entry after 15:15 ET, no entry after 15:30 ET; intraday out at 15:50; days 5 sessions, weeks 20
+
+    - options: expiry windows {''intraday'': (0, 2), ''days'': (7, 14), ''weeks'': (7, 45)} days; |delta| 0.4-0.7; open interest
+    >= 100; spread <= 0.15
+
+    - stops and targets read the quote rule: the mid only within a 2% spread; a long''s stop on a tight bid, else the last
+    trade; never a wide quote''s mid (2026-11-12)
+
+    - one bet per sector or theme: no new position in a sector or theme already held or already placed earlier in the same
+    scan (''other'' exempt by theme); at most 1 new option(s) a scan (2026-11-12)
+
+    - logged only, no live effect yet: the move since the catalyst went public, and its skip-above-1-ATR shadow
+
+    - the live mirror copies every paper entry it can fund on settled cash; no leveraged or inverse funds live; an option
+    that does not fit the live premium cap is copied as its underlying (calls) or skipped (puts)'
+  min: 1
+  max: 5
+  why: 'October 2026, the first month of the AI trader (from Oct 13): facts, trades and rules rendered by monthly-review --facts-only
+    on 2026-11-13. Graded structurally: a diagnosis, 1-5 proposals, every one citing existing facts with a shadow test, none
+    proposing what Constraints #1/#2 forbid.'
+  banned_words:
+  - margin
+  - short sell
+  - short sale
+  - sell to open
+  - naked
+  - covered call
+  - cash-secured put
+  - remove the stop

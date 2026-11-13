@@ -399,6 +399,26 @@ Every sleeve and every lab account learns through ONE shared, structured loop, g
 - **Weekly card** "What we learned this week" (the Friday weekly unit): journal count, flagged patterns, the advance question, hypotheses opened, shadows ahead and behind, lessons promoted and demoted, spend.
   - Green when nothing is to decide, red when a shadow is eligible for promotion, yellow when a lesson was demoted. Golden replay (and the live round trip) for the journal and hypothesis prompts.
 
+**LEARNING ACCELERATION (human ruling 2026-11-13).** Constraint #6 holds: all of it is measured record, never a P&L target in a prompt.
+1. **Monthly AI trader deep review, automated:** `python -m lab monthly-review` (`lab/monthly_review.py`), unit `agentic-ai-review.{service,timer}` (weekdays 17:15 ET; the command acts only in a month's first five sessions and once a month, a marker under `~/agentic-scratch/reviews/`; the human installs the unit).
+   - CODE computes every figure as numbered facts: every trade, timing (move already made at entry since the prior close; since the catalyst went public), clusters (multi-entry scans, stop-out days, refusals by reason), the review shadows scored, the live mirror (copies, skips, refusals, live against paper twins), the A/B arms, and the learning loop's grades and post-mortems (read as files).
+   - The model (the AI trader's pinned `claude-sonnet-4-6`, one forced-tool call, no search) writes the diagnosis and one to five ranked proposals. Each proposal cites existing facts (else it is dropped), names a shadow test, and never proposes margin, short sales, written options, a removed stop, more risk per trade or a target.
+   - The model sees no dollars and no account value: only each decision's return on cost, points against SPY and counts. Dollars appear only in the human's report.
+   - It posts to #reports as a red card while it carries proposals. **Proposals wait for the human's ruling; nothing auto-applies.**
+   - Golden replay `python -m lab review-golden` (October 2026's real facts, graded structurally).
+2. **Ideas not traded are journaled** (`orchestrator/learning_feed.py`): every AI-trader idea is graded at its STATED horizon (intraday that day; days at the 5th session; weeks at the 20th, counting the proposal day). The grade runs from the live price the engine read at proposal, with SPY at the same minute, to that session's close, without its stop or target. Without the minute price, a days or weeks idea starts at its day's close and an intraday one is not graded.
+   - Refused, placed-but-unfilled and never-placed ideas become journal cases of kind `refusal`: one per name, day and direction, and none when the name was taken that day in that direction. A refusal is RIGHT when its idea did not beat SPY.
+   - The cap's refusals and the 7-DTE rule's "no contract" refusals are refusals like any other. Taken trades the strict cap reading would have refused stay trade cases.
+   - Backfilled from 2026-10-13: 33 cases at the build.
+   - The writer's prompt learned the kind (golden replay with two real refusal cases). Hypotheses do not yet form from refusal patterns: the miner tallies and reports them; turning them into hypotheses is a hypothesis-prompt change for a later ruling.
+   - Every idea's grade is written to `data/learning/idea_grades.jsonl` by the evening learning run.
+3. **Intelligence scorecard** (`learning/scorecard.py`) opens the Friday learning card, one plain line each with its trend by month, for the AI trader:
+   - (a) calibration: hit rate and mean points against SPY by confidence band, every idea graded at its horizon;
+   - (b) process: the share of its post-mortems judged right for the right reason, by month resolved;
+   - (c) selection: ideas taken against ideas not taken on the same measure, with a 95% interval on the difference;
+   - (d) timing: the median move already made in a trade's favour at entry, since the prior close (every trade) and since the catalyst went public (logged from 2026-11-13).
+   - One idea per name, day and direction counts once, under its most consequential fate.
+
 1. **Journal.** When any decision resolves (a trade closed; a decline or veto past its grading horizon) the model writes a structured post-mortem: thesis, expected outcome, actual outcome, **right for the right reason** (process vs luck), and tags from a FIXED vocabulary (sector, setup, catalyst/news type, market regime, confidence band, source). Stored in a journal table. The cheapest model that does it reliably; its cost is reported.
 2. **Pattern mining** (weekly, code, no LLM): outcomes and forward excess tallied by tag and tag pair, with n and confidence intervals. A pattern is flagged only at n ≥ 20 with its CI excluding zero, **corrected for the number of patterns tested**.
 3. **Hypotheses → shadows.** The model reads the flagged patterns and proposes at most 3 hypotheses a week, each written as a concrete rule change and auto-registered as a software shadow variant on live prices. **No hypothesis touches a live decision directly.**

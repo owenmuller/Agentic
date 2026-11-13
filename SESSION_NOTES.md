@@ -4167,6 +4167,37 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-13 (afternoon) — LEARNING ACCELERATION: monthly AI trader review, ideas not traded journaled, intelligence scorecard
+
+Ruling recorded in CLAUDE.md § Learning Loop ("LEARNING ACCELERATION"). Constraint #6 holds throughout: measured record only, never a P&L target in a prompt.
+
+**1. Monthly deep review** (`lab/monthly_review.py`, `python -m lab monthly-review [--month YYYY-MM] [--post] [--facts-only] [--scheduled]`).
+- CODE computes the numbered facts: every trade; timing; clusters; refusals by reason (`refusal_kind`); the review shadows scored; the live mirror; the A/B arms; the learning grades and post-mortems.
+- The model (sonnet-4-6, one forced-tool call) writes the diagnosis and 1-5 ranked proposals. Each cites fact ids (else dropped) and names a shadow test.
+- The model sees no dollars and no account value. Dollars appear only in the human report, rendered after the call.
+- Red card in #reports while it carries proposals; nothing auto-applies.
+- Unit `agentic-ai-review.{service,timer}`: weekdays 17:15 ET; acts in a month's first five sessions, once (a marker under `~/agentic-scratch/reviews/`). The human installs it with sudo; the first real run is Tue Dec 1 for November.
+- October facts-only on real data: 25 round trips, 11 won, mean -6.4% on cost, -6.1 points a trade vs SPY.
+  - Calls 5 (mean -16.8%), the one put -98.4% (BAC), ETFs 9 (+2.8%), stocks 10 (-0.4%).
+  - 14 trades entered after a 2%+ move in their favour: mean -9.8%.
+  - Refusals: 13 no option contract, 9 sleeve allocation (gate), 2 premium budget, 1 daily deployment.
+- Golden (`python -m lab review-golden`, October's real facts, 3 runs): PASS 3/3, 5 proposals each, none dropped, $0.17. Weak spots seen: one run re-proposed the 7-DTE minimum already in force, one misread the pre-A/B trades ("none") as a third arm. The human rules on each, so these cost nothing live.
+- Ledger quirk found: a live-mirror `path_test` row's `at` holds a price (12.2101), clobbering its timestamp. The review skips unparseable stamps; the ledger write is unchanged (a later fix).
+
+**2. Ideas not traded, journaled** (`orchestrator/learning_feed.py`).
+- `ai_trader_idea_grades` grades every proposed idea at its stated horizon: from the engine's proposal price (SPY at the same minute, from SIP minute bars) to the close of the horizon's last session. Fates: taken, unfilled, refused, unplaced.
+- `ai_trader_refusal_cases`: kind `refusal`, one per name, day and direction, none when taken that day.
+- The writer's prompt names the kind. Golden `learn-golden` with two real refusal cases added (NOC, refused by the gate, then +6.3 points: WRONG; ENTG, refused for no chain, then -13.4: RIGHT): 11/11 cases, 33/33 runs, $0.14.
+- Backfill since Oct 13: 100 ideas, 33 refusal cases. An early read, not a finding: the 9 ideas the sleeve-allocation gate refused mostly beat SPY.
+- `data/learning/idea_grades.jsonl` is rewritten by each evening learning run.
+- Not done: hypotheses from refusal patterns (`hypotheses.ACTION` has no refusal rule). It is a hypothesis-prompt change for a later ruling.
+
+**3. Intelligence scorecard** (`learning/scorecard.py`) opens the Friday learning card: calibration, process, selection, timing, one line each with its trend by month.
+- One idea per name, day and direction.
+- Missing grades are a yellow card.
+
+Tests: `tests/test_learning_ideas.py`, `tests/test_lab_monthly_review.py`. Full suite green.
+
 ### 2026-11-12 (night) — readings on the review build: the cap counts placed ideas only, "other" exempt by theme, the shadows scored
 
 **Readings (human ruling 2026-11-12, later), recorded in CLAUDE.md § 2b items 2, 5 and 8:**

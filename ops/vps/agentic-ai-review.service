@@ -1,0 +1,33 @@
+# The AI trader's monthly deep review (human ruling 2026-11-13, item 1): on a
+# month's first session, after the close, the prior month is reviewed (every
+# trade, timing, clusters, the shadows, the live mirror, the A/B and the
+# learning loop; the model's diagnosis and ranked proposals, each with its
+# evidence and a shadow test) and posted to #reports. Proposals wait for a
+# human ruling; nothing applies on its own.
+#
+# The command decides: outside a month's first five sessions, or once the
+# month's review has been sent (a marker under ~/agentic-scratch/reviews), it
+# exits at once. Read-only against every ledger; writes only the scratch
+# report and marker. LLM spend: one forced-tool call (~$0.2-0.5).
+#
+# Not named agentic-lab-*: it is no lab account's unit and owns no data tree.
+# Register with:
+#   sudo cp ops/vps/agentic-ai-review.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now agentic-ai-review.timer
+[Unit]
+Description=Agentic AI trader monthly review (first session of each month, after the close)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=agentic
+WorkingDirectory=/home/agentic/Agentic
+Environment=PYTHONIOENCODING=utf-8
+ExecStart=/home/agentic/Agentic/.venv/bin/python -m lab monthly-review --scheduled
+MemoryMax=600M
+MemorySwapMax=0
+OOMScoreAdjust=500
+Nice=10
+TimeoutStartSec=1h

@@ -4,8 +4,8 @@ does it reliably, through ONE forced-tool call with no search - the facts are
 the decision's own and are given in full.
 
 Code decides what code can: the OUTCOME SIDE (a trade is right when it beat
-SPY over its own window; a decline or veto is right when the trade it did not
-make would not have), the MARKET CHECK (when SPY's move was larger than the
+SPY over its own window; a decline, veto or refusal is right when the trade it
+did not make would not have), the MARKET CHECK (when SPY's move was larger than the
 stock's own move beyond it, the market decided: luck), and every computed
 tag. The model judges only what needs judgment - whether a result the stock
 itself decided came from the decision's own reasoning or from a named outside
@@ -40,14 +40,15 @@ SYSTEM = """You write the post-mortem of ONE resolved trading decision for a lea
 The facts below are complete: the decision's own thesis, what it expected, what happened, and the moves. Do not search; judge from these facts only.
 
 WHAT IS ALREADY DECIDED (by code, from the numbers)
-The OUTCOME SIDE is stated below and is final: RIGHT or WRONG. For a trade, RIGHT means the position beat SPY over its own holding window. For a decline (a trade the system chose NOT to make), RIGHT means the trade it skipped would not have beaten SPY.
+The OUTCOME SIDE is stated below and is final: RIGHT or WRONG. For a trade, RIGHT means the position beat SPY over its own holding window. For a decline (a trade the system chose NOT to make) or a refusal (an idea its rules refused, or that was never filled), RIGHT means the trade it skipped would not have beaten SPY.
 
 WHAT YOU JUDGE
 1. cause - why the outcome came out that way. The facts split the result into the stock's OWN move beyond SPY and SPY's move, both signed in the decision's favour; use them.
    reason   the stock's own move decided it, and that is the decision's reasoning at work or failing:
             - a right trade where the named catalyst moved the stock as the thesis said;
             - a wrong trade where the stock itself moved against the thesis: the thesis or its timing was wrong. Buying after an opening gap in the trade's direction and watching the stock give the move back is the timing failing, not bad luck. "The market sold the news", "the move reversed", "momentum faded" are the thesis being wrong;
-            - a decline whose stated doubts came true (right), or whose doubts the stock's own move proved wrong (wrong).
+            - a decline whose stated doubts came true (right), or whose doubts the stock's own move proved wrong (wrong);
+            - a refusal: the idea's own thesis is what the stock's move judges - a refused idea whose thesis failed was rightly skipped (right), one whose thesis played out was a good idea lost (wrong). The rule that refused it is stated in the facts; say whether the outcome supports that rule.
    unclear  the facts cannot tell (for example both parts are tiny, or a key number is missing).
    Luck is not yours to choose. Code checks the market first: when SPY's move was larger than the stock's own move, the facts say MARKET DECIDED, the cause is recorded as luck, and you write the post-mortem accordingly. Do not invent an outside event: these facts contain none beyond what is written here.
    A winner is not proof of good reasoning, and a loser is not proof of bad reasoning.
@@ -109,7 +110,8 @@ def _pct(value: Optional[float]) -> str:
 def user_prompt(case: Case) -> str:
     verdict = side(case)
     kind = {"trade": "a TRADE it made", "decline": "a trade it DECLINED to make",
-            "veto": "a buy it VETOED"}.get(case.kind, case.kind)
+            "veto": "a buy it VETOED", "refusal": "an idea its rules REFUSED or that was never filled"
+            }.get(case.kind, case.kind)
     lines = [
         f"DECISION: {kind} - {case.symbol} ({case.tags.get('instrument', 'n/a')}, direction {case.direction}), "
         f"{case.strategy} in the {case.account} account",

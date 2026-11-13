@@ -17,6 +17,13 @@
   status [<account>]           read-only: pin, kill switch, last snapshot, spend.
   scoreboard [--email]         read-only: the weekly table, every sleeve vs SPY and
                                the ladder, raw and slippage-adjusted.
+  monthly-review [--month YYYY-MM] [--scheduled] [--post] [--facts-only]
+                               the AI trader's monthly deep review (ruling
+                               2026-11-13): facts by code, diagnosis and ranked
+                               proposals by the model; --post sends it to #reports;
+                               --scheduled acts only in a month's first sessions,
+                               once a month (the agentic-ai-review unit).
+  review-golden [--runs N]     the monthly review prompt's golden replay.
   halt <account> --reason R    operator: write the account's halt marker; its
                                next run trips its own kill switch (frozen).
   resume <account> --ack A     operator, A HUMAN ONLY: clear the halt marker and
@@ -699,6 +706,172 @@ def live_session() -> int:
     return 0
 
 
+def monthly_review(month: Optional[str], scheduled: bool, post: bool, facts_only: bool,
+                   golden_out: Optional[Path] = None) -> int:
+    """The AI trader's monthly deep review (human ruling 2026-11-13, item 1).
+    Read-only: the AI trader's and the live mirror's ledgers and the main
+    book's learning files are read as files; the report goes to #reports
+    (``--post``) and to ``<scratch>/reviews/``. Proposals wait for a ruling."""
+    import os
+    from datetime import timedelta
+
+    from execution.market_data import AlpacaDailyBars, AlpacaMinuteBars
+    from lab import monthly_review as review
+    from lab import review_shadows as shadows
+    from lab.ai_trader import NY
+    from research.client import AnthropicResearchClient
+    from research.config import ResearchConfig
+    from risk_gate.sectors import SectorMap
+
+    config = LabConfig.load()
+    ai = config.ai_trader
+    if ai is None:
+        print("no AI trader configured", file=sys.stderr)
+        return 1
+    minute = AlpacaMinuteBars()       # loads the environment: the main book's data keys
+    now = datetime.now(timezone.utc)
+    today = now.astimezone(NY).date()
+    reviews = datasafety.scratch_data_dir().parent / "reviews"
+    if scheduled:
+        calendar = _calendar(os.environ.get("ALPACA_API_KEY", ""), os.environ.get("ALPACA_API_SECRET", ""),
+                             "monthly review calendar")
+        # the first session, or the next four if the timer fired late (Persistent=true)
+        if today not in review.first_sessions(calendar, today):
+            print(f"{today} is not one of its month's first sessions; nothing to do")
+            return 0
+        month = review.previous_month(today)
+        if (reviews / f"ai-trader-{month}.done").exists():
+            print(f"the {month} review was already sent")
+            return 0
+    month = month or review.previous_month(today)
+    start, end = review.month_bounds(month)
+    ledger = datasafety.lab_production_dir("ai-trader") / "ledger.jsonl"
+    if not ledger.exists():
+        print(f"no AI trader ledger at {ledger}", file=sys.stderr)
+        return 1
+    events = review.read_jsonl(ledger)
+    live = review.read_jsonl(datasafety.lab_production_dir(LIVE) / "ledger.jsonl")
+    if not live:
+        datahealth.report("AI trader monthly review", "the live mirror's ledger is missing or empty; its section "
+                                                      "reads empty")
+    main = datasafety.production_data_dir()
+    grades = review.read_jsonl(main / "learning" / "idea_grades.jsonl") if main else []
+    journal = review.read_jsonl(main / "learning" / "journal.jsonl") if main else []
+    if not grades:
+        datahealth.report("AI trader monthly review", "no idea grades from the learning run; the learning facts "
+                                                      "read empty")
+    symbols = sorted({e["symbol"] for e in events if e.get("event") == "position_opened"} | {"SPY"})
+    raw = AlpacaDailyBars().bars_many(symbols, datetime.combine(start - timedelta(days=40), datetime.min.time(),
+                                                                timezone.utc), now)
+    daily = {s: {date_from(str(b["t"])): (float(b["o"]), float(b["c"])) for b in rows} for s, rows in raw.items()}
+    if not daily.get("SPY"):
+        print("no SPY bars: nothing can be measured against SPY", file=sys.stderr)
+        return 1
+    calendar = _calendar(os.environ.get("ALPACA_API_KEY", ""), os.environ.get("ALPACA_API_SECRET", ""),
+                         "monthly review calendar")
+    window = review.in_window(events, start, end)
+    sim = shadows.Simulator(lambda symbol, a, b: minute.bars(symbol, a, b, "sip"), calendar,
+                            intraday_close=ai.intraday_close, horizon_sessions=dict(ai.horizon_sessions), now=now,
+                            report=datahealth.report)
+    try:
+        shadow_text = shadows.report(window, sim, today)
+    finally:
+        minute.close()
+    sectors = SectorMap.load()
+    facts, done = review.build_facts(events, live, start, end, lambda s: daily.get(s, {}),
+                                     sector_of=sectors.sector_of, shadow_text=shadow_text, grades=grades,
+                                     journal=journal)
+    if golden_out is not None:
+        # a golden case from a real month (the review prompt's replay set)
+        import yaml
+
+        golden_out.write_text(yaml.safe_dump({"id": f"month_{month}", "month": month,
+                                              "facts": [[section, text] for _, section, text in facts.items],
+                                              "trades": review.trade_table(done, dollars=False),
+                                              "rules": review.rules_in_force(ai), "min": 1, "max": review.MAX_PROPOSALS},
+                                             sort_keys=False, width=120, allow_unicode=True), encoding="utf-8")
+        print(f"golden case written to {golden_out}")
+    call = None
+    if not facts_only:
+        client = AnthropicResearchClient(ResearchConfig.load())
+
+        def call(system: str, user: str, tool: dict):
+            return client.single_call(system=system, user=user, tool=tool, model=ai.model, max_tokens=4000)
+
+    diagnosis, proposals, dropped, cost, model = review.run(month, facts, done, review.rules_in_force(ai), call)
+    text = review.render(month, facts, done, diagnosis, proposals, dropped, shadow_text, cost, model)
+    label = date_from(month + "-01").strftime("%B %Y")
+    won = sum(1 for t in done if t.pnl > 0)
+    excess = [t.excess for t in done if t.excess is not None]
+    trades_line = (f"Round trips closed: {len(done)}, {won} won, net {cards.usd(sum(t.pnl for t in done), signed=True)}"
+                   + (f", {sum(excess) / len(excess) * 100:+.1f} points a trade against SPY" if excess else "") + ".")
+    card = cards.monthly_review_card(label, trades_line, review.short(diagnosis), [p.title for p in proposals],
+                                     cost, text, dropped=len([d for d in dropped if not d.startswith("facts only")]))
+    reviews.mkdir(parents=True, exist_ok=True)
+    (reviews / f"ai-trader-{month}.txt").write_text(text, encoding="utf-8")
+    print(text)
+    print(f"\n(saved to {reviews / f'ai-trader-{month}.txt'})")
+    if post or scheduled:
+        alerter = Alerter()
+        alerter.card(f"ai-trader-review-{month}", card)
+        alerter.close()
+        (reviews / f"ai-trader-{month}.done").write_text(now.isoformat(), encoding="utf-8")
+    return 0
+
+
+def review_golden(runs: int) -> int:
+    """The monthly review prompt's golden replay (a prompt on the request path:
+    CLAUDE.md § LLM Request-Path Changes). Each case's facts, trades and rules
+    are a real month's, rendered by ``monthly-review --facts-only``; a run
+    passes when the report parses, every proposal cites existing facts, none is
+    dropped, the count is within the case's bounds and every proposal names a
+    shadow test."""
+    import yaml
+
+    from execution import load_environment
+    from lab import monthly_review as review
+    from research.client import AnthropicResearchClient
+    from research.config import ResearchConfig
+
+    config = LabConfig.load().ai_trader
+    load_environment()
+    client = AnthropicResearchClient(ResearchConfig.load())
+    path = Path(__file__).resolve().parents[2] / "config" / "golden" / "lab_monthly_review.yaml"
+    golden = yaml.safe_load(path.read_text(encoding="utf-8"))
+    print(f"monthly review golden: {path} on {config.model}, {runs} run(s) a case; "
+          f"prompt {review.__file__}")
+    failed, spend = [], 0.0
+    for item in golden["cases"]:
+        facts = review.Facts()
+        for section, text in item["facts"]:
+            facts.add(section, text)
+        passes = 0
+        for _ in range(runs):
+            result = client.single_call(system=review.SYSTEM, user=review.user_prompt(
+                item["month"], facts, item["trades"], item["rules"]), tool=review.tool(), model=config.model,
+                max_tokens=4000)
+            spend += float(result.est_cost_usd or 0)
+            diagnosis, proposals, dropped = review.parse(result.structured, facts)
+            text = " ".join(f"{p.title} {p.change}" for p in proposals).lower()
+            banned = [w for w in item.get("banned_words", []) if w in text]
+            ok = (bool(diagnosis) and not dropped and item["min"] <= len(proposals) <= item["max"]
+                  and all(p.shadow_test for p in proposals) and not banned)
+            passes += ok
+            print(f"  {item['id']:24} {'PASS' if ok else 'FAIL'}  {len(proposals)} proposal(s), dropped {len(dropped)}"
+                  + (f", banned words {banned}" if banned else ""))
+            print(f"      diagnosis: {diagnosis[:400]}")
+            for p in proposals:
+                print(f"      {p.rank}. {p.title} [{', '.join(p.evidence)}]: {p.change[:220]}")
+                print(f"         shadow: {p.shadow_test[:220]}")
+            for d in dropped:
+                print(f"      dropped: {d}")
+        if passes * 2 <= runs:
+            failed.append(item["id"])
+    print(f"monthly review golden: {len(golden['cases']) - len(failed)}/{len(golden['cases'])} cases pass; "
+          f"spend ${spend:.2f}" + (f"; FAILED: {', '.join(failed)}" if failed else ""))
+    return 1 if failed else 0
+
+
 def review_shadows() -> int:
     """Read-only: the AI trader review's shadows scored (human rulings
     2026-11-12) - for the 10-session read after the exit shadow's last day."""
@@ -771,9 +944,22 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("live-check")
     sub.add_parser("live-mirror")
     sub.add_parser("review-shadows")
+    p = sub.add_parser("monthly-review")
+    p.add_argument("--month")
+    p.add_argument("--scheduled", action="store_true")
+    p.add_argument("--post", action="store_true")
+    p.add_argument("--facts-only", action="store_true")
+    p.add_argument("--golden-out")
+    p = sub.add_parser("review-golden")
+    p.add_argument("--runs", type=int, default=3)
     args = parser.parse_args(argv)
     if args.command == "review-shadows":
         return review_shadows()
+    if args.command == "monthly-review":
+        return monthly_review(args.month, args.scheduled, args.post, args.facts_only,
+                              Path(args.golden_out) if args.golden_out else None)
+    if args.command == "review-golden":
+        return review_golden(args.runs)
     if args.command == "live-check":
         return live_check()
     if args.command == "live-mirror":
