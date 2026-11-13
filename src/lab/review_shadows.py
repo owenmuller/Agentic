@@ -377,9 +377,10 @@ def move(events: list[dict], sim: Simulator) -> list[str]:
     return lines
 
 
-def report(events: list[dict], sim: Simulator, as_of: date) -> str:
+def report(events: list[dict], sim: Simulator, as_of: date, read_after: Optional[date] = None) -> str:
     sections = [concentration(events, sim), strict(events, sim), exits(events), expiry(events), move(events, sim)]
-    head = [f"AI TRADER REVIEW SHADOWS - as of {as_of} (read-only; the 10-session read is due after 2026-11-26)",
+    due = f"; the 10-session read is due after the {read_after} close" if read_after else ""
+    head = [f"AI TRADER REVIEW SHADOWS - as of {as_of} (read-only{due})",
             "Replays: the underlying on one-minute SIP bars, stops at their level (slippage not charged), "
             "an option scored on its underlying. Returns in the idea's direction.", ""]
     return "\n".join(head + [line for section in sections for line in section + [""]]).rstrip() + "\n"

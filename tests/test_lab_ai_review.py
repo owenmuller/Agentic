@@ -88,7 +88,19 @@ def test_the_exit_shadow_ends_on_its_date(lab_env):
     world.quotes["AAPL"] = (D("180.00"), D("206.00"))
     trader.tick(et(12, "10:00"))
     assert trader.account.ledger.events(["exit_shadow"]) == []
-    assert CFG.exit_shadow_until == date(2026, 11, 26)      # 10 sessions from 2026-11-13
+    assert CFG.exit_shadow_until == date(2026, 11, 27)      # see the calendar test below
+
+
+def test_the_exit_shadow_ends_on_the_tenth_session_from_its_start():
+    """Nov 13, 16-20, 23-25 and the Nov 27 early close: Thanksgiving (Nov 26) is closed."""
+    from execution.market_calendar import MarketCalendar
+
+    rows = [{"date": f"2026-11-{d:02d}", "open": "09:30", "close": "16:00"}
+            for d in (13, 16, 17, 18, 19, 20, 23, 24, 25, 30)]
+    rows += [{"date": "2026-11-27", "open": "09:30", "close": "13:00"}]
+    calendar = MarketCalendar(lambda start, end: rows, lambda: et(13, "09:00", month=11))
+    assert calendar.sessions_between(date(2026, 11, 13), CFG.exit_shadow_until) == 10
+    assert calendar.session(CFG.exit_shadow_until).early
 
 
 def test_levels_come_from_the_last_trade_when_the_quote_is_wide(lab_env):

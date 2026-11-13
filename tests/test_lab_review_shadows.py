@@ -160,7 +160,8 @@ def test_the_move_shadow_splits_skip_from_keep_and_replays_untaken_ideas():
 
 
 def test_the_report_renders_every_section_on_an_empty_ledger():
-    text = rs.report([], sim_for({}), date(2026, 11, 26))
+    text = rs.report([], sim_for({}), date(2026, 11, 27), read_after=date(2026, 11, 27))
+    assert "the 10-session read is due after the 2026-11-27 close" in text
     for head in ("CONCENTRATION CAP", "STRICT READING", "WOULD EXIT", "MINIMUM EXPIRY", "MOVE SINCE PUBLIC"):
         assert head in text
 

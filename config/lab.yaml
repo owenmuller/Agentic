@@ -265,9 +265,11 @@ ai_trader:
     min_word_overlap: 2
     skip_above_atr: 1.0
   # The "would exit" shadow (human ruling 2026-11-12, item 1): 10 sessions
-  # from 2026-11-13 (Nov 27 is a holiday), then the full-market replay is
-  # proposed for the wider-stops question (item 6).
-  exit_shadow_until: 2026-11-26
+  # from 2026-11-13 - Nov 13, 16-20, 23-25 and Fri Nov 27 (a 13:00 early
+  # close); Thu Nov 26 (Thanksgiving) is closed. Then the full-market replay
+  # is proposed for the wider-stops question (item 6). The review-shadows
+  # read runs after this day's close.
+  exit_shadow_until: 2026-11-27
 
 # THE LIVE MIRROR (GO LIVE, human ruling 2026-11-04; CLAUDE.md § Live Mirror).
 # REAL MONEY on the dedicated Robinhood Agentic account. It copies the paper AI

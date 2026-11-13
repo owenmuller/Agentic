@@ -701,7 +701,7 @@ def live_session() -> int:
 
 def review_shadows() -> int:
     """Read-only: the AI trader review's shadows scored (human rulings
-    2026-11-12) - for the 10-session read after 2026-11-26."""
+    2026-11-12) - for the 10-session read after the exit shadow's last day."""
     import os
 
     from execution.market_data import AlpacaMinuteBars
@@ -727,7 +727,8 @@ def review_shadows() -> int:
                             horizon_sessions=dict(config.ai_trader.horizon_sessions), now=now,
                             report=datahealth.report)
     try:
-        print(shadows.report(events, sim, now.astimezone(shadows.NY).date()), end="")
+        print(shadows.report(events, sim, now.astimezone(shadows.NY).date(),
+                             read_after=config.ai_trader.exit_shadow_until), end="")
     finally:
         minute.close()
     return 0

@@ -4189,6 +4189,18 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
 
 Tests: `tests/test_lab_review_shadows.py` (12), plus the updated concentration tests in `tests/test_lab_ai_review.py`. Full suite green.
 
+**Correction, same night (human, 2026-11-12):** the shadow window's end was miscounted. I had Nov 27 as the holiday. Thanksgiving is Thu Nov 26 (closed), and Fri Nov 27 is a 13:00 early close.
+- The 10th session from Nov 13 is therefore Fri Nov 27: Nov 13, 16-20, 23-25, 27.
+- Changed to match:
+  - `exit_shadow_until` 2026-11-26 → 2026-11-27 (the 11-12 evening entry's "through 2026-11-26" is superseded);
+  - the review-shadows header now reads the date from that config value;
+  - CLAUDE.md § 2b items 1 and 8;
+  - a test that counts the 10 sessions on a calendar with the closure and the early close.
+- **Confirmed by the human:** an entry placed but not filled counts as placed for the concentration cap.
+- **The read:** persistent droplet check `ai-trader-review-shadows`, 2026-11-27 14:00 ET (an hour after the early close; SIP's 15-minute delay has passed), running `python -m lab review-shadows`.
+  - The result is a card to Discord #reports, with the full output attached; a failure is a red card to #urgent. Email does not send from the droplet.
+  - The check card now names what it checked.
+
 ### 2026-11-12 (evening) — AI trader review (Nov 4-12) and its rulings, built
 
 **The review (report only, read-only scripts in `~/scratch/review/` on the droplet):** paper AI trader -4.65% vs SPY +0.37% over 11-03 close to 11-12 close; 17 closed new entries, 3 won (18%), average win $2,421, average loss $746, net -$3,180 (with carry-ins -$1,382). Live mirror down about 6.9% ($1,050 -> about $977), its trades only on 11-11/12.

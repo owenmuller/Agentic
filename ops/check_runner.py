@@ -42,6 +42,8 @@ def describe(name: str, command: Sequence[str]) -> tuple[str, str]:
         purpose = f"the {DISPLAY.get(target, target)} account's state, trades and problems so far"
     elif "lab" in words and "scoreboard" in words:
         purpose = "the paper lab scoreboard"
+    elif "lab" in words and "review-shadows" in words:
+        purpose = "the AI trader review's shadows, scored (the 10-session read)"
     else:
         purpose = "the command " + " ".join(w.rsplit("/", 1)[-1] for w in words[-3:])
     return account, purpose

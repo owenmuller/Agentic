@@ -47,6 +47,8 @@ def test_a_failing_or_unstartable_check_is_a_red_card(tmp_path):
 def test_the_check_says_what_it_checked_in_words():
     assert check_runner.describe("ladder-day1", ["python", "-m", "lab", "status", "ladder"]) == (
         "Leverage ladder", "the leverage ladder account's state, trades and problems so far")
+    assert check_runner.describe("ai-trader-review-shadows", ["python", "-m", "lab", "review-shadows"]) == (
+        "AI trader", "the AI trader review's shadows, scored (the 10-session read)")
 
 
 def test_the_scheduler_sets_no_trading_variable():
