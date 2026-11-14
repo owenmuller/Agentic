@@ -289,7 +289,7 @@ def _playbook_block(checks: "Preflight") -> str:
         from learning import playbook
 
         data = playbook.load(checks.audit.path.parent / "learning" / "playbook.json")
-        return playbook.render_block(playbook.active(data, "main"))
+        return playbook.render_block(playbook.for_prompts(data, "main"))
     except Exception as error:  # noqa: BLE001 - evidence is optional; say so
         logger.warning("playbook unavailable (%s); passes run without it", type(error).__name__)
         return ""

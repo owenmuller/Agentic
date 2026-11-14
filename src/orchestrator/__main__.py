@@ -842,7 +842,8 @@ def learning_weekly(data_dir: Path, config, today: date, call=None) -> tuple[Opt
     hyp_lines = [f"  {h.id} {h.proposed_at} {h.account} {h.kind}s {h.filter}: {h.rule} | shadow n={shadows[h.id].n}, "
                  f"advantage {'n/a' if shadows[h.id].advantage is None else f'{shadows[h.id].advantage:+.2f}'} points"
                  f"{' ELIGIBLE for promotion' if h.id in eligible else ''}" for h in hyps]
-    book_lines = [f"  {l['id']} ({l['account']}): {l['lesson']} - {l['evidence']}" for l in playbook.active(book)]
+    book_lines = [f"  {l['id']} ({l['account']}){' RULE-CHANGE PROPOSAL awaiting your ruling' if playbook.is_rule_proposal(l) else ''}: "
+                  f"{l['lesson']} - {l['evidence']}" for l in playbook.active(book)]
     score_lines, score_detail = _scorecard(data_dir, entries, today)
     detail = "\n".join([
         *score_detail, "", mining.render(entries), "",
@@ -853,7 +854,8 @@ def learning_weekly(data_dir: Path, config, today: date, call=None) -> tuple[Opt
         len(this_week), len(entries), spend, flagged, asked,
         [f"{h.id} ({h.rule})" for h in opened], sum(1 for s in shadows.values() if s.ahead),
         sum(1 for s in shadows.values() if s.advantage is not None and not s.ahead), eligible,
-        [], [f"{l['id']} ({l['lesson']})" for l in demoted], detail, scorecard=score_lines)
+        [], [f"{l['id']} ({l['lesson']})" for l in demoted], detail, scorecard=score_lines,
+        proposals=[f"{l['id']} ({l['lesson']})" for l in playbook.active(book) if playbook.is_rule_proposal(l)])
     return card, detail
 
 
@@ -920,7 +922,10 @@ def learn_promote() -> int:
         return 2
     playbook.save(book_path, book)
     print(f"promoted {target} as {lesson['id']}: {lesson['lesson']} ({lesson['evidence']})")
-    if lesson["account"] == "main":
+    if playbook.is_rule_proposal(lesson):
+        print("NOTE: a RULE-CHANGE PROPOSAL for your ruling (ruling 2026-11-13, later): it never enters a prompt or "
+              "the AI trader's brief; nothing changes until a ruling changes the rule.")
+    elif lesson["account"] == "main":
         print("NOTE: a main-book lesson enters the research prompt at the next session - a prompt change: "
               "run the golden replay (python -m orchestrator golden) before it does.")
     return 0

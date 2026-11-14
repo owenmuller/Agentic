@@ -19,6 +19,16 @@ from typing import Iterable, Optional
 
 from learning.hypotheses import Hypothesis, Shadow
 
+#: (kind, action) pairs whose promoted lesson is a RULE-CHANGE PROPOSAL for a
+#: human's ruling, never text in a prompt (human ruling 2026-11-13, later):
+#: "take ideas matching X" would ask the AI trader for ideas its own rules
+#: refuse, a rule it cannot override.
+RULE_CHANGES = frozenset({("refusal", "take")})
+
+
+def is_rule_proposal(lesson: dict) -> bool:
+    return bool(lesson.get("rule_proposal")) or (lesson.get("kind"), lesson.get("action")) in RULE_CHANGES
+
 
 def load(path: Path) -> dict:
     if not path.exists():
@@ -47,7 +57,9 @@ def promote(data: dict, hypothesis: Hypothesis, shadow: Shadow, today: date, app
         raise ValueError(f"{hypothesis.id} is already an active lesson")
     lesson = {
         "id": f"P{len(data['lessons']) + 1}", "hypothesis": hypothesis.id, "account": hypothesis.account,
-        "kind": hypothesis.kind, "lesson": hypothesis.rule, "evidence": evidence(hypothesis, shadow),
+        "kind": hypothesis.kind, "action": hypothesis.action,
+        "rule_proposal": (hypothesis.kind, hypothesis.action) in RULE_CHANGES,
+        "lesson": hypothesis.rule, "evidence": evidence(hypothesis, shadow),
         "promoted": today.isoformat(), "approved_by": approved_by, "demoted": None, "demotion_reason": None,
     }
     data["lessons"].append(lesson)
@@ -76,6 +88,11 @@ def recheck(data: dict, hypotheses: Iterable[Hypothesis], shadows: dict[str, Sha
 def active(data: dict, account: Optional[str] = None) -> list[dict]:
     return [l for l in data.get("lessons", []) if l.get("promoted") and not l.get("demoted")
             and (account is None or l.get("account") == account)]
+
+
+def for_prompts(data: dict, account: Optional[str] = None) -> list[dict]:
+    """The active lessons a prompt may carry: a rule-change proposal never."""
+    return [l for l in active(data, account) if not is_rule_proposal(l)]
 
 
 def render_block(lessons: list[dict]) -> str:

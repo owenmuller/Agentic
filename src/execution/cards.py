@@ -424,10 +424,11 @@ def breaker_card(what: str, sample: bool = False) -> Card:
 def learning_card(new_entries: int, total: int, spend: float, flagged: Sequence[str], asked: Sequence[str],
                   opened: Sequence[str], ahead: int, behind: int, eligible: Sequence[str],
                   promoted: Sequence[str], demoted: Sequence[str], detail: str, sample: bool = False,
-                  scorecard: Sequence[str] = ()) -> Card:
+                  scorecard: Sequence[str] = (), proposals: Sequence[str] = ()) -> Card:
     """"What we learned this week" (§ Learning Loop, item 8; ruling 2026-11-04):
     green when there is nothing to decide, red when a shadow has earned a
-    promotion vote, yellow when the monthly re-check demoted a lesson. The
+    promotion vote or a promoted RULE-CHANGE PROPOSAL awaits a ruling (ruling
+    2026-11-13, later), yellow when the monthly re-check demoted a lesson. The
     intelligence scorecard's lines (ruling 2026-11-13, item 3) come first."""
     lines = list(scorecard) + [f"Journal: {count(new_entries, 'new post-mortem')} this week, {total} in all."]
     lines.append(f"Patterns flagged: {_joined(list(flagged[:3]))}." if flagged else
@@ -440,11 +441,19 @@ def learning_card(new_entries: int, total: int, spend: float, flagged: Sequence[
         lines.append(f"Lessons promoted: {_joined(list(promoted))}.")
     if demoted:
         lines.append(f"Lessons demoted at the monthly re-check: {_joined(list(demoted))}.")
+    if proposals:
+        lines.append(f"Rule-change proposals awaiting your ruling (never in a prompt): {_joined(list(proposals))}.")
     lines.append(f"Model spend on the journal: {cents(spend)}.")
     status, what_to_do, look_at = GOOD, None, None
+    asks = []
     if eligible:
+        asks.append(f"Show me the evidence for {', '.join(eligible)} and promote the ones that hold up.")
+    if proposals:
+        asks.append("Show me the rule-change proposals from the playbook and the rule each would change, for my "
+                    "ruling.")
+    if asks:
         status = ACTION
-        what_to_do = _ask(f"Show me the evidence for {', '.join(eligible)} and promote the ones that hold up.")
+        what_to_do = _ask(" ".join(asks))
     elif demoted:
         status, look_at = LOOK, "a playbook lesson lost its edge and was demoted"
     return Card("Learning loop", "what we learned this week", status, tuple(lines), what_to_do=what_to_do,

@@ -145,9 +145,15 @@ def scoreboard_section(daily_path: Path) -> tuple[list[str], str]:
 def playbook_section(path: Path) -> tuple[list[str], str]:
     data = _read_json(path)
     # active lessons learned from the AI trader's own record (ruling 2026-11-04):
-    # a demoted lesson, or one from the main book's decisions, is not rendered
+    # a demoted lesson, or one from the main book's decisions, is not rendered;
+    # nor is a RULE-CHANGE PROPOSAL (ruling 2026-11-13, later): a "take ideas
+    # matching X" lesson goes to the human's ruling, never into this brief. The
+    # same test as learning.playbook.is_rule_proposal, inlined (lab imports no
+    # learning code); a refusal lesson with no recorded action counts as one.
     lessons = [l for l in (data or {}).get("lessons", [])
-               if l.get("promoted") and not l.get("demoted") and l.get("account", "ai-trader") == "ai-trader"]
+               if l.get("promoted") and not l.get("demoted") and l.get("account", "ai-trader") == "ai-trader"
+               and not l.get("rule_proposal")
+               and not (l.get("kind") == "refusal" and (l.get("action") or "take") == "take")]
     if not lessons:
         return ["(none promoted yet)"], "ok: empty"
     return [f"{l['id']} {l['lesson']} (evidence: {l.get('evidence', 'n/a')})" for l in lessons], "ok"

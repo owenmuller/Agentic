@@ -224,6 +224,35 @@ def test_a_refusal_pattern_becomes_a_rule_either_way_by_its_sign(excess, action,
     assert shadow.n == 25 and shadow.advantage == pytest.approx(2.0, abs=0.3) and shadow.eligible()
 
 
+def test_a_promoted_take_ideas_lesson_is_a_rule_change_proposal_never_prompt_text(tmp_path):
+    """Human ruling 2026-11-13, later: "take ideas matching X" goes to the
+    human's ruling, never into the AI trader's brief or any prompt; a
+    keep-refusing lesson renders as any lesson does."""
+    from execution import cards
+    from lab import brief
+
+    book = {"lessons": []}
+    later = date(2026, 12, 4)
+    for number, (excess, action) in enumerate([(2.0, "take"), (-2.0, "keep_refusing")], 1):
+        h = hypotheses.Hypothesis(f"H{number}", "2026-11-13", "ai-trader", "refusal", {"instrument": "option"},
+                                  action, f"{action} rule", "why")
+        shadow = hypotheses.evaluate(h, refused_ideas(25, excess, start=100 * number, resolved="2026-12-01"))
+        playbook.promote(book, h, shadow, later, "owen")
+    take, keep = book["lessons"]
+    assert take["rule_proposal"] and playbook.is_rule_proposal(take) and not playbook.is_rule_proposal(keep)
+    assert [l["id"] for l in playbook.for_prompts(book, "ai-trader")] == [keep["id"]]
+    path = tmp_path / "playbook.json"
+    playbook.save(path, book)
+    rendered, _ = brief.playbook_section(path)
+    assert rendered == [f"{keep['id']} keep_refusing rule (evidence: {keep['evidence']})"]
+    # a refusal lesson with no recorded action is held out of the brief too (the less-risk reading)
+    playbook.save(path, {"lessons": [{**take, "rule_proposal": None, "action": None}]})
+    assert brief.playbook_section(path)[0] == ["(none promoted yet)"]
+    card = cards.learning_card(0, 0, 0.0, [], [], [], 0, 0, [], [], [], "d", proposals=[f"{take['id']} (take rule)"])
+    assert card.status == cards.ACTION and "rule-change proposals" in card.what_to_do
+    assert any(line.startswith("Rule-change proposals awaiting your ruling") for line in card.lines)
+
+
 def test_a_candidate_line_names_each_tag_as_what_the_decisions_have():
     [c] = [hypotheses.Candidate("C1", "main", "decline", (("source", "congressional_disclosures"),), 60, 0.9,
                                 0.2, 1.6)]
