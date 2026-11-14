@@ -4167,6 +4167,29 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-13 (evening) — Readings confirmed; hypotheses from refusals; live ledger time stamps
+
+Human ruling, later the same day:
+1. **The five readings are confirmed as chosen:**
+   - unfilled and unplaced ideas are refusal cases;
+   - one case per name, day and direction;
+   - strict-shadow trades stay trade cases;
+   - "no contract" covers the 7-DTE refusals;
+   - the scorecard is the AI trader's only.
+2. **Hypotheses from refusal patterns (approved).** `learning/hypotheses.py` `ACTIONS` covers `refusal` both ways: "take ideas matching this" (refused ideas beat SPY) and "keep refusing ideas matching this" (they lagged SPY). Code picks the action by the sign (`rule_for`). The keep-refusing shadow scores the refusal's own value.
+   - The prompt gained the refusal line and "never its opposite".
+   - The first golden caught a real inversion. "refused ... ideas where instrument option" under keep refusing was written "not an option" in 2 runs of 3, and in 3 of 3 under the first noun ("ideas not traded").
+   - A probe at 4 runs each: the bare label inverted 4 of 4; "instrument is option", "= option" and "[instrument: option]" inverted 0 of 4.
+   - Fix: every candidate's tags now read "tag is value", for all kinds. The refusal noun carries no negation ("refused or unfilled ideas").
+   - The golden runner now also fails a refusal rule worded in the opposite direction, and any rule containing a case's `banned_words`.
+   - Final golden: `learn-hypotheses-golden --runs 5`: 6/6 cases, 30/30 runs, $0.066.
+3. **Live mirror ledger time stamps.**
+   - Cause: `_path_passed(..., at=<fill price>)`, and every path-test row splatted its state record, whose `at` was the start time, while `Ledger.append` let fields override its own stamp.
+   - Rows affected, found by scanning every lab ledger: live-mirror rows 32 (T1) and 36 (T4) hold the start time; rows 44 (T2, 12.210100) and 49 (T3, 757.332400) hold the fill price. The ladder and AI trader ledgers have no unparseable stamp.
+   - Fix: `Ledger.append` refuses `at` from a caller. Path-test rows carry `started_at` and `price`.
+   - Old rows: the mirror appends a `ledger_correction` per row at its next session start (idempotent). `lab.account.corrected` gives readers the write time, with `at_recorded` kept. Nothing is rewritten.
+4. **Monthly review unit installed by the human.** Its timer fires on weekdays at 17:15 ET. `--scheduled` exits unless today is one of its month's first five sessions; checked by hand on the droplet: "2026-11-13 is not one of its month's first sessions; nothing to do". Nov 16 is a no-op; Dec 1 runs the November review and writes the marker. Dec 2-7 act only if Dec 1's run did not complete.
+
 ### 2026-11-13 (afternoon) — LEARNING ACCELERATION: monthly AI trader review, ideas not traded journaled, intelligence scorecard
 
 Ruling recorded in CLAUDE.md § Learning Loop ("LEARNING ACCELERATION"). Constraint #6 holds throughout: measured record only, never a P&L target in a prompt.

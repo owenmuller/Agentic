@@ -4,6 +4,7 @@
 # passes when it parses, stays within the limit (and at or above `min`),
 # chooses only accepted candidates, and every rule names its pattern (one of
 # `rule_words`). Synthetic numbers, shaped like the journal's.
+# `banned_words` (when given): no rule may contain one (an inverted pattern).
 cases:
   - id: two_of_three_with_an_overlap
     limit: 2
@@ -35,3 +36,39 @@ cases:
     candidates:
       - {id: C1, account: main, kind: trade, filter: [[sector, other]],
          n: 21, mean: -0.4, low: -0.79, high: -0.01}
+  # Refusal cells (human ruling 2026-11-13, later): the AI trader's ideas its
+  # rules refused or that never filled. Skipped ideas that beat SPY -> take;
+  # that lagged it -> keep refusing. A refusal rule must say its own
+  # direction, never the opposite (the runner checks the wording).
+  - id: refusals_both_ways_beside_a_trade
+    limit: 2
+    min: 1
+    accept: [C1, C2, C3]
+    rule_words: ["stock", "share", "option", "gap", "70", "confidence"]
+    banned_words: ["non-option", "not an option", "non-stock", "not a stock"]
+    candidates:
+      - {id: C1, account: ai-trader, kind: refusal, filter: [[confidence_band, "70-85"], [instrument, stock]],
+         n: 26, mean: 2.4, low: 0.6, high: 4.2}
+      - {id: C2, account: ai-trader, kind: refusal, filter: [[entry, long_after_gap_up], [instrument, option]],
+         n: 22, mean: -4.1, low: -7.0, high: -1.2}
+      - {id: C3, account: ai-trader, kind: trade, filter: [[entry, long_after_gap_up]],
+         n: 31, mean: -1.5, low: -2.6, high: -0.4}
+  - id: keep_refusing_alone
+    limit: 1
+    min: 1
+    accept: [C1]
+    rule_words: ["option"]
+    banned_words: ["non-option", "not an option", "not option", "other than option"]
+    candidates:
+      - {id: C1, account: ai-trader, kind: refusal, filter: [[instrument, option]],
+         n: 40, mean: -2.5, low: -3.9, high: -1.1}
+  - id: take_refused_with_an_overlap
+    limit: 1
+    min: 1
+    accept: [C1, C2]
+    rule_words: ["70", "confidence", "high"]
+    candidates:
+      - {id: C1, account: ai-trader, kind: refusal, filter: [[confidence_band, "70-85"]],
+         n: 34, mean: 1.8, low: 0.3, high: 3.3}
+      - {id: C2, account: ai-trader, kind: refusal, filter: [[confidence_band, "70-85"], [instrument, stock]],
+         n: 26, mean: 2.4, low: 0.6, high: 4.2}

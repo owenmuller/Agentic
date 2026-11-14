@@ -14,7 +14,7 @@ import pytest
 
 from execution import cards
 from execution.base import OrderReceipt, OrderStatus
-from lab.account import LabState, Ledger
+from lab.account import CORRECTION, LabState, Ledger, corrected, path_test_corrections
 from lab.config import AccountConfig, LabConfig, account_limits
 from lab.live_mirror import LiveMirror
 
@@ -968,7 +968,7 @@ def test_the_path_tests_run_in_order_through_the_real_paths_then_entries_go_ahea
     mirror.tick()                                       # settled unfilled; re-priced at the bid
     mirror.tick()
     t2 = mirror.e["path_tests"]["t2"]
-    assert t2["status"] == "passed" and t2["cancelled_attempts"] == 1 and t2["at"]
+    assert t2["status"] == "passed" and t2["cancelled_attempts"] == 1 and t2["price"] == "11.95" and "at" not in t2
     f_sells = [o for o in mirror.broker.sent if o.symbol == "F" and type(o).__name__ == "EquitySellToCloseOrder"]
     assert [o.execution.limit_price for o in f_sells][-1] == D("11.95") and len(f_sells) == 2
     for _ in range(3):                                  # T3: 0.05 SPY in, out on its target (fractional market)
@@ -983,6 +983,52 @@ def test_the_path_tests_run_in_order_through_the_real_paths_then_entries_go_ahea
     paper(tmp_path, opened("a", "UNH"), filled("a", price="400"))     # entries go ahead now
     mirror.tick()
     assert mirror.broker.sent[-1].symbol == "UNH"
+    # every path_test row's ``at`` is its write time (2026-11-13: T2/T3 once wrote the fill price there)
+    rows = [e for e in mirror.ledger.events() if e["event"] == "path_test"]
+    assert [r["test"] for r in rows] == ["t1", "t4", "t2", "t3"]
+    for r in rows:
+        assert datetime.fromisoformat(r["at"]) and r["at"] == r["done_at"] and r["started_at"] <= r["at"], r
+    assert rows[2]["price"] == "11.95" and rows[2]["sold"]
+    assert path_test_corrections(mirror.ledger.events()) == []          # nothing owed for rows written right
+
+
+def test_the_ledger_stamps_its_own_time_and_event_and_refuses_a_caller_that_passes_them(tmp_path):
+    ledger = Ledger(tmp_path / "l.jsonl", lambda: T0)
+    with pytest.raises(ValueError, match="stamped by the ledger itself"):
+        ledger.append("path_test", test="t2", at="12.2101")
+    with pytest.raises(TypeError):                                       # ``event`` cannot be passed twice
+        ledger.append("path_test", **{"event": "x"})
+    assert ledger.events() == []
+    assert ledger.append("path_test", test="t2", price="12.2101")["at"] == T0.isoformat()
+
+
+def test_rows_written_before_the_fix_are_corrected_once_by_appending_never_rewritten(tmp_path, config):
+    """The live ledger of 2026-11-11: T1's ``at`` held its start time, T2's
+    the exit's fill price. Session start appends one correction per row; the
+    rows stay as written; readers see the write time with the recorded value
+    beside it."""
+    mirror, seen, clock, reader = mirroring(tmp_path, config)
+    path = tmp_path / "ledger.jsonl"
+    old = [{"event": "path_test", "at": "2026-11-11T14:31:08.550480+00:00", "done_at": "2026-11-11T14:31:14.466200+00:00",
+            "test": "t1", "passed": True, "status": "passed"},
+           {"event": "path_test", "at": "12.210100", "done_at": "2026-11-11T14:33:57.459198+00:00", "test": "t2",
+            "passed": True, "status": "passed", "sold": "1.000000"}]
+    before = path.read_text(encoding="utf-8") if path.exists() else ""
+    with open(path, "a", encoding="utf-8") as handle:
+        for row in old:
+            handle.write(json.dumps(row) + "\n")
+    written = path.read_text(encoding="utf-8")
+    mirror.start()
+    mirror.start()                                      # a second session start owes nothing more
+    after = path.read_text(encoding="utf-8")
+    assert after.startswith(written) and written.startswith(before)                 # appended, never rewritten
+    fixes = [e for e in mirror.ledger.events() if e["event"] == CORRECTION]
+    assert [(f["test"], f["recorded"], f["written_at"]) for f in fixes] == [
+        ("t1", old[0]["at"], old[0]["done_at"]), ("t2", "12.210100", old[1]["done_at"])]
+    assert "start time" in fixes[0]["meaning"] and "fill price" in fixes[1]["meaning"]
+    view = {e.get("test"): e for e in corrected(mirror.ledger.events()) if e["event"] == "path_test"}
+    assert view["t2"]["at"] == old[1]["done_at"] and view["t2"]["at_recorded"] == "12.210100"
+    assert view["t1"]["at"] == old[0]["done_at"] and view["t1"]["at_recorded"] == old[0]["at"]
 
 
 def test_a_paper_entry_waits_in_the_queue_while_the_path_tests_run(tmp_path, config):

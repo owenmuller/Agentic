@@ -63,15 +63,29 @@ def _json_default(value: object) -> object:
     raise TypeError(f"not serializable: {type(value).__name__}")
 
 
+#: Fields the ledger stamps itself: a caller can never supply them. Origin
+#: (2026-11-13): the live mirror's T2/T3 path-test rows passed ``at=`` the
+#: exit's fill price, and every path-test row splatted its state's start time
+#: as ``at`` - the record's own write time was overwritten (see
+#: ``path_test_corrections`` for the rows already written).
+RESERVED_FIELDS = frozenset({"event", "at"})
+
+
 class Ledger:
     """Append-only JSONL: every order, fill, funding, adjustment, snapshot and
-    kill-switch event of one account. The account's books are a replay of it."""
+    kill-switch event of one account. The account's books are a replay of it.
+    ``event`` and ``at`` are the ledger's own: ``at`` is always the time the
+    row was written, and a caller passing either is refused."""
 
     def __init__(self, path: Path, clock: Callable[[], datetime]) -> None:
         self.path = path
         self._clock = clock
 
     def append(self, event: str, **fields: Any) -> dict:
+        clash = RESERVED_FIELDS & fields.keys()
+        if clash:
+            raise ValueError(f"ledger row {event!r}: {', '.join(sorted(clash))} is stamped by the ledger itself, "
+                             f"never by a caller")
         record = {"event": event, "at": self._clock().isoformat(), **fields}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "a", encoding="utf-8") as handle:
@@ -94,6 +108,62 @@ class Ledger:
                 if wanted is None or record.get("event") in wanted:
                     out.append(record)
         return out
+
+
+CORRECTION = "ledger_correction"
+
+
+def _is_stamp(value: object) -> bool:
+    try:
+        datetime.fromisoformat(str(value))
+    except ValueError:
+        return False
+    return True
+
+
+def path_test_corrections(events: list[dict]) -> list[dict]:
+    """The correction rows still owed for live-mirror ``path_test`` rows
+    written before 2026-11-13 (pure; ``events`` in ledger order). Such a row
+    has no ``started_at``: its ``at`` is the test's START time (copied from the
+    mirror's state), or for a passed T2/T3 the exit's FILL PRICE. The original
+    row is never rewritten - the ledger is append-only; a correction row says
+    what the recorded value was, what it meant, and when the row was written
+    (its ``done_at``, else unknown). ``row`` is the 1-based position among the
+    ledger's rows; a row already corrected is skipped, so this is idempotent."""
+    done = {c.get("row") for c in events if c.get("event") == CORRECTION}
+    owed = []
+    for row, event in enumerate(events, 1):
+        if event.get("event") != "path_test" or "started_at" in event or row in done:
+            continue
+        recorded = event.get("at")
+        if _is_stamp(recorded):
+            meaning = "the test's start time, not the time the row was written"
+        elif "sold" in event:
+            meaning = "the exit's fill price, not a time"
+        else:
+            meaning = "not a time (origin unknown)"
+        owed.append({"row": row, "corrects": "path_test", "test": event.get("test"), "field": "at",
+                     "recorded": recorded, "meaning": meaning, "written_at": event.get("done_at"),
+                     "why": "a write before 2026-11-13 let the row's own fields overwrite the ledger's time stamp"})
+    return owed
+
+
+def corrected(events: list[dict]) -> list[dict]:
+    """``events`` with each correction applied for readers: a corrected row's
+    ``at`` becomes its known write time, the recorded value kept beside it as
+    ``at_recorded``. A row whose write time is unknown keeps what it holds
+    (readers already skip a stamp that does not parse). Correction rows pass
+    through; the file is never changed."""
+    fixes = {c.get("row"): c for c in events if c.get("event") == CORRECTION}
+    out = []
+    for row, event in enumerate(events, 1):
+        fix = fixes.get(row)
+        if fix and event.get("event") == fix.get("corrects") and event.get("test") == fix.get("test"):
+            event = {**event, "at_recorded": event.get("at"), "at_meaning": fix.get("meaning")}
+            if fix.get("written_at"):
+                event["at"] = fix["written_at"]
+        out.append(event)
+    return out
 
 
 @dataclass

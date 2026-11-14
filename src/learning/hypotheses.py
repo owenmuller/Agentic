@@ -8,6 +8,12 @@ model, no prices, no second opinion:
                  matching it"; the shadow is the live record without them.
   decline cells  a pattern of declines whose skipped trades beat SPY -> "take
                  declines matching it"; the shadow adds those trades.
+  refusal cells  (the AI trader's ideas its rules refused or that were never
+                 filled; human ruling 2026-11-13, later) both ways: skipped
+                 ideas that beat SPY -> "take ideas matching it" (the shadow
+                 adds them); skipped ideas that lagged SPY -> "keep refusing
+                 ideas matching it" (the shadow is the refusal's own value:
+                 it stays ahead while the refused ideas keep lagging).
 
 Winning trade patterns and right declines propose no change: "do more of it"
 has no shadow a skip/take rule can measure. The action follows the sign by
@@ -32,10 +38,26 @@ from typing import Any, Iterable, Optional
 from learning import mining
 from learning.journal import Entry
 
-#: The rule a cell can become, by kind; the sign the cell's mean must have.
-ACTION = {"trade": ("skip", -1.0), "decline": ("take", 1.0)}
+#: The rules a cell can become, by kind: (action, the sign the cell's mean must have).
+ACTIONS = {"trade": (("skip", -1.0),), "decline": (("take", 1.0),),
+           "refusal": (("take", 1.0), ("keep_refusing", -1.0))}
+#: What each rule reads as in the prompt and on the card.
+_PHRASES = {("trade", "skip"): "skip trades matching this", ("decline", "take"): "take declines matching this",
+            ("refusal", "take"): "take ideas matching this",
+            ("refusal", "keep_refusing"): "keep refusing ideas matching this"}
+#: Golden 2026-11-13: "ideas not traded ... where instrument option" was read
+#: three times in three as NON-option ideas; the noun carries no negation.
+_NOUNS = {"refusal": "refused or unfilled ideas"}
 PER_WEEK = 3
 MIN_N = 20
+
+
+def rule_for(kind: str, mean: float) -> Optional[str]:
+    """The action a cell of ``kind`` with this mean becomes, or None."""
+    for action, sign in ACTIONS.get(kind, ()):
+        if mean * sign > 0:
+            return action
+    return None
 
 
 @dataclass(frozen=True)
@@ -51,11 +73,21 @@ class Candidate:
 
     @property
     def action(self) -> str:
-        return ACTION[self.kind][0]
+        action = rule_for(self.kind, self.mean)
+        if action is None:
+            raise ValueError(f"{self.id}: a {self.kind} cell with mean {self.mean:+.2f} permits no rule")
+        return action
+
+    @property
+    def phrase(self) -> str:
+        return _PHRASES[(self.kind, self.action)]
 
     @property
     def label(self) -> str:
-        return " and ".join(f"{tag.replace('_', ' ')} {value.replace('_', ' ')}" for tag, value in self.filter)
+        """"instrument is option", never the bare "instrument option": a probe
+        on 2026-11-13 found haiku reading the bare form under a keep-refusing
+        rule as NON-option ideas 4 times in 4; with "is", 0 in 4."""
+        return " and ".join(f"{tag.replace('_', ' ')} is {value.replace('_', ' ')}" for tag, value in self.filter)
 
 
 @dataclass(frozen=True)
@@ -103,10 +135,10 @@ def candidates(entries: Iterable[Entry], existing: Iterable[Hypothesis], *, min_
     taken = {(h.account, h.kind, tuple(sorted(h.filter.items()))) for h in existing}
     out = []
     for account in sorted({e.account for e in rows}):
-        for kind, (_action, sign) in ACTION.items():
+        for kind in ACTIONS:
             group = [e for e in rows if e.account == account and e.kind == kind]
             for cell in mining.tally(group, min_n=min_n):
-                if not cell.flagged or cell.mean * sign <= 0:
+                if not cell.flagged or rule_for(kind, cell.mean) is None:
                     continue
                 key = tuple(sorted(cell.key))
                 if (account, kind, key) in taken:
@@ -124,6 +156,8 @@ def slots(existing: Iterable[Hypothesis], today: date, per_week: int = PER_WEEK)
 
 
 def evaluate(hypothesis: Hypothesis, entries: Iterable[Entry]) -> Shadow:
+    """take: a matching case gains its excess; skip and keep_refusing: a
+    matching case gains the opposite (the loss avoided)."""
     sign = 1.0 if hypothesis.action == "take" else -1.0
     values = [sign * e.excess for e in entries
               if e.account == hypothesis.account and e.kind == hypothesis.kind and e.excess is not None
@@ -158,12 +192,13 @@ SYSTEM = """You turn measured patterns from a trading system's own decision jour
 
 Each candidate below is a pattern the journal has already measured and flagged: a group of decisions sharing the same tags, its number of cases, and its mean result in points against SPY with a corrected confidence interval. The rule each candidate would become is fixed by code:
   a TRADE pattern that lost against SPY becomes "skip trades matching this";
-  a DECLINE pattern whose skipped trades beat SPY becomes "take declines matching this".
+  a DECLINE pattern whose skipped trades beat SPY becomes "take declines matching this";
+  a pattern of IDEAS NOT TRADED (ideas the AI trader proposed that its rules refused, or that were placed and never filled) becomes "take ideas matching this" when those ideas beat SPY, and "keep refusing ideas matching this" when they lagged SPY - a rule that confirms a refusal is earning its place.
 No rule touches a live decision now: each is tracked as a shadow on decisions made AFTER today, and a human decides later whether it becomes a lesson.
 
 YOUR JOB
 Choose at most the number of candidates stated below - the ones most likely to be a real, repeatable effect rather than chance or a duplicate of another candidate (two candidates that describe mostly the same decisions: keep the clearer one). For each, write:
-  rule       one sentence a reader can apply: what to skip or take, in plain words, naming the pattern.
+  rule       one sentence a reader can apply: what to skip, take or keep refusing - the candidate's own rule, never its opposite - in plain words, naming the pattern exactly as its tags give it (a tag's value is what the decisions HAVE, never what they lack).
   rationale  one or two sentences: why this could be a real effect, from the numbers and what the tags describe.
 You may choose none if every candidate looks like chance.
 
@@ -200,14 +235,14 @@ def tool(candidate_ids: list[str], limit: int) -> dict[str, Any]:
 def user_prompt(cands: list[Candidate], limit: int) -> str:
     lines = [f"Choose at most {limit}.", ""]
     for c in cands:
-        lines.append(f"{c.id}: {c.account} account, {c.kind}s where {c.label}: n={c.n}, mean {c.mean:+.2f} points "
-                     f"[{c.low:+.2f}, {c.high:+.2f}] -> would become: {c.action} {c.kind}s matching this")
+        lines.append(f"{c.id}: {c.account} account, {_NOUNS.get(c.kind, c.kind + 's')} where {c.label}: n={c.n}, "
+                     f"mean {c.mean:+.2f} points [{c.low:+.2f}, {c.high:+.2f}] -> would become: {c.phrase}")
     return "\n".join(lines)
 
 
 def parse(structured: Any, cands: list[Candidate], limit: int, today: date,
           next_number: int) -> list[Hypothesis]:
-    by_id = {c.id: c for c in cands}
+    by_id = {c.id: c for c in cands if rule_for(c.kind, c.mean) is not None}
     out, seen = [], set()
     for item in (structured or {}).get("hypotheses", []) if isinstance(structured, dict) else []:
         cand = by_id.get(item.get("candidate")) if isinstance(item, dict) else None

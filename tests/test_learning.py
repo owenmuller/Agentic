@@ -197,6 +197,47 @@ def test_only_a_flagged_pattern_whose_sign_permits_a_rule_becomes_a_candidate():
     assert all(c.filter != chosen.filter for c in hypotheses.candidates(gap_trades(30), existing))
 
 
+def refused_ideas(n, excess, start=0, resolved="2026-11-01", instrument="option"):
+    return [Entry(**{**vars(e), "decision_id": f"r{start + i}", "kind": "refusal",
+                     "tags": {**e.tags, "instrument": instrument}})
+            for i, e in enumerate(gap_trades(n, start=start, excess=excess, resolved=resolved))]
+
+
+@pytest.mark.parametrize("excess, action, phrase", [
+    (2.0, "take", "take ideas matching this"),                       # refused ideas that beat SPY
+    (-2.0, "keep_refusing", "keep refusing ideas matching this"),    # refused ideas that lagged it
+])
+def test_a_refusal_pattern_becomes_a_rule_either_way_by_its_sign(excess, action, phrase):
+    """Human ruling 2026-11-13, later: refusal cells reach the hypotheses."""
+    cands = hypotheses.candidates(refused_ideas(30, excess), [])
+    assert cands and all(c.kind == "refusal" and c.action == action for c in cands)
+    text = hypotheses.user_prompt(cands, 3)
+    assert "refused or unfilled ideas where" in text
+    assert f"-> would become: {phrase}" in text
+    assert "IDEAS NOT TRADED" in hypotheses.SYSTEM and "keep refusing ideas matching this" in hypotheses.SYSTEM
+    answer = {"hypotheses": [{"candidate": cands[0].id, "rule": "r", "rationale": "w"}]}
+    [h] = hypotheses.parse(answer, cands, 1, date(2026, 11, 13), next_number=1)
+    assert (h.kind, h.action) == ("refusal", action)
+    # its shadow, after the proposal: the refusal's value when kept, the idea's excess when taken
+    later = refused_ideas(25, excess, start=500, resolved="2026-12-01")
+    shadow = hypotheses.evaluate(h, later + gap_trades(25, start=900, resolved="2026-12-01"))
+    assert shadow.n == 25 and shadow.advantage == pytest.approx(2.0, abs=0.3) and shadow.eligible()
+
+
+def test_a_candidate_line_names_each_tag_as_what_the_decisions_have():
+    [c] = [hypotheses.Candidate("C1", "main", "decline", (("source", "congressional_disclosures"),), 60, 0.9,
+                                0.2, 1.6)]
+    assert hypotheses.user_prompt([c], 1).splitlines()[-1] == (
+        "C1: main account, declines where source is congressional disclosures: n=60, mean +0.90 points "
+        "[+0.20, +1.60] -> would become: take declines matching this")
+    option = hypotheses.Candidate("C1", "ai-trader", "refusal", (("instrument", "option"),), 40, -2.5, -3.9, -1.1)
+    assert "refused or unfilled ideas where instrument is option:" in hypotheses.user_prompt([option], 1)
+    wrong_sign = hypotheses.Candidate("C2", "main", "trade", (("sector", "x"),), 30, 1.0, 0.2, 1.8)
+    assert hypotheses.rule_for("trade", 1.0) is None and hypotheses.rule_for("veto", -1.0) is None
+    answer = {"hypotheses": [{"candidate": "C2", "rule": "r", "rationale": "w"}]}
+    assert hypotheses.parse(answer, [wrong_sign], 1, date(2026, 11, 13), 1) == []
+
+
 def test_three_a_week_and_the_model_may_only_choose_offered_candidates():
     friday = date(2026, 11, 6)
     made = [hypotheses.Hypothesis(f"H{i}", "2026-11-04", "a", "trade", {"sector": "x"}, "skip", "r", "w")

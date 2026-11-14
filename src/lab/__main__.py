@@ -750,7 +750,9 @@ def monthly_review(month: Optional[str], scheduled: bool, post: bool, facts_only
         print(f"no AI trader ledger at {ledger}", file=sys.stderr)
         return 1
     events = review.read_jsonl(ledger)
-    live = review.read_jsonl(datasafety.lab_production_dir(LIVE) / "ledger.jsonl")
+    from lab.account import corrected
+
+    live = corrected(review.read_jsonl(datasafety.lab_production_dir(LIVE) / "ledger.jsonl"))
     if not live:
         datahealth.report("AI trader monthly review", "the live mirror's ledger is missing or empty; its section "
                                                       "reads empty")

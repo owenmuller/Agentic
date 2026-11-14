@@ -52,6 +52,7 @@ from zoneinfo import ZoneInfo
 from execution import BrokerError, OrderOutcomeUnknown, cards
 from execution.market_calendar import MarketCalendar
 from execution.robinhood import occ_parts, option_position_id, option_tick
+from lab.account import CORRECTION, path_test_corrections
 from risk_gate.gate import RiskGate
 from risk_gate.schema import (
     EquityBuyOrder, EquitySellToCloseOrder, LimitExecution, MarketBuyExecution, MarketSellExecution,
@@ -314,6 +315,7 @@ class LiveMirror:
         self.e.setdefault("phase", "waiting_funds")
         self.e.setdefault("positions", {})
         self._retry_option_round_trip()
+        self._correct_ledger()
         self.gate = self._build_gate(snap)
         if not self.dry and self.reader.approvals_required():
             self.e["approvals_on"] = True
@@ -328,6 +330,14 @@ class LiveMirror:
                            held={k: str(v) for k, v in snap.held.items()},
                            day_start_equity=self.e.get("day_start_equity"), day_start_basis=self.e.get("day_start_basis"))
         self._save()
+
+    def _correct_ledger(self) -> None:
+        """Append the correction rows owed for path-test rows written before
+        2026-11-13 (their ``at`` held a start time or a fill price). The rows
+        themselves are never rewritten; this runs at each session start and
+        appends only what is still owed."""
+        for fix in path_test_corrections(self.ledger.events()):
+            self.ledger.append(CORRECTION, **fix)
 
     def _prior_close_equity(self, snap: Snapshot, today: date) -> tuple[Decimal, str]:
         """Today's loss-limit baseline: the PRIOR SESSION'S CLOSE equity (human
@@ -795,7 +805,8 @@ class LiveMirror:
         held = [pid for pid in self.e.get("positions", {}) if pid.startswith("path-")]
         if held:
             name = held[0][len("path-"):]
-            started = datetime.fromisoformat((st.get(name) or {}).get("at") or self.clock().isoformat())
+            record = st.get(name) or {}
+            started = datetime.fromisoformat(record.get("started_at") or record.get("at") or self.clock().isoformat())
             if (self.clock() - started).total_seconds() > self.config.path_test_exit_minutes * 60:
                 self._path_failed(name, f"its position was not closed in {self.config.path_test_exit_minutes} "
                                         "minutes (the exit keeps trying)")
@@ -823,13 +834,22 @@ class LiveMirror:
         return f"mirror-path-{name}-{self._today().isoformat()}"
 
     def _path_started(self, name: str, **record) -> None:
-        self.e["path_tests"][name] = {"status": "running", "at": self.clock().isoformat(), **record}
+        self.e["path_tests"][name] = {"status": "running", "started_at": self.clock().isoformat(), **record}
+
+    def _path_row(self, name: str) -> dict:
+        """A path test's state as ledger fields. The ledger stamps ``at`` (the
+        write time) itself; a state written before 2026-11-13 kept the start
+        time under ``at``, carried here as ``started_at``."""
+        row = dict(self.e["path_tests"].get(name) or {})
+        legacy = row.pop("at", None)
+        row.setdefault("started_at", legacy)
+        return row
 
     def _path_passed(self, name: str, **record) -> None:
         st = self.e["path_tests"]
         st[name] = {**(st.get(name) or {}), **record, "status": "passed", "done_at": self.clock().isoformat()}
         self.e.get("plans", {}).pop(f"path-{name}", None)
-        self.ledger.append("path_test", test=name, passed=True, **st[name])
+        self.ledger.append("path_test", test=name, passed=True, **self._path_row(name))
         self._card(f"live path test passed: {self.PATH_LABELS[name]}", cards.GOOD,
                    [", ".join(f"{k} {v}" for k, v in record.items())])
         self._save()
@@ -843,7 +863,7 @@ class LiveMirror:
         if self.halt_path is not None and not self.halt_path.exists():
             self.halt_path.write_text(f"live path test {name} failed at {self.clock().isoformat(timespec='seconds')}: "
                                       f"{why} (written by the live mirror)\n", encoding="utf-8")
-        self.ledger.append("path_test", test=name, passed=False, **st[name])
+        self.ledger.append("path_test", test=name, passed=False, **self._path_row(name))
         self._card(f"a live path test failed: {self.PATH_LABELS[name]}", cards.ACTION,
                    [why, "New live entries are halted (HALT marker); exits keep running."],
                    detail=json.dumps(st[name], default=str),
@@ -978,7 +998,7 @@ class LiveMirror:
                     self._path_failed(name, "the first exit filled above the market, so the cancel and re-price "
                                             "were not exercised", sold_at=str(done["price"]))
                 else:
-                    self._path_passed(name, sold=str(done["filled"]), at=str(done["price"]),
+                    self._path_passed(name, sold=str(done["filled"]), price=str(done["price"]),
                                       cancelled_attempts=attempts, why=working["extra"].get("why"))
 
     def grant_lost(self, error: Exception) -> None:

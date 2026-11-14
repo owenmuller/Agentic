@@ -962,9 +962,17 @@ def learn_hypotheses_golden() -> int:
             picked = [h.filter for h in got]
             accepted = [dict(tuple(p) for p in c["filter"]) for c in item["candidates"] if c["id"] in item["accept"]]
             words_ok = all(any(w in h.rule.lower() for w in item.get("rule_words", [""])) for h in got)
-            ok = (item["min"] <= len(got) <= item["limit"] and all(f in accepted for f in picked) and words_ok)
+            # a refusal rule says its own direction, never the opposite (ruling 2026-11-13, later)
+            sense_ok = all(("refus" in h.rule.lower() and not h.rule.lower().startswith("take"))
+                           if h.action == "keep_refusing" else
+                           ("take" in h.rule.lower() and "keep refusing" not in h.rule.lower())
+                           for h in got if h.kind == "refusal")
+            banned_ok = not any(w in h.rule.lower() for w in item.get("banned_words", []) for h in got)
+            ok = (item["min"] <= len(got) <= item["limit"] and all(f in accepted for f in picked) and words_ok
+                  and sense_ok and banned_ok)
             passes += ok
-            print(f"  {item['id']:30} {'PASS' if ok else 'FAIL'}  chose {[h.filter for h in got]}")
+            print(f"  {item['id']:30} {'PASS' if ok else 'FAIL'}  chose "
+                  f"{[(h.kind, h.action, h.filter) for h in got]}")
             for h in got:
                 print(f"      {h.id}: {h.rule} | {h.rationale[:160]}")
         if passes * 2 <= runs:
