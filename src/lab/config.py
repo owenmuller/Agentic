@@ -177,6 +177,13 @@ class DayTraderConfig(_Strict):
 
     enabled: bool = False
     extended_atr: Decimal = Field(default=Decimal("1.0"), gt=ZERO, le=Decimal("1.0"))
+    #: A TAG, never a rule (human ruling 2026-11-16, later): an idea whose move
+    #: in its direction is at least this many ATRs but not extended is marked
+    #: "partial" so the monthly review can rule on below-threshold chasing.
+    partial_atr: Decimal = Field(default=Decimal("0.5"), gt=ZERO, lt=Decimal("1.0"))
+    #: The day-trader regime's first day (same ruling): the AI trader's results
+    #: are reported before it and from it separately.
+    regime_start: Optional[date] = None
     pullback_minutes: int = Field(default=60, gt=0, le=60)
     opening_range_minutes: int = Field(default=15, ge=5, le=30)
     relvol_sessions: int = Field(default=20, ge=5, le=60)

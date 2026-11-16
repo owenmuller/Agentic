@@ -249,7 +249,13 @@ def render(rows: list[Row], day: date) -> str:
                      f" - actually {row.actual}")
         if row.context is not None:
             lines.append(f"    context: {row.context.line(1 if bullish(str(idea.get('instrument'))) else -1, Decimal('1'))}")
-        lines.append(f"    verdict: {row.verdict}")
+        band = ""
+        if row.context is not None:
+            sign = 1 if bullish(str(idea.get("instrument"))) else -1
+            ratio = row.context.move_in_atr(sign)
+            if ratio is not None:
+                band = f" [extension: {row.context.extension(sign, Decimal('1'), Decimal('0.5'))}, {ratio:.2f}x ATR]"
+        lines.append(f"    verdict: {row.verdict}{band}")
         if row.level is not None:
             if row.filled is not None:
                 lines.append(f"    pullback FILLED {row.filled['at'].astimezone(NY):%H:%M} at {row.filled['price']}; "

@@ -4167,6 +4167,21 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-16 (evening) — Before the AI trader reset: resume re-bases the peak; partial extension tagged; regime partition
+
+Human ruling, later the same day:
+1. **`lab resume` already re-based the high-water mark** to the last snapshot equity (here 97,947.29, the 16:00 snapshot), and the gate takes max(that, NAV). So the 12% switch measures from 97,947.29 and trips at about 86,193.
+   - Improved: the reset row now records the previous peak (111,667.21), the new one and its basis (the dated snapshot), through `lab.account.reset_kill_switch`.
+   - `resume` refuses while the account's unit is running, because its in-memory tripped state would be written back at the next tick (the live mirror is excepted).
+   - Test: after the reset, 97,000 is clear and 86,000 trips.
+2. **Readings: all confirmed.**
+3. **Partial extension:** a 0.5x-1x ATR move at entry is tagged `partial` (`context.extension`, `move_in_atr`). It is a tag, not a rule; the threshold is unchanged.
+   - Grouped in the Friday setup report and the monthly review.
+   - The dry run reads CSCO 0.85x, AMAT 0.80x, CBRS 0.64x and LUNR 0.95x as partial. The 0.5x floor is my reading.
+4. **Regime partition from 2026-11-16** (`day_trader.regime_start`):
+   - the scoreboard's AI trader is shown before and under it;
+   - the monthly review splits trades by opening date in November and adds a "Day-trader rules" section.
+
 ### 2026-11-16 — STOP CHASING, TRADE LIKE A DAY TRADER (built, OFF); the AI trader's kill switch tripped at the open
 
 **The AI trader's 12% kill switch tripped at 09:30:01 ET** (NAV 97,830 against a high-water mark of 111,667: 12.4%; Friday's close was 98,584, 11.7%). No pass ran today. Exits kept running: STLD stopped out at 15:39.

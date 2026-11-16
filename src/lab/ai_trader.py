@@ -1103,7 +1103,7 @@ class AiTrader:
             sign = 1 if bull else -1
             ctx = self._context(idea, now, label, anchors[symbol])
             extended = ctx.extended(sign, multiple)
-            measured = self._measured(ctx, sign, multiple, extended)
+            measured = self._measured(ctx, sign, multiple, extended, cfg.day_trader.partial_atr)
             self._scan_context[symbol] = measured
             if extended is None:
                 routes[index] = ("refuse", "anti-chase: the move since the prior close cannot be measured (no price, "
@@ -1155,7 +1155,8 @@ class AiTrader:
         return ctx
 
     @staticmethod
-    def _measured(ctx: Context, sign: int, multiple: Decimal, extended: Optional[bool]) -> dict:
+    def _measured(ctx: Context, sign: int, multiple: Decimal, extended: Optional[bool],
+                  partial: Decimal = Decimal("0.5")) -> dict:
         def s(value: Any) -> Optional[str]:
             return None if value is None else f"{value:.6g}"
 
@@ -1163,7 +1164,9 @@ class AiTrader:
                     from_close=s(ctx.from_close), from_open=s(ctx.from_open), from_vwap=s(ctx.from_vwap),
                     vwap=s(ctx.vwap), or_low=s(ctx.or_low), or_high=s(ctx.or_high), rel_volume=s(ctx.rel_volume),
                     catalyst_move=s(ctx.catalyst_move()), catalyst_public_at=ctx.catalyst.get("public_at"),
-                    direction=sign, extended_atr=str(multiple), extended=extended, gaps=ctx.gaps or None)
+                    direction=sign, extended_atr=str(multiple), extended=extended,
+                    move_in_atr=s(ctx.move_in_atr(sign)), extension=ctx.extension(sign, multiple, partial),
+                    gaps=ctx.gaps or None)
 
     def _anti_chase(self, label: str, symbol: str, idea: dict, measured: Optional[dict], outcome: str,
                     **extra: Any) -> None:

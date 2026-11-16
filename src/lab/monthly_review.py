@@ -123,6 +123,10 @@ class Trade:
     #: in the trade's favour, the entry price against the prior close
     moved: Optional[float] = None
     sessions: Optional[int] = None
+    #: the day-trader rules' tags (ruling 2026-11-16): setup, entry mode, extension at entry
+    setup: Optional[str] = None
+    entry_mode: Optional[str] = None
+    extension: Optional[str] = None
 
     @property
     def ret(self) -> float:
@@ -172,6 +176,8 @@ def trades(events: list[dict], start: date, end: date, bars: Bars) -> list[Trade
         anchor = _f(plan.get("anchor_mid"))
         if anchor and prior and own[max(prior)][1] > 0:
             trade.moved = (-1 if trade.instrument == "put" else 1) * (anchor / own[max(prior)][1] - 1)
+        trade.setup, trade.entry_mode = plan.get("setup"), plan.get("entry_mode")
+        trade.extension = (plan.get("context") or {}).get("extension")
         out.append(trade)
     return sorted(out, key=lambda t: t.opened_at)
 
@@ -212,7 +218,8 @@ def _group(trades_: Sequence[Trade]) -> str:
 
 def build_facts(events: list[dict], live: list[dict], start: date, end: date, bars: Bars, *,
                 sector_of: Callable[[str], str], shadow_text: str = "",
-                grades: Sequence[Mapping[str, Any]] = (), journal: Sequence[Mapping[str, Any]] = ()) -> tuple[Facts, list[Trade]]:
+                grades: Sequence[Mapping[str, Any]] = (), journal: Sequence[Mapping[str, Any]] = (),
+                regime_start: Optional[date] = None) -> tuple[Facts, list[Trade]]:
     month = in_window(events, start, end)
     done = trades(events, start, end, bars)
     f = Facts()
@@ -228,6 +235,25 @@ def build_facts(events: list[dict], live: list[dict], start: date, end: date, ba
         lev = [t for t in done if t.tag]
         if lev:
             f.add("Trades", f"Leveraged or inverse funds: {_group(lev)}.")
+        if regime_start is not None and start <= regime_start <= end:
+            # the regime partition (human ruling 2026-11-16, later): trades opened
+            # before the day-trader rules and under them, each on its own line
+            before = [t for t in done if t.opened_at.date() < regime_start]
+            under = [t for t in done if t.opened_at.date() >= regime_start]
+            f.add("Trades", f"Opened before the day-trader rules ({regime_start}): "
+                            f"{_group(before) if before else 'none'}; opened under them: "
+                            f"{_group(under) if under else 'none'}.")
+        tagged = [t for t in done if t.entry_mode]
+        if tagged:
+            # partial = a 0.5x-1x ATR move already made at entry: below the anti-chase
+            # threshold, tagged for this review to rule on (same ruling)
+            for label, key in (("setup", lambda t: t.setup), ("entry", lambda t: t.entry_mode),
+                               ("extension at entry (partial = 0.5x-1x ATR already moved)", lambda t: t.extension)):
+                groups = {}
+                for t in tagged:
+                    groups.setdefault(str(key(t) or "not measured"), []).append(t)
+                f.add("Day-trader rules", f"By {label}: " + "; ".join(f"{k}: {_group(v)}"
+                                                                       for k, v in sorted(groups.items())) + ".")
     else:
         f.add("Trades", "No round trip closed in the month.")
     passes = [e for e in month if e.get("event") == "llm_pass"]

@@ -35,7 +35,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 from zoneinfo import ZoneInfo
 
 from lab import leverage
@@ -289,6 +289,7 @@ def build(
     momentum: Optional[dict[date, float]] = None,
     spmo: Optional[dict[date, float]] = None,
     fund: Optional[Callable[[str], bool]] = None,
+    regime_start: Optional[date] = None,
 ) -> Board:
     table = slippage_table(exec_lines)
     ladder = daily_last(ladder_events, "equity")
@@ -322,6 +323,24 @@ def build(
             f"market lean: beta to SPY {row.beta:+.2f} (correlation {row.beta_corr:+.2f}, "
             f"{row.beta_n} daily returns)")]))
     rows.append(row)
+    if regime_start is not None and ai:
+        # the regime partition (human ruling 2026-11-16, later): before the
+        # day-trader rules and under them, each its own return and trades
+        opened = {e["pid"]: _day(e["at"]) for e in ai_events if e.get("event") == "position_opened"}
+        pre = {d: v for d, v in ai.items() if d < regime_start}
+        base = max(pre) if pre else None
+        post = {d: v for d, v in ai.items() if d >= (base or regime_start)} if max(ai) >= regime_start else {}
+        for label, series, subset, note in (
+                (f"  AI trader before the day-trader rules", pre,
+                 [t for t in trades if opened.get(t.pid, regime_start) < regime_start], "trades opened before the regime"),
+                (f"  AI trader under the day-trader rules", post,
+                 [t for t in trades if opened.get(t.pid, regime_start) >= regime_start],
+                 f"from the {base} close; trades opened from {regime_start}" if base else
+                 f"trades opened from {regime_start}")):
+            sub = Row(label, note=note)
+            _versus(sub, series, spy, ladder, spmo)
+            _trade_stats(sub, subset)
+            rows.append(sub)
     # Leveraged and inverse ETFs apart from the other picks (ruling 2026-10-14,
     # second, item 2): closed-trade statistics only; the account has one equity line.
     for label, subset in (("  AI trader: leveraged / inverse ETFs", [t for t in trades if t.tag]),
@@ -473,18 +492,22 @@ def day_trader_lines(events: list[dict]) -> list[str]:
     money = realized(events)
     open_n = sum(1 for pid in plans if pid not in money)
 
-    def group(key: str) -> list[str]:
+    def group(read: Callable[[dict], Any]) -> list[str]:
         cells: dict[str, list[float]] = {}
         for pid, plan in plans.items():
             if pid in money:
                 pnl, cost = money[pid]
-                cells.setdefault(str(plan.get(key) or "not stated"), []).append(pnl / cost)
+                cells.setdefault(str(read(plan) or "not measured"), []).append(pnl / cost)
         return [f"  {name}: {len(rets)} closed, mean {sum(rets) / len(rets):+.1%} on cost, "
                 f"won {sum(r > 0 for r in rets)}/{len(rets)}" for name, rets in sorted(cells.items())]
 
+    # "partial" = a move of 0.5x-1x ATR in the idea's direction at entry: below the
+    # anti-chase threshold, tagged for the monthly review (ruling 2026-11-16, later)
     return (["STOP CHASING (ruling 2026-11-16) - AI trader trades under the day-trader rules"
-             f" ({len(plans) - open_n} closed, {open_n} open)", " by setup:"] + group("setup")
-            + [" by entry:"] + group("entry_mode"))
+             f" ({len(plans) - open_n} closed, {open_n} open)", " by setup:"] + group(lambda p: p.get("setup"))
+            + [" by entry:"] + group(lambda p: p.get("entry_mode"))
+            + [" by extension at entry (partial = 0.5x-1x ATR already moved):"]
+            + group(lambda p: (p.get("context") or {}).get("extension")))
 
 
 #: The research brief's A/B (human ruling 2026-10-15, second). Flags: the

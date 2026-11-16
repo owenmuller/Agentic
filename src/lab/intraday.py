@@ -102,6 +102,22 @@ class Context:
         moved = self.catalyst_move()
         return moved is not None and moved > bar
 
+    def move_in_atr(self, sign: int) -> Optional[Decimal]:
+        """The larger of the two measures, in the idea's direction, in ATRs."""
+        if self.atr_fraction is None or self.atr_fraction <= 0 or self.from_close is None:
+            return None
+        moves = [sign * self.from_close] + ([self.catalyst_move()] if self.catalyst_move() is not None else [])
+        return max(moves) / self.atr_fraction
+
+    def extension(self, sign: int, multiple: Decimal, partial: Decimal) -> Optional[str]:
+        """A TAG (human ruling 2026-11-16, later): "extended" past
+        ``multiple`` ATRs; "partial" from ``partial`` up to it (below-threshold
+        chasing, for the monthly review to rule on); "none" under it."""
+        ratio = self.move_in_atr(sign)
+        if ratio is None:
+            return None
+        return "extended" if ratio > multiple else "partial" if ratio >= partial else "none"
+
     # -- the prompt line (item 3) ----------------------------------------------
 
     def line(self, sign: int, multiple: Decimal) -> str:

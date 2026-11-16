@@ -217,25 +217,37 @@ def resume(name: str, ack: str) -> int:
     """FOR A HUMAN OPERATOR ONLY (CLAUDE.md: resume requires manual human
     reset). Clears the marker and the trip; the high-water mark re-baselines
     to the account's last snapshot equity, as the main gate's reset does."""
+    from lab.account import reset_kill_switch
+
     if not ack.strip():
         print("a resume needs --ack naming the human who resets it", file=sys.stderr)
+        return 2
+    if name != LIVE and _unit_active(datasafety.lab_unit(name)):
+        # the running engine holds the tripped state in memory and would write it
+        # back at its next tick (2026-11-16): reset between sessions
+        print(f"REFUSED: {datasafety.lab_unit(name)}.service is running; its engine would write the tripped state "
+              f"back at its next tick. Reset after the session ends (or once the unit is stopped).", file=sys.stderr)
         return 2
     directory = datasafety.resolve_lab_data_dir(name)
     state = LabState.load(directory / "state.json")
     ledger = Ledger(directory / "ledger.jsonl", lambda: datetime.now(timezone.utc))
-    snapshots = ledger.events(["snapshot"])
     (directory / "HALT").unlink(missing_ok=True)
-    was = state.kill_switch_tripped
-    state.kill_switch_tripped = False
-    state.tripped_at = state.trip_reason = None
-    if snapshots and snapshots[-1].get("equity"):
-        state.high_water_mark = str(snapshots[-1]["equity"])
+    row = reset_kill_switch(state, ledger, ack)
     state.save(directory / "state.json")
-    ledger.append("kill_switch_reset", acknowledgement=ack.strip(), was_tripped=was,
-                  high_water_mark=state.high_water_mark)
-    print(f"LAB {name}: kill switch {'reset' if was else 'was clear'}; halt marker cleared; "
-          f"high-water mark {state.high_water_mark}")
+    print(f"LAB {name}: kill switch {'reset' if row['was_tripped'] else 'was clear'}; halt marker cleared; "
+          f"high-water mark {row['previous_high_water_mark']} -> {row['high_water_mark']} ({row['basis']}); "
+          f"the 12% switch measures from it")
     return 0
+
+
+def _unit_active(unit: str) -> bool:
+    """Whether a system unit is running (False where systemd is absent)."""
+    import subprocess
+
+    try:
+        return subprocess.run(["systemctl", "is-active", "--quiet", f"{unit}.service"], check=False).returncode == 0
+    except (FileNotFoundError, OSError):
+        return False
 
 
 
@@ -723,6 +735,7 @@ def scoreboard(email: bool) -> int:
             leverage_table=dict(config.ai_trader.leverage_factors) if config.ai_trader else None,
             momentum=momentum, spmo=dict(sorted(spmo.items())),
             fund=board_mod.fund_lookup(broker.asset_name),
+            regime_start=config.ai_trader.day_trader.regime_start if config.ai_trader else None,
         )
     if any(e.get("event") in ("anti_chase", "pullback_placed") for e in ai_events):
         # the chase shadow (ruling 2026-11-16, item 5): what chasing would have done
@@ -960,7 +973,7 @@ def monthly_review(month: Optional[str], scheduled: bool, post: bool, facts_only
     sectors = SectorMap.load()
     facts, done = review.build_facts(events, live, start, end, lambda s: daily.get(s, {}),
                                      sector_of=sectors.sector_of, shadow_text=shadow_text, grades=grades,
-                                     journal=journal)
+                                     journal=journal, regime_start=ai.day_trader.regime_start)
     if golden_out is not None:
         # a golden case from a real month (the review prompt's replay set)
         import yaml

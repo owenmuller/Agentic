@@ -110,6 +110,27 @@ class Ledger:
         return out
 
 
+def reset_kill_switch(state: "LabState", ledger: Ledger, ack: str) -> dict:
+    """A human's reset (``lab resume``): the trip and its reason cleared, and
+    the high-water mark RE-BASED to the account's last snapshot equity, so the
+    12% switch measures from there and the old peak cannot re-trip it at once.
+    The reset row records the previous peak, the new one and its basis (the
+    snapshot it came from, dated). With no snapshot the peak is left as it
+    was, and the row says so."""
+    previous = state.high_water_mark
+    was = state.kill_switch_tripped
+    basis = next((s for s in reversed(ledger.events(["snapshot"])) if s.get("equity")), None)
+    state.kill_switch_tripped = False
+    state.tripped_at = state.trip_reason = None
+    if basis is not None:
+        state.high_water_mark = str(basis["equity"])
+    return ledger.append(
+        "kill_switch_reset", acknowledgement=ack.strip(), was_tripped=was, previous_high_water_mark=previous,
+        high_water_mark=state.high_water_mark,
+        basis=(f"snapshot equity at {basis['at']}" if basis is not None
+               else "no snapshot: the high-water mark is unchanged"))
+
+
 CORRECTION = "ledger_correction"
 
 

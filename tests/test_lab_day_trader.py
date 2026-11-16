@@ -484,3 +484,82 @@ def test_the_dry_run_fills_a_resting_limit_at_its_level_and_walks_from_the_fill(
     pre = {"t": datetime(2026, 11, 13, 5, 11, tzinfo=NY).astimezone(timezone.utc).isoformat(), "o": 1, "h": 1,
            "l": 1, "c": 1}
     assert dry.regular([pre] + rows, MarketCalendar.weekdays()) == rows    # a pre-market print never counts
+
+
+# ------------------------------------------------------------- the reset, the tag, the partition (ruling 2026-11-16, later)
+
+def test_a_reset_rebases_the_peak_to_the_last_snapshot_and_the_switch_measures_from_there(lab_env):
+    from lab.account import reset_kill_switch
+
+    def account_with(cash):
+        world = World(cash=D(cash))
+        account = open_account("ai-trader", LabConfig.load(), adapter=world, main_account_number=lambda: "PA-MAIN",
+                               data_dir=lab_env / "ai", clock=lambda: et(16, "15:00", month=11),
+                               allow_disabled=True)
+        return account, world
+
+    account, world = account_with("97947.29")
+    account.state.high_water_mark, account.state.kill_switch_tripped = "111667.21", True
+    account.state.trip_reason = "drawdown 0.1239 from high-water mark 111667.21 reached the 0.12 trip"
+    account.ledger.append("snapshot", equity="97947.29", cash="44129.52", positions=[])
+    row = reset_kill_switch(account.state, account.ledger, "Owen")
+    assert row["previous_high_water_mark"] == "111667.21" and row["high_water_mark"] == "97947.29"
+    assert row["was_tripped"] and row["basis"].startswith("snapshot equity at 2026-11-16") and row["at"]
+    assert not account.state.kill_switch_tripped and account.state.trip_reason is None
+    account.state.save(account.state_path)
+    # the next session's gate measures 12% from 97,947.29: 97,000 is clear, 86,000 trips (12.2%)
+    for cash, trips in (("97000", False), ("86000", True)):
+        account, world = account_with(cash)
+        trader = AiTrader(account, CFG, llm=DayLLM([]), quotes=world.quote, chain=world, sleep=lambda s: None,
+                          monotonic=iter(range(0, 10**9, 5)).__next__)
+        trader.rebuild_gate(date(2026, 11, 17))
+        assert trader.gate.state.high_water_mark == D("97947.29") and trader.gate.kill_switch_tripped is trips
+        if trips:
+            assert "from high-water mark 97947.29" in account.state.trip_reason
+
+
+def test_a_resume_is_refused_while_the_accounts_unit_runs(monkeypatch, lab_env):
+    import lab.__main__ as lab_main
+
+    monkeypatch.setattr(lab_main, "_unit_active", lambda unit: unit == "agentic-lab-ai-trader")
+    assert lab_main.resume("ai-trader", "Owen") == 2
+
+
+@pytest.mark.parametrize("from_close, band", [("0.033", "partial"), ("0.012", "none"), ("0.045", "extended"),
+                                               ("0.0195", "partial")])
+def test_below_threshold_chasing_is_tagged_partial_never_refused(from_close, band):
+    # CSCO 2026-11-13: -3.3% for a put against a 3.9% ATR = 0.85x -> partial
+    ctx = Context("CSCO", OPEN, price=D("100") * (1 - D(from_close)), prior_close=D("100"), atr_fraction=D("0.039"))
+    assert ctx.extension(-1, D("1"), D("0.5")) == band
+    assert ctx.extended(-1, D("1")) is (band == "extended")
+    measured = AiTrader._measured(ctx, -1, D("1"), ctx.extended(-1, D("1")), D("0.5"))
+    assert measured["extension"] == band and D(measured["move_in_atr"]) > 0
+
+
+def test_the_scoreboard_reports_the_ai_trader_before_and_under_the_day_trader_rules():
+    from lab.scoreboard import build
+
+    def snap(day, equity):
+        return {"event": "snapshot", "at": f"2026-11-{day:02d}T21:00:00+00:00", "equity": equity}
+
+    events = [snap(12, 100), snap(13, 98), snap(16, 97), snap(17, 99)]
+    spy = {date(2026, 11, d): 100.0 for d in (11, 12, 13, 16, 17)}
+    board = build(ladder_events=[], ai_events=events, exec_lines=[], spy=spy, main_equity={}, rung_labels={},
+                  regime_start=date(2026, 11, 16))
+    rows = {r.name.strip(): r for r in board.rows}
+    before, under = rows["AI trader before the day-trader rules"], rows["AI trader under the day-trader rules"]
+    assert before.ret == pytest.approx(-0.02) and before.start == date(2026, 11, 12)
+    assert under.ret == pytest.approx(99 / 98 - 1) and under.start == date(2026, 11, 13)   # from the last close before
+    assert "from the 2026-11-13 close" in under.note
+
+
+def test_the_monthly_review_splits_trades_by_the_regime():
+    from lab import monthly_review as review
+    from test_lab_monthly_review import EVENTS, LIVE, bars
+
+    facts, _ = review.build_facts(EVENTS, LIVE, date(2026, 10, 1), date(2026, 10, 31), bars, sector_of=lambda s: "x",
+                                  regime_start=date(2026, 10, 14))
+    text = facts.render()
+    assert "Opened before the day-trader rules (2026-10-14): 2 trade(s)" in text and "opened under them: none" in text
+    plain, _ = review.build_facts(EVENTS, LIVE, date(2026, 10, 1), date(2026, 10, 31), bars, sector_of=lambda s: "x")
+    assert "day-trader rules" not in plain.render()

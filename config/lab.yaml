@@ -278,6 +278,12 @@ ai_trader:
   day_trader:
     enabled: false
     extended_atr: 1.0            # item 1: refuse an at-market entry past 1x ATR(14)
+    # A TAG only (ruling 2026-11-16, later): 0.5x-1x ATR in the idea's direction is
+    # "partial extension" in the setup report; the monthly review rules on it.
+    partial_atr: 0.5
+    # The regime partition (same ruling): AI trader results are reported before
+    # this day and from it separately (scoreboard, monthly review).
+    regime_start: 2026-11-16
     pullback_minutes: 60         # item 2: a pullback order lives this long at most
     opening_range_minutes: 15    # item 2: the opening range is the first 15 minutes
     relvol_sessions: 20          # item 3: relative volume against the 20-day average
