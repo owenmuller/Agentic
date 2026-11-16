@@ -368,6 +368,10 @@ _REFUSALS = (
     ("no intraday entries", "too late in the session"), ("theme ", "no listed theme"),
     ("not tradeable", "not tradeable at the broker"), ("size ", "below the dust floor"),
     ("limit ", "limit at or below the stop"), ("malformed", "malformed idea"), ("unknown instrument", "malformed idea"),
+    # the day-trader rules (ruling 2026-11-16)
+    ("anti-chase", "anti-chase: extended, no entry"), ("dropped after the intraday context", "dropped after the context"),
+    ("pullback entry at", "pullback entry never filled"), ("pullback trigger at", "pullback entry never filled"),
+    ("pullback level", "pullback level at or below the stop"), ("setup ", "no listed setup"),
 )
 
 

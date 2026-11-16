@@ -85,6 +85,9 @@ class Board:
     #: the AI trader's theme tags and the "other" share (readings 2026-11-12, later)
     theme_lines: list[str] = field(default_factory=list)
     theme_flags: list[str] = field(default_factory=list)
+    #: stop chasing (ruling 2026-11-16, item 5): results by setup and by entry
+    #: mode, then (added by the command, which has the bars) the chase shadow
+    day_lines: list[str] = field(default_factory=list)
 
 
 def _day(stamp: str) -> date:
@@ -395,7 +398,7 @@ def build(
     ]
     ab_lines, ab_flags = brief_ab(ai_events)
     theme_lines, theme_flags = theme_share(ai_events)
-    return Board(rows, table, notes, ab_lines, ab_flags, theme_lines, theme_flags)
+    return Board(rows, table, notes, ab_lines, ab_flags, theme_lines, theme_flags, day_trader_lines(ai_events))
 
 
 def stop_floor_note(table: dict[str, tuple[int, Optional[float]]], floor: Optional[float]) -> str:
@@ -451,8 +454,37 @@ def render(board: Board, as_of: date) -> str:
         lines.extend(board.ab_lines + [""])
     if board.theme_lines:
         lines.extend(board.theme_lines + [""])
+    if board.day_lines:
+        lines.extend(board.day_lines + [""])
     lines.extend(board.notes)
     return "\n".join(lines)
+
+
+def day_trader_lines(events: list[dict]) -> list[str]:
+    """Item 5 (ruling 2026-11-16): the AI trader's closed trades opened under
+    the day-trader rules, by setup and by entry mode (at the market or a
+    pullback), with each group's mean return on cost. Empty until a trade
+    carries the tags (the rules are off until they ship)."""
+    from lab.review_shadows import realized
+
+    plans = {e["pid"]: e for e in events if e.get("event") == "position_opened" and e.get("entry_mode")}
+    if not plans:
+        return []
+    money = realized(events)
+    open_n = sum(1 for pid in plans if pid not in money)
+
+    def group(key: str) -> list[str]:
+        cells: dict[str, list[float]] = {}
+        for pid, plan in plans.items():
+            if pid in money:
+                pnl, cost = money[pid]
+                cells.setdefault(str(plan.get(key) or "not stated"), []).append(pnl / cost)
+        return [f"  {name}: {len(rets)} closed, mean {sum(rets) / len(rets):+.1%} on cost, "
+                f"won {sum(r > 0 for r in rets)}/{len(rets)}" for name, rets in sorted(cells.items())]
+
+    return (["STOP CHASING (ruling 2026-11-16) - AI trader trades under the day-trader rules"
+             f" ({len(plans) - open_n} closed, {open_n} open)", " by setup:"] + group("setup")
+            + [" by entry:"] + group("entry_mode"))
 
 
 #: The research brief's A/B (human ruling 2026-10-15, second). Flags: the

@@ -111,7 +111,9 @@ class Simulator:
         key = (symbol, first, end)
         if key not in self._cache:
             self._cache[key] = sorted(self._bars(symbol, first, end), key=lambda b: _ts(b["t"]))
-        rows = [b for b in self._cache[key] if first <= _ts(b["t"]) < end]
+        # regular-session bars only (2026-11-16): the engine acts only in session,
+        # so a pre-market or after-hours print can neither stop nor fill it
+        rows = [b for b in self._cache[key] if first <= _ts(b["t"]) < end and self._in_session(_ts(b["t"]))]
         if not rows:
             # never silent (rule 2026-10-15): a replay with no bars is a gap, not a result
             self._report("AI trader review shadows", f"no minute bars for {symbol} {first:%Y-%m-%d %H:%M} to "
@@ -133,6 +135,10 @@ class Simulator:
         last = rows[-1]
         return self._out("intraday_close" if horizon == "intraday" else "horizon_end", last, float(last["c"]),
                          anchor, bull)
+
+    def _in_session(self, stamp: datetime) -> bool:
+        session = self._calendar.session(stamp.astimezone(NY).date())
+        return session is not None and session.open <= stamp < session.close
 
     @staticmethod
     def _out(reason: str, bar: dict, price: float, anchor: float, bull: bool) -> Sim:
@@ -377,8 +383,55 @@ def move(events: list[dict], sim: Simulator) -> list[str]:
     return lines
 
 
+#: Refusal codes of the day-trader rules (ruling 2026-11-16), as the shadow names them.
+CHASE_CODES = {"anti_chase": "refused by the anti-chase rule",
+               "context_drop": "dropped by the model after the context",
+               "pullback_unfilled": "pullback entry never filled"}
+
+
+def chase(events: list[dict], sim: Simulator) -> list[str]:
+    """STOP CHASING (ruling 2026-11-16, item 5): every idea the day-trader
+    rules kept out of an at-market entry, replayed AS IF CHASED - entered at
+    the price when it was proposed, with its own stop, target and horizon -
+    and every filled pullback beside the chase it replaced."""
+    lines = ["STOP CHASING - what chasing would have done (ruling 2026-11-16, item 5)"]
+    rows = [e for e in events if e.get("event") == "idea_rejected" and e.get("code") in CHASE_CODES]
+    plans = _plans(events)
+    placed = {e["pid"]: e for e in events if e.get("event") == "pullback_placed"}
+    filled = [p for p in plans.values() if p.get("entry_mode") == "pullback" and p["pid"] in placed]
+    if not rows and not filled:
+        return lines + ["  nothing yet (the rules are off, or nothing was kept out)"]
+    groups: dict[str, list[Sim]] = {}
+    for row in rows:
+        idea, levels = row.get("idea") or {}, row.get("levels") or {}
+        groups.setdefault(CHASE_CODES[row["code"]], []).append(
+            sim.run(str(row.get("symbol", "")).upper(), idea.get("instrument", ""), idea.get("horizon", ""),
+                    _ts(placed[row["pid"]]["at"]) if row.get("pid") in placed else _ts(row["at"]),
+                    _f(levels.get("anchor")), _f(levels.get("stop")), _f(levels.get("target"))))
+    for name, sims in sorted(groups.items()):
+        lines.append(_group(f"{name}, if chased", sims))
+    pairs: list[float] = []
+    actual: list[Sim] = []
+    for plan in filled:
+        row = placed[plan["pid"]]
+        chased = row.get("chase") or {}
+        mine = _sim_plan(sim, plan)
+        actual.append(mine)
+        other = sim.run(plan["symbol"], plan["instrument"], plan["horizon"], _ts(row["at"]), _f(chased.get("anchor")),
+                        _f(chased.get("stop")), _f(chased.get("target")))
+        if mine.status == "done" and other.status == "done":
+            pairs.append(mine.ret - other.ret)
+    if filled:
+        lines.append(_group("pullback entries filled (as traded, same simulator)", actual))
+        if pairs:
+            lines.append(f"  filled pullback minus the chase it replaced: n {len(pairs)}, mean {mean(pairs):+.2%}, "
+                         f"pullback ahead {sum(d > 0 for d in pairs)}/{len(pairs)}")
+    return lines
+
+
 def report(events: list[dict], sim: Simulator, as_of: date, read_after: Optional[date] = None) -> str:
-    sections = [concentration(events, sim), strict(events, sim), exits(events), expiry(events), move(events, sim)]
+    sections = [concentration(events, sim), strict(events, sim), exits(events), expiry(events), move(events, sim),
+                chase(events, sim)]
     due = f"; the 10-session read is due after the {read_after} close" if read_after else ""
     head = [f"AI TRADER REVIEW SHADOWS - as of {as_of} (read-only{due})",
             "Replays: the underlying on one-minute SIP bars, stops at their level (slippage not charged), "

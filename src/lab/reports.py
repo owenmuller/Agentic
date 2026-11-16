@@ -169,6 +169,11 @@ def scoreboard_report(board: Any, as_of: date, table: str, grade_at: int, verdic
         lines.append(cards.BoardLine("AI trader theme tags", None, None, None,
                                      ("FLAG: " + "; ".join(flags)) if flags else
                                      board.theme_lines[0].split(": ", 1)[-1]))
+    if getattr(board, "day_lines", None):
+        # stop chasing (ruling 2026-11-16, item 5): by setup and entry mode in the table
+        lines.append(cards.BoardLine("Stop chasing", None, None, None,
+                                     board.day_lines[0].split(" - ", 1)[-1] + "; by setup, by entry and the "
+                                     "chase shadow in the table"))
     test = rows.get("B EXECUTION TEST (not a strategy)")
     if test is not None and test.sessions:
         lines.append(cards.BoardLine(

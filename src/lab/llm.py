@@ -63,6 +63,7 @@ class LabLLM:
         web_search = base.web_search.model_copy(update={"tool_type": ai_config.search_tool})
         self.config = base.model_copy(update={"tiers": TierOverrides(**overrides), "web_search": web_search})
         self._fee = Decimal(str(ai_config.search_fee_usd))
+        self._model = ai_config.model
         if client is None:
             # The same SDK client the research client would build, with the
             # lab's per-request timeout and one retry: a pass that cannot
@@ -75,6 +76,21 @@ class LabLLM:
             client = anthropic.Anthropic(api_key=require_env("ANTHROPIC_API_KEY"),
                                          timeout=float(ai_config.request_timeout_seconds), max_retries=1)
         self._client = _CountingClient(self.config, client=client)
+
+    def confirm(self, *, system: str, user: str, tool: dict[str, Any], max_tokens: int) -> PassResult:
+        """The day-trader confirm step (human ruling 2026-11-16, item 3): ONE
+        forced-tool call on the same pinned model, no search - the client's
+        ``single_call``, the path the learning writer already runs. Metered
+        like a pass (tokens priced from research.yaml; no searches)."""
+        result = self._client.single_call(system=system, user=user, tool=tool, model=self._model,
+                                          max_tokens=max_tokens)
+        tokens = result.est_cost_usd
+        if tokens is None:
+            raise RuntimeError(f"model {result.model or 'unknown'} has no price in research.yaml; refusing to meter blind")
+        return PassResult(structured=result.structured, text=result.text, model=result.model,
+                          input_tokens=result.input_tokens, output_tokens=result.output_tokens, searches=0,
+                          token_cost_usd=tokens, cost_usd=tokens, transcript_hash=result.transcript_hash,
+                          stop_reason=result.stop_reason)
 
     def scan(self, *, system: str, user: str, tool: dict[str, Any]) -> PassResult:
         self._client.searches = 0

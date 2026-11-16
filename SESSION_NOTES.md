@@ -4167,6 +4167,42 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-16 — STOP CHASING, TRADE LIKE A DAY TRADER (built, OFF); the AI trader's kill switch tripped at the open
+
+**The AI trader's 12% kill switch tripped at 09:30:01 ET** (NAV 97,830 against a high-water mark of 111,667: 12.4%; Friday's close was 98,584, 11.7%). No pass ran today. Exits kept running: STLD stopped out at 15:39.
+- Bug: the trip's card read `trader.gate` before `rebuild_gate` had assigned it, raised, and the KILL-SWITCH CARD WAS NEVER SENT (a "tick failed" crash card went instead).
+- Fixed: the gate is assigned before the card; a failing card is a fault, never a lost tick (test added).
+- Resetting is the human's (`python -m lab resume ai-trader --ack ...`).
+
+**The ruling, built and OFF** (`lab.yaml ai_trader.day_trader.enabled: false`; CLAUDE.md § 2b "STOP CHASING"):
+- `lab/intraday.py`: context and pullback level.
+- `ai_trader`: the anti-chase routes, the confirm step, resting limits and triggers, the gate re-reservation.
+- `ai_prompts`: the redirect, the setup list, the confirm prompt.
+- `lab golden --day-trader`; `lab roundtrip --pullback`; `lab day-trader-dryrun`.
+- The chase shadow in `review_shadows`, on the Friday scoreboard.
+
+Readings taken (Constraint #6, for the human to confirm):
+1. Either measure (since the prior close, or since the catalyst) passing 1x ATR makes an idea extended.
+2. A move that cannot be measured refuses the entry.
+3. A pullback level at or through the price is refused, not entered at the market.
+4. The context is shown in a confirm step after the proposals (the search phase has no hook for a client-side tool); a failed step enters nothing.
+5. A waiting pullback holds a slot, its sector and theme, counts as traded today, has its cash reserved and counted as deployed, and ends on the kill switch, a halt, its stop level or its cutoff.
+6. Today's bars are IEX (VWAP, opening range, relative volume IEX against IEX).
+7. The setup list adds news_reaction and other; a missing setup is refused.
+
+Golden (`python -m lab golden ai-trader --day-trader`, production path):
+- 5/5 proposal cases, every idea naming a setup (scheduled_catalyst 4, trend_pullback 2), $0.75.
+- Confirm step 7/7 cases (the real ideas of Nov 12-13 with their computed contexts), 21/21 runs clean, the same decision in every run, $0.16.
+
+Dry run (`lab day-trader-dryrun`; no ideas on Nov 16 because of the kill switch, so Nov 12 and 13). Returns are on the underlying in the idea's direction, from regular-session bars:
+- Of 11 ideas, 2 were refused outright (MOD +31%, already under VWAP; the NVDA put, already back above VWAP).
+- 2 became pullback limits (TRMK at 47.81, FIGR at 26.19). Neither filled; their chases ran -2.51% and -5.01%.
+- The confirm step dropped SOXS (chase -3.51%), LUNR (-8.00%), FIGR, LLY (-0.03%) and XLE (-1.46%).
+- It kept CSCO put (+4.08%), CBRS (-3.29%), AMAT put (+2.64%) and TRMK.
+- Two days are an illustration, not a finding.
+
+Found in passing: the review-shadows simulator walked extended-hours minute bars, so a multi-day replay could stop on a pre-market print. It now uses regular-session bars only; this matters for the Nov 27 10-session read.
+
 ### 2026-11-13 (evening) — Readings confirmed; hypotheses from refusals; live ledger time stamps
 
 Human ruling, later the same day:

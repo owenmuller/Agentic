@@ -37,7 +37,8 @@ import json
 import logging
 import shutil
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 from pathlib import Path
 
 import datahealth
@@ -276,6 +277,20 @@ def _catalyst_clock(account: LabAccount, config: LabConfig, calendar):
     return CatalystClock(config.ai_trader.move_since_public, client, calendar=calendar)
 
 
+def _intraday(account: LabAccount, config: LabConfig, calendar):
+    """The intraday context (ruling 2026-11-16, items 1-3): bars on Alpaca's
+    data host with this account's own keys. Read only while the day-trader
+    rules are on."""
+    import httpx
+
+    from execution.market_data import DATA_BASE_URL
+    from lab.intraday import IntradayData
+
+    client = httpx.Client(base_url=DATA_BASE_URL, timeout=15.0, headers={
+        "APCA-API-KEY-ID": account.api_key, "APCA-API-SECRET-KEY": account.api_secret})
+    return IntradayData(config.ai_trader.day_trader, client, calendar=calendar)
+
+
 def brief_renderer(ai_config):
     """The research brief (ruling 2026-10-15): the main book's momentum files
     (read only) and the committed evidence library, re-read at every scan."""
@@ -333,7 +348,8 @@ def run_session(name: str) -> int:
     trader = AiTrader(account, config.ai_trader, llm=llm, quotes=quotes, chain=chain, alert=kill_switch,
                       leverage_alert=leverage_watch, brief=brief_renderer(config.ai_trader),
                       calendar=calendar, reader=_ai_reader(quotes, account),
-                      catalyst_clock=_catalyst_clock(account, config, calendar))
+                      catalyst_clock=_catalyst_clock(account, config, calendar),
+                      intraday=_intraday(account, config, calendar))
     holder["trader"] = trader
     try:
         clock = account.adapter.market_clock()
@@ -398,11 +414,13 @@ def _ai_snapshot(account: LabAccount, trader) -> None:
     )
 
 
-def golden(name: str, with_brief: bool = False) -> int:
+def golden(name: str, with_brief: bool = False, day_trader: bool = False) -> int:
     """The AI trader's golden replay: production prompt, production request
     path, no broker. Also the live search->report round trip. ``--with-brief``
     runs it with the research brief switched on (its pre-ship replay, ruling
-    2026-10-15), whatever lab.yaml says."""
+    2026-10-15), whatever lab.yaml says. ``--day-trader`` switches the
+    day-trader rules on (ruling 2026-11-16): the cases then grade each idea's
+    setup, and the confirm step's own cases run on the same client."""
     from lab import golden as golden_replay
     from lab.ai_trader import NY
     from lab.llm import LabLLM
@@ -413,15 +431,23 @@ def golden(name: str, with_brief: bool = False) -> int:
         return 3
     # the replay grades the brief arm: every case sends it
     ai = config.ai_trader.model_copy(update={"brief_mode": "always"}) if with_brief else config.ai_trader
+    if day_trader:
+        ai = ai.model_copy(update={"day_trader": ai.day_trader.model_copy(update={"enabled": True})})
     renderer = brief_renderer(ai) if ai.brief_mode != "off" else None
     if renderer is not None:
         sample = renderer()
         print(f"research brief: {sample.chars} chars, ~{sample.tokens_estimate} tokens (~2.6 chars a token), "
               f"sha {sample.sha}, sections {sample.sections}")
     today = datetime.now(timezone.utc).astimezone(NY).date()
-    results = golden_replay.run(ai, LabLLM(ai), today, brief=renderer)
+    llm = LabLLM(ai)
+    results = golden_replay.run(ai, llm, today, brief=renderer)
     print(golden_replay.render(results, golden_replay.next_session(today)))
-    return 0 if all(r.passed for r in results) else 1
+    passed = all(r.passed for r in results)
+    if ai.day_trader.enabled:
+        confirms = golden_replay.run_confirm(ai, llm, today)
+        print(golden_replay.render_confirm(confirms))
+        passed = passed and all(r.passed for r in confirms)
+    return 0 if passed else 1
 
 
 def roundtrip(name: str) -> int:
@@ -497,6 +523,140 @@ def roundtrip(name: str) -> int:
     return 0 if not left and not faults else 1
 
 
+def roundtrip_pullback(name: str) -> int:
+    """The day-trader order paths, live, at minimum size, in the AI trader's
+    paper account (human ruling 2026-11-16: a live round trip before it
+    ships), each through the engine's own methods and the account's gate:
+      A  a resting pullback limit far under SPY: placed, found working at the
+         broker, expired after one minute and cancelled - nothing filled;
+      B  a pullback limit at the ask: filled, written as a position whose stop
+         and target come from the fill, then sold;
+      C  a call's underlying trigger set at the price: it fires, the option is
+         bought by the normal path (one contract), then sold.
+    Market hours only. Writes only scratch; the account ends flat in SPY. It
+    works only its own entries (never the copied ledger's positions)."""
+    import time as _time
+    from decimal import ROUND_DOWN, ROUND_UP, Decimal
+
+    from lab.ai_trader import NY, AiTrader, usable_price
+
+    config = LabConfig.load()
+    try:
+        account = open_account(name, config, data_dir=_snapshot(name), allow_disabled=True)
+    except LabRefused as refusal:
+        print(f"LAB {name} REFUSED: {refusal}", file=sys.stderr)
+        return 3
+    if not account.adapter.market_clock().get("is_open"):
+        print(f"LAB {name}: the market is closed; the round trip runs in session", file=sys.stderr)
+        return 3
+    day = config.ai_trader.day_trader.model_copy(update={"enabled": True, "pullback_minutes": 1})
+    ai = config.ai_trader.model_copy(update={"day_trader": day})
+    quotes, chain, _ = _ai_parts(account, config)
+    calendar = _calendar(account.api_key, account.api_secret, "round trip calendar")
+    trader = AiTrader(account, ai, llm=None, quotes=quotes, chain=chain, calendar=calendar,
+                      reader=_ai_reader(quotes, account))
+    trader._max_units = Decimal("1")
+    cents = Decimal("0.01")
+    failures: list[str] = []
+
+    def now() -> datetime:
+        return datetime.now(timezone.utc)
+
+    def price() -> Decimal:
+        value = usable_price(trader._reader.quote("SPY"))
+        if value is None:
+            raise RuntimeError("no usable SPY price")
+        return value
+
+    def mine(pid: str) -> list[dict]:
+        return [e for e in account.ledger.events() if e.get("pid") == pid]
+
+    def work(pid: str, seconds: int) -> Optional[dict]:
+        deadline = _time.monotonic() + seconds
+        while _time.monotonic() < deadline:
+            trader.rebuild_gate(now().astimezone(NY).date())
+            row = trader.pending().get(pid)
+            if row is None:
+                break
+            (trader._work_limit if row["kind"] == "limit" else trader._work_trigger)(row, now())
+            _time.sleep(5)
+        return next((e for e in mine(pid) if e["event"] == "pullback_done"), None)
+
+    idea = {"symbol": "SPY", "instrument": "etf", "horizon": "intraday", "stop_pct": 1, "target_pct": 2,
+            "confidence": 60, "theme": "broad_market", "setup": "trend_pullback", "thesis": "round trip",
+            "source": "round trip", "invalidation": "none"}
+    trader.rebuild_gate(now().astimezone(NY).date())
+    # A: resting, then expired and cancelled
+    here = price()
+    level = (here * Decimal("0.97")).quantize(cents, rounding=ROUND_DOWN)
+    trader._place_pullback(idea, now(), "round_trip_a", level, here)
+    placed = [e for e in account.ledger.events(["pullback_placed"]) if e.get("scan") == "round_trip_a"]
+    pid_a = placed[-1]["pid"] if placed else None
+    order_a = next((e["order_id"] for e in mine(pid_a) if e["event"] == "pullback_order"), None) if pid_a else None
+    if order_a is None:
+        failures.append("A: the resting limit was not placed")
+    else:
+        status = account.adapter.get_order(order_a)
+        print(f"A: resting limit {level} placed as {order_a}, broker status {status.status}")
+        if status.is_terminal:
+            failures.append(f"A: the resting limit was already terminal ({status.status})")
+        done = work(pid_a, 120)
+        final = account.adapter.get_order(order_a)
+        print(f"A: ended {done and done.get('outcome')}: {done and done.get('detail')}; broker {final.status}, "
+              f"filled {final.filled_quantity}")
+        if not done or done.get("outcome") != "unfilled" or final.filled_quantity > 0:
+            failures.append("A: the resting limit did not expire unfilled")
+    # B: a limit at the ask fills; the position's levels come from the fill
+    trader.rebuild_gate(now().astimezone(NY).date())
+    ask = quotes("SPY")[1]
+    level = (ask * Decimal("1.002")).quantize(cents, rounding=ROUND_UP)
+    trader._place_pullback(idea, now(), "round_trip_b", level, price())
+    placed = [e for e in account.ledger.events(["pullback_placed"]) if e.get("scan") == "round_trip_b"]
+    pid_b = placed[-1]["pid"] if placed else None
+    done = work(pid_b, 60) if pid_b else None
+    opened = next((e for e in mine(pid_b) if e["event"] == "position_opened"), None) if pid_b else None
+    if not done or done.get("outcome") != "filled" or opened is None:
+        failures.append(f"B: the limit at the ask did not fill into a position ({done})")
+    else:
+        print(f"B: filled at {opened['anchor_mid']}; stop {opened['stop']}, target {opened['target']} (from the fill)")
+        position = trader.positions().get(pid_b)
+        if position is not None:
+            trader.close(position, "round_trip", now())
+    # C: a call's trigger at the price fires and buys one contract by the normal path
+    trader.rebuild_gate(now().astimezone(NY).date())
+    here = price()
+    trader._place_pullback({**idea, "instrument": "call"}, now(), "round_trip_c",
+                           (here * Decimal("1.001")).quantize(cents, rounding=ROUND_UP), here)
+    placed = [e for e in account.ledger.events(["pullback_placed"]) if e.get("scan") == "round_trip_c"]
+    pid_c = placed[-1]["pid"] if placed else None
+    done = work(pid_c, 60) if pid_c else None
+    if not done or done.get("outcome") != "filled":
+        failures.append(f"C: the trigger did not buy the option ({done})")
+    else:
+        position = trader.positions().get(pid_c)    # the option is opened under the trigger's own pid
+        if position is None or not position.occ:
+            failures.append("C: the trigger reported a fill but no option position is open")
+        else:
+            print(f"C: bought {position.quantity} {position.occ} on the trigger; stop {position.stop}, "
+                  f"target {position.target} (on the underlying, from its price at the trigger)")
+            trader.close(position, "round_trip", now())
+    ours = {pid for pid in (pid_a, pid_b, pid_c) if pid}
+    for event in account.ledger.events(["settled"]):
+        if event.get("pid") in ours:
+            print(f"  settled {event['side']} {event['symbol']}: {event['filled_qty']} at {event['avg_price']} "
+                  f"({event['status']})")
+    faults = [e for e in account.ledger.events(["fault"]) if e.get("at", "") >= (now() - timedelta(minutes=10)).isoformat()]
+    for event in faults:
+        print(f"  FAULT {event['message']}")
+    left = [p.symbol for p in account.adapter.get_positions() if p.symbol.startswith("SPY")]
+    print(f"left holding after the round trip: {left or 'nothing in SPY'}")
+    for failure in failures:
+        print(f"FAIL {failure}")
+    ok = not failures and not left and not faults
+    print("PULLBACK ROUND TRIP: " + ("PASSED" if ok else "FAILED"))
+    return 0 if ok else 1
+
+
 # -- items 3 and 4: the weekly scoreboard ------------------------------------------
 
 def scoreboard(email: bool) -> int:
@@ -564,6 +724,24 @@ def scoreboard(email: bool) -> int:
             momentum=momentum, spmo=dict(sorted(spmo.items())),
             fund=board_mod.fund_lookup(broker.asset_name),
         )
+    if any(e.get("event") in ("anti_chase", "pullback_placed") for e in ai_events):
+        # the chase shadow (ruling 2026-11-16, item 5): what chasing would have done
+        import os
+
+        from execution.market_data import AlpacaMinuteBars
+        from lab import review_shadows as shadows
+
+        minute = AlpacaMinuteBars()
+        try:
+            calendar = _calendar(os.environ.get("ALPACA_API_KEY", ""), os.environ.get("ALPACA_API_SECRET", ""),
+                                 "scoreboard calendar")
+            sim = shadows.Simulator(lambda symbol, a, b: minute.bars(symbol, a, b, "sip"), calendar,
+                                    intraday_close=config.ai_trader.intraday_close,
+                                    horizon_sessions=dict(config.ai_trader.horizon_sessions),
+                                    now=datetime.now(timezone.utc), report=datahealth.report)
+            board.day_lines = (board.day_lines or ["STOP CHASING (ruling 2026-11-16)"]) + shadows.chase(ai_events, sim)
+        finally:
+            minute.close()
     text = board_mod.render(board, today)
     print(text)
     if email:
@@ -909,6 +1087,55 @@ def review_shadows() -> int:
     return 0
 
 
+def day_trader_dryrun(day_text: str, with_confirm: bool, golden_out: Optional[str]) -> int:
+    """Read-only (human ruling 2026-11-16): the day-trader rules replayed on a
+    day's REAL AI-trader ideas - which would have been refused, which turned
+    into pullback orders, and where those would have filled."""
+    import os
+
+    import httpx
+    import yaml
+
+    from execution.market_data import DATA_BASE_URL, AlpacaMinuteBars
+    from lab import day_trader_dryrun as dry
+    from lab import scoreboard as board_mod
+    from lab.intraday import IntradayData
+
+    config = LabConfig.load()
+    ai = config.ai_trader
+    path = datasafety.lab_production_dir("ai-trader") / "ledger.jsonl"
+    if not path.exists():
+        print(f"no AI trader ledger at {path}", file=sys.stderr)
+        return 1
+    events = board_mod.read_jsonl(path)
+    day = date_from(day_text)
+    minute = AlpacaMinuteBars()       # loads the environment: the main book's data keys
+    key, secret = os.environ.get("ALPACA_API_KEY", ""), os.environ.get("ALPACA_API_SECRET", "")
+    calendar = _calendar(key, secret, "day-trader dry run calendar")
+    client = httpx.Client(base_url=DATA_BASE_URL, timeout=20.0,
+                          headers={"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret})
+    intraday = IntradayData(ai.day_trader, client, calendar=calendar)
+    try:
+        rows = dry.run(events, day, ai, context=lambda s, t, p: intraday.context(s, t, p),
+                       bars=lambda s, a, b: minute.bars(s, a, b, "sip"), calendar=calendar,
+                       now=datetime.now(timezone.utc))
+        if with_confirm:
+            from lab.llm import LabLLM
+
+            on = ai.model_copy(update={"day_trader": ai.day_trader.model_copy(update={"enabled": True})})
+            spend = dry.confirm(rows, on, LabLLM(on), events, day)
+            print(f"(confirm step on the real ideas: ${spend:.3f})")
+        print(dry.render(rows, day))
+        if golden_out:
+            Path(golden_out).write_text(yaml.safe_dump({"cases": dry.golden_cases(rows, events, day)}, sort_keys=False,
+                                                       allow_unicode=True, width=120), encoding="utf-8")
+            print(f"confirm-step golden cases written to {golden_out}")
+    finally:
+        minute.close()
+        client.close()
+    return 0
+
+
 def date_from(text: str):
     from datetime import date
 
@@ -941,11 +1168,19 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("account")
         if name == "golden":
             p.add_argument("--with-brief", action="store_true")
+            # the day-trader rules switched on for the replay (ruling 2026-11-16)
+            p.add_argument("--day-trader", action="store_true")
+        if name == "roundtrip":
+            p.add_argument("--pullback", action="store_true")
     p = sub.add_parser("retry-option-round-trip")
     p.add_argument("--reason", required=True)
     sub.add_parser("live-check")
     sub.add_parser("live-mirror")
     sub.add_parser("review-shadows")
+    p = sub.add_parser("day-trader-dryrun")
+    p.add_argument("--day", required=True)
+    p.add_argument("--confirm", action="store_true")
+    p.add_argument("--golden-out")
     p = sub.add_parser("monthly-review")
     p.add_argument("--month")
     p.add_argument("--scheduled", action="store_true")
@@ -955,6 +1190,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("review-golden")
     p.add_argument("--runs", type=int, default=3)
     args = parser.parse_args(argv)
+    if args.command == "day-trader-dryrun":
+        return day_trader_dryrun(args.day, args.confirm, args.golden_out)
     if args.command == "review-shadows":
         return review_shadows()
     if args.command == "monthly-review":
@@ -984,9 +1221,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "scoreboard":
         return scoreboard(args.email)
     if args.command == "golden":
-        return golden(args.account, args.with_brief)
+        return golden(args.account, args.with_brief, args.day_trader)
     if args.command == "roundtrip":
-        return roundtrip(args.account)
+        return roundtrip_pullback(args.account) if args.pullback else roundtrip(args.account)
     return resume(args.account, args.ack)
 
 

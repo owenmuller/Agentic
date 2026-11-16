@@ -154,6 +154,36 @@ class MoveSinceConfig(_Strict):
     skip_above_atr: Decimal = Field(gt=ZERO)
 
 
+#: The setup types every idea must name (human ruling 2026-11-16, item 4):
+#: the four the prompt favours, the news reaction it no longer favours (named
+#: so its results stay measurable), and "other".
+SETUPS = ("scheduled_catalyst", "consolidation_continuation", "trend_pullback", "extended_negative_put",
+          "news_reaction", "other")
+
+
+class DayTraderConfig(_Strict):
+    """STOP CHASING, TRADE LIKE A DAY TRADER (human ruling 2026-11-16).
+    Off: the prompt, the tool and every entry are byte-for-byte as before.
+    On (after its golden replay and live round trip):
+      1. anti-chase: no at-market entry once the move in the idea's direction
+         since the prior close, or since its catalyst, passes
+         ``extended_atr`` x ATR(14);
+      2. a pullback entry instead, if the model still wants the name: a limit
+         (stocks/ETFs) or an underlying trigger (options) at the higher of
+         VWAP and the opening-range low (longs; the mirror for puts), valid
+         ``pullback_minutes`` or until its stop level is breached;
+      3. the intraday context line for every idea, in a confirm step;
+      4. the prompt's redirect and the fixed setup list (``SETUPS``)."""
+
+    enabled: bool = False
+    extended_atr: Decimal = Field(default=Decimal("1.0"), gt=ZERO, le=Decimal("1.0"))
+    pullback_minutes: int = Field(default=60, gt=0, le=60)
+    opening_range_minutes: int = Field(default=15, ge=5, le=30)
+    relvol_sessions: int = Field(default=20, ge=5, le=60)
+    #: The confirm step's output budget (one forced-tool call, no search).
+    confirm_max_tokens: int = Field(default=1500, ge=300, le=4000)
+
+
 class AiTraderConfig(_Strict):
     """2b, the AUTONOMOUS AI TRADER (PAPER PUSH 2026-10-09; built per ruling
     2026-10-10, item 5). The LLM decides what and why; these rules decide
@@ -224,6 +254,8 @@ class AiTraderConfig(_Strict):
     #: date every tick also computes the OLD exit rule (the mid of any quote,
     #: however wide) and logs each disagreement with the new one. None: off.
     exit_shadow_until: Optional[date] = None
+    #: Stop chasing (human ruling 2026-11-16); off until it ships.
+    day_trader: DayTraderConfig = Field(default_factory=DayTraderConfig)
 
     @model_validator(mode="after")
     def _sane(self) -> "AiTraderConfig":

@@ -81,10 +81,22 @@ from execution.base import OrderStatus
 from execution.market_calendar import MarketCalendar
 from execution.quotes import QuoteReader, Reading
 from lab.account import LabAccount
-from lab.ai_prompts import HORIZONS, INSTRUMENTS, HeldView, build_user, report_tool, system_prompt
+from lab.ai_prompts import (
+    HORIZONS,
+    INSTRUMENTS,
+    ConfirmItem,
+    HeldView,
+    build_user,
+    confirm_system,
+    confirm_tool,
+    confirm_user,
+    report_tool,
+    system_prompt,
+)
 from lab.brief import BEGIN as BRIEF_BEGIN, END as BRIEF_END, Brief
 from lab import leverage
-from lab.config import AiTraderConfig
+from lab.config import SETUPS, AiTraderConfig
+from lab.intraday import Context, pullback_level
 from risk_gate.gate import ApprovedOrder, RiskGate
 from risk_gate.sectors import SectorMap
 from risk_gate.schema import (
@@ -259,8 +271,20 @@ class AiTrader:
         reader: Optional[QuoteReader] = None,
         sectors: Optional[SectorMap] = None,
         catalyst_clock: Any = None,
+        intraday: Any = None,
     ) -> None:
         self.account = account
+        #: Intraday context (ruling 2026-11-16, items 1-3; ``lab.intraday``),
+        #: read only while ``config.day_trader.enabled``. None there: every
+        #: idea's extension is unknown, so nothing is entered (Constraint #6).
+        self._intraday = intraday
+        #: this scan's move-since-public rows, measured once per symbol
+        self._moves: dict[str, dict] = {}
+        #: this scan's anti-chase measurements, by symbol, for the plan
+        self._scan_context: dict[str, dict] = {}
+        #: The live round trip's size cap (shares or contracts); None in production.
+        #: It can only make an entry smaller.
+        self._max_units: Optional[Decimal] = None
         #: Prices by the main book's quote rule (human ruling 2026-11-12, item
         #: 1): stops, targets and the levels. ``quotes`` (raw bid/ask) still
         #: prices the orders themselves. Default: the rule over ``quotes``
@@ -328,18 +352,46 @@ class AiTrader:
             factor = recorded.get(symbol) or leverage.factor(symbol, "etf", self.config.leverage_factors)
             face += position.exposure
             adjusted += position.exposure * abs(factor)
+        for row in self.pending().values():   # a resting pullback limit counts as the exposure it may become
+            notional = self._pending_notional(row)
+            face += notional
+            adjusted += notional * abs(Decimal(str((row.get("plan") or {}).get("leverage") or "1")))
         return face, adjusted
 
     def spent_today(self, day: date) -> Decimal:
+        """Every model call today: the passes and (ruling 2026-11-16) the
+        day-trader confirm steps."""
         return sum(
-            (Decimal(str(e["cost_usd"])) for e in self.account.ledger.events(["llm_pass"])
+            (Decimal(str(e["cost_usd"])) for e in self.account.ledger.events(["llm_pass", "context_pass"])
              if datetime.fromisoformat(e["at"]).astimezone(NY).date() == day),
             ZERO,
         )
 
     def traded_today(self, day: date) -> list[str]:
-        return [e["symbol"] for e in self.account.ledger.events(["position_opened"])
+        """Symbols opened today, and (ruling 2026-11-16) symbols that had a
+        pullback entry placed today, filled or not (the reading that trades less)."""
+        return [e["symbol"] for e in self.account.ledger.events(["position_opened", "pullback_placed"])
                 if datetime.fromisoformat(e["at"]).astimezone(NY).date() == day]
+
+    def pending(self) -> dict[str, dict]:
+        """Pullback entries placed and not yet done (ruling 2026-11-16, item 2),
+        from the ledger: a restart resumes them. Each holds a slot."""
+        out: dict[str, dict] = {}
+        for event in self.account.ledger.events(["pullback_placed", "pullback_order", "pullback_done"]):
+            kind, pid = event.get("event"), event.get("pid")
+            if kind == "pullback_placed":
+                out[pid] = dict(event)
+            elif kind == "pullback_order" and pid in out:
+                out[pid]["order_id"] = event.get("order_id")
+            elif kind == "pullback_done":
+                out.pop(pid, None)
+        return out
+
+    @staticmethod
+    def _pending_notional(row: dict) -> Decimal:
+        if row.get("kind") != "limit":
+            return ZERO
+        return Decimal(str(row.get("quantity") or 0)) * Decimal(str(row.get("level") or 0))
 
     def rebuild_gate(self, day: date) -> RiskGate:
         """The account's RiskGate, seeded from the broker every tick (orders
@@ -362,6 +414,13 @@ class AiTrader:
                     state.aggressive_deployed_today += value
             else:
                 state.unsettled_proceeds += value
+        # A resting pullback limit (ruling 2026-11-16, item 2) is not in the
+        # broker's cash figure: its worst-case cost is reserved again every
+        # rebuild and counted as deployed, so no later order can spend it.
+        for row in self.pending().values():
+            notional = self._pending_notional(row)
+            state.reserved_cash += notional
+            state.aggressive_deployed_today += notional
         marks = {}
         for position in state.positions.values():
             if position.quantity:
@@ -373,9 +432,16 @@ class AiTrader:
             self.account.persist_gate(gate, reason=f"operator halt marker: {halt}")
         tripped_before = self.account.state.kill_switch_tripped
         self.account.persist_gate(gate)
-        if gate.kill_switch_tripped and not tripped_before and self._alert is not None:
-            self._alert(f"LAB {self.account.name} KILL SWITCH", self.account.state.trip_reason or "tripped")
+        # the gate is in place BEFORE the card: the card reads it (2026-11-16:
+        # the trip at 09:30:01 found ``self.gate`` still None, the card raised,
+        # and the kill-switch card was never sent)
         self.gate = gate
+        if gate.kill_switch_tripped and not tripped_before and self._alert is not None:
+            try:
+                self._alert(f"LAB {self.account.name} KILL SWITCH", self.account.state.trip_reason or "tripped")
+            except Exception as error:  # noqa: BLE001 - a failed card must not cost the tick its exits
+                self._fault(f"the kill-switch card failed ({type(error).__name__}: {str(error)[:200]}); "
+                            f"the switch itself is tripped: {self.account.state.trip_reason}")
         return gate
 
     # -- the tick ----------------------------------------------------------
@@ -386,6 +452,7 @@ class AiTrader:
         self._recover()
         self.rebuild_gate(day)
         self._leverage_watch()
+        self._work_pullbacks(now)
         for position in list(self.positions().values()):
             reason = self.exit_reason(position, now)
             if reason:
@@ -564,12 +631,13 @@ class AiTrader:
             self._mark_scan(now, label)
         gate = self.gate
         held = list(self.positions().values())
+        waiting = list(self.pending().values())   # pullback entries hold slots (ruling 2026-11-16)
         entries_open = (now.astimezone(NY) < self.cut(day, cfg.no_entries_after)
                         and not (gate is not None and gate.kill_switch_tripped))
         if not dry_run:
             if not entries_open:
                 return ScanOutcome(False, note="entries closed (time, kill switch or halt); no pass bought")
-            if len(held) >= cfg.max_positions:
+            if len(held) + len(waiting) >= cfg.max_positions:
                 return ScanOutcome(False, note="all slots full; no pass bought")
             spent = self.spent_today(day)
             if spent + cfg.pass_cost_reserve_usd > cfg.daily_spend_cap_usd:
@@ -585,9 +653,11 @@ class AiTrader:
         arm = self._arm = self.brief_arm()
         brief = rendered if arm == "brief" else None
         user = self.user_prompt(now, held, brief=brief)
+        day_on = cfg.day_trader.enabled
         try:
             result = self.llm.scan(system=system_prompt(cfg, brief=brief is not None), user=user,
-                                   tool=report_tool(brief is not None, list(cfg.concentration.themes)))
+                                   tool=report_tool(brief is not None, list(cfg.concentration.themes),
+                                                    SETUPS if day_on else None))
         except Exception as error:  # noqa: BLE001 - a failed pass is a fault, never a trade
             self._fault(f"scan {label}: the model pass failed ({type(error).__name__}: {str(error)[:200]}); "
                         f"nothing traded")
@@ -624,22 +694,36 @@ class AiTrader:
         for position in held:
             for key in self.concentration_keys(position.symbol, position.theme):
                 held_keys.setdefault(key, position.symbol)
+        for row in waiting:   # a placed pullback entry occupies its sector and theme like a position
+            for key in self.concentration_keys(row["symbol"], (row.get("plan") or {}).get("theme")):
+                held_keys.setdefault(key, row["symbol"])
         pass_keys: dict[tuple[str, str], str] = {}
         strict_keys: dict[tuple[str, str], str] = {}
         self._options_this_scan = 0
         self._opened_pids = {}
         self._placed = set()
+        self._moves = {}
+        self._scan_context = {}
         anchors: dict[str, Optional[Decimal]] = {}
-        for idea in ideas:
+        # Stop chasing (ruling 2026-11-16): measure, refuse what cannot be
+        # entered, ask the model about the rest with its context in front of it
+        routes: dict[int, tuple] = {}
+        if day_on and not dry_run:
+            routes = self._day_trader_routes(ideas, now, label, taken, held, waiting, anchors)
+        for index, idea in enumerate(ideas):
             symbol = str(idea.get("symbol", "")).upper().strip()
             keys = self.concentration_keys(symbol, idea.get("theme")) if _SYMBOL.match(symbol) else set()
-            if not dry_run and _SYMBOL.match(symbol):
+            if not dry_run and _SYMBOL.match(symbol) and symbol not in anchors:
                 anchors[symbol] = usable_price(self._reader.quote(symbol))
                 if anchors[symbol] is not None:
                     self.account.ledger.append("anchor_check", scan=label, symbol=idea.get("symbol"),
                                                **self.anchor_check(idea, anchors[symbol]))
-            verdict = self.validate(idea, now, taken, slots=cfg.max_positions - len(held) - len(outcome.opened),
+            verdict = self.validate(idea, now, taken,
+                                    slots=cfg.max_positions - len(held) - len(waiting) - len(outcome.opened),
                                     live=not dry_run)
+            route = routes.get(index)
+            if verdict.ok and route is not None and route[0] in ("refuse", "drop"):
+                verdict = Verdict(False, route[1])
             strict: Optional[Verdict] = None
             if verdict.ok:
                 verdict = self.concentration(idea, keys, held_keys, pass_keys)
@@ -654,6 +738,10 @@ class AiTrader:
                     if verdict.reason.startswith("concentration"):
                         # the levels it would have had, so the replay shadow can score it
                         extra = dict(code="concentration", levels=self._shadow_levels(idea, anchors.get(symbol)))
+                    elif route is not None and route[0] in ("refuse", "drop") and verdict.reason == route[1]:
+                        # the chase it would have been (ruling 2026-11-16, item 5): scored by the shadow
+                        extra = dict(code=route[2], levels=self._shadow_levels(idea, anchors.get(symbol)),
+                                     context=self._scan_context.get(symbol))
                     self.account.ledger.append("idea_rejected", scan=label, symbol=idea.get("symbol"),
                                                reason=verdict.reason, idea=idea, **extra)
                 continue
@@ -665,7 +753,10 @@ class AiTrader:
                 for key in keys:
                     pass_keys.setdefault(key, symbol)
                 continue
-            opened = self._enter(idea, now, label)
+            if route is not None and route[0] == "pullback":
+                opened = self._place_pullback(idea, now, label, route[1], anchors.get(symbol))
+            else:
+                opened = self._enter(idea, now, label)
             if symbol in self._placed:  # placed: it now counts against every later idea
                 for key in keys:
                     pass_keys.setdefault(key, symbol)
@@ -722,12 +813,15 @@ class AiTrader:
                           p.opened_day.isoformat(), str(p.stop), str(p.target), p.thesis[:300],
                           theme=p.theme or "not recorded") for p in held]
         local = now.astimezone(NY)
+        waiting = [row["symbol"] for row in self.pending().values()]
         return build_user(
-            now, held=views, traded_today=self.traded_today(day), max_positions=cfg.max_positions,
+            now, held=views, traded_today=self.traded_today(day),
+            max_positions=cfg.max_positions,
             max_ideas=cfg.max_ideas_per_scan,
             entries_open=local < self.cut(day, cfg.no_entries_after),
             intraday_open=local < self.cut(day, cfg.no_intraday_entries_after),
             brief=brief.text if brief is not None else None,
+            pending=waiting,
         )
 
     # -- validation --------------------------------------------------------
@@ -751,6 +845,9 @@ class AiTrader:
         if idea.get("theme") not in cfg.concentration.themes:
             # the cap reads it (ruling 2026-11-12, item 2): no theme, no entry
             return Verdict(False, f"theme {idea.get('theme')!r} is not one of the configured themes")
+        if cfg.day_trader.enabled and idea.get("setup") not in SETUPS:
+            # measured by setup (ruling 2026-11-16, items 4-5): no setup, no entry
+            return Verdict(False, f"setup {idea.get('setup')!r} is not one of the fixed setup types")
         if slots <= 0:
             return Verdict(False, "no free slot")
         if symbol in {t.upper() for t in taken}:
@@ -835,17 +932,31 @@ class AiTrader:
             symbol = str(idea.get("symbol", "")).upper().strip()
             if not _SYMBOL.match(symbol):
                 continue
-            sign = -1 if idea.get("instrument") == "put" else 1
-            row: dict[str, Any] = dict(scan=label, symbol=symbol, instrument=idea.get("instrument"),
-                                       horizon=idea.get("horizon"), pid=self._opened_pids.get(symbol),
-                                       catalyst=str(idea.get("catalyst") or "")[:300])
-            try:
-                row.update(self._catalyst_clock.measure(
-                    symbol, str(idea.get("catalyst") or idea.get("thesis") or ""), sign, now, anchors.get(symbol)))
-            except Exception as error:  # noqa: BLE001 - logged only: never stops the session
-                row.update(status="error", error=f"{type(error).__name__}: {str(error)[:200]}")
-                datahealth.report("AI trader move since public", f"{symbol}: {row['error']}")
+            row = dict(self._move_row(idea, label, now, anchors.get(symbol)) or {})
+            row["pid"] = self._opened_pids.get(symbol)
             self.account.ledger.append("move_since_public", **row)
+
+    def _move_row(self, idea: dict, label: str, now: datetime, anchor: Optional[Decimal]) -> Optional[dict]:
+        """One idea's move since public, measured once per symbol per scan
+        (the day-trader rules read it before entry; the log after). None while
+        the measurement is off."""
+        if self._catalyst_clock is None or not self.config.move_since_public.enabled:
+            return None
+        symbol = str(idea.get("symbol", "")).upper().strip()
+        if symbol in self._moves:
+            return self._moves[symbol]
+        sign = -1 if idea.get("instrument") == "put" else 1
+        row: dict[str, Any] = dict(scan=label, symbol=symbol, instrument=idea.get("instrument"),
+                                   horizon=idea.get("horizon"), pid=None,
+                                   catalyst=str(idea.get("catalyst") or "")[:300])
+        try:
+            row.update(self._catalyst_clock.measure(
+                symbol, str(idea.get("catalyst") or idea.get("thesis") or ""), sign, now, anchor))
+        except Exception as error:  # noqa: BLE001 - a failed read is a gap, never a stopped scan
+            row.update(status="error", error=f"{type(error).__name__}: {str(error)[:200]}")
+            datahealth.report("AI trader move since public", f"{symbol}: {row['error']}")
+        self._moves[symbol] = row
+        return row
 
     def anchor_check(self, idea: dict, live_mid: Decimal) -> dict:
         """Ruling 2026-10-10: log the gap between the live price and any price
@@ -877,26 +988,11 @@ class AiTrader:
         gate = self.gate
         symbol = str(idea["symbol"]).upper().strip()
         instrument = idea["instrument"]
-        nav = gate.state.nav
-        budget = (nav * cfg.risk_fraction).quantize(CENTS, rounding=ROUND_DOWN)
-        pid = uuid.uuid4().hex[:12]
         stop_fraction = Decimal(str(idea["stop_pct"])) / 100
         target_fraction = Decimal(str(idea["target_pct"])) / 100
-        plan = dict(pid=pid, symbol=symbol, instrument=instrument, horizon=idea["horizon"],
-                    stop_pct=str(idea["stop_pct"]), target_pct=str(idea["target_pct"]),
-                    thesis=str(idea.get("thesis", ""))[:1000], source=str(idea.get("source", ""))[:1000],
-                    catalyst=str(idea.get("catalyst", ""))[:500], invalidation=str(idea.get("invalidation", ""))[:500],
-                    confidence=int(idea["confidence"]), scan=label, risk_budget=budget, nav=nav,
-                    theme=str(idea.get("theme")))
-        if self._arm is not None:  # the A/B arm rides on the position (ruling 2026-10-15)
-            plan.update(brief_arm=self._arm)
-        if "brief_use" in idea:  # the brief's use rides on the position (ruling 2026-10-15)
-            plan.update(brief_use=str(idea.get("brief_use"))[:20], brief_items=str(idea.get("brief_items") or "")[:500])
-        # Leverage is allowed and MEASURED (ruling 2026-10-14, second): the
-        # factor and its tag ride on the plan, so the gross figures, the
-        # scoreboard and the journal can tell a 3x fund from a stock pick.
-        factor = self.leverage_factor(symbol, instrument)
-        plan.update(leverage=str(factor), tag=leverage.tag(factor))
+        plan, budget = self._base_plan(idea, label)
+        if cfg.day_trader.enabled:
+            plan.update(entry_mode="at_market")
         # The levels come from the LIVE price at order time (ruling 2026-10-10),
         # never from a price the model cited - read by the quote rule (ruling
         # 2026-11-12, item 1): the mid of a tight quote, else the last trade,
@@ -927,15 +1023,379 @@ class AiTrader:
         if per_share <= ZERO:
             self._reject(plan, f"limit {limit} at or below the stop")
             return None
-        quantity = budget / per_share
-        cap = gate.sleeve_nav(Sleeve.AGGRESSIVE) * gate.limits.aggressive_sleeve.max_single_position * Decimal("0.995")
-        quantity = min(quantity, cap / limit, gate.state.settled_buying_power / limit).quantize(STEP, rounding=ROUND_DOWN)
+        quantity = self._shares(budget, per_share, limit)
         if quantity * limit < Decimal("5"):
             self._reject(plan, f"size {quantity} x {limit} below the dust floor")
             return None
         order = EquityBuyOrder(symbol=symbol, quantity=quantity, execution=LimitExecution(limit_price=limit),
                                sleeve="aggressive", confidence=plan["confidence"])
         return self._open(order, plan, limit, anchor)
+
+    def _shares(self, budget: Decimal, per_share: Decimal, limit: Decimal) -> Decimal:
+        """Shares for ``budget`` at risk ``per_share``, inside the gate's
+        single-position cap and the settled cash."""
+        gate = self.gate
+        quantity = budget / per_share
+        cap = gate.sleeve_nav(Sleeve.AGGRESSIVE) * gate.limits.aggressive_sleeve.max_single_position * Decimal("0.995")
+        if self._max_units is not None:
+            quantity = min(quantity, self._max_units)
+        return min(quantity, cap / limit, gate.state.settled_buying_power / limit).quantize(STEP, rounding=ROUND_DOWN)
+
+    def _base_plan(self, idea: dict, label: str) -> tuple[dict, Decimal]:
+        """The plan every entry carries, and its risk budget (2% of NAV)."""
+        cfg = self.config
+        symbol = str(idea["symbol"]).upper().strip()
+        instrument = idea["instrument"]
+        nav = self.gate.state.nav
+        budget = (nav * cfg.risk_fraction).quantize(CENTS, rounding=ROUND_DOWN)
+        pid = uuid.uuid4().hex[:12]
+        plan = dict(pid=pid, symbol=symbol, instrument=instrument, horizon=idea["horizon"],
+                    stop_pct=str(idea["stop_pct"]), target_pct=str(idea["target_pct"]),
+                    thesis=str(idea.get("thesis", ""))[:1000], source=str(idea.get("source", ""))[:1000],
+                    catalyst=str(idea.get("catalyst", ""))[:500], invalidation=str(idea.get("invalidation", ""))[:500],
+                    confidence=int(idea["confidence"]), scan=label, risk_budget=budget, nav=nav,
+                    theme=str(idea.get("theme")))
+        if self._arm is not None:  # the A/B arm rides on the position (ruling 2026-10-15)
+            plan.update(brief_arm=self._arm)
+        if "brief_use" in idea:  # the brief's use rides on the position (ruling 2026-10-15)
+            plan.update(brief_use=str(idea.get("brief_use"))[:20], brief_items=str(idea.get("brief_items") or "")[:500])
+        # Leverage is allowed and MEASURED (ruling 2026-10-14, second): the
+        # factor and its tag ride on the plan, so the gross figures, the
+        # scoreboard and the journal can tell a 3x fund from a stock pick.
+        factor = self.leverage_factor(symbol, instrument)
+        plan.update(leverage=str(factor), tag=leverage.tag(factor))
+        # measured on every entry while the day-trader rules are on (ruling
+        # 2026-11-16, item 5): the setup the model named and the context the
+        # anti-chase rule read
+        if "setup" in idea:
+            plan.update(setup=str(idea.get("setup"))[:40])
+        if symbol in self._scan_context:
+            plan.update(context=self._scan_context[symbol])
+        return plan, budget
+
+    # -- stop chasing (human ruling 2026-11-16) ----------------------------------------
+
+    def _day_trader_routes(self, ideas: list[dict], now: datetime, label: str, taken: list[str],
+                           held: list[Position], waiting: list[dict],
+                           anchors: dict[str, Optional[Decimal]]) -> dict[int, tuple]:
+        """Items 1-3 before any entry. Each idea that passes validation is
+        measured; one whose extension cannot be measured, or that is extended
+        with no pullback level beyond the price, is refused (``refuse``); the
+        rest go to the confirm step with their context line, and come back as
+        ``market`` (not extended, kept), ``pullback`` (extended, kept) or
+        ``drop``. A route is (kind, reason-or-level, code)."""
+        cfg = self.config
+        multiple = cfg.day_trader.extended_atr
+        routes: dict[int, tuple] = {}
+        asking: list[tuple[int, ConfirmItem]] = []
+        free = cfg.max_positions - len(held) - len(waiting)
+        for index, idea in enumerate(ideas):
+            symbol = str(idea.get("symbol", "")).upper().strip()
+            if not _SYMBOL.match(symbol):
+                continue
+            anchors[symbol] = usable_price(self._reader.quote(symbol))
+            if anchors[symbol] is not None:
+                self.account.ledger.append("anchor_check", scan=label, symbol=idea.get("symbol"),
+                                           **self.anchor_check(idea, anchors[symbol]))
+            if not self.validate(idea, now, taken, slots=free, live=True).ok:
+                continue    # the main loop refuses it with its own reason
+            bull = bullish(str(idea.get("instrument")))
+            sign = 1 if bull else -1
+            ctx = self._context(idea, now, label, anchors[symbol])
+            extended = ctx.extended(sign, multiple)
+            measured = self._measured(ctx, sign, multiple, extended)
+            self._scan_context[symbol] = measured
+            if extended is None:
+                routes[index] = ("refuse", "anti-chase: the move since the prior close cannot be measured (no price, "
+                                           "prior close or ATR), so an entry is refused rather than guessed",
+                                 "anti_chase")
+                self._anti_chase(label, symbol, idea, measured, "refused_unmeasured")
+                continue
+            entry = "entered at the market."
+            if extended:
+                level, why = pullback_level(ctx, bull)
+                if level is None:
+                    routes[index] = ("refuse", f"anti-chase: extended past {multiple:g}x ATR(14) and {why}",
+                                     "anti_chase")
+                    self._anti_chase(label, symbol, idea, measured, "refused_no_level", why=why)
+                    continue
+                measured["pullback_level"] = str(level)
+                until = self._pullback_until(idea, now)
+                entry = (f"a pullback entry at {level} ({'the higher of VWAP and the opening-range low' if bull else 'the lower of VWAP and the opening-range high'}), "
+                         f"valid until {until.astimezone(NY):%H:%M} ET; no entry if the price does not come back.")
+                routes[index] = ("pullback", level, "anti_chase")
+            else:
+                routes[index] = ("market", None, "")
+            asking.append((index, ConfirmItem(idea, ctx.line(sign, multiple), entry)))
+        if not asking:
+            return routes
+        decisions = self._confirm(now, label, asking)
+        for index, item in asking:
+            symbol = str(item.idea.get("symbol", "")).upper().strip()
+            verdict, why = (decisions or {}).get(symbol, ("drop", "no decision returned" if decisions is not None
+                                                          else "the confirm step failed"))
+            extended = routes[index][0] == "pullback"
+            if verdict != "keep":
+                routes[index] = ("drop", f"dropped after the intraday context: {why}"[:400], "context_drop")
+                if extended:
+                    self._anti_chase(label, symbol, item.idea, self._scan_context.get(symbol), "dropped", why=why)
+        return routes
+
+    def _context(self, idea: dict, now: datetime, label: str, anchor: Optional[Decimal]) -> Context:
+        symbol = str(idea.get("symbol", "")).upper().strip()
+        if self._intraday is None:
+            datahealth.report("AI trader intraday context", f"{symbol}: no intraday data source wired")
+            return Context(symbol, now)
+        try:
+            ctx = self._intraday.context(symbol, now, anchor)
+        except Exception as error:  # noqa: BLE001 - a failed read refuses the entry, never stops the scan
+            datahealth.report("AI trader intraday context", f"{symbol}: {type(error).__name__}: {str(error)[:200]}")
+            return Context(symbol, now)
+        ctx.catalyst = dict(self._move_row(idea, label, now, anchor) or {})
+        return ctx
+
+    @staticmethod
+    def _measured(ctx: Context, sign: int, multiple: Decimal, extended: Optional[bool]) -> dict:
+        def s(value: Any) -> Optional[str]:
+            return None if value is None else f"{value:.6g}"
+
+        return dict(price=s(ctx.price), prior_close=s(ctx.prior_close), atr_fraction=s(ctx.atr_fraction),
+                    from_close=s(ctx.from_close), from_open=s(ctx.from_open), from_vwap=s(ctx.from_vwap),
+                    vwap=s(ctx.vwap), or_low=s(ctx.or_low), or_high=s(ctx.or_high), rel_volume=s(ctx.rel_volume),
+                    catalyst_move=s(ctx.catalyst_move()), catalyst_public_at=ctx.catalyst.get("public_at"),
+                    direction=sign, extended_atr=str(multiple), extended=extended, gaps=ctx.gaps or None)
+
+    def _anti_chase(self, label: str, symbol: str, idea: dict, measured: Optional[dict], outcome: str,
+                    **extra: Any) -> None:
+        """One row per extended idea and what became of it (item 5's shadow)."""
+        self.account.ledger.append("anti_chase", scan=label, symbol=symbol, outcome=outcome, idea=idea,
+                                   context=measured, **extra)
+
+    def _confirm(self, now: datetime, label: str, asking: list[tuple[int, ConfirmItem]]) -> Optional[dict]:
+        """The confirm step: one forced-tool call (no search) with every idea's
+        context. Returns symbol -> (keep|drop, reason), or None when the call
+        failed - and then nothing is entered (Constraint #6)."""
+        cfg = self.config
+        symbols = sorted({str(item.idea.get("symbol", "")).upper().strip() for _, item in asking})
+        try:
+            result = self.llm.confirm(system=confirm_system(cfg), user=confirm_user(now, [i for _, i in asking]),
+                                      tool=confirm_tool(symbols), max_tokens=cfg.day_trader.confirm_max_tokens)
+        except Exception as error:  # noqa: BLE001 - a failed call is a fault, never a trade
+            self._fault(f"scan {label}: the confirm step failed ({type(error).__name__}: {str(error)[:200]}); "
+                        f"nothing from this pass entered")
+            return None
+        decisions: dict[str, tuple[str, str]] = {}
+        for row in (result.structured or {}).get("decisions") or []:
+            if not isinstance(row, dict):
+                continue
+            symbol = str(row.get("symbol", "")).upper().strip()
+            if symbol in symbols and symbol not in decisions and row.get("decision") in ("keep", "drop"):
+                decisions[symbol] = (row["decision"], str(row.get("reason") or "")[:500])
+        self.account.ledger.append(
+            "context_pass", scan=label, model=result.model, cost_usd=result.cost_usd,
+            token_cost_usd=result.token_cost_usd, input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens, transcript_hash=result.transcript_hash,
+            reported=result.structured is not None,
+            items=[{"symbol": str(i.idea.get("symbol", "")).upper(), "context": i.context, "entry": i.entry}
+                   for _, i in asking],
+            decisions={s: {"decision": d, "reason": r} for s, (d, r) in decisions.items()})
+        if result.structured is None:
+            self._fault(f"scan {label}: the confirm step returned no report ({result.stop_reason}); nothing from "
+                        f"this pass entered")
+            return None
+        return decisions
+
+    def _pullback_until(self, idea: dict, now: datetime) -> datetime:
+        """A pullback entry lives ``pullback_minutes`` at most, and never past
+        the day's entry cutoff for its horizon."""
+        cfg = self.config
+        day = now.astimezone(NY).date()
+        cutoff = self.cut(day, cfg.no_intraday_entries_after if idea.get("horizon") == "intraday"
+                          else cfg.no_entries_after)
+        return min(now + timedelta(minutes=cfg.day_trader.pullback_minutes), cutoff)
+
+    def _place_pullback(self, idea: dict, now: datetime, label: str, level: Decimal,
+                        anchor: Optional[Decimal]) -> Optional[str]:
+        """Item 2. A stock or ETF: a resting limit at ``level``, sized from the
+        level and its stop (2% of NAV at risk; a fill at or under the limit
+        risks no more). A call or put: no order yet - a trigger on the
+        underlying; the option is bought, by the normal path, when the
+        underlying reaches the level. Returns the symbol once placed."""
+        cfg = self.config
+        symbol = str(idea["symbol"]).upper().strip()
+        instrument = idea["instrument"]
+        plan, budget = self._base_plan(idea, label)
+        stop_fraction = Decimal(str(idea["stop_pct"])) / 100
+        target_fraction = Decimal(str(idea["target_pct"])) / 100
+        stop_level, target_level = levels(instrument, level, stop_fraction, target_fraction)
+        until = self._pullback_until(idea, now)
+        plan.update(entry_mode="pullback", pullback_level=str(level), chase_anchor=str(anchor) if anchor else None)
+        row = dict(pid=plan["pid"], scan=label, symbol=symbol, instrument=instrument, horizon=idea["horizon"],
+                   level=str(level), stop_level=str(stop_level), target_level=str(target_level),
+                   expires_at=until.isoformat(), plan={k: v for k, v in plan.items() if k != "nav"}, idea=idea,
+                   chase=self._shadow_levels(idea, anchor))
+        if instrument in OPTIONS:
+            self.account.ledger.append("pullback_placed", kind="trigger", **row)
+            self._anti_chase(label, symbol, idea, self._scan_context.get(symbol), "pullback", pid=plan["pid"])
+            self._placed.add(symbol)
+            self._options_this_scan += 1
+            self.notes.append(f"pullback trigger {symbol} {instrument} at {level} until {until.astimezone(NY):%H:%M}")
+            return symbol
+        if not self.account.adapter.tradeable_equity(symbol):
+            self._reject(plan, "not tradeable at the broker (inactive, untradable or not fractionable)")
+            return None
+        per_share = level - stop_level
+        if per_share <= ZERO:
+            self._reject(plan, f"pullback level {level} at or below its stop")
+            return None
+        quantity = self._shares(plan["risk_budget"], per_share, level)
+        if quantity * level < Decimal("5"):
+            self._reject(plan, f"size {quantity} x {level} below the dust floor")
+            return None
+        face, adjusted = self.gross()
+        cost = quantity * level
+        factor = abs(Decimal(str(plan.get("leverage", "1"))))
+        nav = self.gate.state.nav
+        basis = adjusted + cost * factor if cfg.gross_basis == "leverage_adjusted" else face + cost
+        if basis > nav * cfg.max_gross_fraction:
+            self._reject(plan, f"gross cap ({cfg.gross_basis}): {basis:.2f} with this pullback entry would pass "
+                               f"{cfg.max_gross_fraction:.0%} of NAV")
+            return None
+        order = EquityBuyOrder(symbol=symbol, quantity=quantity, execution=LimitExecution(limit_price=level),
+                               sleeve="aggressive", confidence=plan["confidence"])
+        decision = self.gate.submit(order)
+        if not decision.is_approved:
+            self._reject(plan, f"gate: {decision.code}: {decision.message}")
+            return None
+        reference = f"lab-{self.account.name}-pb-{plan['pid']}"
+        # the plan is on the ledger BEFORE the order: a crash between the two
+        # is recovered by the reference (``_pullback_order_id``)
+        self.account.ledger.append("pullback_placed", kind="limit", quantity=str(quantity),
+                                   client_reference=reference, **row)
+        try:
+            receipt = self.account.adapter.submit_order(decision, client_reference=reference)
+        except BrokerError as error:
+            self.gate.cancel(decision)
+            self.account.ledger.append("pullback_done", pid=plan["pid"], outcome="refused",
+                                       detail=f"broker refused: {str(error)[:200]}", filled_qty="0")
+            self._fault(f"broker refused the pullback entry {symbol}: {error}")
+            return None
+        self.account.ledger.append("pullback_order", pid=plan["pid"], order_id=receipt.broker_order_id)
+        self._anti_chase(label, symbol, idea, self._scan_context.get(symbol), "pullback", pid=plan["pid"])
+        self._placed.add(symbol)
+        self.notes.append(f"pullback limit {symbol} x {quantity} at {level} until {until.astimezone(NY):%H:%M}")
+        return symbol
+
+    def _work_pullbacks(self, now: datetime) -> None:
+        """Every tick: each waiting pullback entry is filled, kept, or ended."""
+        for row in list(self.pending().values()):
+            try:
+                if row.get("kind") == "limit":
+                    self._work_limit(row, now)
+                else:
+                    self._work_trigger(row, now)
+            except Exception as error:  # noqa: BLE001 - one entry's failure must not stop the tick's exits
+                self._fault(f"pullback entry {row.get('symbol')}: {type(error).__name__}: {str(error)[:200]}")
+
+    def _stale(self, row: dict, now: datetime, price: Optional[Decimal]) -> Optional[str]:
+        """Why a waiting entry ends now, if it does: its time, the day's
+        cutoff, the kill switch or halt, or its stop level breached first."""
+        if now >= datetime.fromisoformat(row["expires_at"]):
+            return f"expired unfilled after {self.config.day_trader.pullback_minutes} minutes or at the entry cutoff"
+        if (self.gate is not None and self.gate.kill_switch_tripped) or self.account.halted():
+            return "the kill switch or an operator halt stopped new entries"
+        if price is not None:
+            stop = Decimal(row["stop_level"])
+            if (price <= stop) if bullish(row["instrument"]) else (price >= stop):
+                return f"the price {price} breached its stop level {stop} before the entry"
+        return None
+
+    def _work_limit(self, row: dict, now: datetime) -> None:
+        adapter = self.account.adapter
+        order_id = row.get("order_id") or self._pullback_order_id(row)
+        if order_id is None:
+            self._finish_pullback(row, None, "never reached the broker (no order under its reference)")
+            return
+        status = adapter.get_order(order_id)
+        if status.is_terminal:
+            self._finish_pullback(row, status, f"the broker ended it ({status.status})", order_id=order_id)
+            return
+        why = self._stale(row, now, usable_price(self._reader.quote(row["symbol"])))
+        if why is not None:
+            self._finish_pullback(row, self._terminal(order_id), why, order_id=order_id)
+
+    def _pullback_order_id(self, row: dict) -> Optional[str]:
+        lookup = getattr(self.account.adapter, "get_order_by_client_reference", None)
+        status = lookup(row.get("client_reference")) if lookup is not None and row.get("client_reference") else None
+        order_id = getattr(status, "broker_order_id", None) if status is not None else None
+        if order_id:
+            self.account.ledger.append("pullback_order", pid=row["pid"], order_id=order_id, recovered=True)
+        return order_id
+
+    def _finish_pullback(self, row: dict, status: Optional[OrderStatus], why: str, *,
+                         order_id: Optional[str] = None) -> None:
+        """A limit's end: filled (all or part) becomes a position with its stop
+        and target measured from the ACTUAL fill; nothing filled is a refusal
+        with the chase it would have been, for the shadow and the journal."""
+        filled = status.filled_quantity if status is not None else ZERO
+        if filled > ZERO and status.filled_avg_price is not None:
+            fill = status.filled_avg_price
+            plan = dict(row["plan"])
+            stop, target = levels(row["instrument"], fill, Decimal(plan["stop_pct"]) / 100,
+                                  Decimal(plan["target_pct"]) / 100)
+            plan.update(anchor_mid=str(fill), anchor_source="pullback_fill", stop=str(stop), target=str(target),
+                        pullback_placed_at=row["at"])
+            self.account.ledger.append("position_opened", **plan)
+            position = Position(pid=plan["pid"], symbol=plan["symbol"], instrument=plan["instrument"],
+                                horizon=plan["horizon"], stop=stop, target=target, thesis=plan.get("thesis", ""),
+                                opened_at="")
+            self._settle(None, order_id or "", position, "buy", row["level"], row["level"], status, "entry", 1)
+            self.account.ledger.append("pullback_done", pid=row["pid"], outcome="filled",
+                                       detail=why if status.status != "filled" else "filled",
+                                       filled_qty=str(filled), avg_price=str(fill))
+            self.notes.append(f"pullback entry filled: {plan['symbol']} x {filled} at {fill}")
+            return
+        self._pullback_unfilled(row, why)
+
+    def _pullback_unfilled(self, row: dict, why: str) -> None:
+        self.account.ledger.append("pullback_done", pid=row["pid"], outcome="unfilled", detail=why, filled_qty="0")
+        self.account.ledger.append(
+            "idea_rejected", scan=row.get("scan"), symbol=row["symbol"], code="pullback_unfilled", pid=row["pid"],
+            reason=f"pullback entry at {row['level']} not reached: {why}"[:400], idea=row.get("idea"),
+            levels=row.get("chase"), context=(row.get("plan") or {}).get("context"))
+        self.notes.append(f"pullback entry {row['symbol']} ended unfilled: {why}")
+
+    def _work_trigger(self, row: dict, now: datetime) -> None:
+        """An option's pullback: when the underlying reaches the level, the
+        option is bought by the normal path (contract pick, premium budget,
+        the gate), its stop and target set from the underlying's price then."""
+        reading = self._reader.quote(row["symbol"])
+        price = usable_price(reading)
+        why = self._stale(row, now, price)
+        if why is not None:
+            self._pullback_unfilled(row, why)
+            return
+        if price is None:
+            return
+        level = Decimal(row["level"])
+        if (price > level) if bullish(row["instrument"]) else (price < level):
+            return
+        plan = dict(row["plan"])
+        nav = self.gate.state.nav
+        budget = (nav * self.config.risk_fraction).quantize(CENTS, rounding=ROUND_DOWN)
+        stop, target = levels(row["instrument"], price, Decimal(plan["stop_pct"]) / 100,
+                              Decimal(plan["target_pct"]) / 100)
+        plan.update(nav=nav, risk_budget=budget, anchor_mid=str(price), anchor_source="pullback_trigger",
+                    stop=str(stop), target=str(target), pullback_placed_at=row["at"])
+        opened = self._enter_option(plan, row.get("idea") or {}, now, budget)
+        self.account.ledger.append("pullback_done", pid=row["pid"], outcome="filled" if opened else "refused",
+                                   detail=f"the underlying reached {level} at {price}",
+                                   filled_qty="1" if opened else "0")
+        if not opened:
+            self.account.ledger.append(
+                "idea_rejected", scan=row.get("scan"), symbol=row["symbol"], code="pullback_unfilled", pid=row["pid"],
+                reason=f"pullback trigger at {level} reached but the option entry failed (see the ledger)",
+                idea=row.get("idea"), levels=row.get("chase"), context=plan.get("context"))
 
     def _enter_option(self, plan: dict, idea: dict, now: datetime, budget: Decimal) -> Optional[str]:
         cfg = self.config.options
@@ -949,6 +1409,8 @@ class AiTrader:
             return None
         limit = (pick.ask * (1 + self.config.limit_buffer)).quantize(CENTS, rounding=ROUND_UP)
         contracts = int((budget / (limit * pick.multiplier)).to_integral_value(rounding=ROUND_DOWN))
+        if self._max_units is not None:
+            contracts = min(contracts, int(self._max_units))
         if contracts < 1:
             self._reject(plan, f"one contract costs {limit * pick.multiplier}, above the {budget} premium budget")
             return None

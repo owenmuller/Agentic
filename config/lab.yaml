@@ -270,6 +270,18 @@ ai_trader:
   # is proposed for the wider-stops question (item 6). The review-shadows
   # read runs after this day's close.
   exit_shadow_until: 2026-11-27
+  # STOP CHASING, TRADE LIKE A DAY TRADER (human ruling 2026-11-16). OFF until
+  # its golden replay (python -m lab golden ai-trader --day-trader) and its live
+  # round trip (python -m lab roundtrip ai-trader --pullback) have passed; then
+  # a reviewed commit switches it on. Off, every prompt and entry is as before.
+  # Bounds only tighten: extended_atr <= 1.0, pullback_minutes <= 60.
+  day_trader:
+    enabled: false
+    extended_atr: 1.0            # item 1: refuse an at-market entry past 1x ATR(14)
+    pullback_minutes: 60         # item 2: a pullback order lives this long at most
+    opening_range_minutes: 15    # item 2: the opening range is the first 15 minutes
+    relvol_sessions: 20          # item 3: relative volume against the 20-day average
+    confirm_max_tokens: 1500
 
 # THE LIVE MIRROR (GO LIVE, human ruling 2026-11-04; CLAUDE.md § Live Mirror).
 # REAL MONEY on the dedicated Robinhood Agentic account. It copies the paper AI

@@ -1,0 +1,186 @@
+# Golden cases for the AI trader's day-trader CONFIRM STEP (human ruling 2026-11-16).
+# REAL ideas the AI trader proposed on 2026-11-12 and 2026-11-13, each with the intraday
+# context line and entry the rules engine computed for it at the time its pass returned
+# (python -m lab day-trader-dryrun --day D --golden-out FILE). Graded HARD on structure:
+# the tool is called; one keep/drop decision with a reason for every idea; no other symbol.
+# Decisions are REPORTED, not graded (no verdict here is unambiguous).
+cases:
+- name: 2026-11-12_0945
+  time: 09:46
+  items:
+  - idea:
+      symbol: SOXS
+      instrument: etf
+      horizon: intraday
+      confidence: 63
+      stop_pct: 3.5
+      target_pct: 7.0
+      thesis: SOXS (Direxion Daily Semiconductor Bear 3x ETF) was up ~9.3% in premarket at $49.52 vs prior close of $45.32,
+        tracking the SOX index lower on NVDA's collapse. With NVDA a dominant weight in the semiconductor index and no near-term
+        resolution to the leadership vacuum, the SOX should remain under pressure through today's session. SOXS provides leveraged
+        inverse exposure without the binary risk of a single-name option.
+      catalyst: NVDA CEO departure dragging SOX index; Nasdaq 100 futures -1%; broad semi complex selling off in sympathy.
+    context: price 46.82; +3.3% from the prior close 45.32; -5.8% from today's open 49.71; 2.0% below VWAP 47.77; relative
+      volume 1.8x the 20-day average at this time of day; ATR(14) 22.3% of price
+    entry: entered at the market.
+  - idea:
+      symbol: LUNR
+      instrument: stock
+      horizon: days
+      confidence: 61
+      stop_pct: 8.0
+      target_pct: 20.0
+      thesis: Intuitive Machines reported record Q3 revenue of $269M and a record backlog of $1.9B, with $66M in operating
+        cash flow and $33M in free cash flow — a material step-change in fundamentals. NASA's CLPS 2 lunar-services contract
+        selection further expands the pipeline. The stock was up ~13.7% premarket on the earnings gap. Momentum from a clean
+        earnings beat with record financials and government contract backing supports continuation over the next few sessions,
+        independent of the broader tech selloff.
+      catalyst: Q3 2026 earnings beat with record revenue ($269M), record backlog ($1.9B), positive FCF; NASA CLPS 2 contract
+        award.
+    context: price 13.18; +8.3% from the prior close 12.18; -7.1% from today's open 14.20; 6.6% below VWAP 14.11; relative
+      volume 2.2x the 20-day average at this time of day; ATR(14) 8.7% of price
+    entry: entered at the market.
+- name: 2026-11-12_1200
+  time: '12:01'
+  items:
+  - idea:
+      symbol: TRMK
+      instrument: stock
+      horizon: days
+      confidence: 65
+      stop_pct: 2.5
+      target_pct: 5.5
+      thesis: 'Hancock Whitney (HWC) announced a definitive all-stock acquisition of Trustmark (TRMK) on November 12, 2026,
+        valuing TRMK at 0.7463 HWC shares per TRMK share. With HWC trading near $65.01, the implied deal price is ~$48.49,
+        while TRMK was last seen at ~$46.08 — a ~5% discount to deal value. The transaction has strong industrial logic (projected
+        $205.5M annual pretax cost saves, ~7% EPS accretion in 2028) and is expected to close late Q1 2027. Classic merger-arb
+        convergence trade: TRMK should grind toward the collar value over the coming sessions as deal certainty is priced
+        in.'
+      catalyst: Hancock Whitney definitive acquisition announcement of Trustmark at a ~18.6% premium, November 12, 2026; deal
+        expected to close late Q1 2027.
+    context: 'price 48.12; +5.6% from the prior close 45.56; -1.0% from today''s open 48.58; 0.8% above VWAP 47.75; relative
+      volume 30.9x the 20-day average at this time of day; ATR(14) 2.7% of price; EXTENDED: moved more than 1.0x ATR in the
+      idea''s direction'
+    entry: a pullback entry at 47.81 (the higher of VWAP and the opening-range low), valid until 13:01 ET; no entry if the
+      price does not come back.
+  - idea:
+      symbol: FIGR
+      instrument: stock
+      horizon: days
+      confidence: 58
+      stop_pct: 5.0
+      target_pct: 12.0
+      thesis: Figure Technology reported a strong Q3 earnings beat on November 12, 2026 — EPS nearly doubled analyst forecasts,
+        revenue exceeded expectations on robust loan marketplace volume, and adjusted EBITDA margin expanded to 58% from 55%
+        a year ago. Management also announced an expanded share buyback program. The stock was up ~8.3% in premarket to $26.20,
+        well below its 52-week high of $78, suggesting significant room for re-rating. The combination of a fundamental beat,
+        margin expansion, and buyback signal supports a multi-day continuation move.
+      catalyst: Q3 2026 earnings beat with EPS ~2x consensus, EBITDA margin expansion to 58%, and buyback program expansion
+        announced November 12, 2026.
+    context: 'price 26.92; +11.3% from the prior close 24.19; +6.2% from today''s open 25.35; 2.8% above VWAP 26.20; relative
+      volume 2.4x the 20-day average at this time of day; ATR(14) 7.2% of price; EXTENDED: moved more than 1.0x ATR in the
+      idea''s direction'
+    entry: a pullback entry at 26.19 (the higher of VWAP and the opening-range low), valid until 13:01 ET; no entry if the
+      price does not come back.
+- name: 2026-11-12_1445
+  time: '14:46'
+  items:
+  - idea:
+      symbol: LLY
+      instrument: call
+      horizon: days
+      confidence: 62
+      stop_pct: 2.5
+      target_pct: 6.0
+      thesis: Eli Lilly received NMPA approval in China for orforglipron, its oral GLP-1 weight-loss pill — making it the
+        first drugmaker to have an oral GLP-1 approved in China, ahead of Novo Nordisk's competing oral product. China is
+        the world's second-largest pharma market and the GLP-1 opportunity there is enormous. Jefferies raised its price target
+        to $1,700 (from $1,610) on the news. The stock gapped modestly intraday (~+1-2%) but the multi-day institutional re-rating
+        and competitive moat story should continue to pull the stock higher over the next several sessions as analysts and
+        funds digest the China market size.
+      catalyst: NMPA (China) approval of orforglipron (oral GLP-1) announced November 12, 2026 — first oral GLP-1 weight-loss
+        pill approved in China; Jefferies PT raised to $1,700.
+    context: price 1434.76; -0.2% from the prior close 1437.29; -1.1% from today's open 1451.04; 0.8% below VWAP 1446.08;
+      relative volume 0.8x the 20-day average at this time of day; ATR(14) 3.6% of price
+    entry: entered at the market.
+- name: 2026-11-13_0945
+  time: 09:46
+  items:
+  - idea:
+      symbol: CSCO
+      instrument: put
+      horizon: days
+      confidence: 62
+      stop_pct: 3.5
+      target_pct: 7.5
+      thesis: Cisco beat Q1 FY2027 estimates — revenue +24% YoY to $18.52B, EPS $1.40 — and raised guidance, yet the stock
+        is selling off ~3.5% premarket in a classic 'sell the news' reaction. The underlying concern is declining gross margins,
+        which investors are treating as a structural headwind. With the good news already priced in and margin compression
+        as the narrative, the stock is likely to drift lower over the next several sessions.
+      catalyst: Cisco Q1 FY2027 earnings beat with raised guidance but declining gross margins triggering a post-earnings
+        sell-off, reported evening of November 12, 2026.
+    context: price 98.60; -3.3% from the prior close 102.01; -1.7% from today's open 100.30; 0.5% below VWAP 99.05; relative
+      volume 4.4x the 20-day average at this time of day; ATR(14) 3.9% of price
+    entry: entered at the market.
+- name: 2026-11-13_1045
+  time: '10:45'
+  items:
+  - idea:
+      symbol: CBRS
+      instrument: call
+      horizon: days
+      confidence: 62
+      stop_pct: 8.0
+      target_pct: 15.0
+      thesis: 'Cerebras Systems delivered a triple catalyst: Q3 EPS of $0.13 vs. consensus estimate of -$0.13 (massive beat),
+        record revenue of $230.87M, and a raised full-year 2026 core revenue guide to $940M–$960M (from $880M–$890M), plus
+        a new Microsoft partnership announced alongside results. The stock gapped from ~$97.75 close to open near $108–$113.
+        Despite the 16% move, the stock still trades at a steep discount to the analyst consensus target of ~$251.80. Institutional
+        re-rating and momentum from the AI semis theme (NVDA earnings Nov 17 as a sector read-through) should sustain buying
+        pressure into next week. A long call captures continued upside with defined risk on the premium.'
+      catalyst: Q3 earnings beat (EPS +$0.26 vs. consensus), full-year revenue guidance raise, new Microsoft deal — all reported
+        after close 2026-11-12.
+    context: price 104.28; +6.7% from the prior close 97.75; -4.3% from today's open 108.98; 4.5% below VWAP 109.14; relative
+      volume 3.4x the 20-day average at this time of day; ATR(14) 10.5% of price
+    entry: entered at the market.
+- name: 2026-11-13_1200
+  time: '12:01'
+  items:
+  - idea:
+      symbol: AMAT
+      instrument: put
+      horizon: days
+      confidence: 62
+      stop_pct: 4.5
+      target_pct: 10.0
+      thesis: Applied Materials reported a strong beat-and-raise quarter (EPS +92% YoY, revenue +53% YoY, Q1 guidance above
+        consensus) yet the stock is selling off ~6% intraday and is already down ~19% over the prior month. At least 10 sell-side
+        firms cut price targets on November 13 (all maintaining Buy ratings but lowering numbers), creating an overhead valuation
+        ceiling. The multiple-compression narrative — stock trading at a significant premium to intrinsic value per GF Value
+        analysis — is a multi-day headwind. This mirrors the CSCO 'sell the news' dynamic. Evidence E9 shows sharp company-specific
+        drops do not revert and continue drifting lower over 5-day windows.
+      catalyst: Applied Materials Q4 FY2026 earnings beat-and-raise met with aggressive selling; 10+ analyst price target
+        cuts on 2026-11-13 reinforce valuation ceiling; stock down ~6% intraday after being down ~19% over prior month.
+    context: price 359.97; -5.5% from the prior close 380.95; -4.4% from today's open 376.70; 1.3% below VWAP 364.64; relative
+      volume 1.7x the 20-day average at this time of day; ATR(14) 6.9% of price
+    entry: entered at the market.
+- name: 2026-11-13_1445
+  time: '14:45'
+  items:
+  - idea:
+      symbol: XLE
+      instrument: etf
+      horizon: days
+      confidence: 62
+      stop_pct: 2.5
+      target_pct: 5.5
+      thesis: 'President Trump stated the US ''doesn''t need a deal with Iran,'' abruptly reversing market expectations for
+        a diplomatic resolution and pushing crude oil prices higher. Energy stocks are the top-performing S&P 500 sector on
+        the day. This geopolitical re-pricing is a durable multi-day catalyst: no Iran deal means sustained supply-risk premium
+        in crude, which flows directly into XLE constituent earnings estimates. The setup is a clean sector rotation into
+        energy with a fresh, dated headline as the driver.'
+      catalyst: Trump's public statement ruling out an Iran nuclear deal (November 13, 2026), driving crude oil higher and
+        lifting energy equities to the top of the S&P 500 sector leaderboard.
+    context: price 64.66; +0.5% from the prior close 64.33; -0.2% from today's open 64.78; 0.2% above VWAP 64.55; relative
+      volume 0.4x the 20-day average at this time of day; ATR(14) 2.7% of price
+    entry: entered at the market.

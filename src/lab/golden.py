@@ -32,8 +32,9 @@ from typing import Any, Optional
 import yaml
 
 from lab.account import LabState, Ledger
+from lab.ai_prompts import ConfirmItem, confirm_system, confirm_tool, confirm_user
 from lab.ai_trader import NY, AiTrader, at
-from lab.config import AccountConfig, AiTraderConfig
+from lab.config import SETUPS, AccountConfig, AiTraderConfig
 
 
 @dataclass
@@ -128,6 +129,9 @@ def run_case(case: dict, config: AiTraderConfig, llm: Any, day: date, brief: Any
                             f"({idea.get('stop_pct')!r} / {idea.get('target_pct')!r})")
         if idea.get("theme") not in config.concentration.themes:
             failures.append(f"{symbol}: theme {idea.get('theme')!r} is not one of the configured themes")
+        if config.day_trader.enabled and idea.get("setup") not in SETUPS:
+            # the day-trader prompt makes it a rule (ruling 2026-11-16, item 4)
+            failures.append(f"{symbol}: setup {idea.get('setup')!r} is not one of the fixed setup types")
         # with the brief on (ruling 2026-10-15) the prompt makes these rules:
         # every idea says how it used the brief, and a use names its items
         if outcome.brief_arm == "brief":
@@ -162,6 +166,81 @@ def render(results: list[CaseResult], day: date) -> str:
                          f"conf {idea.get('confidence')}: {str(idea.get('thesis', ''))[:140]}")
             if "brief_use" in idea:
                 lines.append(f"          brief: {idea.get('brief_use')} {str(idea.get('brief_items') or '')[:160]}")
+            if "setup" in idea:
+                lines.append(f"          setup: {idea.get('setup')}")
+    passed = sum(1 for r in results if r.passed)
+    lines.append(f"  {passed}/{len(results)} cases passed; total cost {total:.3f} USD")
+    return "\n".join(lines)
+
+
+# -- the day-trader confirm step (human ruling 2026-11-16, items 2-3) -------------------
+
+@dataclass
+class ConfirmResult:
+    name: str
+    runs: list[dict] = field(default_factory=list)   # per run: decisions, failures, cost
+    passed: bool = True
+
+
+def load_confirm_cases(path: Optional[Path] = None) -> list[dict]:
+    path = path or Path(__file__).resolve().parents[2] / "config" / "golden" / "lab_ai_trader_confirm.yaml"
+    with open(path, "r", encoding="utf-8") as handle:
+        return list(yaml.safe_load(handle)["cases"])
+
+
+def grade_confirm(structured: Any, symbols: list[str]) -> tuple[dict, list[str]]:
+    """HARD: the tool is called; exactly one decision for every idea, keep or
+    drop, each with a reason; no symbol that was not asked about."""
+    failures: list[str] = []
+    if not isinstance(structured, dict):
+        return {}, ["the model did not call the confirm tool"]
+    decisions: dict[str, tuple[str, str]] = {}
+    for row in structured.get("decisions") or []:
+        symbol = str((row or {}).get("symbol", "")).upper()
+        if symbol not in symbols:
+            failures.append(f"a decision on {symbol!r}, which was not asked about")
+        elif symbol in decisions:
+            failures.append(f"two decisions on {symbol}")
+        elif row.get("decision") not in ("keep", "drop") or not str(row.get("reason") or "").strip():
+            failures.append(f"{symbol}: decision {row.get('decision')!r} or its reason is missing")
+        else:
+            decisions[symbol] = (row["decision"], str(row["reason"]))
+    for symbol in symbols:
+        if symbol not in decisions and not any(symbol in f for f in failures):
+            failures.append(f"no decision on {symbol}")
+    return decisions, failures
+
+
+def run_confirm(config: AiTraderConfig, llm: Any, today: date, runs: int = 3) -> list[ConfirmResult]:
+    """Each case is real ideas with the context lines the engine computed for
+    them (the dry run of 2026-11-16), sent through the production client's
+    single forced-tool call. Decisions are REPORTED, structure is graded."""
+    results = []
+    for case in load_confirm_cases():
+        items = [ConfirmItem(i["idea"], i["context"], i["entry"]) for i in case["items"]]
+        symbols = sorted({str(i.idea["symbol"]).upper() for i in items})
+        result = ConfirmResult(case["name"])
+        for _ in range(runs):
+            out = llm.confirm(system=confirm_system(config), user=confirm_user(at(today, case["time"]), items),
+                              tool=confirm_tool(symbols), max_tokens=config.day_trader.confirm_max_tokens)
+            decisions, failures = grade_confirm(out.structured, symbols)
+            result.runs.append({"decisions": decisions, "failures": failures, "cost": out.cost_usd})
+        result.passed = sum(1 for r in result.runs if not r["failures"]) * 2 > runs
+        results.append(result)
+    return results
+
+
+def render_confirm(results: list[ConfirmResult]) -> str:
+    lines = ["AI TRADER CONFIRM STEP GOLDEN (real ideas and their computed context, production client)"]
+    total = sum((Decimal(str(r["cost"])) for c in results for r in c.runs), Decimal("0"))
+    for case in results:
+        clean = sum(1 for r in case.runs if not r["failures"])
+        lines.append(f"  {'PASS' if case.passed else 'FAIL'}  {case.name}: {clean}/{len(case.runs)} runs clean")
+        for n, run in enumerate(case.runs, 1):
+            for failure in run["failures"]:
+                lines.append(f"        run {n} FAIL: {failure}")
+            for symbol, (decision, reason) in sorted(run["decisions"].items()):
+                lines.append(f"        run {n} {symbol}: {decision.upper()} - {reason[:200]}")
     passed = sum(1 for r in results if r.passed)
     lines.append(f"  {passed}/{len(results)} cases passed; total cost {total:.3f} USD")
     return "\n".join(lines)
