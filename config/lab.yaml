@@ -276,7 +276,7 @@ ai_trader:
   # a reviewed commit switches it on. Off, every prompt and entry is as before.
   # Bounds only tighten: extended_atr <= 1.0, pullback_minutes <= 60.
   day_trader:
-    enabled: false
+    enabled: true                # switched ON 2026-11-17 after the live pullback round trip passed (golden 2026-11-16)
     extended_atr: 1.0            # item 1: refuse an at-market entry past 1x ATR(14)
     # A TAG only (ruling 2026-11-16, later): 0.5x-1x ATR in the idea's direction is
     # "partial extension" in the setup report; the monthly review rules on it.

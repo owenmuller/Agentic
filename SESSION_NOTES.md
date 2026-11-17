@@ -4167,6 +4167,27 @@ Ruling recorded in CLAUDE.md § Live Mirror. The client is `execution/robinhood.
      - Sells by quantity have no venue floor.
      - Both carry the gate's market-order justification.
 
+### 2026-11-17 — Pullback round trip PASSED; the day-trader rules switched ON from the 2026-11-18 session
+
+- **Reset (human, 2026-11-16 19:32 ET):** `kill_switch_reset` row: was tripped, previous peak 111,667.21,
+  new peak 97,947.29 (the 2026-11-16 16:00 ET snapshot); the 12% switch trips at about 86,193.62.
+- **Round trip:** scheduled as the droplet check `ai-trader-pullback-roundtrip` at 10:15 ET (between
+  the 09:45 and 10:45 scans); exit 0, card delivered to #reports over Discord.
+  - A: a resting limit at 715.31 expired unfilled after a minute; the broker shows it cancelled, 0 filled.
+  - B: a limit at the ask filled 1 SPY at 736.92; stop 729.55 (1%) and target 751.66 (2%) from the fill;
+    sold at 737.02.
+  - C: the call trigger fired and bought 1 SPY261118C00736000 at 5.29; stop 729.70 and target 751.82 on
+    the underlying, from its price at the trigger; sold at 5.21.
+  - Flat in SPY after it, no fault; the production ledger shows only snapshots across the test.
+- **Switch-on (reviewed commit):** `lab.yaml ai_trader.day_trader.enabled: true`. The other lab tests now
+  pin the off state as their base (`tests/test_lab_ai.py` CFG), and a test asserts the shipped config is
+  on at the ruled bounds. The AI trader loads its config at the 09:20 ET start, so Tuesday ran under the
+  old rules and the rules run from Wednesday 2026-11-18 (the human's choice; no mid-session restart).
+- **Scheduled checks post to Discord, never email (human, 2026-11-16):** the runner always used the
+  alerter's Discord cards (#reports on pass, #urgent on failure); only its wording said email (fixed,
+  31af86b). Confirmed by a self-test check at 20:07 ET (delivered, discord, #reports). Open: the Nov 6
+  `momentum-step2` check passed but left no alert-ledger row; asked the human whether its card arrived.
+
 ### 2026-11-16 (evening) — Before the AI trader reset: resume re-bases the peak; partial extension tagged; regime partition
 
 Human ruling, later the same day:

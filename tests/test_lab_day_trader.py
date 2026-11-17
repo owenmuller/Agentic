@@ -96,8 +96,16 @@ def test_the_pullback_level(vwap, or_low, or_high, price, bull, level, why):
 
 # ------------------------------------------------------------- off: nothing changed
 
+def test_the_shipped_config_runs_the_day_trader_rules_at_the_ruled_bounds():
+    """Switched on 2026-11-17 by a reviewed commit, after the golden replay
+    (2026-11-16) and the live pullback round trip passed."""
+    shipped = LabConfig.load().ai_trader.day_trader
+    assert shipped.enabled and shipped.extended_atr == 1.0 and shipped.pullback_minutes == 60
+    assert shipped.opening_range_minutes == 15 and str(shipped.regime_start) == "2026-11-16"
+
+
 def test_switched_off_the_prompt_the_tool_and_the_user_message_are_as_before():
-    assert not CFG.day_trader.enabled                       # ships off until its golden replay and round trip
+    assert not CFG.day_trader.enabled                       # the base the other lab tests run on
     off = system_prompt(CFG)
     assert "HOW A DAY TRADER" not in off and "setup" not in str(report_tool(False, ["a"]))
     on = system_prompt(ON)
