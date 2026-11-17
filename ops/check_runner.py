@@ -8,8 +8,9 @@ which fire on their own clock regardless of any laptop.
   python ops/check_runner.py NAME -- COMMAND [ARGS...]
 
 runs COMMAND from the checkout, writes its whole output to
-``~/checks/NAME-<UTC stamp>.txt`` and emails it: the DAILY tier when the
-command exits 0, the URGENT tier when it fails or cannot start. A check is a
+``~/checks/NAME-<UTC stamp>.txt`` and posts it as a card to Discord: #reports when the command exits 0,
+#urgent when it fails or cannot start (the alerter's DISCORD_WEBHOOK_REPORTS /
+_URGENT; ntfy is the fallback; the droplet cannot send email). A check is a
 non-production process (a user unit), so the data guard confines it to
 reads and scratch - exactly what a check should be able to do.
 """

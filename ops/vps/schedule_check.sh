@@ -5,7 +5,7 @@
 # has Persistent=true, so a run missed while the droplet was down fires once
 # at the next boot (lingering is on for the agentic user, so the user manager
 # starts at boot without a login). The check runs ops/check_runner.py, which
-# writes ~/checks/ and sends the result (DAILY on pass, URGENT on failure).
+# writes ~/checks/ and posts the result to Discord (#reports on pass, #urgent on failure).
 #
 #   schedule_check.sh NAME "YYYY-MM-DD HH:MM" -- COMMAND [ARGS...]     (time in ET)
 #   schedule_check.sh --remove NAME                                    (bare or check-NAME; an error if none)
